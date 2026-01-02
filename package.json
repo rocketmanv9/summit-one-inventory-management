@@ -6,12 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sb:start": "supabase start",
+    "sb:stop": "supabase stop --no-backup",
+    "sb:status": "supabase status",
+    "dev:local": "npm run sb:start && npm run dev"
   },
   "dependencies": {
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "@supabase/supabase-js": "^2.48.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -25,3 +30,9 @@
     "typescript": "^5"
   }
 }
+
+
+
+
+
+
