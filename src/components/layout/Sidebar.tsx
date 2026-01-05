@@ -12,6 +12,7 @@ import {
   BarChart3,
   Settings,
   ChevronRight,
+  Bug,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -32,8 +33,13 @@ const navigation: NavSection[] = [
     title: 'Overview',
     items: [
       {
+        title: 'Debug',
+        href: '/debug',
+        icon: Bug,
+      },
+      {
         title: 'Dashboard',
-        href: '/',
+        href: '/dashboard',
         icon: LayoutDashboard,
       },
       {

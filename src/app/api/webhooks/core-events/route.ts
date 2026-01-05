@@ -2,21 +2,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac } from 'crypto';
 
-interface CoreEvent {
-  delivery_id: string;
-  event_id: string;
-  event_type: string;
-  tenant_id: string | null;
-  aggregate_type: string | null;
-  aggregate_id: string | null;
-  payload: any;
-  occurred_at: string;
+interface TenantProfileData {
+  ein?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  website?: string;
+  industry?: string;
+  logo_url?: string;
+  org_type?: string;
+  products?: string[];
+  services?: string[];
+  timezone?: string;
+  nick_name?: string;
+  tenant_id: string;
+  legal_name?: string;
+  naics_code?: string;
+  description?: string;
+  postal_code?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  address_line_1?: string;
+  address_line_2?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  accent_color?: string;
 }
 
 export async function POST(req: NextRequest) {
   try {
     // 1. Verify HMAC signature
-    const signature = req.headers.get('x-summit-signature');
+    const signature = req.headers.get('x-event-signature');
+    const eventType = req.headers.get('x-event-type');
     const rawBody = await req.text();
     
     if (!signature) {
@@ -26,9 +43,15 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    const expectedSignature = createHmac('sha256', process.env.WEBHOOK_SECRET!)
-      .update(rawBody)
-      .digest('hex');
+    if (!eventType) {
+      return NextResponse.json(
+        { error: 'Missing event type' },
+        { status: 400 }
+      );
+    }
+    
+    const hmac = createHmac('sha256', process.env.WEBHOOK_SECRET!);
+    const expectedSignature = 'sha256=' + hmac.update(rawBody).digest('hex');
     
     if (signature !== expectedSignature) {
       console.error('Invalid webhook signature');
@@ -38,9 +61,12 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    const event: CoreEvent = JSON.parse(rawBody);
+    const body = JSON.parse(rawBody);
+    const payload = body.payload;
     
-    // 2. Check idempotency (prevent duplicate processing)
+    // 2. Check idempotency using delivery_id or event_id from body
+    const deliveryId = body.delivery_id || body.event_id || `${eventType}-${Date.now()}`;
+    
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -55,7 +81,7 @@ export async function POST(req: NextRequest) {
     const { data: existing } = await supabase
       .from('processed_events')
       .select('id')
-      .eq('delivery_id', event.delivery_id)
+      .eq('delivery_id', deliveryId)
       .single();
     
     if (existing) {
@@ -63,16 +89,16 @@ export async function POST(req: NextRequest) {
     }
     
     // 3. Process event based on type
-    await processEvent(supabase, event);
+    await processEvent(supabase, eventType, payload);
     
     // 4. Record processing
     await supabase
       .from('processed_events')
       .insert({
-        delivery_id: event.delivery_id,
-        event_type: event.event_type,
-        tenant_id: event.tenant_id,
-        payload: event.payload,
+        delivery_id: deliveryId,
+        event_type: eventType,
+        tenant_id: payload?.new?.tenant_id || payload?.tenant_id || null,
+        payload: payload,
       });
     
     return NextResponse.json({ status: 'processed' });
@@ -85,128 +111,217 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function processEvent(supabase: any, event: CoreEvent) {
-  console.log(`Processing event: ${event.event_type}`, {
-    delivery_id: event.delivery_id,
-    tenant_id: event.tenant_id,
-  });
+async function processEvent(supabase: any, eventType: string, payload: any) {
+  console.log(`Processing event: ${eventType}`);
   
-  switch (event.event_type) {
-    case 'tenant.membership.created':
-      await handleMembershipCreated(supabase, event);
-      break;
-      
-    case 'tenant.membership.updated':
-      await handleMembershipUpdated(supabase, event);
-      break;
-      
-    case 'tenant.membership.deleted':
-      await handleMembershipDeleted(supabase, event);
-      break;
-      
-    case 'tenant.profile.updated':
-      await handleProfileUpdated(supabase, event);
-      break;
-      
+  switch (eventType) {
     case 'tenant.created':
-      await handleTenantCreated(supabase, event);
+      await handleTenantCreated(supabase, payload);
       break;
       
     case 'tenant.updated':
-      await handleTenantUpdated(supabase, event);
+      await handleTenantUpdated(supabase, payload);
+      break;
+      
+    case 'tenant.profile.created':
+      await handleTenantProfileCreated(supabase, payload);
+      break;
+      
+    case 'tenant.profile.updated':
+      await handleTenantProfileUpdated(supabase, payload);
+      break;
+      
+    case 'tenant.membership.created':
+      await handleMembershipCreated(supabase, payload);
+      break;
+      
+    case 'tenant.membership.updated':
+      await handleMembershipUpdated(supabase, payload);
+      break;
+      
+    case 'tenant.membership.deleted':
+      await handleMembershipDeleted(supabase, payload);
+      break;
+      
+    case 'tenant.product.entitlement.created':
+      await handleProductEntitlementCreated(supabase, payload);
+      break;
+      
+    case 'tenant.product.entitlement.deleted':
+      await handleProductEntitlementDeleted(supabase, payload);
       break;
       
     default:
-      console.log(`Unhandled event type: ${event.event_type}`);
+      console.log(`Unhandled event type: ${eventType}`);
   }
 }
 
-async function handleMembershipCreated(supabase: any, event: CoreEvent) {
-  const { user_id, tenant_id, role } = event.payload;
+async function handleTenantCreated(supabase: any, payload: any) {
+  const tenant = payload.new;
+  console.log(`Tenant created: ${tenant.name} (ID: ${tenant.id})`);
   
-  console.log(`User ${user_id} added to tenant ${tenant_id} with role ${role}`);
+  // Store basic tenant info - profile data comes via tenant.profile.created
+  const { error } = await supabase
+    .from('tenants')
+    .insert({
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.id, // Will be updated by profile event
+      synced_at: new Date().toISOString(),
+    });
   
-  // Create local user permissions or setup
-  // For inventory service, we might just log this or set up initial preferences
-  // The actual authorization happens via RLS policies using tenant_id from session
+  if (error) {
+    console.error('Failed to create tenant:', error);
+  }
 }
 
-async function handleMembershipUpdated(supabase: any, event: CoreEvent) {
-  const { user_id, tenant_id, old_role, new_role } = event.payload;
+async function handleTenantUpdated(supabase: any, payload: any) {
+  const tenant = payload.new;
+  console.log(`Tenant updated: ${tenant.name}`);
   
-  console.log(`User ${user_id} role changed from ${old_role} to ${new_role} in tenant ${tenant_id}`);
+  const { error } = await supabase
+    .from('tenants')
+    .update({
+      name: tenant.name,
+      synced_at: new Date().toISOString(),
+    })
+    .eq('id', tenant.id);
+  
+  if (error) {
+    console.error('Failed to update tenant:', error);
+  }
+}
+
+async function handleTenantProfileCreated(supabase: any, payload: any) {
+  const profile: TenantProfileData = payload.new;
+  console.log(`Tenant profile created for: ${profile.tenant_id}`);
+  
+  // Update tenant with profile information
+  const { error } = await supabase
+    .from('tenants')
+    .upsert({
+      id: profile.tenant_id,
+      name: profile.legal_name || profile.nick_name,
+      slug: profile.tenant_id,
+      industry: profile.industry,
+      address: {
+        line1: profile.address_line_1,
+        line2: profile.address_line_2,
+        city: profile.city,
+        state: profile.state,
+        postal_code: profile.postal_code,
+        country: profile.country,
+      },
+      metadata: {
+        legal_name: profile.legal_name,
+        nick_name: profile.nick_name,
+        org_type: profile.org_type,
+        naics_code: profile.naics_code,
+        ein: profile.ein,
+        website: profile.website,
+        contact_email: profile.contact_email,
+        contact_phone: profile.contact_phone,
+        logo_url: profile.logo_url,
+        timezone: profile.timezone,
+        products: profile.products,
+        services: profile.services,
+        colors: {
+          primary: profile.primary_color,
+          secondary: profile.secondary_color,
+          accent: profile.accent_color,
+        }
+      },
+      synced_at: new Date().toISOString(),
+    });
+  
+  if (error) {
+    console.error('Failed to sync tenant profile:', error);
+  }
+}
+
+async function handleTenantProfileUpdated(supabase: any, payload: any) {
+  const profile: TenantProfileData = payload.new;
+  console.log(`Tenant profile updated for: ${profile.tenant_id}`);
+  
+  // Update tenant with latest profile information
+  const { error } = await supabase
+    .from('tenants')
+    .update({
+      name: profile.legal_name || profile.nick_name,
+      industry: profile.industry,
+      address: {
+        line1: profile.address_line_1,
+        line2: profile.address_line_2,
+        city: profile.city,
+        state: profile.state,
+        postal_code: profile.postal_code,
+        country: profile.country,
+      },
+      metadata: {
+        legal_name: profile.legal_name,
+        nick_name: profile.nick_name,
+        org_type: profile.org_type,
+        naics_code: profile.naics_code,
+        ein: profile.ein,
+        website: profile.website,
+        contact_email: profile.contact_email,
+        contact_phone: profile.contact_phone,
+        logo_url: profile.logo_url,
+        timezone: profile.timezone,
+        products: profile.products,
+        services: profile.services,
+        colors: {
+          primary: profile.primary_color,
+          secondary: profile.secondary_color,
+          accent: profile.accent_color,
+        }
+      },
+      synced_at: new Date().toISOString(),
+    })
+    .eq('id', profile.tenant_id);
+  
+  if (error) {
+    console.error('Failed to update tenant profile:', error);
+  }
+}
+
+async function handleMembershipCreated(supabase: any, payload: any) {
+  const membership = payload.new;
+  console.log(`User ${membership.user_id} added to tenant ${membership.tenant_id} with role ${membership.role}`);
+  
+  // RLS policies handle authorization automatically via session tenant_id
+  // Just log for now - could create user preferences table later
+}
+
+async function handleMembershipUpdated(supabase: any, payload: any) {
+  const newData = payload.new;
+  const oldData = payload.old;
+  console.log(`User ${newData.user_id} role changed from ${oldData.role} to ${newData.role}`);
   
   // Update local permissions if needed
 }
 
-async function handleMembershipDeleted(supabase: any, event: CoreEvent) {
-  const { user_id, tenant_id } = event.payload;
+async function handleMembershipDeleted(supabase: any, payload: any) {
+  const membership = payload.old;
+  console.log(`User ${membership.user_id} removed from tenant ${membership.tenant_id}`);
   
-  console.log(`User ${user_id} removed from tenant ${tenant_id}`);
-  
-  // Clean up local user data if needed
-  // Note: Don't delete data, just revoke access - RLS handles this automatically
+  // RLS will automatically block access - no need to delete data
 }
 
-async function handleProfileUpdated(supabase: any, event: CoreEvent) {
-  const { user_id, email, first_name, last_name } = event.payload.new;
+async function handleProductEntitlementCreated(supabase: any, payload: any) {
+  const entitlement = payload.new;
+  console.log(`Tenant ${entitlement.tenant_id} granted access to product ${entitlement.product_id}`);
   
-  console.log(`Profile updated for user ${user_id}: ${email}`);
-  
-  // If you maintain a local users table, sync it here
-  // For now, we'll just log it since user info comes from session
+  // Track which tenants have access to Inventory module
+  // Could create entitlements table or just log
+  // For now, if they can authenticate and have tenant_id in session, they have access
 }
 
-async function handleTenantCreated(supabase: any, event: CoreEvent) {
-  const { tenant_id, name, slug, industry, address, metadata } = event.payload;
+async function handleProductEntitlementDeleted(supabase: any, payload: any) {
+  const entitlement = payload.old;
+  console.log(`Tenant ${entitlement.tenant_id} lost access to product ${entitlement.product_id}`);
   
-  console.log(`New tenant created: ${name} (${slug})`);
-  
-  // Store tenant information locally
-  const { error } = await supabase
-    .from('tenants')
-    .insert({
-      id: tenant_id,
-      name,
-      slug,
-      industry,
-      address,
-      metadata,
-      synced_at: new Date().toISOString(),
-    });
-  
-  if (error) {
-    console.error('Failed to sync tenant:', error);
-  } else {
-    console.log(`Tenant ${name} synced successfully`);
-  }
-  
-  // Initialize tenant-specific data if needed
-  // For example, create default locations, categories, etc.
-}
-
-async function handleTenantUpdated(supabase: any, event: CoreEvent) {
-  const { tenant_id, name, slug, industry, address, metadata } = event.payload;
-  
-  console.log(`Tenant updated: ${name}`);
-  
-  // Update tenant information locally
-  const { error } = await supabase
-    .from('tenants')
-    .upsert({
-      id: tenant_id,
-      name,
-      slug,
-      industry,
-      address,
-      metadata,
-      synced_at: new Date().toISOString(),
-    });
-  
-  if (error) {
-    console.error('Failed to update tenant:', error);
-  } else {
-    console.log(`Tenant ${name} updated successfully`);
-  }
+  // Could soft-delete or archive tenant data
+  // Or block access via middleware check
 }
 
