@@ -6,6 +6,7 @@ export function middleware(request: NextRequest) {
   
   // Skip middleware for these paths
   if (
+    pathname === '/' ||
     pathname.startsWith('/auth/callback') ||
     pathname.startsWith('/error') ||
     pathname.startsWith('/_next') ||
