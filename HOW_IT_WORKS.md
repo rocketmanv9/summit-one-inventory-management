@@ -204,14 +204,14 @@ Every table has RLS enabled with policies like:
 CREATE POLICY "tenant_isolation_select"
 ON inventory.catalog_items
 FOR SELECT
-USING (tenant_id = (auth.jwt() ->> 'tenant_id')::uuid);
+USING (tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid);
 
 -- Write policy (role-based)
 CREATE POLICY "admins_can_delete"
 ON inventory.catalog_items
 FOR DELETE
 USING (
-  tenant_id = (auth.jwt() ->> 'tenant_id')::uuid
+  tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid
   AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
 );
 ```

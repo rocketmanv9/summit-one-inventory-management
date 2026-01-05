@@ -2,7 +2,7 @@
 -- Aligns with events_outbox pattern for event-driven architecture
 
 CREATE TABLE inventory.events_outbox (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     scope TEXT NOT NULL CHECK (scope IN ('tenant', 'profile', 'global')),
     event_type TEXT NOT NULL,

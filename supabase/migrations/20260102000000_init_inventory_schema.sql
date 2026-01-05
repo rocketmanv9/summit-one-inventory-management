@@ -2,6 +2,11 @@
 -- This must run before all other inventory migrations
 
 -- =====================================================
+-- ENABLE EXTENSIONS
+-- =====================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- =====================================================
 -- CREATE SCHEMA
 -- =====================================================
 CREATE SCHEMA IF NOT EXISTS inventory;

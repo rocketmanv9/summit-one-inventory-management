@@ -5,7 +5,7 @@
 -- PURCHASE ORDERS TABLE
 -- =====================================================
 CREATE TABLE inventory.purchase_orders (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     po_number TEXT NOT NULL,
     vendor_location_id UUID NULL REFERENCES inventory.locations(id) ON DELETE SET NULL,
@@ -35,7 +35,7 @@ CREATE INDEX idx_purchase_orders_expected_delivery_date ON inventory.purchase_or
 -- PURCHASE ORDER LINES TABLE
 -- =====================================================
 CREATE TABLE inventory.purchase_order_lines (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     po_id UUID NOT NULL REFERENCES inventory.purchase_orders(id) ON DELETE CASCADE,
     line_number INTEGER NOT NULL,
@@ -67,7 +67,7 @@ CREATE INDEX idx_purchase_order_lines_status ON inventory.purchase_order_lines(t
 -- RECEIPTS TABLE
 -- =====================================================
 CREATE TABLE inventory.receipts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     po_id UUID NULL REFERENCES inventory.purchase_orders(id) ON DELETE SET NULL,
     receipt_number TEXT NOT NULL,
@@ -94,7 +94,7 @@ CREATE INDEX idx_receipts_location_id ON inventory.receipts(location_id);
 -- RECEIPT LINES TABLE
 -- =====================================================
 CREATE TABLE inventory.receipt_lines (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     receipt_id UUID NOT NULL REFERENCES inventory.receipts(id) ON DELETE CASCADE,
     po_line_id UUID NULL REFERENCES inventory.purchase_order_lines(id) ON DELETE SET NULL,
@@ -121,7 +121,7 @@ CREATE INDEX idx_receipt_lines_catalog_item_id ON inventory.receipt_lines(catalo
 -- CYCLE COUNTS TABLE
 -- =====================================================
 CREATE TABLE inventory.cycle_counts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     count_number TEXT NOT NULL,
     location_id UUID NULL REFERENCES inventory.locations(id) ON DELETE SET NULL,
@@ -148,7 +148,7 @@ CREATE INDEX idx_cycle_counts_status ON inventory.cycle_counts(tenant_id, status
 -- CYCLE COUNT LINES TABLE
 -- =====================================================
 CREATE TABLE inventory.cycle_count_lines (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     cycle_count_id UUID NOT NULL REFERENCES inventory.cycle_counts(id) ON DELETE CASCADE,
     line_number INTEGER NOT NULL,

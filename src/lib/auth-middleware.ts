@@ -14,6 +14,34 @@ export interface AuthContext {
   email?: string;
 }
 
+interface JwtPayload {
+  sub?: string;
+  email?: string;
+  tenant_id?: string;
+  app_metadata?: {
+    tenant_id?: string;
+    role?: string;
+    modules?: string[];
+  };
+}
+
+function decodeJwtPayload(token: string): JwtPayload | null {
+  const payloadPart = token.split('.')[1];
+  if (!payloadPart) {
+    return null;
+  }
+
+  try {
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const json = Buffer.from(padded, 'base64').toString('utf8');
+    return JSON.parse(json);
+  } catch (error) {
+    console.error('Failed to decode JWT payload:', error);
+    return null;
+  }
+}
+
 /**
  * Extract and validate JWT from request
  */
@@ -27,9 +55,25 @@ export async function validateJWT(request: NextRequest): Promise<AuthContext | n
   const token = authHeader.substring(7);
 
   try {
+    const authUrl =
+      process.env.CORE_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const authAnonKey =
+      process.env.CORE_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!authUrl || !authAnonKey) {
+      console.error('Auth config missing: CORE_SUPABASE_URL/CORE_SUPABASE_ANON_KEY');
+      return null;
+    }
+
     const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      authUrl,
+      authAnonKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
     );
 
     const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -39,22 +83,40 @@ export async function validateJWT(request: NextRequest): Promise<AuthContext | n
       return null;
     }
 
-    // Extract claims from user metadata
-    const tenantId = user.app_metadata?.tenant_id;
-    const role = user.app_metadata?.role || 'user';
-    const modules = user.app_metadata?.modules || [];
+    const jwtPayload = decodeJwtPayload(token);
+
+    // Extract claims from user metadata or JWT payload (core tokens may include top-level claims)
+    const tenantId =
+      user.app_metadata?.tenant_id ??
+      jwtPayload?.tenant_id ??
+      jwtPayload?.app_metadata?.tenant_id;
+    const role =
+      user.app_metadata?.role ??
+      jwtPayload?.app_metadata?.role ??
+      'user';
+    const modules =
+      user.app_metadata?.modules ??
+      jwtPayload?.app_metadata?.modules ??
+      [];
 
     if (!tenantId) {
-      console.error('JWT missing tenant_id in app_metadata');
+      console.error('JWT missing tenant_id claim');
+      return null;
+    }
+
+    const userId = user.id ?? jwtPayload?.sub;
+
+    if (!userId) {
+      console.error('JWT missing sub claim');
       return null;
     }
 
     return {
-      userId: user.id,
+      userId,
       tenantId,
       role,
       modules,
-      email: user.email
+      email: user.email ?? jwtPayload?.email
     };
   } catch (error) {
     console.error('JWT validation error:', error);

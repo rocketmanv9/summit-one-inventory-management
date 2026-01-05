@@ -1,90 +1,113 @@
 /**
- * Example API route with auth middleware
- * GET /api/inventory/items
+ * Inventory Items API - Demonstrates tenant isolation
+ * GET /api/inventory/items - List items for authenticated tenant
+ * POST /api/inventory/items - Create new item
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { withAuth, withModule } from '@/lib/auth-middleware';
+import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
 import { createClient } from '@supabase/supabase-js';
 
-export const GET = withModule('inventory', async (req, authContext) => {
-  // authContext contains: userId, tenantId, role, modules
+export async function GET(request: NextRequest) {
+  // Get tenant ID from request headers (set by middleware)
+  const tenantId = getTenantIdFromHeaders(request.headers);
   
-  // Create Supabase client - RLS will automatically filter by tenant
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: {
-        headers: {
-          Authorization: req.headers.get('authorization')!
-        }
-      }
-    }
-  );
-
-  // Query will be filtered by RLS using JWT tenant_id claim
-  const { data, error } = await supabase
-    .from('catalog_items')
-    .select(`
-      *,
-      item_categories(name)
-    `)
-    .eq('active', true)
-    .order('name');
-
-  if (error) {
+  if (!tenantId) {
     return NextResponse.json(
-      { error: 'Database error', details: error.message },
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    // Query items - ALWAYS filter by tenant_id
+    // This is critical for data isolation
+    const { data: items, error } = await supabase
+      .from('catalog_items')
+      .select(`
+        *,
+        item_categories(name)
+      `)
+      .eq('tenant_id', tenantId)
+      .eq('active', true)
+      .order('name');
+    
+    if (error) {
+      console.error('Error fetching items:', error);
+      return NextResponse.json(
+        { error: 'Failed to fetch items' },
+        { status: 500 }
+      );
+    }
+    
+    return NextResponse.json({ 
+      data: items,
+      meta: {
+        tenantId,
+        count: items?.length || 0
+      }
+    });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
+}
 
-  return NextResponse.json({
-    data,
-    meta: {
-      tenantId: authContext.tenantId,
-      count: data.length
-    }
-  });
-});
-
-export const POST = withAuth(async (req, authContext) => {
-  const body = await req.json();
-
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: {
-        headers: {
-          Authorization: req.headers.get('authorization')!
-        }
-      }
-    }
-  );
-
-  // tenant_id is automatically set from JWT in RLS context
-  // created_by is automatically set from auth.uid() trigger
-  const { data, error } = await supabase
-    .from('catalog_items')
-    .insert({
-      tenant_id: authContext.tenantId, // Explicit for clarity
-      sku: body.sku,
-      name: body.name,
-      tracking_mode: body.tracking_mode,
-      uom: body.uom,
-      category_id: body.category_id
-    })
-    .select()
-    .single();
-
-  if (error) {
+export async function POST(request: NextRequest) {
+  const tenantId = getTenantIdFromHeaders(request.headers);
+  
+  if (!tenantId) {
     return NextResponse.json(
-      { error: 'Failed to create item', details: error.message },
-      { status: 400 }
+      { error: 'Not authenticated' },
+      { status: 401 }
     );
   }
+  
+  try {
+    const body = await request.json();
+    const { name, sku, description, category_id } = body;
+    
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    // CRITICAL: Always set tenant_id from session, NEVER from client input
+    const { data: item, error } = await supabase
+      .from('catalog_items')
+      .insert({
+        tenant_id: tenantId, // From authenticated session
+        name,
+        sku,
+        description,
+        category_id,
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error creating item:', error);
+      return NextResponse.json(
+        { error: 'Failed to create item' },
+        { status: 500 }
+      );
+    }
+    
+    return NextResponse.json({ item }, { status: 201 });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
 
-  return NextResponse.json({ data }, { status: 201 });
-});

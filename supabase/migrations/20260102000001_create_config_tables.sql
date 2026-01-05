@@ -2,13 +2,13 @@
 -- These tables enable fully customizable dashboards per tenant, role, or user
 
 -- Enable UUID extension if not already enabled
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" SCHEMA extensions;
 
 -- =====================================================
 -- DASHBOARDS TABLE
 -- =====================================================
 CREATE TABLE inventory.dashboards (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     name TEXT NOT NULL,
     scope TEXT NOT NULL,
@@ -38,7 +38,7 @@ CREATE INDEX idx_dashboards_default ON inventory.dashboards(tenant_id, is_defaul
 -- DASHBOARD WIDGETS TABLE
 -- =====================================================
 CREATE TABLE inventory.dashboard_widgets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     dashboard_id UUID NOT NULL REFERENCES inventory.dashboards(id) ON DELETE CASCADE,
     widget_type TEXT NOT NULL,

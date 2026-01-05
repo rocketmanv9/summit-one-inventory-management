@@ -5,7 +5,7 @@
 -- STOCK BALANCES TABLE
 -- =====================================================
 CREATE TABLE inventory.stock_balances (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     catalog_item_id UUID NOT NULL REFERENCES inventory.catalog_items(id) ON DELETE CASCADE,
     location_id UUID NOT NULL REFERENCES inventory.locations(id) ON DELETE CASCADE,
@@ -34,7 +34,7 @@ CREATE INDEX idx_stock_balances_updated_at ON inventory.stock_balances(updated_a
 -- =====================================================
 -- Supports "reserved/allocated/committed" inventory
 CREATE TABLE inventory.reservations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     catalog_item_id UUID NOT NULL REFERENCES inventory.catalog_items(id) ON DELETE CASCADE,
     location_id UUID NOT NULL REFERENCES inventory.locations(id) ON DELETE CASCADE,
@@ -94,7 +94,7 @@ CREATE INDEX idx_asset_state_updated_at ON inventory.asset_state(updated_at DESC
 -- =====================================================
 -- Aggregates for charts and analytics - makes dashboards snappy
 CREATE TABLE inventory.daily_item_activity (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     activity_date DATE NOT NULL,
     catalog_item_id UUID NOT NULL REFERENCES inventory.catalog_items(id) ON DELETE CASCADE,
@@ -124,7 +124,7 @@ CREATE INDEX idx_daily_item_activity_location_id ON inventory.daily_item_activit
 -- =====================================================
 -- Aggregated asset metrics by day
 CREATE TABLE inventory.daily_asset_metrics (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     activity_date DATE NOT NULL,
     asset_type TEXT NULL, -- Optional grouping by type/category

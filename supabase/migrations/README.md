@@ -53,7 +53,7 @@ Creates the `inventory` schema and sets up permissions.
 ### 1. **Tenant Isolation**
 Every table has `tenant_id` with RLS policies:
 ```sql
-tenant_id = (auth.jwt() ->> 'tenant_id')::UUID
+tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID
 ```
 
 ### 2. **Idempotency**

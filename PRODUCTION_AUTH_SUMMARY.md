@@ -4,7 +4,7 @@
 
 ### 1. Strict RLS Policies (Migration 006)
 - **NO bypasses** - removed all COALESCE fallbacks
-- Direct JWT claim checks: `tenant_id = (auth.jwt() ->> 'tenant_id')::uuid`
+- Direct JWT claim checks: `tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid`
 - Role-based policies for sensitive operations
 - Service role can bypass (for background jobs only)
 

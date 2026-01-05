@@ -6,7 +6,7 @@
 -- =====================================================
 -- Represents: receive/issue/transfer/adjust/reserve/unreserve/return
 CREATE TABLE inventory.inventory_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type IN ('receive', 'issue', 'transfer', 'adjust', 'reserve', 'unreserve', 'return', 'allocate', 'consume')),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -37,7 +37,7 @@ CREATE INDEX idx_inventory_events_processing ON inventory.inventory_events(tenan
 -- =====================================================
 -- Represents: asset assigned, moved, status changed, maintenance logged, retired
 CREATE TABLE inventory.asset_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type IN ('assigned', 'unassigned', 'moved', 'status_changed', 'maintenance_logged', 'retired', 'activated', 'inspected')),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -70,7 +70,7 @@ CREATE INDEX idx_asset_events_processing ON inventory.asset_events(tenant_id, cr
 -- =====================================================
 -- Represents: PO created, PO approved, items received, invoice matched, etc.
 CREATE TABLE inventory.procurement_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type IN ('po_created', 'po_approved', 'po_cancelled', 'items_received', 'invoice_matched', 'payment_made')),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

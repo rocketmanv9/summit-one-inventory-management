@@ -26,7 +26,15 @@ Expected claims in the JWT token from Core:
 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55321
 NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_...  # Server-side only
+CORE_SUPABASE_URL=https://core-project.supabase.co
+CORE_SUPABASE_ANON_KEY=sb_publishable_core_...  # Used to validate Core JWTs
 ```
+
+## JWT Secret Alignment
+
+Core-issued JWTs must be signed with the same secret as the inventory Supabase project
+(or the inventory project must be configured to use Core's signing key). Without
+aligned secrets, PostgREST/RLS will reject Core tokens.
 
 ## Database Schema
 
@@ -53,7 +61,7 @@ All tables have:
 ```sql
 CREATE POLICY {table}_tenant_isolation ON inventory.{table}
     FOR ALL
-    USING (tenant_id = (auth.jwt() ->> 'tenant_id')::uuid);
+    USING (tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid);
 ```
 
 **No COALESCE bypasses** - JWT tenant_id claim is required.
@@ -66,7 +74,7 @@ Example - Only admins can delete catalog items:
 CREATE POLICY catalog_items_delete_admin_only ON inventory.catalog_items
     FOR DELETE
     USING (
-        tenant_id = (auth.jwt() ->> 'tenant_id')::uuid
+        tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid
         AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
     );
 ```
@@ -77,7 +85,7 @@ Example - Admins can modify approved POs:
 CREATE POLICY purchase_orders_update_admin_or_draft ON inventory.purchase_orders
     FOR UPDATE
     USING (
-        tenant_id = (auth.jwt() ->> 'tenant_id')::uuid
+        tenant_id = (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::uuid
         AND (status = 'draft' OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin')
     );
 ```
@@ -251,7 +259,7 @@ X-Service-Auth: <service-jwt-token>
 
 ✅ All tables have `tenant_id` NOT NULL  
 ✅ All tables have RLS enabled  
-✅ RLS policies check `auth.jwt() ->> 'tenant_id'`  
+✅ RLS policies check `auth.jwt() -> 'app_metadata' ->> 'tenant_id'`  
 ✅ Audit fields (created_by, updated_by) auto-set from auth.uid()  
 ✅ API routes use auth middleware  
 ✅ No COALESCE bypasses in RLS  

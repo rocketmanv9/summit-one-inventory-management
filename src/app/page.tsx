@@ -1,65 +1,126 @@
-import Image from "next/image";
+import { LayoutDashboard, TrendingUp, Package, AlertTriangle } from 'lucide-react';
 
-export default function Home() {
+export default function DashboardPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+        <p className="text-muted-foreground">
+          Overview of your inventory management system
+        </p>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">
+                Total Items
+              </p>
+              <p className="text-2xl font-bold">24</p>
+              <p className="text-xs text-muted-foreground">
+                +2 from last month
+              </p>
+            </div>
+            <Package className="h-8 w-8 text-primary" />
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">
+                Total Locations
+              </p>
+              <p className="text-2xl font-bold">8</p>
+              <p className="text-xs text-muted-foreground">
+                2 yards, 3 trucks, 3 jobs
+              </p>
+            </div>
+            <LayoutDashboard className="h-8 w-8 text-accent" />
+          </div>
         </div>
-      </main>
+
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">
+                Low Stock Alerts
+              </p>
+              <p className="text-2xl font-bold text-destructive">3</p>
+              <p className="text-xs text-muted-foreground">
+                Requires attention
+              </p>
+            </div>
+            <AlertTriangle className="h-8 w-8 text-destructive" />
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">
+                Today's Activity
+              </p>
+              <p className="text-2xl font-bold">12</p>
+              <p className="text-xs text-success">
+                ↑ 8.2% from yesterday
+              </p>
+            </div>
+            <TrendingUp className="h-8 w-8 text-success" />
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="rounded-lg border bg-card p-6">
+        <h2 className="mb-4 text-lg font-semibold">Quick Actions</h2>
+        <div className="grid gap-3 md:grid-cols-3">
+          <button className="rounded-lg border border-primary bg-primary/5 p-4 text-left hover:bg-primary/10">
+            <p className="font-medium text-primary">Receive Stock</p>
+            <p className="text-sm text-muted-foreground">
+              Log incoming inventory
+            </p>
+          </button>
+          <button className="rounded-lg border p-4 text-left hover:bg-muted">
+            <p className="font-medium">Transfer Stock</p>
+            <p className="text-sm text-muted-foreground">
+              Move between locations
+            </p>
+          </button>
+          <button className="rounded-lg border p-4 text-left hover:bg-muted">
+            <p className="font-medium">Issue Stock</p>
+            <p className="text-sm text-muted-foreground">
+              Allocate to jobs
+            </p>
+          </button>
+        </div>
+      </div>
+
+      {/* Recent Activity */}
+      <div className="rounded-lg border bg-card p-6">
+        <h2 className="mb-4 text-lg font-semibold">Recent Activity</h2>
+        <div className="space-y-3">
+          {[
+            { action: 'Receipt', item: 'Premium Sealcoat', qty: '+500 gal', time: '2 hours ago' },
+            { action: 'Transfer', item: 'Hot Mix Asphalt', qty: '2 tons', time: '5 hours ago' },
+            { action: 'Issue', item: 'Cold Patch Mix', qty: '-150 lbs', time: '1 day ago' },
+          ].map((activity, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between border-b pb-3 last:border-0"
+            >
+              <div>
+                <p className="font-medium">{activity.action}: {activity.item}</p>
+                <p className="text-sm text-muted-foreground">{activity.time}</p>
+              </div>
+              <span className="text-sm font-medium">{activity.qty}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

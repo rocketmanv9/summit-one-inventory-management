@@ -5,7 +5,7 @@
 -- ITEM CATEGORIES TABLE
 -- =====================================================
 CREATE TABLE inventory.item_categories (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -22,7 +22,7 @@ CREATE INDEX idx_item_categories_tenant_id ON inventory.item_categories(tenant_i
 -- CATALOG ITEMS TABLE (SKUs)
 -- =====================================================
 CREATE TABLE inventory.catalog_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     sku TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -48,7 +48,7 @@ CREATE INDEX idx_catalog_items_tracking_mode ON inventory.catalog_items(tenant_i
 -- =====================================================
 -- Locations are universal containers: yard, truck, job, person, vendor, etc.
 CREATE TABLE inventory.locations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     location_type TEXT NOT NULL CHECK (location_type IN ('yard', 'warehouse', 'truck', 'job', 'person', 'vendor', 'other')),
     name TEXT NOT NULL,
@@ -70,7 +70,7 @@ CREATE INDEX idx_locations_external_ref ON inventory.locations USING GIN (extern
 -- ASSETS TABLE (serialized/VIN)
 -- =====================================================
 CREATE TABLE inventory.assets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     catalog_item_id UUID NULL REFERENCES inventory.catalog_items(id) ON DELETE SET NULL,
     asset_tag TEXT NOT NULL,
@@ -105,7 +105,7 @@ CREATE INDEX idx_assets_home_location_id ON inventory.assets(home_location_id) W
 -- =====================================================
 -- For extra IDs: barcode, MPN, GS1, etc.
 CREATE TABLE inventory.identifiers (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
     entity_type TEXT NOT NULL CHECK (entity_type IN ('catalog_item', 'asset', 'location')),
     entity_id UUID NOT NULL,
