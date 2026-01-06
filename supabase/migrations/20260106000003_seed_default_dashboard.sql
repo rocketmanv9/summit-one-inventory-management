@@ -37,8 +37,7 @@ BEGIN
     title,
     layout,
     config,
-    refresh_seconds,
-    created_by
+    refresh_seconds
   )
   VALUES
     -- Row 1: Key metrics
@@ -50,8 +49,7 @@ BEGIN
       'Total Inventory Value',
       jsonb_build_object('x', 0, 'y', 0, 'w', 3, 'h', 1),
       jsonb_build_object('description', 'Current total value of all inventory'),
-      300,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      300
     ),
     (
       gen_random_uuid(),
@@ -61,9 +59,7 @@ BEGIN
       'Total Items',
       jsonb_build_object('x', 3, 'y', 0, 'w', 3, 'h', 1),
       jsonb_build_object('description', 'Total quantity on hand'),
-      300,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      300
     ),
     (
       gen_random_uuid(),
@@ -73,9 +69,7 @@ BEGIN
       'Stockout Items',
       jsonb_build_object('x', 6, 'y', 0, 'w', 3, 'h', 1),
       jsonb_build_object('description', 'Items with zero stock'),
-      60,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      60
     ),
     (
       gen_random_uuid(),
@@ -85,9 +79,7 @@ BEGIN
       'Low Stock Alerts',
       jsonb_build_object('x', 9, 'y', 0, 'w', 3, 'h', 1),
       jsonb_build_object('description', 'Items below reorder point'),
-      60,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      60
     ),
 
     -- Row 2: Tables
@@ -99,9 +91,7 @@ BEGIN
       'Critical Stock Alerts',
       jsonb_build_object('x', 0, 'y', 1, 'w', 6, 'h', 2),
       jsonb_build_object('limit', 10),
-      120,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      120
     ),
     (
       gen_random_uuid(),
@@ -111,9 +101,7 @@ BEGIN
       'Highest Value Items',
       jsonb_build_object('x', 6, 'y', 1, 'w', 6, 'h', 2),
       jsonb_build_object('limit', 10),
-      300,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      300
     ),
 
     -- Row 3: Flow metrics
@@ -125,9 +113,7 @@ BEGIN
       'Receipts Today',
       jsonb_build_object('x', 0, 'y', 3, 'w', 4, 'h', 1),
       jsonb_build_object('description', 'Total items received today'),
-      60,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      60
     ),
     (
       gen_random_uuid(),
@@ -137,9 +123,7 @@ BEGIN
       'Shipments Today',
       jsonb_build_object('x', 4, 'y', 3, 'w', 4, 'h', 1),
       jsonb_build_object('description', 'Total items shipped today'),
-      60,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      60
     ),
     (
       gen_random_uuid(),
@@ -149,9 +133,7 @@ BEGIN
       'Adjustments Today',
       jsonb_build_object('x', 8, 'y', 3, 'w', 4, 'h', 1),
       jsonb_build_object('description', 'Total adjustments made today'),
-      60,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      '00000000-0000-0000-0000-000000000000'::uuid
+      60
     );
 
 END $$;
