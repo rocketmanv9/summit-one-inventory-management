@@ -39,11 +39,13 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
         maxY = Math.max(maxY, y + h);
       });
 
-      // Insert new widget
-      const { error } = await supabase
-        .from('dashboard_widgets')
-        .insert({
-          dashboard_id: dashboardId,
+      // Insert new widget via API
+      const response = await fetch(`/api/dashboards/${dashboardId}/widgets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           widget_key: widget.widget_key,
           title: widget.name,
           layout: {
@@ -54,11 +56,13 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
           },
           config: widget.default_config || {},
           refresh_seconds: 300,
-          created_by: 'user',
-          updated_by: 'user',
-        });
+        }),
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to add widget');
+      }
 
       onAdded();
       onClose();

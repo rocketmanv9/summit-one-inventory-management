@@ -8,18 +8,14 @@ export function useDashboards() {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const supabase = createClient();
 
   useEffect(() => {
     async function fetchDashboards() {
       try {
-        const { data, error } = await supabase
-          .from('dashboards')
-          .select('*')
-          .order('is_default', { ascending: false })
-          .order('name');
-
-        if (error) throw error;
+        const response = await fetch('/api/dashboards');
+        if (!response.ok) throw new Error('Failed to fetch dashboards');
+        
+        const { data } = await response.json();
         setDashboards(data || []);
       } catch (e) {
         setError(e as Error);
@@ -38,7 +34,6 @@ export function useDashboard(id: string | null) {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const supabase = createClient();
 
   useEffect(() => {
     if (!id) {
@@ -48,13 +43,10 @@ export function useDashboard(id: string | null) {
 
     async function fetchDashboard() {
       try {
-        const { data, error } = await supabase
-          .from('dashboards')
-          .select('*')
-          .eq('id', id)
-          .single();
-
-        if (error) throw error;
+        const response = await fetch(`/api/dashboards/${id}`);
+        if (!response.ok) throw new Error('Failed to fetch dashboard');
+        
+        const { data } = await response.json();
         setDashboard(data);
       } catch (e) {
         setError(e as Error);
@@ -73,7 +65,6 @@ export function useDashboardWidgets(dashboardId: string | null) {
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const supabase = createClient();
 
   useEffect(() => {
     if (!dashboardId) {
@@ -83,13 +74,10 @@ export function useDashboardWidgets(dashboardId: string | null) {
 
     async function fetchWidgets() {
       try {
-        const { data, error } = await supabase
-          .from('dashboard_widgets')
-          .select('*')
-          .eq('dashboard_id', dashboardId)
-          .order('created_at');
-
-        if (error) throw error;
+        const response = await fetch(`/api/dashboards/${dashboardId}/widgets`);
+        if (!response.ok) throw new Error('Failed to fetch widgets');
+        
+        const { data } = await response.json();
         setWidgets(data || []);
       } catch (e) {
         setError(e as Error);
