@@ -1,8 +1,9 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import { useDashboard, useDashboardWidgets } from '@/hooks/useDashboards';
-import { WidgetContainer } from '@/components/widgets/WidgetContainer';
+import { EditableDashboardGrid } from '@/components/dashboards/EditableDashboardGrid';
+import { AddWidgetModal } from '@/components/dashboards/AddWidgetModal';
 import AppShell from '@/components/layout/AppShell';
 import Link from 'next/link';
 
@@ -13,7 +14,9 @@ interface PageProps {
 export default function DashboardViewPage({ params }: PageProps) {
   const { id } = use(params);
   const { dashboard, loading: dashboardLoading, error: dashboardError } = useDashboard(id);
-  const { widgets, loading: widgetsLoading, error: widgetsError } = useDashboardWidgets(id);
+  const { widgets, loading: widgetsLoading, error: widgetsError, updateWidget, deleteWidget } = useDashboardWidgets(id);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [showAddWidget, setShowAddWidget] = useState(false);
 
   const loading = dashboardLoading || widgetsLoading;
   const error = dashboardError || widgetsError;
@@ -56,17 +59,6 @@ export default function DashboardViewPage({ params }: PageProps) {
     );
   }
 
-  // Calculate grid positions from widget layout
-  const getGridStyle = (widget: typeof widgets[0]) => {
-    if (!widget.layout) return {};
-    
-    const { x, y, w, h } = widget.layout;
-    return {
-      gridColumn: `${x + 1} / span ${w}`,
-      gridRow: `${y + 1} / span ${h}`,
-    };
-  };
-
   return (
     <AppShell>
       <div className="p-8">
@@ -85,11 +77,31 @@ export default function DashboardViewPage({ params }: PageProps) {
             )}
           </div>
           
-          {dashboard.is_default && (
-            <span className="px-3 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
-              Default
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {dashboard.is_default && (
+              <span className="px-3 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
+                Default
+              </span>
+            )}
+            
+            <button
+              onClick={() => setShowAddWidget(true)}
+              className="px-4 py-2 text-sm font-medium bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+            >
+              + Add Widget
+            </button>
+            
+            <button
+              onClick={() => setIsEditMode(!isEditMode)}
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                isEditMode
+                  ? 'bg-gray-600 text-white hover:bg-gray-700'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              {isEditMode ? 'Exit Edit Mode' : 'Edit Layout'}
+            </button>
+          </div>
         </div>
 
         {/* Widgets Grid */}
@@ -99,19 +111,32 @@ export default function DashboardViewPage({ params }: PageProps) {
             <p className="mt-2 text-sm text-gray-600">
               Add widgets to customize this dashboard
             </p>
+            <button
+              onClick={() => setShowAddWidget(true)}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+            >
+              Add Your First Widget
+            </button>
           </div>
         ) : (
-          <div className="grid grid-cols-12 gap-4 auto-rows-[200px]">
-            {widgets.map((widget) => (
-              <div
-                key={widget.id}
-                style={getGridStyle(widget)}
-                className="min-h-0"
-              >
-                <WidgetContainer widget={widget} />
-              </div>
-            ))}
-          </div>
+          <EditableDashboardGrid
+            widgets={widgets}
+            isEditMode={isEditMode}
+            onWidgetUpdate={updateWidget}
+            onWidgetDelete={deleteWidget}
+          />
+        )}
+
+        {/* Add Widget Modal */}
+        {showAddWidget && (
+          <AddWidgetModal
+            dashboardId={id}
+            onClose={() => setShowAddWidget(false)}
+            onAdded={() => {
+              setShowAddWidget(false);
+              window.location.reload(); // Refresh to show new widget
+            }}
+          />
         )}
       </div>
     </AppShell>
