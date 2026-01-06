@@ -2,6 +2,7 @@
 -- DASHBOARD SYSTEM TABLES
 -- =====================================================
 -- Multi-tenant dashboard builder with customizable widgets
+-- Version: 1.0.0
 
 -- =====================================================
 -- 1. DASHBOARDS TABLE
