@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/supabase/client';
-import { getTenantFromCookie } from '@/lib/auth-middleware';
+import { getTenantIdFromHeaders } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   try {
-    const tenant = getTenantFromCookie();
-    if (!tenant) {
+    const tenantId = getTenantIdFromHeaders(request.headers);
+    if (!tenantId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
