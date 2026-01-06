@@ -33,7 +33,7 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
         .eq('dashboard_id', dashboardId);
 
       let maxY = 0;
-      existingWidgets?.forEach(w => {
+      existingWidgets?.forEach((w: any) => {
         const y = (w.layout as any)?.y || 0;
         const h = (w.layout as any)?.h || 1;
         maxY = Math.max(maxY, y + h);

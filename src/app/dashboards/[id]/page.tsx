@@ -4,7 +4,7 @@ import { use, useState } from 'react';
 import { useDashboard, useDashboardWidgets } from '@/hooks/useDashboards';
 import { EditableDashboardGrid } from '@/components/dashboards/EditableDashboardGrid';
 import { AddWidgetModal } from '@/components/dashboards/AddWidgetModal';
-import AppShell from '@/components/layout/AppShell';
+import { AppShell } from '@/components/layout/AppShell';
 import Link from 'next/link';
 
 interface PageProps {

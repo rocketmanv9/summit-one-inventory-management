@@ -49,20 +49,29 @@ export interface WidgetRegistryEntry {
   name: string;
   description: string | null;
   default_config: WidgetConfig;
+  default_width: number;
+  default_height: number;
   allowed_filters: string[];
   is_enabled: boolean;
 }
 
 export interface WidgetProps {
   widget: DashboardWidget;
-  data?: any;
-  loading?: boolean;
-  error?: Error | null;
+  data: WidgetData | null;
+  isLoading: boolean;
 }
 
 export interface WidgetData {
-  widget_key: string;
-  data: any;
-  cached_at: string;
-  expires_at: string;
+  value?: string | number;
+  change?: string;
+  trend?: 'up' | 'down' | 'neutral';
+  columns?: { key: string; label: string }[];
+  rows?: Record<string, any>[];
+  labels?: string[];
+  datasets?: {
+    label: string;
+    data: number[];
+    color?: string;
+  }[];
+  [key: string]: any;
 }

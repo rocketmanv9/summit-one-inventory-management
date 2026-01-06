@@ -1,11 +1,24 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import GridLayout, { Layout } from 'react-grid-layout';
+import GridLayout from 'react-grid-layout';
 import type { DashboardWidget } from '@/types/dashboard';
 import { WidgetContainer } from '@/components/widgets/WidgetContainer';
 import { saveLayout } from '@/hooks/useDashboards';
 import 'react-grid-layout/css/styles.css';
+
+type LayoutItem = {
+  i: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minW?: number;
+  minH?: number;
+  maxW?: number;
+  maxH?: number;
+  static?: boolean;
+};
 
 interface EditableDashboardGridProps {
   widgets: DashboardWidget[];
@@ -20,7 +33,7 @@ export function EditableDashboardGrid({
   onWidgetUpdate,
   onWidgetDelete,
 }: EditableDashboardGridProps) {
-  const [layouts, setLayouts] = useState<Layout[]>(
+  const [layouts, setLayouts] = useState<LayoutItem[]>(
     widgets.map(w => ({
       i: w.id,
       x: w.layout?.x || 0,
@@ -31,8 +44,8 @@ export function EditableDashboardGrid({
   );
   const [selectedWidget, setSelectedWidget] = useState<string | null>(null);
 
-  const handleLayoutChange = useCallback((newLayout: Layout[]) => {
-    setLayouts(newLayout);
+  const handleLayoutChange = useCallback((newLayout: any) => {
+    setLayouts(newLayout as LayoutItem[]);
   }, []);
 
   const handleSaveLayout = async () => {
@@ -112,16 +125,11 @@ export function EditableDashboardGrid({
       {/* Draggable Grid */}
       <GridLayout
         className="layout"
-        layout={layouts}
+        layout={layouts as any}
+        onLayoutChange={handleLayoutChange}
         cols={12}
         rowHeight={200}
         width={1200}
-        onLayoutChange={handleLayoutChange}
-        isDraggable={true}
-        isResizable={true}
-        compactType={null}
-        preventCollision={false}
-        margin={[16, 16]}
       >
         {widgets.map((widget) => (
           <div
@@ -185,7 +193,7 @@ interface WidgetConfigPanelProps {
 }
 
 function WidgetConfigPanel({ widget, onClose, onSave }: WidgetConfigPanelProps) {
-  const [title, setTitle] = useState(widget.title);
+  const [title, setTitle] = useState(widget.title || '');
   const [refreshSeconds, setRefreshSeconds] = useState(widget.refresh_seconds || 0);
 
   const handleSave = () => {

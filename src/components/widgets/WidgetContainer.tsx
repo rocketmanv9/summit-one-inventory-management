@@ -131,7 +131,7 @@ export function WidgetContainer({ widget }: WidgetContainerProps) {
         .gte('occurred_at', `${today}T00:00:00`)
         .lte('occurred_at', `${today}T23:59:59`);
 
-      const total = data?.reduce((sum, item) => sum + (item.quantity || 0), 0) || 0;
+      const total = data?.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0) || 0;
       return { value: total, trend: 'neutral' };
     }
 

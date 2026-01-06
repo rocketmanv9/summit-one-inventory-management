@@ -42,16 +42,15 @@ jobs:
 
       - name: Link Supabase project
         run: |
-          supabase link --project-ref ${{ steps.env.outputs.project_id }}
+          supabase link --project-ref ${{ steps.env.outputs.project_id }} --password ${{ steps.env.outputs.db_password }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Push migrations to ${{ steps.env.outputs.env }}
         run: |
-          supabase db push
+          supabase db push --password ${{ steps.env.outputs.db_password }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ steps.env.outputs.db_password }}
 
       - name: Migration complete
         run: |

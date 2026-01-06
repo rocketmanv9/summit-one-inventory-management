@@ -1,7 +1,7 @@
 'use client';
 
 import { useDashboards } from '@/hooks/useDashboards';
-import AppShell from '@/components/layout/AppShell';
+import { AppShell } from '@/components/layout/AppShell';
 import Link from 'next/link';
 
 export default function DashboardsPage() {
