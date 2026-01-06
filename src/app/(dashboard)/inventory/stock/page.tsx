@@ -1,5 +1,8 @@
+import { AppShell } from '@/components/layout/AppShell';
+
 export default function StockBalancesPage() {
   return (
+    <AppShell>
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Stock Balances</h1>
