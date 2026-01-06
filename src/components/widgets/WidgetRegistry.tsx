@@ -1,60 +1,64 @@
 'use client';
 
 import type { DashboardWidget, WidgetData } from '@/types/dashboard';
-import { BaseMetricWidget } from './BaseMetricWidget';
-import { BaseTableWidget } from './BaseTableWidget';
-import { BaseChartWidget } from './BaseChartWidget';
+import { GenericMetricWidget } from './GenericMetricWidget';
+import { GenericTableWidget } from './GenericTableWidget';
+import { GenericChartWidget } from './GenericChartWidget';
+
+// Import specific widget components
+import { TotalInventoryValue } from './inventory/TotalInventoryValue';
+import { ItemsBelowReorder } from './inventory/ItemsBelowReorder';
+import { ItemsBelowMinStock } from './inventory/ItemsBelowMinStock';
+import { TopConsumedItems } from './inventory/TopConsumedItems';
+import { OpenPurchaseOrders } from './procurement/OpenPurchaseOrders';
+import { RecentReceipts } from './flow/RecentReceipts';
+import { RecentIssues } from './flow/RecentIssues';
+import { InventoryTurnover } from './exec/InventoryTurnover';
 
 // Widget component registry - maps widget_key to React component
 export const WIDGET_COMPONENTS: Record<string, React.ComponentType<{
   widget: DashboardWidget;
-  data: WidgetData | null;
-  isLoading: boolean;
 }>> = {
-  // Inventory domain - Metrics
-  'inv_total_value': BaseMetricWidget,
-  'inv_total_items': BaseMetricWidget,
-  'inv_unique_skus': BaseMetricWidget,
-  'inv_stockout_items': BaseMetricWidget,
-  'inv_low_stock_items': BaseMetricWidget,
-  'inv_overstock_items': BaseMetricWidget,
-  'inv_avg_days_supply': BaseMetricWidget,
-  'inv_turnover_ratio': BaseMetricWidget,
+  // Inventory Metrics
+  'inventory.widget.total_inventory_value': TotalInventoryValue,
+  'inventory.widget.inventory_value_by_category': GenericChartWidget,
+  'inventory.widget.inventory_value_by_yard': GenericChartWidget,
+  'inventory.widget.items_below_reorder': ItemsBelowReorder,
+  'inventory.widget.items_below_min_stock': ItemsBelowMinStock,
+  'inventory.widget.critical_stock_alerts': GenericTableWidget,
+  'inventory.widget.overstocked_items': GenericTableWidget,
+  'inventory.widget.stock_received_timeseries': GenericChartWidget,
+  'inventory.widget.stock_issued_timeseries': GenericChartWidget,
+  'inventory.widget.stock_transfers': GenericTableWidget,
+  'inventory.widget.stock_adjustments': GenericTableWidget,
+  'inventory.widget.damaged_inventory': GenericTableWidget,
+  'inventory.widget.returns_to_stock': GenericTableWidget,
+  'inventory.widget.reservations_vs_available': GenericChartWidget,
+  'inventory.widget.top_consumed_items': TopConsumedItems,
+  'inventory.widget.idle_inventory': GenericTableWidget,
   
-  // Inventory domain - Tables
-  'inv_top_value_items': BaseTableWidget,
-  'inv_slow_movers': BaseTableWidget,
-  'inv_fast_movers': BaseTableWidget,
-  'inv_negative_stock': BaseTableWidget,
-  'inv_expiring_soon': BaseTableWidget,
-  'inv_stock_alerts_list': BaseTableWidget,
+  // Procurement Widgets
+  'procurement.widget.open_purchase_orders': OpenPurchaseOrders,
+  'procurement.widget.late_deliveries': GenericTableWidget,
+  'procurement.widget.supplier_spend': GenericChartWidget,
   
-  // Inventory domain - Charts
-  'inv_value_by_category': BaseChartWidget,
-  'inv_stock_trend_30d': BaseChartWidget,
+  // Alerts Widgets
+  'alerts.widget.jobs_at_risk_due_to_stock': GenericTableWidget,
+  'alerts.widget.stockout_forecast': GenericTableWidget,
   
-  // Procurement domain
-  'proc_open_pos': BaseMetricWidget,
-  'proc_pending_receipts': BaseTableWidget,
-  'proc_late_pos': BaseTableWidget,
+  // Executive Widgets
+  'exec.widget.inventory_health_score': GenericMetricWidget,
+  'exec.widget.inventory_turnover': InventoryTurnover,
+  'exec.widget.carrying_cost': GenericMetricWidget,
+  'exec.widget.stock_accuracy': GenericMetricWidget,
   
-  // Alerts domain
-  'alert_critical_stockouts': BaseTableWidget,
-  'alert_pending_actions': BaseTableWidget,
-  
-  // Executive domain
-  'exec_stockout_forecast_7d': BaseMetricWidget,
-  'exec_inventory_health_score': BaseMetricWidget,
-  'exec_procurement_efficiency': BaseMetricWidget,
-  'exec_fill_rate': BaseMetricWidget,
-  
-  // Flow domain
-  'flow_receipts_today': BaseMetricWidget,
-  'flow_shipments_today': BaseMetricWidget,
-  'flow_adjustments_today': BaseMetricWidget,
-  'flow_recent_transactions': BaseTableWidget,
+  // Flow Widgets
+  'flow.widget.recent_receipts': RecentReceipts,
+  'flow.widget.recent_issues': RecentIssues,
+  'flow.widget.cycle_count_status': GenericMetricWidget,
+  'flow.widget.pending_approvals': GenericTableWidget,
 };
 
 export function getWidgetComponent(widgetKey: string) {
-  return WIDGET_COMPONENTS[widgetKey] || BaseMetricWidget; // Fallback to metric widget
+  return WIDGET_COMPONENTS[widgetKey] || GenericMetricWidget; // Fallback to metric widget
 }

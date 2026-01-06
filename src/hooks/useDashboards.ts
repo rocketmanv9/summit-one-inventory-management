@@ -145,18 +145,26 @@ export function useWidgetRegistry() {
   return { widgets, loading, error };
 }
 
-export async function saveLayout(widgets: DashboardWidget[]) {
-  const supabase = createClient();
-  const updates = widgets.map(widget => ({
-    id: widget.id,
-    layout: widget.layout,
-  }));
+export async function saveLayout(dashboardId: string, widgets: DashboardWidget[]) {
+  try {
+    const response = await fetch('/api/widgets/layout', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ dashboardId, widgets }),
+    });
 
-  const { error } = await supabase
-    .from('dashboard_widgets')
-    .upsert(updates);
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to save layout');
+    }
 
-  return { error };
+    return { error: null };
+  } catch (error) {
+    console.error('Error saving layout:', error);
+    return { error: error as Error };
+  }
 }
 
 export async function saveWidgetConfig(

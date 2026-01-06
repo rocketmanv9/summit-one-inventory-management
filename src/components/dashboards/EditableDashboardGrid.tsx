@@ -21,6 +21,7 @@ type LayoutItem = {
 };
 
 interface EditableDashboardGridProps {
+  dashboardId: string;
   widgets: DashboardWidget[];
   isEditMode: boolean;
   onWidgetUpdate: (widgetId: string, updates: Partial<DashboardWidget>) => Promise<any>;
@@ -28,6 +29,7 @@ interface EditableDashboardGridProps {
 }
 
 export function EditableDashboardGrid({
+  dashboardId,
   widgets,
   isEditMode,
   onWidgetUpdate,
@@ -64,7 +66,7 @@ export function EditableDashboardGrid({
       };
     });
 
-    const { error } = await saveLayout(updatedWidgets);
+    const { error } = await saveLayout(dashboardId, updatedWidgets);
     if (error) {
       console.error('Error saving layout:', error);
       alert('Failed to save layout. Please try again.');

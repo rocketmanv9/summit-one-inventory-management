@@ -120,6 +120,7 @@ export default function DashboardDetailPage() {
         {widgets.length > 0 ? (
           <EditableDashboardGrid
             key={refreshKey}
+            dashboardId={dashboardId}
             widgets={widgets}
             isEditMode={isEditMode}
             onWidgetUpdate={updateWidget}
