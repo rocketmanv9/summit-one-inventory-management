@@ -58,18 +58,3 @@ export function proxy(request: NextRequest) {
     return response;
   }
 }
-
-export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api/auth/callback (SSO callback)
-     * - auth/callback (SSO callback page)
-     * - error (error page)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    '/((?!api/auth/callback|auth/callback|error|_next/static|_next/image|favicon.ico).*)',
-  ],
-};
