@@ -123,19 +123,14 @@ export function useWidgetRegistry() {
   const [widgets, setWidgets] = useState<WidgetRegistryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const supabase = createClient();
 
   useEffect(() => {
     async function fetchRegistry() {
       try {
-        const { data, error } = await supabase
-          .from('widget_registry')
-          .select('*')
-          .eq('is_enabled', true)
-          .order('domain')
-          .order('name');
-
-        if (error) throw error;
+        const response = await fetch('/api/widgets');
+        if (!response.ok) throw new Error('Failed to fetch widget registry');
+        
+        const { data } = await response.json();
         setWidgets(data || []);
       } catch (e) {
         setError(e as Error);
