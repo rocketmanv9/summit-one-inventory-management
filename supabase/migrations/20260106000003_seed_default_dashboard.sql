@@ -5,8 +5,7 @@ INSERT INTO dashboards (
   name,
   description,
   is_default,
-  created_by,
-  updated_by
+  created_by
 )
 VALUES (
   gen_random_uuid(),
@@ -14,7 +13,6 @@ VALUES (
   'Inventory Overview',
   'Real-time inventory metrics and alerts',
   true,
-  'system',
   'system'
 )
 ON CONFLICT DO NOTHING;
@@ -40,8 +38,7 @@ BEGIN
     layout,
     config,
     refresh_seconds,
-    created_by,
-    updated_by
+    created_by
   )
   VALUES
     -- Row 1: Key metrics
@@ -54,7 +51,6 @@ BEGIN
       jsonb_build_object('x', 0, 'y', 0, 'w', 3, 'h', 1),
       jsonb_build_object('description', 'Current total value of all inventory'),
       300,
-      'system',
       'system'
     ),
     (
