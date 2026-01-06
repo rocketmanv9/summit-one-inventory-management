@@ -65,6 +65,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const supabase = createClient();
 
   useEffect(() => {
     if (!dashboardId) {
