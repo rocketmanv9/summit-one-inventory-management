@@ -38,8 +38,13 @@ const navigation: NavSection[] = [
         icon: Bug,
       },
       {
-        title: 'Analytics',
+        title: 'Dashboard',
         href: '/dashboards',
+        icon: LayoutDashboard,
+      },
+      {
+        title: 'Analytics',
+        href: '/analytics',
         icon: BarChart3,
       },
     ],
