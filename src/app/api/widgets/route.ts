@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/supabase/client';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
   try {
-    const tenantId = getTenantIdFromHeaders(request.headers);
-    if (!tenantId) {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('summit_session');
+    
+    if (!sessionCookie) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    let session;
+    try {
+      session = JSON.parse(sessionCookie.value);
+    } catch {
+      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    }
+
+    if (!session.tenantId) {
+      return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
     }
 
     const supabase = createClient();
