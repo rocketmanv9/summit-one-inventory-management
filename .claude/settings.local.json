@@ -4,7 +4,8 @@
       "Bash(npm install)",
       "Bash(dir:*)",
       "Bash(findstr:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\grant\\\\summit-one-inventory-management\\\\src\\\\app\\\\dashboards\")"
     ]
   }
 }

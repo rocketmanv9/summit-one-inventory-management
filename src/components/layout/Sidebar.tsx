@@ -39,7 +39,7 @@ const navigation: NavSection[] = [
       },
       {
         title: 'Dashboard',
-        href: '/dashboards',
+        href: '/dashboard',
         icon: LayoutDashboard,
       },
       {
