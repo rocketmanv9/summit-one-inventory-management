@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
@@ -7,22 +7,31 @@ export async function GET(request: NextRequest) {
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('inventory_session');
     
+    console.log('[/api/widgets] Session cookie exists:', !!sessionCookie);
+    
     if (!sessionCookie) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized - No session cookie' }, { status: 401 });
     }
 
     let session;
     try {
       session = JSON.parse(sessionCookie.value);
-    } catch {
+      console.log('[/api/widgets] Session parsed:', { tenantId: session.tenantId, userId: session.userId });
+    } catch (e) {
+      console.error('[/api/widgets] Failed to parse session:', e);
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
     }
 
     if (!session.tenantId) {
+      console.error('[/api/widgets] No tenantId in session');
       return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
     }
 
-    const supabase = createClient();
+    // Use service role to bypass RLS since widget_registry is global
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
     
     const { data, error } = await supabase
       .from('widget_registry')
