@@ -1,6 +1,9 @@
-export default function ReceiveStockPage() {
+import { AppShell } from '@/components/layout/AppShell';
+
+export default function ReceivePage() {
   return (
-    <div className="space-y-6">
+    <AppShell>
+      <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Receive Stock</h1>
         <p className="text-muted-foreground">
@@ -14,5 +17,6 @@ export default function ReceiveStockPage() {
         </p>
       </div>
     </div>
+    </AppShell>
   );
 }

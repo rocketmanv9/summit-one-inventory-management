@@ -14,5 +14,6 @@ export default function StockBalancesPage() {
         </p>
       </div>
     </div>
+    </AppShell>
   );
 }

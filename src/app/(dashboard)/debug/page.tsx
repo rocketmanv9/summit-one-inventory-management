@@ -205,5 +205,6 @@ export default function DebugPage() {
         </div>
       </div>
     </div>
+    </AppShell>
   );
 }
