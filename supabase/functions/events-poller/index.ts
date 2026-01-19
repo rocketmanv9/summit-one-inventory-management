@@ -1,3 +1,4 @@
+// @ts-nocheck
 // ================================================================
 // Events Poller Edge Function
 // ================================================================
@@ -6,7 +7,6 @@
 // Schedule: Runs every minute via cron
 // ================================================================
 
-/// <reference types="https://esm.sh/@types/deno@1.38.0/index.d.ts" />
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
 
 const BATCH_SIZE = 100
