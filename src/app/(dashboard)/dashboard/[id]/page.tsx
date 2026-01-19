@@ -125,6 +125,7 @@ export default function DashboardDetailPage() {
             isEditMode={isEditMode}
             onWidgetUpdate={updateWidget}
             onWidgetDelete={deleteWidget}
+            onLayoutSaved={() => setRefreshKey(prev => prev + 1)}
           />
         ) : (
           /* Empty State */

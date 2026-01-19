@@ -26,6 +26,7 @@ interface EditableDashboardGridProps {
   isEditMode: boolean;
   onWidgetUpdate: (widgetId: string, updates: Partial<DashboardWidget>) => Promise<any>;
   onWidgetDelete: (widgetId: string) => Promise<any>;
+  onLayoutSaved?: () => void; // Callback to refresh widgets after layout save
 }
 
 export function EditableDashboardGrid({
@@ -34,6 +35,7 @@ export function EditableDashboardGrid({
   isEditMode,
   onWidgetUpdate,
   onWidgetDelete,
+  onLayoutSaved,
 }: EditableDashboardGridProps) {
   const [layouts, setLayouts] = useState<LayoutItem[]>(
     widgets.map(w => ({
@@ -72,6 +74,10 @@ export function EditableDashboardGrid({
       alert('Failed to save layout. Please try again.');
     } else {
       alert('Layout saved successfully!');
+      // Refresh the widgets data to show updated positions
+      if (onLayoutSaved) {
+        onLayoutSaved();
+      }
     }
   };
 

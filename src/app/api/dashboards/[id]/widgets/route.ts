@@ -102,6 +102,26 @@ export async function POST(
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
     
+    // If no layout provided, calculate next available position
+    let widgetLayout = layout;
+    if (!widgetLayout) {
+      // Get existing widgets to find next available position
+      const { data: existingWidgets } = await supabase
+        .from('dashboard_widgets')
+        .select('layout')
+        .eq('dashboard_id', dashboardId)
+        .eq('tenant_id', session.tenantId);
+      
+      // Calculate next position (stack vertically)
+      const maxY = existingWidgets?.reduce((max, w) => {
+        const y = w.layout?.y || 0;
+        const h = w.layout?.h || 4;
+        return Math.max(max, y + h);
+      }, 0) || 0;
+      
+      widgetLayout = { x: 0, y: maxY, w: 4, h: 4 };
+    }
+    
     const { data: widget, error } = await supabase
       .from('dashboard_widgets')
       .insert({
@@ -109,7 +129,7 @@ export async function POST(
         dashboard_id: dashboardId,
         widget_key,
         title: title || null,
-        layout: layout || { x: 0, y: 0, w: 4, h: 4 },
+        layout: widgetLayout,
         config: config || {},
         refresh_seconds: refresh_seconds || 300,
       })

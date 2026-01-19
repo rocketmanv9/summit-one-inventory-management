@@ -1,0 +1,60 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // Get all event definitions with stats
+    const { data: stats, error: statsError } = await supabase
+      .rpc('get_event_catalog_stats');
+
+    if (statsError) {
+      console.error('Error fetching event catalog stats:', statsError);
+      return NextResponse.json(
+        { error: 'Failed to fetch event catalog' },
+        { status: 500 }
+      );
+    }
+
+    // Get all event definitions with full details
+    const { data: definitions, error: defsError } = await supabase
+      .from('event_definitions')
+      .select('*')
+      .order('event_name', { ascending: true })
+      .order('version', { ascending: false });
+
+    if (defsError) {
+      console.error('Error fetching event definitions:', defsError);
+      return NextResponse.json(
+        { error: 'Failed to fetch event definitions' },
+        { status: 500 }
+      );
+    }
+
+    // Get consumers
+    const { data: consumers, error: consumersError } = await supabase
+      .from('event_consumers')
+      .select('*')
+      .order('event_name', { ascending: true });
+
+    if (consumersError) {
+      console.error('Error fetching event consumers:', consumersError);
+    }
+
+    return NextResponse.json({
+      definitions: definitions || [],
+      stats: stats || [],
+      consumers: consumers || []
+    });
+  } catch (error) {
+    console.error('Error in event catalog endpoint:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}

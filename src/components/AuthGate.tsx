@@ -42,8 +42,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
   
   function redirectToCore() {
-    const coreUrl = process.env.NEXT_PUBLIC_CORE_URL || 'https://dev.summit-one.app';
-    window.location.href = `${coreUrl}/dashboard`;
+    // In development, redirect to dev login instead of Core
+    if (process.env.NODE_ENV === 'development') {
+      router.push('/dev-login');
+    } else {
+      const coreUrl = process.env.NEXT_PUBLIC_CORE_URL || 'https://dev.summit-one.app';
+      window.location.href = `${coreUrl}/dashboard`;
+    }
   }
   
   if (loading) {

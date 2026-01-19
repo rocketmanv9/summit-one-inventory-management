@@ -43,6 +43,8 @@ export async function GET(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
     
+    console.log('[DASHBOARDS API] Fetching for tenant:', session.tenantId);
+    
     const { data: dashboards, error } = await supabase
       .from('dashboards')
       .select('*')
@@ -57,6 +59,8 @@ export async function GET(request: NextRequest) {
         { status: 500 }
       );
     }
+    
+    console.log('[DASHBOARDS API] Found dashboards:', dashboards?.map(d => ({ id: d.id, name: d.name, tenant: d.tenant_id })));
     
     return NextResponse.json({ data: dashboards });
   } catch (error) {
@@ -101,6 +105,8 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         description: description?.trim() || null,
         is_default: is_default || false,
+        scope: 'user', // User-scoped dashboard by default
+        owner_user_id: session.userId, // Set owner to current user
         created_by: session.userId,
       })
       .select()
