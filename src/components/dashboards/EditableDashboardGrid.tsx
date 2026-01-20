@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import GridLayout from 'react-grid-layout';
 import type { DashboardWidget } from '@/types/dashboard';
 import { WidgetContainer } from '@/components/widgets/WidgetContainer';
@@ -27,6 +27,7 @@ interface EditableDashboardGridProps {
   onWidgetUpdate: (widgetId: string, updates: Partial<DashboardWidget>) => Promise<any>;
   onWidgetDelete: (widgetId: string) => Promise<any>;
   onLayoutSaved?: () => void; // Callback to refresh widgets after layout save
+  onExitEditMode?: () => void; // Callback when user exits edit mode
 }
 
 export function EditableDashboardGrid({
@@ -36,6 +37,7 @@ export function EditableDashboardGrid({
   onWidgetUpdate,
   onWidgetDelete,
   onLayoutSaved,
+  onExitEditMode,
 }: EditableDashboardGridProps) {
   const [layouts, setLayouts] = useState<LayoutItem[]>(
     widgets.map(w => ({
@@ -47,12 +49,35 @@ export function EditableDashboardGrid({
     }))
   );
   const [selectedWidget, setSelectedWidget] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasLayoutChanges, setHasLayoutChanges] = useState(false);
+
+  // Sync layouts when widgets change
+  useEffect(() => {
+    setLayouts(widgets.map(w => ({
+      i: w.id,
+      x: w.layout?.x || 0,
+      y: w.layout?.y || 0,
+      w: w.layout?.w || 4,
+      h: w.layout?.h || 1,
+    })));
+    setHasLayoutChanges(false);
+  }, [widgets]);
 
   const handleLayoutChange = useCallback((newLayout: any) => {
     setLayouts(newLayout as LayoutItem[]);
+    setHasLayoutChanges(true);
   }, []);
 
   const handleSaveLayout = async () => {
+    if (!hasLayoutChanges) {
+      // No changes to save, just exit edit mode
+      if (onExitEditMode) onExitEditMode();
+      return;
+    }
+
+    setIsSaving(true);
+    
     const updatedWidgets = widgets.map(widget => {
       const layout = layouts.find(l => l.i === widget.id);
       if (!layout) return widget;
@@ -69,32 +94,41 @@ export function EditableDashboardGrid({
     });
 
     const { error } = await saveLayout(dashboardId, updatedWidgets);
+    setIsSaving(false);
+    
     if (error) {
       console.error('Error saving layout:', error);
       alert('Failed to save layout. Please try again.');
     } else {
-      alert('Layout saved successfully!');
+      setHasLayoutChanges(false);
       // Refresh the widgets data to show updated positions
+      if (onLayoutSaved) {
+        onLayoutSaved();
+      }
+      // Exit edit mode after successful save
+      if (onExitEditMode) {
+        onExitEditMode();
+      }
+    }
+  };
+
+  const handleDeleteWidget = async (widgetId: string) => {
+    const { error } = await onWidgetDelete(widgetId);
+    if (error) {
+      console.error('Error deleting widget:', error);
+      alert('Failed to delete widget. Please try again.');
+    } else {
+      // Trigger refresh to get updated widget list
       if (onLayoutSaved) {
         onLayoutSaved();
       }
     }
   };
 
-  const handleDeleteWidget = async (widgetId: string) => {
-    if (!confirm('Are you sure you want to delete this widget?')) return;
-    
-    const { error } = await onWidgetDelete(widgetId);
-    if (error) {
-      console.error('Error deleting widget:', error);
-      alert('Failed to delete widget. Please try again.');
-    }
-  };
-
   if (!isEditMode) {
     // Static grid for view mode
     return (
-      <div className="grid grid-cols-12 gap-4 auto-rows-[200px]">
+      <div className="grid grid-cols-12 gap-5 auto-rows-[200px]">
         {widgets.map((widget) => {
           const { x, y, w, h } = widget.layout || { x: 0, y: 0, w: 4, h: 1 };
           return (
@@ -104,7 +138,7 @@ export function EditableDashboardGrid({
                 gridColumn: `${x + 1} / span ${w}`,
                 gridRow: `${y + 1} / span ${h}`,
               }}
-              className="min-h-0"
+              className="min-h-0 transition-all duration-200 hover:scale-[1.01]"
             >
               <WidgetContainer widget={widget} />
             </div>
@@ -116,18 +150,46 @@ export function EditableDashboardGrid({
 
   return (
     <div className="relative">
-      {/* Edit Mode Controls */}
-      <div className="mb-4 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+      {/* Edit Mode Controls - Compact integrated design */}
+      <div className="mb-4 flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-blue-900">✏️ Edit Mode</span>
-          <span className="text-xs text-blue-700">Drag widgets to rearrange • Resize from corners</span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center justify-center w-7 h-7 bg-blue-600 text-white rounded-full text-sm font-bold">✎</span>
+            <div>
+              <div className="text-sm font-bold text-blue-900">Edit Mode Active</div>
+              <div className="text-xs text-blue-700">Drag to move • Resize from corners • Delete unwanted widgets</div>
+            </div>
+          </div>
         </div>
-        <button
-          onClick={handleSaveLayout}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
-        >
-          Save Layout
-        </button>
+        <div className="flex items-center gap-2">
+          {hasLayoutChanges && (
+            <span className="text-xs text-orange-600 font-medium px-2 py-1 bg-orange-50 rounded border border-orange-200">
+              Unsaved changes
+            </span>
+          )}
+          <button
+            onClick={handleSaveLayout}
+            disabled={isSaving}
+            className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm flex items-center gap-2"
+          >
+            {isSaving ? (
+              <>
+                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Saving...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                {hasLayoutChanges ? 'Save & Exit' : 'Exit Edit Mode'}
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Draggable Grid */}
@@ -138,36 +200,40 @@ export function EditableDashboardGrid({
         cols={12}
         rowHeight={200}
         width={1200}
+        compactType="vertical"
+        preventCollision={true}
       >
         {widgets.map((widget) => (
           <div
             key={widget.id}
-            className={`relative cursor-move ${
-              selectedWidget === widget.id ? 'ring-2 ring-blue-500' : ''
-            }`}
-            onClick={() => setSelectedWidget(widget.id)}
+            className="relative cursor-move bg-white rounded-lg border-2 transition-all border-gray-200 hover:border-blue-300 hover:shadow-lg"
           >
             {/* Widget Controls */}
-            <div className="absolute top-2 right-2 z-10 flex gap-2">
+            <div className="absolute top-2 right-2 z-10 flex gap-1.5">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   setSelectedWidget(widget.id);
                 }}
-                className="p-1.5 bg-white border border-gray-300 rounded shadow-sm hover:bg-gray-50"
+                className="p-2 bg-white border-2 border-blue-400 text-blue-600 rounded-md shadow-md hover:bg-blue-50 transition-all hover:scale-110"
                 title="Configure"
               >
-                ⚙️
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
               </button>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeleteWidget(widget.id);
                 }}
-                className="p-1.5 bg-white border border-red-300 text-red-600 rounded shadow-sm hover:bg-red-50"
+                className="p-2 bg-white border-2 border-red-400 text-red-600 rounded-md shadow-md hover:bg-red-50 transition-all hover:scale-110"
                 title="Delete"
               >
-                🗑️
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
               </button>
             </div>
 

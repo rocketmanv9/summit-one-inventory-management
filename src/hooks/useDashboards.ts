@@ -67,26 +67,26 @@ export function useDashboardWidgets(dashboardId: string | null) {
   const [error, setError] = useState<Error | null>(null);
   const supabase = createClient();
 
-  useEffect(() => {
+  const fetchWidgets = async () => {
     if (!dashboardId) {
       setLoading(false);
       return;
     }
 
-    async function fetchWidgets() {
-      try {
-        const response = await fetch(`/api/dashboards/${dashboardId}/widgets`);
-        if (!response.ok) throw new Error('Failed to fetch widgets');
-        
-        const { data } = await response.json();
-        setWidgets(data || []);
-      } catch (e) {
-        setError(e as Error);
-      } finally {
-        setLoading(false);
-      }
+    try {
+      const response = await fetch(`/api/dashboards/${dashboardId}/widgets`);
+      if (!response.ok) throw new Error('Failed to fetch widgets');
+      
+      const { data } = await response.json();
+      setWidgets(data || []);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
     }
+  };
 
+  useEffect(() => {
     fetchWidgets();
   }, [dashboardId]);
 
@@ -104,19 +104,36 @@ export function useDashboardWidgets(dashboardId: string | null) {
   };
 
   const deleteWidget = async (widgetId: string) => {
-    const { error } = await supabase
-      .from('dashboard_widgets')
-      .delete()
-      .eq('id', widgetId);
-
-    if (!error) {
+    console.log('Deleting widget:', widgetId);
+    
+    try {
+      const response = await fetch(`/api/dashboards/${dashboardId}/widgets/${widgetId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete widget');
+      }
+      
+      console.log('Widget deleted successfully');
       setWidgets(prev => prev.filter(w => w.id !== widgetId));
+      // Force refetch to ensure sync
+      await fetchWidgets();
+      
+      return { error: null };
+    } catch (error) {
+      console.error('Delete error:', error);
+      return { error };
     }
-
-    return { error };
   };
 
-  return { widgets, loading, error, updateWidget, deleteWidget };
+  const refetch = () => {
+    setLoading(true);
+    return fetchWidgets();
+  };
+
+  return { widgets, loading, error, updateWidget, deleteWidget, refetch };
 }
 
 export function useWidgetRegistry() {

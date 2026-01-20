@@ -21,10 +21,10 @@ export async function POST() {
     // Create a dev session
     const session = {
       userId: '00000000-0000-0000-0000-000000000001',
-      email: 'dev@test.com',
+      email: 'grant@summitone.com',
       tenantId: tenantId,
       role: 'admin',
-      fullName: 'Dev User',
+      fullName: 'Grant',
       expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
     };
 

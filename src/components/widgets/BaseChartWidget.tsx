@@ -54,9 +54,9 @@ export function BaseChartWidget({ widget, data, isLoading }: WidgetProps) {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-lg border border-gray-200 p-6">
+    <div className="h-full flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow p-6">
       <div className="mb-4">
-        <h3 className="text-sm font-medium text-gray-900">{widget.title}</h3>
+        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">{widget.title}</h3>
       </div>
 
       <div className="flex-1 overflow-auto">
@@ -67,7 +67,7 @@ export function BaseChartWidget({ widget, data, isLoading }: WidgetProps) {
             ))}
           </div>
         ) : !chartData ? (
-          <div className="text-center text-gray-500">No chart data available</div>
+          <div className="text-center text-gray-500 py-8">No chart data available</div>
         ) : (
           renderSimpleBarChart()
         )}

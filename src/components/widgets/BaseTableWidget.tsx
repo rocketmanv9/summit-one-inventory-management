@@ -21,9 +21,9 @@ export function BaseTableWidget({ widget, data, isLoading }: WidgetProps) {
   }, [data, isLoading]);
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-lg border border-gray-200">
-      <div className="px-6 py-4 border-b border-gray-200">
-        <h3 className="text-sm font-medium text-gray-900">{widget.title}</h3>
+    <div className="h-full flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+      <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+        <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">{widget.title}</h3>
       </div>
 
       <div className="flex-1 overflow-auto">

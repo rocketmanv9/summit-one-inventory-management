@@ -1,0 +1,263 @@
+-- ============================================================================
+-- PHASE 8: COMPREHENSIVE TEST SUITE
+-- ============================================================================
+-- Tests for idempotency, RLS, ledger integrity, reservation logic, events
+
+\echo ''
+\echo '=========================================='
+\echo 'EPIC INVENTORY SYSTEM VERIFICATION SUITE'
+\echo '=========================================='
+\echo ''
+
+-- Setup test scenario
+\echo '1. Setting up test data...'
+SELECT * FROM inventory.setup_test_scenario() \gset
+
+\echo '   ✅ Tenant created: ' :tenant_id
+\echo '   ✅ Location created: ' :location_id
+\echo '   ✅ Items created: ' :item1_id ', ' :item2_id
+\echo ''
+
+-- Test 1: Idempotency
+\echo '2. Testing idempotency (duplicate event IDs should be rejected)...'
+DO $$
+DECLARE
+    v_event_id TEXT := 'test_idempotency_' || gen_random_uuid()::TEXT;
+    v_movement1_id UUID;
+    v_movement2_id UUID;
+BEGIN
+    -- First call
+    v_movement1_id := inventory.insert_stock_movement(
+        p_tenant_id => :'tenant_id'::UUID,
+        p_catalog_item_id => :'item1_id'::UUID,
+        p_location_id => :'location_id'::UUID,
+        p_quantity_delta => 10,
+        p_movement_type => 'adjustment_in',
+        p_source_ref_type => 'test',
+        p_source_ref_id => NULL,
+        p_unit_cost => NULL,
+        p_reason => 'Idempotency test',
+        p_notes => NULL,
+        p_correlation_id => NULL,
+        p_occurred_at => NOW(),
+        p_created_by_user_id => NULL,
+        p_last_event_id => v_event_id
+    );
+    
+    -- Duplicate call (should return same ID, not create new)
+    v_movement2_id := inventory.insert_stock_movement(
+        p_tenant_id => :'tenant_id'::UUID,
+        p_catalog_item_id => :'item1_id'::UUID,
+        p_location_id => :'location_id'::UUID,
+        p_quantity_delta => 10,
+        p_movement_type => 'adjustment_in',
+        p_source_ref_type => 'test',
+        p_source_ref_id => NULL,
+        p_unit_cost => NULL,
+        p_reason => 'Idempotency test duplicate',
+        p_notes => NULL,
+        p_correlation_id => NULL,
+        p_occurred_at => NOW(),
+        p_created_by_user_id => NULL,
+        p_last_event_id => v_event_id
+    );
+    
+    IF v_movement1_id = v_movement2_id THEN
+        RAISE NOTICE '   ✅ Idempotency working: Same ID returned';
+    ELSE
+        RAISE EXCEPTION '   ❌ Idempotency FAILED: Different IDs returned';
+    END IF;
+    
+    -- Check only one movement exists
+    IF (SELECT COUNT(*) FROM inventory.stock_movements WHERE last_event_id = v_event_id) = 1 THEN
+        RAISE NOTICE '   ✅ Only one movement created';
+    ELSE
+        RAISE EXCEPTION '   ❌ Multiple movements created!';
+    END IF;
+END $$;
+\echo ''
+
+-- Test 2: Ledger-to-Balance Reconciliation
+\echo '3. Testing ledger-to-balance reconciliation...'
+SELECT 
+    CASE 
+        WHEN COUNT(*) = 0 THEN '   ✅ All ledger balances match stock_balances'
+        ELSE '   ❌ MISMATCHES FOUND: ' || COUNT(*)::TEXT || ' discrepancies'
+    END as result
+FROM inventory.v_ledger_balance_reconciliation;
+\echo ''
+
+-- Test 3: Reservation Logic
+\echo '4. Testing reservation logic...'
+DO $$
+DECLARE
+    v_reservation_id UUID;
+    v_available_before NUMERIC;
+    v_available_after NUMERIC;
+    v_reserved_qty NUMERIC := 20;
+BEGIN
+    -- Get available before
+    SELECT qty_available INTO v_available_before
+    FROM inventory.stock_balances
+    WHERE tenant_id = :'tenant_id'::UUID
+    AND catalog_item_id = :'item1_id'::UUID
+    AND location_id = :'location_id'::UUID;
+    
+    -- Create reservation
+    v_reservation_id := inventory.rpc_inv_reserve(
+        p_tenant_id => :'tenant_id'::UUID,
+        p_catalog_item_id => :'item1_id'::UUID,
+        p_location_id => :'location_id'::UUID,
+        p_qty => v_reserved_qty,
+        p_allocation_type => 'job',
+        p_job_ref => '{"job_number": "JOB-12345"}'::JSONB,
+        p_last_event_id => 'test_reserve_' || gen_random_uuid()::TEXT
+    );
+    
+    -- Get available after
+    SELECT qty_available INTO v_available_after
+    FROM inventory.stock_balances
+    WHERE tenant_id = :'tenant_id'::UUID
+    AND catalog_item_id = :'item1_id'::UUID
+    AND location_id = :'location_id'::UUID;
+    
+    IF v_available_after = v_available_before - v_reserved_qty THEN
+        RAISE NOTICE '   ✅ Reservation reduced available quantity correctly';
+    ELSE
+        RAISE EXCEPTION '   ❌ Available quantity mismatch: Expected %, got %', 
+            v_available_before - v_reserved_qty, v_available_after;
+    END IF;
+END $$;
+
+-- Check reservation integrity
+SELECT 
+    CASE 
+        WHEN COUNT(*) = 0 THEN '   ✅ No reservation integrity issues'
+        ELSE '   ❌ ISSUES FOUND: ' || COUNT(*)::TEXT || ' problems'
+    END as result
+FROM inventory.v_reservation_integrity;
+\echo ''
+
+-- Test 4: Transfer Workflow
+\echo '5. Testing transfer workflow...'
+DO $$
+DECLARE
+    v_tenant_id UUID := :'tenant_id'::UUID;
+    v_from_location_id UUID := :'location_id'::UUID;
+    v_to_location_id UUID;
+    v_item_id UUID := :'item1_id'::UUID;
+    v_transfer_id UUID;
+    v_qty_before_from NUMERIC;
+    v_qty_after_from NUMERIC;
+    v_qty_after_to NUMERIC;
+    v_transfer_qty NUMERIC := 15;
+BEGIN
+    -- Create destination location
+    v_to_location_id := inventory.create_test_location(v_tenant_id, 'Branch Warehouse');
+    
+    -- Get quantity before
+    SELECT COALESCE(qty_on_hand, 0) INTO v_qty_before_from
+    FROM inventory.stock_balances
+    WHERE tenant_id = v_tenant_id
+    AND catalog_item_id = v_item_id
+    AND location_id = v_from_location_id;
+    
+    -- Create and execute transfer
+    v_transfer_id := inventory.rpc_inv_transfer_create(
+        p_tenant_id => v_tenant_id,
+        p_from_location_id => v_from_location_id,
+        p_to_location_id => v_to_location_id,
+        p_transfer_lines => jsonb_build_array(
+            jsonb_build_object('catalog_item_id', v_item_id, 'qty', v_transfer_qty)
+        ),
+        p_last_event_id => 'test_transfer_' || gen_random_uuid()::TEXT
+    );
+    
+    -- Execute transfer
+    PERFORM inventory.rpc_inv_transfer_execute(
+        p_tenant_id => v_tenant_id,
+        p_transfer_id => v_transfer_id,
+        p_last_event_id => 'test_transfer_exec_' || gen_random_uuid()::TEXT
+    );
+    
+    -- Check quantities
+    SELECT COALESCE(qty_on_hand, 0) INTO v_qty_after_from
+    FROM inventory.stock_balances
+    WHERE tenant_id = v_tenant_id
+    AND catalog_item_id = v_item_id
+    AND location_id = v_from_location_id;
+    
+    SELECT COALESCE(qty_on_hand, 0) INTO v_qty_after_to
+    FROM inventory.stock_balances
+    WHERE tenant_id = v_tenant_id
+    AND catalog_item_id = v_item_id
+    AND location_id = v_to_location_id;
+    
+    IF v_qty_after_from = v_qty_before_from - v_transfer_qty 
+       AND v_qty_after_to = v_transfer_qty THEN
+        RAISE NOTICE '   ✅ Transfer executed correctly (paired ledger entries)';
+    ELSE
+        RAISE EXCEPTION '   ❌ Transfer quantities incorrect';
+    END IF;
+END $$;
+\echo ''
+
+-- Test 5: Event Emission
+\echo '6. Testing event emission (outbox pattern)...'
+SELECT 
+    event_type,
+    COUNT(*) as event_count
+FROM public.events_outbox
+WHERE tenant_id = :'tenant_id'::UUID
+GROUP BY event_type
+ORDER BY event_type;
+
+SELECT 
+    CASE 
+        WHEN COUNT(*) > 0 THEN '   ✅ Events emitted to outbox: ' || COUNT(*)::TEXT || ' events'
+        ELSE '   ⚠️  No events in outbox (may be processed already)'
+    END as result
+FROM public.events_outbox
+WHERE tenant_id = :'tenant_id'::UUID;
+\echo ''
+
+-- Test 6: RLS Coverage
+\echo '7. Checking RLS coverage...'
+SELECT 
+    tablename,
+    CASE 
+        WHEN rls_enabled THEN '✅ Enabled'
+        ELSE '❌ DISABLED'
+    END as rls_status,
+    policy_count || ' policies' as policies
+FROM inventory.v_rls_coverage
+ORDER BY rls_enabled DESC, tablename;
+\echo ''
+
+-- Test 7: Idempotency Coverage
+\echo '8. Checking idempotency coverage...'
+SELECT 
+    table_name,
+    total_rows,
+    rows_with_event_id,
+    rows_missing_event_id,
+    coverage_pct || '%' as coverage
+FROM inventory.v_idempotency_summary
+WHERE total_rows > 0
+ORDER BY coverage_pct ASC;
+\echo ''
+
+-- Summary
+\echo '=========================================='
+\echo 'VERIFICATION COMPLETE'
+\echo '=========================================='
+\echo ''
+\echo 'Check the results above for:'
+\echo '  - All ✅ marks indicate passing tests'
+\echo '  - Any ❌ marks indicate failures'
+\echo '  - RLS should be enabled on all tables'
+\echo '  - Idempotency coverage should be 100% (or close)'
+\echo '  - No ledger/balance mismatches'
+\echo '  - No reservation integrity issues'
+\echo ''
+

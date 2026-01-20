@@ -9,10 +9,15 @@ import {
   Truck,
   ShoppingCart,
   ClipboardCheck,
-  BarChart3,
   Settings,
-  ChevronRight,
   Bug,
+  CalendarCheck,
+  ArrowLeftRight,
+  PackageOpen,
+  Users,
+  FileText,
+  Boxes,
+  History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -33,19 +38,14 @@ const navigation: NavSection[] = [
     title: 'Overview',
     items: [
       {
-        title: 'Debug',
-        href: '/debug',
-        icon: Bug,
-      },
-      {
         title: 'Dashboard',
         href: '/dashboard',
         icon: LayoutDashboard,
       },
       {
-        title: 'Analytics',
-        href: '/analytics',
-        icon: BarChart3,
+        title: 'Debug',
+        href: '/debug',
+        icon: Bug,
       },
     ],
   },
@@ -55,7 +55,7 @@ const navigation: NavSection[] = [
       {
         title: 'Stock Balances',
         href: '/inventory/stock',
-        icon: Package,
+        icon: Boxes,
       },
       {
         title: 'Items',
@@ -72,30 +72,55 @@ const navigation: NavSection[] = [
         href: '/inventory/assets',
         icon: Truck,
       },
+      {
+        title: 'Vendors',
+        href: '/inventory/vendors',
+        icon: Users,
+      },
     ],
   },
   {
     title: 'Operations',
     items: [
       {
-        title: 'Receive Stock',
-        href: '/operations/receive',
+        title: 'Reservations',
+        href: '/inventory/reservations',
+        icon: CalendarCheck,
+      },
+      {
+        title: 'Transfers',
+        href: '/inventory/transfers',
+        icon: ArrowLeftRight,
+      },
+      {
+        title: 'Purchasing',
+        href: '/inventory/purchasing',
         icon: ShoppingCart,
       },
       {
-        title: 'Transfer',
-        href: '/operations/transfer',
-        icon: ChevronRight,
-      },
-      {
-        title: 'Issue',
-        href: '/operations/issue',
-        icon: ChevronRight,
+        title: 'Receiving',
+        href: '/inventory/receiving',
+        icon: PackageOpen,
       },
       {
         title: 'Cycle Counts',
-        href: '/operations/cycle-counts',
+        href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
+      },
+    ],
+  },
+  {
+    title: 'Audit',
+    items: [
+      {
+        title: 'Ledger',
+        href: '/inventory/audit',
+        icon: History,
+      },
+      {
+        title: 'Reports',
+        href: '/inventory/reports',
+        icon: FileText,
       },
     ],
   },

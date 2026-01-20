@@ -1,54 +1,91 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-
-interface Session {
-  userId: string;
-  email: string;
-  tenantId: string;
-  role: string;
-  fullName: string;
-  expiresAt: number;
-}
+import { useRouter, usePathname } from 'next/navigation';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [session, setSession] = useState<Session | null>(null);
+  const pathname = usePathname();
   const [loading, setLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const supabase = createClientComponentClient();
+  
+  // Skip auth check for public pages
+  const isPublicPage = pathname === '/dev-login' || pathname === '/error' || pathname === '/auth/callback';
   
   useEffect(() => {
-    // Note: The actual SSO callback is now handled by middleware redirecting to /auth/callback
-    // This component just checks for existing session
+    if (isPublicPage) {
+      setLoading(false);
+      setAuthenticated(true);
+      return;
+    }
+    
     checkSession();
-  }, [searchParams]);
+    
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setAuthenticated(true);
+        setLoading(false);
+      } else if (event === 'SIGNED_OUT') {
+        setAuthenticated(false);
+        redirectToAuth();
+      }
+    });
+    
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [pathname, isPublicPage]);
   
   async function checkSession() {
     try {
-      const response = await fetch('/api/auth/session');
-      if (response.ok) {
-        const session = await response.json();
-        setSession(session);
-      } else {
-        redirectToCore();
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error || !session) {
+        console.log('[AuthGate] No active session, redirecting to auth');
+        redirectToAuth();
+        return;
       }
+      
+      // Validate that session has tenant_id in metadata
+      const tenantId = session.user.user_metadata?.tenant_id;
+      if (!tenantId) {
+        console.error('[AuthGate] Session missing tenant_id, forcing re-auth');
+        await supabase.auth.signOut();
+        redirectToAuth();
+        return;
+      }
+      
+      console.log('[AuthGate] Valid session found:', { 
+        email: session.user.email, 
+        tenant_id: tenantId 
+      });
+      
+      setAuthenticated(true);
     } catch (error) {
-      console.error('Session check error:', error);
-      redirectToCore();
+      console.error('[AuthGate] Session check error:', error);
+      redirectToAuth();
     } finally {
       setLoading(false);
     }
   }
   
-  function redirectToCore() {
-    // In development, redirect to dev login instead of Core
+  function redirectToAuth() {
+    // In development, allow dev-login bypass
     if (process.env.NODE_ENV === 'development') {
       router.push('/dev-login');
     } else {
+      // Production: redirect to Core SSO
       const coreUrl = process.env.NEXT_PUBLIC_CORE_URL || 'https://dev.summit-one.app';
-      window.location.href = `${coreUrl}/dashboard`;
+      const inventoryUrl = window.location.origin;
+      window.location.href = `${coreUrl}/sso?service=inventory&return_to=${encodeURIComponent(inventoryUrl)}`;
     }
+  }
+  
+  if (isPublicPage) {
+    return <>{children}</>;
   }
   
   if (loading) {
@@ -62,8 +99,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
   
-  if (!session) {
-    return null; // Redirecting to core
+  if (!authenticated) {
+    return null; // Redirecting
   }
   
   return <>{children}</>;
