@@ -101,12 +101,13 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('catalog_items')
+      .from('inventory.catalog_items')
       .select(`
         *,
         item_categories:category_id(name),
         vendors:preferred_vendor_id(name)
       `)
+      .is('deleted_at', null)
       .order('name');
 
     if (filters?.active !== undefined) {
@@ -141,7 +142,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('locations')
+      .from('inventory.locations')
       .select('*')
       .order('name');
 
@@ -172,7 +173,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('stock_balances')
+      .from('inventory.stock_balances')
       .select(`
         *,
         catalog_items:catalog_item_id(name, sku, unit_of_measure),
@@ -206,9 +207,9 @@ export const InventoryRPC = {
   async getLowStockItems() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('mv_low_stock_summary')
+      .from('inventory.mv_low_stock_summary')
       .select('*')
-      .order('severity', { ascending: false });
+      .order('total_available');
 
     if (error) {
       throw new Error(`Failed to fetch low stock items: ${error.message}`);
@@ -224,7 +225,7 @@ export const InventoryRPC = {
   async getInventorySummary() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('mv_inventory_summary')
+      .from('inventory.mv_inventory_summary')
       .select('*')
       .single();
 
@@ -246,7 +247,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('transfers')
+      .from('inventory.transfers')
       .select(`
         *,
         from_locations:from_location_id(name),
@@ -284,7 +285,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('reservations')
+      .from('inventory.reservations')
       .select(`
         *,
         catalog_items:catalog_item_id(name, sku),

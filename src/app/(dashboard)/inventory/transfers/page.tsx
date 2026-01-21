@@ -370,8 +370,31 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     notes: '',
     lines: [{ catalog_item_id: '', qty: '' }],
   });
+  const [locations, setLocations] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [locsRes, itemsRes] = await Promise.all([
+          fetch('/api/inventory/locations'),
+          fetch('/api/inventory/items'),
+        ]);
+        const locsData = await locsRes.json();
+        const itemsData = await itemsRes.json();
+        setLocations(locsData.data || []);
+        setItems(itemsData.data || []);
+      } catch (err) {
+        console.error('Error loading data:', err);
+      } finally {
+        setLoadingData(false);
+      }
+    };
+    loadData();
+  }, []);
 
   const addLine = () => {
     setForm({
@@ -443,100 +466,127 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">From Location *</label>
-              <input
-                type="text"
-                value={form.from_location_id}
-                onChange={(e) => setForm({ ...form, from_location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                placeholder="Location UUID"
-                required
-              />
+          {loadingData ? (
+            <div className="py-8 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+              <p className="mt-2 text-sm text-gray-500">Loading locations and items...</p>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">To Location *</label>
-              <input
-                type="text"
-                value={form.to_location_id}
-                onChange={(e) => setForm({ ...form, to_location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                placeholder="Location UUID"
-                required
-              />
-            </div>
-          </div>
-
-          <div className="border-t pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-medium">Line Items</h4>
-              <button
-                type="button"
-                onClick={addLine}
-                className="text-sm text-primary hover:underline"
-              >
-                + Add Line
-              </button>
-            </div>
-            <div className="space-y-2">
-              {form.lines.map((line, index) => (
-                <div key={index} className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={line.catalog_item_id}
-                    onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
-                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="Item UUID"
-                  />
-                  <input
-                    type="number"
-                    value={line.qty}
-                    onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                    className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="Qty"
-                    min="1"
-                  />
-                  {form.lines.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLine(index)}
-                      className="text-red-500 hover:text-red-700"
-                    >
-                      ✕
-                    </button>
-                  )}
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">From Location *</label>
+                  <select
+                    value={form.from_location_id}
+                    onChange={(e) => setForm({ ...form, from_location_id: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  >
+                    <option value="">Select location...</option>
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.location_type})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">To Location *</label>
+                  <select
+                    value={form.to_location_id}
+                    onChange={(e) => setForm({ ...form, to_location_id: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    required
+                  >
+                    <option value="">Select location...</option>
+                    {locations.filter(loc => loc.id !== form.from_location_id).map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.location_type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={2}
-            />
-          </div>
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium">Line Items *</h4>
+                  <button
+                    type="button"
+                    onClick={addLine}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    + Add Line
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {form.lines.map((line, index) => (
+                    <div key={index} className="flex gap-2 items-center">
+                      <select
+                        value={line.catalog_item_id}
+                        onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
+                        className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        required
+                      >
+                        <option value="">Select item...</option>
+                        {items.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.sku}) - {item.unit_of_measure}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        value={line.qty}
+                        onChange={(e) => updateLine(index, 'qty', e.target.value)}
+                        className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Qty"
+                        min="1"
+                        required
+                      />
+                      {form.lines.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeLine(index)}
+                          className="text-red-500 hover:text-red-700 px-2"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? 'Creating...' : 'Create Transfer'}
-            </button>
-          </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Notes</label>
+                <textarea
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  rows={2}
+                  placeholder="Optional notes about this transfer..."
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {saving ? 'Creating...' : 'Create Transfer'}
+                </button>
+              </div>
+            </>
+          )}
         </form>
       </div>
     </div>

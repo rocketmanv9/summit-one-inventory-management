@@ -24,13 +24,13 @@ export async function GET(request: NextRequest) {
     // Query items - ALWAYS filter by tenant_id
     // This is critical for data isolation
     const { data: items, error } = await supabase
-      .from('catalog_items')
+      .from('inventory.catalog_items')
       .select(`
         *,
-        item_categories(name)
+        item_categories:inventory.item_categories(name)
       `)
       .eq('tenant_id', tenantId)
-      .eq('active', true)
+      .is('deleted_at', null)
       .order('name');
     
     if (error) {
@@ -69,19 +69,24 @@ export async function POST(request: NextRequest) {
   
   try {
     const body = await request.json();
-    const { name, sku, description, category_id } = body;
+    const { name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level } = body;
     
     const supabase = createClient();
     
     // CRITICAL: Always set tenant_id from session, NEVER from client input
     const { data: item, error } = await supabase
-      .from('catalog_items')
+      .from('inventory.catalog_items')
       .insert({
         tenant_id: tenantId, // From authenticated session
         name,
         sku,
         description,
         category_id,
+        unit_of_measure: unit_of_measure || 'EA',
+        tracking_mode: tracking_mode || 'stock',
+        reorder_point,
+        min_stock_level,
+        max_stock_level,
       })
       .select()
       .single();
@@ -94,7 +99,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    return NextResponse.json({ item }, { status: 201 });
+    return NextResponse.json({ data: item }, { status: 201 });
   } catch (error) {
     console.error('Unexpected error:', error);
     return NextResponse.json(

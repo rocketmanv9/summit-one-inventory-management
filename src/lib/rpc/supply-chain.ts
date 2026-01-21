@@ -139,8 +139,9 @@ export const SupplyChainRPC = {
   async getVendors() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('vendors')
+      .from('inventory.vendors')
       .select('*')
+      .eq('active', true)
       .order('name');
 
     if (error) {
@@ -162,7 +163,7 @@ export const SupplyChainRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('purchase_orders')
+      .from('supply_chain.purchase_orders')
       .select(`
         *,
         vendors:vendor_id(name),
@@ -204,7 +205,7 @@ export const SupplyChainRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('receipts')
+      .from('supply_chain.receipts')
       .select(`
         *,
         locations:location_id(name),

@@ -25,8 +25,7 @@ export async function GET(request: NextRequest) {
     const locationType = searchParams.get('type');
 
     let query = supabase
-      .schema('inventory')
-      .from('locations')
+      .from('inventory.locations')
       .select('*')
       .eq('tenant_id', tenantId)
       .eq('active', true);
@@ -75,7 +74,7 @@ export async function POST(request: NextRequest) {
     const supabase = createClient();
 
     const { data: location, error } = await supabase
-      .from('locations')
+      .from('inventory.locations')
       .insert({
         tenant_id: tenantId,
         name,
