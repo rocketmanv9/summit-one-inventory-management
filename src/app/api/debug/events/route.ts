@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
     // Get event definitions (catalog)
     console.log('Fetching event definitions...');
     const { data: definitions, error: defsError } = await supabase
+      .schema('public')
       .from('event_definitions')
       .select('*')
       .order('event_name', { ascending: true });

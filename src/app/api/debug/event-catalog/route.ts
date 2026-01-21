@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
 
     // Get all event definitions with full details
     const { data: definitions, error: defsError, count } = await supabase
+      .schema('public')
       .from('event_definitions')
       .select('*', { count: 'exact' })
       .range(0, 999)  // Explicitly request rows 0-999

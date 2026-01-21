@@ -23,6 +23,7 @@ export async function GET() {
 
     // Get event definitions
     const { data: events, error } = await supabase
+      .schema('public')
       .from('event_definitions')
       .select('*')
       .order('event_name', { ascending: true });
