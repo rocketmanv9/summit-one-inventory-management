@@ -14,8 +14,9 @@ function ErrorContent() {
   const [message, setMessage] = useState<string>('');
   
   useEffect(() => {
-    const messageCode = searchParams.get('message') || 'invalid_token';
-    setMessage(errorMessages[messageCode] || errorMessages.invalid_token);
+    const messageParam = searchParams.get('message') || 'invalid_token';
+    // If the message is not a known code, use it directly
+    setMessage(errorMessages[messageParam] || messageParam);
   }, [searchParams]);
   
   const handleReturnToCore = () => {

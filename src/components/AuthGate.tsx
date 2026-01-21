@@ -41,44 +41,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   
   async function checkSession() {
     try {
-      // In development, check for dev session cookie first
-      if (process.env.NODE_ENV === 'development') {
-        const devSessionCheck = await fetch('/api/auth/session-check');
-        if (devSessionCheck.ok) {
-          const devData = await devSessionCheck.json();
-          if (devData.authenticated) {
-            console.log('[AuthGate] Dev session found:', devData.session);
-            setAuthenticated(true);
-            setLoading(false);
-            return;
-          }
+      // Check for cookie-based session (used in both dev and production)
+      const sessionCheck = await fetch('/api/auth/session-check');
+      if (sessionCheck.ok) {
+        const data = await sessionCheck.json();
+        if (data.authenticated) {
+          console.log('[AuthGate] Session found:', data.session);
+          setAuthenticated(true);
+          setLoading(false);
+          return;
         }
       }
 
-      // Check Supabase session (production or when dev session doesn't exist)
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error || !session) {
-        console.log('[AuthGate] No active session, redirecting to auth');
-        redirectToAuth();
-        return;
-      }
-      
-      // Validate that session has tenant_id in metadata
-      const tenantId = session.user.user_metadata?.tenant_id;
-      if (!tenantId) {
-        console.error('[AuthGate] Session missing tenant_id, forcing re-auth');
-        await supabase.auth.signOut();
-        redirectToAuth();
-        return;
-      }
-      
-      console.log('[AuthGate] Valid session found:', { 
-        email: session.user.email, 
-        tenant_id: tenantId 
-      });
-      
-      setAuthenticated(true);
+      // No session found, redirect to auth
+      console.log('[AuthGate] No active session, redirecting to auth');
+      redirectToAuth();
     } catch (error) {
       console.error('[AuthGate] Session check error:', error);
       redirectToAuth();
@@ -92,10 +69,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     if (process.env.NODE_ENV === 'development') {
       router.push('/dev-login');
     } else {
-      // Production: redirect to Core SSO
-      const coreUrl = process.env.NEXT_PUBLIC_CORE_URL || 'https://dev.summit-one.app';
-      const inventoryUrl = window.location.origin;
-      window.location.href = `${coreUrl}/sso?service=inventory&return_to=${encodeURIComponent(inventoryUrl)}`;
+      // Production: Show error - user should access via Core dashboard
+      router.push('/error?message=Please access the Inventory Management service through the Summit One Core dashboard');
     }
   }
   
