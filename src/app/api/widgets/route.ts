@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/supabase/client';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
@@ -28,10 +28,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Use service role to bypass RLS since widget_registry is global
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
     
     const { data, error } = await supabase
       .from('widget_registry')

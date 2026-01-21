@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/supabase/client';
 import { cookies } from 'next/headers';
 
 export async function PATCH(request: NextRequest) {
@@ -33,10 +33,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request - widgets must be an array' }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     // Update each widget's layout individually
     for (const widget of widgets) {

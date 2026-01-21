@@ -67,10 +67,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { location_id, count_type, catalog_item_ids, item_category_id } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     // Use the RPC for starting cycle counts
     const { data, error } = await supabase.rpc('rpc_inv_cycle_count_start', {

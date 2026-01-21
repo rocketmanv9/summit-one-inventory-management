@@ -19,10 +19,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     const { data: vendors, error } = await supabase
       .schema('inventory')
@@ -67,10 +64,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, code, contact_name, contact_email, contact_phone, address, payment_terms, lead_time_days } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     const { data: vendor, error } = await supabase
       .from('vendors')

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/supabase/client';
 import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
@@ -26,10 +26,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { widget_key, config } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     // Fetch widget data based on widget_key
     const data = await fetchWidgetData(supabase, widget_key, tenantId, config || {});

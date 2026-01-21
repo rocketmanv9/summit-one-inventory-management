@@ -18,10 +18,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'movements'; // movements, events, or both

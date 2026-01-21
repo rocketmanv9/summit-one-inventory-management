@@ -39,7 +39,7 @@ export function ReceivingToday({ widget }: ReceivingTodayProps) {
     <BaseTableWidget
       widget={widget}
       data={data}
-      loading={loading}
+      isLoading={loading}
     />
   );
 }

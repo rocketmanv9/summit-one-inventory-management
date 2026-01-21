@@ -19,10 +19,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     const { searchParams } = new URL(request.url);
     const locationType = searchParams.get('type');
@@ -75,10 +72,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, location_type, address, parent_location_id } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     const { data: location, error } = await supabase
       .from('locations')

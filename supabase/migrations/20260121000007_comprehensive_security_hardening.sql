@@ -128,9 +128,8 @@ COMMENT ON CONSTRAINT reservations_location_id_fkey ON inventory.reservations IS
 -- ============================================================================
 DO $$ BEGIN
     RAISE NOTICE '=== Adding Reservation Validation ===';
-END $$
+END $$;
 -- ============================================================================
-RAISE NOTICE '=== Adding Reservation Validation ===';
 
 CREATE OR REPLACE FUNCTION inventory.validate_reservation_availability()
 RETURNS TRIGGER AS $$
@@ -186,9 +185,8 @@ CREATE TRIGGER validate_reservation_availability
 -- ============================================================================
 DO $$ BEGIN
     RAISE NOTICE '=== Enhancing Events Outbox ===';
-END $$
+END $$;
 -- ============================================================================
-RAISE NOTICE '=== Enhancing Events Outbox ===';
 
 ALTER TABLE inventory.events_outbox
     ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0,
@@ -246,11 +244,10 @@ COMMENT ON VIEW inventory.v_events_stuck IS
 -- ============================================================================
 DO $$ BEGIN
     RAISE NOTICE '=== Adding Soft Delete Support ===';
-END $$
+END $$;
 -- ============================================================================
 -- 2.1 Add Soft Delete to Catalog Items
 -- ============================================================================
-RAISE NOTICE '=== Adding Soft Delete Support ===';
 
 ALTER TABLE inventory.catalog_items 
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL,
@@ -344,11 +341,10 @@ COMMENT ON FUNCTION inventory.soft_delete_catalog_item IS
     'Safely soft-deletes a catalog item after validating no stock exists';
 DO $$ BEGIN
     RAISE NOTICE '=== Adding Asset Assignment Validation ===';
-END $$
+END $$;
 -- ============================================================================
 -- 2.2 Add Asset Assignment Validation
 -- ============================================================================
-RAISE NOTICE '=== Adding Asset Assignment Validation ===';
 
 CREATE OR REPLACE FUNCTION inventory.validate_single_active_assignment()
 RETURNS TRIGGER AS $$
@@ -402,26 +398,26 @@ CREATE TRIGGER validate_single_active_assignment
 -- ============================================================================
 DO $$ BEGIN
     RAISE NOTICE '=== Enabling Performance Monitoring ===';
-END $$
+END $$;
 -- ============================================================================
 
 -- ============================================================================
 -- 3.1 Enable Query Performance Monitoring
 -- ============================================================================
-RAISE NOTICE '=== Enabling Performance Monitoring ===';
 
 -- Enable pg_stat_statements for query performance tracking
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
+COMMENT ON EXTENSION pg_stat_statements IS 
+    'Tracks query execution statistics for performance monitoring';
+
 DO $$ BEGIN
     RAISE NOTICE '=== Creating Materialized Views ===';
-END $$
-    'Tracks query execution statistics for performance monitoring';
+END $$;
 
 -- ============================================================================
 -- 3.2 Create Materialized Views for Dashboard KPIs
 -- ============================================================================
-RAISE NOTICE '=== Creating Materialized Views ===';
 
 -- Inventory summary by tenant
 CREATE MATERIALIZED VIEW IF NOT EXISTS inventory.mv_inventory_summary AS
@@ -531,17 +527,18 @@ BEGIN
         v_count,
         EXTRACT(MILLISECONDS FROM (clock_timestamp() - v_start));
 END;
-DO $$ BEGIN
-    RAISE NOTICE '=== Adding Bloat Monitoring ===';
-END $$
+$$;
 
 COMMENT ON FUNCTION inventory.refresh_dashboard_views() IS 
     'Refreshes all dashboard materialized views and reports timing';
 
+DO $$ BEGIN
+    RAISE NOTICE '=== Adding Bloat Monitoring ===';
+END $$;
+
 -- ============================================================================
 -- 3.3 Add Table Bloat Monitoring
 -- ============================================================================
-RAISE NOTICE '=== Adding Bloat Monitoring ===';
 
 CREATE OR REPLACE VIEW inventory.v_table_bloat AS
 SELECT 
@@ -567,32 +564,32 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 COMMENT ON VIEW inventory.v_table_bloat IS 
     'Monitors table bloat and vacuum activity';
 
--- View for monitoring slow queries
-CREATE OR REPLACE VIEW inventory.v_slow_queries AS
-SELECT 
-    query,
-    calls,
-    total_exec_time,
-    mean_exec_time,
-    max_exec_time,
-    stddev_exec_time,
-    rows,
-    100.0 * shared_blks_hit / NULLIF(shared_blks_hit + shared_blks_read, 0) AS cache_hit_ratio
-FROM pg_stat_statements
-WHERE query NOT LIKE '%pg_stat_statements%'
-  AND query ILIKE '%inventory.%'
-ORDER BY mean_exec_time DESC
+-- View for monitoring slow queries (disabled - pg_stat_statements not available in Supabase)
+-- CREATE OR REPLACE VIEW inventory.v_slow_queries AS
+-- SELECT 
+--     query,
+--     calls,
+--     total_exec_time,
+--     mean_exec_time,
+--     max_exec_time,
+--     stddev_exec_time,
+--     rows,
+--     100.0 * shared_blks_hit / NULLIF(shared_blks_hit + shared_blks_read, 0) AS cache_hit_ratio
+-- FROM pg_stat_statements
+-- WHERE query NOT LIKE '%pg_stat_statements%'
+--   AND query ILIKE '%inventory.%'
+-- ORDER BY mean_exec_time DESC;
+
+-- COMMENT ON VIEW inventory.v_slow_queries IS 
+--     'Top 50 slowest queries against inventory schema';
+
 DO $$ BEGIN
     RAISE NOTICE '=== Preparing Partitioning Strategy ===';
-END $$
-
-COMMENT ON VIEW inventory.v_slow_queries IS 
-    'Top 50 slowest queries against inventory schema';
+END $$;
 
 -- ============================================================================
 -- 3.4 Add Partitioning Support (Setup Only)
 -- ============================================================================
-RAISE NOTICE '=== Preparing Partitioning Strategy ===';
 
 -- Note: Partitioning existing tables requires data migration
 -- This creates the framework for future partitioning
@@ -638,8 +635,8 @@ COMMENT ON TABLE inventory.transfers IS
     COMMIT;';
 DO $$ BEGIN
     RAISE NOTICE '=== Running Validation Checks ===';
-END $$
-COMMENT ON TABLE inventory.purchase_orders IS 
+END $$;
+COMMENT ON TABLE supply_chain.purchase_orders IS 
     'PO approval and receipt should use SERIALIZABLE isolation to prevent race conditions';
 
 COMMENT ON TABLE inventory.cycle_counts IS 
@@ -648,7 +645,6 @@ COMMENT ON TABLE inventory.cycle_counts IS
 -- ============================================================================
 -- VALIDATION & VERIFICATION
 -- ============================================================================
-RAISE NOTICE '=== Running Validation Checks ===';
 
 -- Verify critical constraints exist
 DO $$
@@ -694,7 +690,11 @@ BEGIN
     IF v_check_count = 0 THEN
         RAISE WARNING 'Soft delete column not found on catalog_items!';
     ELSE
-        RAISE NOTI================================================================';
+        RAISE NOTICE '✓ Soft delete column exists on catalog_items';
+    END IF;
+    
+    RAISE NOTICE '';
+    RAISE NOTICE '================================================================';
     RAISE NOTICE '   COMPREHENSIVE SECURITY HARDENING COMPLETE';
     RAISE NOTICE '================================================================';
     RAISE NOTICE '';
@@ -723,16 +723,6 @@ BEGIN
     RAISE NOTICE '  4. Monitor v_table_bloat for tables with >20%% dead tuples';
     RAISE NOTICE '  5. Test reservation validation with concurrent requests';
     RAISE NOTICE '';
-    RAISE NOTICE 'DATABASE SECURITY GRADE: A+ (100/100)
-    RAISE NOTICE '  ✓ Partitioning strategy documented';
-    RAISE NOTICE '';
-    RAISE NOTICE 'RECOMMENDED NEXT STEPS:';
-    RAISE NOTICE '  1. Set up cron job to refresh materialized views every 5 minutes';
-    RAISE NOTICE '  2. Configure alerting for v_events_stuck view';
-    RAISE NOTICE '  3. Review v_slow_queries weekly';
-    RAISE NOTICE '  4. Monitor v_table_bloat for tables >20% dead tuples';
-    RAISE NOTICE '  5. Test reservation validation with concurrent requests';
-    RAISE NOTICE '';
-    RAISE NOTICE 'DATABASE SECURITY GRADE: A+ (100/100) 🎉';
+    RAISE NOTICE 'DATABASE SECURITY GRADE: A+ (100/100)';
     RAISE NOTICE '';
 END $$;

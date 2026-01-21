@@ -164,13 +164,6 @@ export default function StockBalancesPage() {
       },
     },
     {
-      key: 'qty_on_order',
-      header: 'On Order',
-      sortable: true,
-      className: 'text-right font-mono',
-      render: (row: StockBalance) => row.qty_on_order?.toLocaleString() ?? 0,
-    },
-    {
       key: 'status',
       header: 'Status',
       render: (row: StockBalance) => {

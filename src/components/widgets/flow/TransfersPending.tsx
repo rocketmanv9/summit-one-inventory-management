@@ -39,7 +39,7 @@ export function TransfersPending({ widget }: TransfersPendingProps) {
     <BaseTableWidget
       widget={widget}
       data={data}
-      loading={loading}
+      isLoading={loading}
     />
   );
 }

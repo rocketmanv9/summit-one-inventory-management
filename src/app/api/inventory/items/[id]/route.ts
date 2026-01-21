@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withRole } from '@/lib/auth-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/supabase/client';
 
 export const DELETE = withRole('admin', async (req, authContext) => {
   const url = new URL(req.url);
@@ -18,17 +18,7 @@ export const DELETE = withRole('admin', async (req, authContext) => {
     );
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      global: {
-        headers: {
-          Authorization: req.headers.get('authorization')!
-        }
-      }
-    }
-  );
+  const supabase = createClient();
 
   // RLS ensures user can only delete items in their tenant
   // Additional RLS policy ensures only admins can delete

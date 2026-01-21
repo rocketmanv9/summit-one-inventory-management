@@ -39,7 +39,7 @@ export function CycleCountVariances({ widget }: CycleCountVariancesProps) {
     <BaseTableWidget
       widget={widget}
       data={data}
-      loading={loading}
+      isLoading={loading}
     />
   );
 }

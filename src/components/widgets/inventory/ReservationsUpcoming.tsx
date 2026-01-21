@@ -39,7 +39,7 @@ export function ReservationsUpcoming({ widget }: ReservationsUpcomingProps) {
     <BaseTableWidget
       widget={widget}
       data={data}
-      loading={loading}
+      isLoading={loading}
     />
   );
 }
