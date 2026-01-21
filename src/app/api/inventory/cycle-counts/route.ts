@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -19,52 +19,28 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
-    const { searchParams } = new URL(request.url);
-    const status = searchParams.get('status');
-    const locationId = searchParams.get('location_id');
-
-    let query = supabase
+    // Simplified: Just return cycle counts without lines
+    const { data: cycleCounts, error } = await supabase
       .from('cycle_counts')
       .select(`
         *,
-        locations(id, name, location_type),
-        cycle_count_lines(
-          id,
-          catalog_item_id,
-          expected_qty,
-          counted_qty,
-          variance_qty,
-          variance_approved,
-          catalog_items(id, name, sku)
-        )
+        location:locations(id, name, location_type)
       `)
-      .eq('tenant_id', tenantId);
-
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    if (locationId) {
-      query = query.eq('location_id', locationId);
-    }
-
-    const { data: cycleCounts, error } = await query.order('created_at', { ascending: false });
+      .eq('tenant_id', tenantId)
+      .order('scheduled_for', { ascending: false });
 
     if (error) {
       console.error('Error fetching cycle counts:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch cycle counts' },
+        { error: 'Failed to fetch cycle counts', details: error },
         { status: 500 }
       );
     }
 
     return NextResponse.json({
-      data: cycleCounts,
+      data: cycleCounts || [],
       meta: { tenantId, count: cycleCounts?.length || 0 }
     });
   } catch (error) {

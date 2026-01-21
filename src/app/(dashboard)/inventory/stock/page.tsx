@@ -17,7 +17,8 @@ interface StockBalance {
   on_hand_qty: number;
   reserved_qty: number;
   available_qty: number;
-  on_order_qty?: number;
+  qty_on_order?: number;
+  inventory_position?: number;
   reorder_point?: number;
   catalog_items?: { id: string; name: string; sku: string; unit_of_measure: string };
   locations?: { id: string; name: string; location_type: string };
@@ -135,6 +136,34 @@ export default function StockBalancesPage() {
       ),
     },
     {
+      key: 'qty_on_order',
+      header: 'On Order',
+      sortable: true,
+      className: 'text-right font-mono text-blue-600',
+      render: (row: StockBalance) => (
+        <span title="Quantity on open purchase orders not yet received">
+          {row.qty_on_order?.toLocaleString() ?? 0}
+        </span>
+      ),
+    },
+    {
+      key: 'inventory_position',
+      header: 'Position',
+      sortable: true,
+      className: 'text-right font-mono font-semibold',
+      render: (row: StockBalance) => {
+        const position = row.inventory_position ?? 0;
+        return (
+          <span 
+            className={position <= 0 ? 'text-red-600' : position > 10 ? 'text-green-600' : 'text-yellow-600'}
+            title="On Hand - Reserved + On Order (total expected available)"
+          >
+            {position.toLocaleString()}
+          </span>
+        );
+      },
+    },
+    {
       key: 'on_order_qty',
       header: 'On Order',
       sortable: true,
@@ -168,7 +197,7 @@ export default function StockBalancesPage() {
       <div className="space-y-6">
         <PageHeader
           title="Stock Balances"
-          description="View current inventory levels by item and location"
+          description="View current inventory levels by item and location. Example: See how many tons of asphalt mix you have at the main yard vs. Job Site #234, or track rebar quantities across all truck inventories."
           actions={
             <button
               onClick={fetchStock}

@@ -27,13 +27,13 @@ export async function GET(request: NextRequest) {
     // Get stats
     let stats = null;
     try {
-      const result = await supabase.rpc('get_outbox_stats');
+      const result = await supabase.rpc('get_event_catalog_stats');
       stats = result.data;
       if (result.error) {
         console.error('Error fetching stats:', result.error);
       }
     } catch (statsError) {
-      console.error('Error calling get_outbox_stats:', statsError);
+      console.error('Error calling get_event_catalog_stats:', statsError);
     }
 
     // Get event definitions (catalog)

@@ -21,11 +21,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get all event definitions with full details
-    const { data: definitions, error: defsError } = await supabase
+    const { data: definitions, error: defsError, count } = await supabase
       .from('event_definitions')
-      .select('*')
-      .order('event_name', { ascending: true })
-      .order('version', { ascending: false });
+      .select('*', { count: 'exact' })
+      .range(0, 999)  // Explicitly request rows 0-999
+      .order('event_name', { ascending: true });
+
+    console.log('Fetched event definitions count:', definitions?.length, 'Total count:', count);
+    console.log('Event names with inventory prefix:', definitions?.filter(d => d.event_name.startsWith('inventory.')).map(d => d.event_name));
 
     if (defsError) {
       console.error('Error fetching event definitions:', defsError);

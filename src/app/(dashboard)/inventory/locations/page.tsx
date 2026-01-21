@@ -118,7 +118,7 @@ export default function LocationsPage() {
       <div className="space-y-6">
         <PageHeader
           title="Locations"
-          description="Manage warehouses, yards, trucks, and other inventory locations"
+          description="Manage warehouses, yards, trucks, and other inventory locations. Example: Set up locations like 'Main Plant Yard', 'Truck #12', 'Highway 50 Job Site', or 'Vendor: ABC Concrete Supply' to track where materials are stored or in transit."
           actions={
             <button
               onClick={() => setShowCreateModal(true)}

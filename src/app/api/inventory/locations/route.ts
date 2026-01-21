@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     const locationType = searchParams.get('type');
 
     let query = supabase
+      .schema('inventory')
       .from('locations')
       .select('*')
       .eq('tenant_id', tenantId)

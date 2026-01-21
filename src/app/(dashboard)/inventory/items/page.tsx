@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface CatalogItem {
   id: string;
@@ -20,6 +21,7 @@ interface CatalogItem {
   max_stock_level?: number;
   active: boolean;
   item_categories?: { name: string };
+  vendors?: { name: string };
 }
 
 export default function ItemsPage() {
@@ -35,9 +37,12 @@ export default function ItemsPage() {
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/items');
-      const { data } = await res.json();
-      setItems(data || []);
+      const data = await InventoryRPC.getCatalogItems({
+        active: filters.active_only === 'true' ? true : undefined,
+        tracking_mode: filters.tracking_mode || undefined,
+        search: filters.search || undefined,
+      });
+      setItems(data);
     } catch (error) {
       console.error('Error fetching items:', error);
     } finally {
@@ -139,7 +144,7 @@ export default function ItemsPage() {
       <div className="space-y-6">
         <PageHeader
           title="Catalog Items"
-          description="Manage your inventory catalog"
+          description="Manage your inventory catalog. Example: Define items like 'Hot Mix Asphalt (HMA)', 'Ready-Mix Concrete 3000 PSI', 'Rebar #4', 'Aggregate Base', or 'Diesel Fuel' - each with SKUs, units (tons, yards, gallons), and categories."
           actions={
             <button
               onClick={() => setShowCreateModal(true)}

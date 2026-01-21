@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -19,48 +19,29 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
-    const { searchParams } = new URL(request.url);
-    const poId = searchParams.get('purchase_order_id');
-
-    let query = supabase
+    // Simplified: Return basic receipt data without complex joins
+    const { data: receipts, error } = await supabase
       .from('receipts')
       .select(`
         *,
-        purchase_orders(id, po_number, vendor_id, vendors(name)),
-        locations(id, name),
-        receipt_lines(
-          id,
-          purchase_order_line_id,
-          qty_received,
-          qty_accepted,
-          qty_rejected,
-          rejection_reason,
-          catalog_items(id, name, sku)
-        )
+        purchase_order:purchase_orders(id, po_number),
+        location:locations(id, name)
       `)
-      .eq('tenant_id', tenantId);
-
-    if (poId) {
-      query = query.eq('purchase_order_id', poId);
-    }
-
-    const { data: receipts, error } = await query.order('received_at', { ascending: false });
+      .eq('tenant_id', tenantId)
+      .order('received_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching receipts:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch receipts' },
+        { error: 'Failed to fetch receipts', details: error },
         { status: 500 }
       );
     }
 
     return NextResponse.json({
-      data: receipts,
+      data: receipts || [],
       meta: { tenantId, count: receipts?.length || 0 }
     });
   } catch (error) {
@@ -87,10 +68,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { purchase_order_id, location_id, lines, notes } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     // Create receipt header
     const { data: receipt, error: receiptError } = await supabase

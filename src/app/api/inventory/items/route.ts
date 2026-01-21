@@ -5,8 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   // Get tenant ID from request headers (set by middleware)
@@ -20,10 +19,7 @@ export async function GET(request: NextRequest) {
   }
   
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
     
     // Query items - ALWAYS filter by tenant_id
     // This is critical for data isolation
@@ -75,10 +71,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, sku, description, category_id } = body;
     
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
     
     // CRITICAL: Always set tenant_id from session, NEVER from client input
     const { data: item, error } = await supabase

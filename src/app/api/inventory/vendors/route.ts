@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
     );
 
     const { data: vendors, error } = await supabase
+      .schema('inventory')
       .from('vendors')
       .select('*')
       .eq('tenant_id', tenantId)

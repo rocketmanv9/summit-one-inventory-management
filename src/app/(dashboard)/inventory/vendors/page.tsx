@@ -112,7 +112,7 @@ export default function VendorsPage() {
       <div className="space-y-6">
         <PageHeader
           title="Vendors"
-          description="Manage your suppliers and vendors"
+          description="Manage your suppliers and vendors. Example: Maintain vendor records for 'Acme Asphalt Supply', 'Riverside Ready-Mix', or 'Steel Rebar Distributors' with contact info, pricing, and delivery locations for easy PO creation."
           actions={
             <button
               onClick={() => setShowCreateModal(true)}

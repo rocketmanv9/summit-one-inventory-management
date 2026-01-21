@@ -3,7 +3,24 @@
  * Sets session variables for RLS policies
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Create a Supabase client configured for inventory schema
+ */
+export function createClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      db: { schema: 'inventory' },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    }
+  );
+}
 
 export interface SessionContext {
   tenantId: string;
@@ -16,16 +33,7 @@ export interface SessionContext {
  * Call this before making any database queries
  */
 export async function setTenantContext(context: SessionContext) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    }
-  );
+  const supabase = createClient();
   
   try {
     const { error } = await supabase.rpc('set_session_context', {
@@ -48,16 +56,7 @@ export async function setTenantContext(context: SessionContext) {
  * Create a Supabase client with tenant context already set
  */
 export async function createTenantClient(context: SessionContext) {
-  const client = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    }
-  );
+  const client = createClient();
   
   // Set context
   await setTenantContext(context);

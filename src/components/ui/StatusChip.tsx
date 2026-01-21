@@ -52,12 +52,20 @@ const statusConfig: Record<StatusType, { bg: string; text: string; dot: string }
 };
 
 interface StatusChipProps {
-  status: string;
+  status: string | null | undefined;
   showDot?: boolean;
   size?: 'sm' | 'md';
 }
 
 export function StatusChip({ status, showDot = true, size = 'sm' }: StatusChipProps) {
+  if (!status) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full font-medium bg-gray-100 text-gray-800 px-2 py-0.5 text-xs">
+        Unknown
+      </span>
+    );
+  }
+  
   const normalizedStatus = status.toLowerCase().replace(/ /g, '_') as StatusType;
   const config = statusConfig[normalizedStatus] || { bg: 'bg-gray-100', text: 'text-gray-800', dot: 'bg-gray-500' };
 

@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/supabase/client';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
   
   // Skip auth check for public pages
   const isPublicPage = pathname === '/dev-login' || pathname === '/error' || pathname === '/auth/callback';
@@ -41,6 +41,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   
   async function checkSession() {
     try {
+      // In development, check for dev session cookie first
+      if (process.env.NODE_ENV === 'development') {
+        const devSessionCheck = await fetch('/api/auth/session-check');
+        if (devSessionCheck.ok) {
+          const devData = await devSessionCheck.json();
+          if (devData.authenticated) {
+            console.log('[AuthGate] Dev session found:', devData.session);
+            setAuthenticated(true);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      // Check Supabase session (production or when dev session doesn't exist)
       const { data: { session }, error } = await supabase.auth.getSession();
       
       if (error || !session) {

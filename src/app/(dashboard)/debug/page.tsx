@@ -409,33 +409,32 @@ export default function DebugPage() {
           <div className="grid grid-cols-4 gap-4 mt-2 text-sm">
             <div>
               <span className="text-muted-foreground">Total Events:</span>{' '}
-              <span className="font-semibold">{definitions.filter(d => d.producer === 'inventory').length}</span>
+              <span className="font-semibold">{definitions.length}</span>
             </div>
             <div>
               <span className="text-muted-foreground">Active:</span>{' '}
               <span className="font-semibold text-green-600">
-                {definitions.filter(d => d.producer === 'inventory' && d.status === 'active').length}
+                {definitions.filter(d => d.status === 'active').length}
               </span>
             </div>
             <div>
               <span className="text-muted-foreground">Deprecated:</span>{' '}
               <span className="font-semibold text-orange-600">
-                {definitions.filter(d => d.producer === 'inventory' && d.status === 'deprecated').length}
+                {definitions.filter(d => d.status === 'deprecated').length}
               </span>
             </div>
             <div>
               <span className="text-muted-foreground">Draft:</span>{' '}
               <span className="font-semibold text-blue-600">
-                {definitions.filter(d => d.producer === 'inventory' && d.status === 'draft').length}
+                {definitions.filter(d => d.status === 'draft').length}
               </span>
             </div>
           </div>
         </div>
         
         <div className="space-y-4">
-          {definitions.filter(d => d.producer === 'inventory').length > 0 ? (
+          {definitions.length > 0 ? (
             definitions
-              .filter(d => d.producer === 'inventory')
               .sort((a, b) => a.event_name.localeCompare(b.event_name))
               .map((def) => (
               <div

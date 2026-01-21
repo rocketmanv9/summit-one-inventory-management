@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -19,53 +19,25 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
-    const { searchParams } = new URL(request.url);
-    const status = searchParams.get('status');
-    const vendorId = searchParams.get('vendor_id');
-
-    let query = supabase
+    // Simplified: Just return purchase orders without vendor relationship
+    const { data: purchaseOrders, error } = await supabase
       .from('purchase_orders')
-      .select(`
-        *,
-        vendors(id, name, code),
-        locations(id, name),
-        purchase_order_lines(
-          id,
-          catalog_item_id,
-          qty_ordered,
-          qty_received,
-          unit_cost,
-          status,
-          catalog_items(id, name, sku, unit_of_measure)
-        )
-      `)
-      .eq('tenant_id', tenantId);
-
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    if (vendorId) {
-      query = query.eq('vendor_id', vendorId);
-    }
-
-    const { data: purchaseOrders, error } = await query.order('created_at', { ascending: false });
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching purchase orders:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch purchase orders' },
+        { error: 'Failed to fetch purchase orders', details: error },
         { status: 500 }
       );
     }
 
     return NextResponse.json({
-      data: purchaseOrders,
+      data: purchaseOrders || [],
       meta: { tenantId, count: purchaseOrders?.length || 0 }
     });
   } catch (error) {
@@ -92,10 +64,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { vendor_id, ship_to_location_id, lines, expected_delivery_date, notes } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createClient();
 
     // Generate PO number
     const poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
