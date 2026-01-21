@@ -6,9 +6,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const supabase = createClient();
     
     // Verify authentication
@@ -29,8 +30,6 @@ export async function POST(
       );
     }
     
-    const reservationId = params.id;
-    
     // Optional: Parse request body for idempotency key
     const body = await request.json().catch(() => ({}));
     const lastEventId = body.last_event_id || null;
@@ -38,7 +37,7 @@ export async function POST(
     // Call RPC function (already exists in DB)
     const { data, error } = await supabase.rpc('rpc_inv_fulfill_reservation_issue', {
       p_tenant_id: tenantId,
-      p_reservation_id: reservationId,
+      p_reservation_id: id,
       p_fulfilled_by_user_id: session.user.id,
       p_last_event_id: lastEventId
     });
