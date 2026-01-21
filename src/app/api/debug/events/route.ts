@@ -3,10 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function GET(request: NextRequest) {
   try {
-    // Use service role to bypass RLS
+    // Try service role first, fall back to anon key
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      serviceRoleKey || anonKey,
       {
         auth: {
           autoRefreshToken: false,
@@ -14,6 +17,8 @@ export async function GET(request: NextRequest) {
         }
       }
     );
+    
+    console.log('Using key type:', serviceRoleKey ? 'service_role' : 'anon');
 
     // Get recent events from outbox
     const { data: events, error: eventsError } = await supabase
@@ -44,14 +49,28 @@ export async function GET(request: NextRequest) {
     }
 
     // Get event definitions (catalog)
+    console.log('Fetching event definitions...');
     const { data: definitions, error: defsError } = await supabase
       .from('event_definitions')
       .select('*')
       .order('event_name', { ascending: true });
 
+    console.log('Event definitions result:', {
+      count: definitions?.length,
+      error: defsError,
+      sampleEvent: definitions?.[0]
+    });
+
     if (defsError) {
       console.error('Error fetching event definitions:', defsError);
-      // Don't fail the whole request if catalog is missing
+      // Return the error details so we can see what's wrong
+      return NextResponse.json({
+        events: events || [],
+        stats: stats || null,
+        definitions: [],
+        definitionsError: defsError,
+        lastEmitted: {}
+      });
     }
 
     // Get last emitted timestamp for each event type

@@ -6,10 +6,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    // Use service role to bypass RLS
+    // Try service role first, fall back to anon key
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      serviceRoleKey || anonKey,
       {
         auth: {
           autoRefreshToken: false,
