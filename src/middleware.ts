@@ -7,6 +7,23 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
+  const { pathname, searchParams } = request.nextUrl;
+  
+  // Handle SSO redirect from Core: /dashboard?core_token=... -> /auth/callback?core_token=...
+  if (pathname === '/dashboard' && searchParams.has('core_token')) {
+    const callbackUrl = new URL('/auth/callback', request.url);
+    callbackUrl.searchParams.set('core_token', searchParams.get('core_token')!);
+    if (searchParams.has('core_env')) {
+      callbackUrl.searchParams.set('core_env', searchParams.get('core_env')!);
+    }
+    if (searchParams.has('target_org')) {
+      callbackUrl.searchParams.set('target_org', searchParams.get('target_org')!);
+    }
+    
+    console.log('[Middleware] SSO redirect from Core, forwarding to auth callback');
+    return NextResponse.redirect(callbackUrl);
+  }
+  
   const response = NextResponse.next();
   
   // Get the dev session cookie
@@ -29,7 +46,7 @@ export function middleware(request: NextRequest) {
   return response;
 }
 
-// Apply proxy to API routes
+// Apply middleware to dashboard and API routes
 export const config = {
-  matcher: '/api/:path*',
+  matcher: ['/dashboard/:path*', '/api/:path*'],
 };
