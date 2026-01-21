@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
 
     // Get all event definitions with stats
     const { data: stats, error: statsError } = await supabase
+      .schema('public')
       .rpc('get_event_catalog_stats');
 
     if (statsError) {

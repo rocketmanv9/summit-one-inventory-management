@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     const supabase = createClient();
     
     const { data: tenant, error } = await supabase
+      .schema('public')
       .from('tenants')
       .select('*')
       .eq('id', tenantId)

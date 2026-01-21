@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     // Get stats
     let stats = null;
     try {
-      const result = await supabase.rpc('get_event_catalog_stats');
+      const result = await supabase.schema('public').rpc('get_event_catalog_stats');
       stats = result.data;
       if (result.error) {
         console.error('Error fetching stats:', result.error);
