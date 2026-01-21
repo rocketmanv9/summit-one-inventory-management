@@ -13,8 +13,16 @@ export default function DevLoginPage() {
     setMessage('');
     
     try {
-      const response = await fetch('/api/auth/dev-login', {
-        method: 'POST'
+      const response = await fetch('/api/dev-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: '11111111-1111-1111-1111-111111111111',
+          email: 'dev@summit.one',
+          tenantId: 'ba964c21-05a0-4a71-92ea-47ec7cfe0bbd',
+          role: 'admin',
+          fullName: 'Dev User',
+        }),
       });
       
       const data = await response.json();
