@@ -246,3 +246,39 @@ All APIs implement proper security:
 - ✅ Viewing stock balances and movements
 
 **All UI forms use proper dropdowns and selectors - no more manual UUID entry required!**
+
+---
+
+## 📡 EVENT CATALOG SETUP
+
+### Seed Production Event Catalog
+
+The event catalog needs to be populated in your live database. This includes all inventory event definitions for the event-driven architecture.
+
+**Quick Setup:**
+
+```powershell
+# Option 1: Run the automated script
+.\seed_production_events.ps1
+
+# Option 2: Push migrations directly
+supabase db push
+```
+
+**What Gets Seeded:**
+- 13 inventory event definitions
+- Complete JSON schemas for each event
+- Example payloads for testing
+- Event versioning support
+
+**Events Included:**
+- Stock movements (`inventory.stock.*`)
+- Catalog items (`inventory.item.*`)
+- Purchase orders (`inventory.po.*`)
+- Receipts (`inventory.receipt.*`)
+- Transfers (`inventory.transfer.*`)
+- Cycle counts (`inventory.cycle_count.*`)
+- Reservations (`inventory.reservation.*`)
+- Alerts (`inventory.alert.*`)
+
+See **[EVENT_CATALOG_SEED_GUIDE.md](EVENT_CATALOG_SEED_GUIDE.md)** for detailed instructions.
