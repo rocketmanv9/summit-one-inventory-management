@@ -1,12 +1,12 @@
 /**
- * Next.js Proxy
+ * Next.js Middleware
  * Runs on every request to set tenant context from session cookie
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export default function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const response = NextResponse.next();
   
   // Get the dev session cookie

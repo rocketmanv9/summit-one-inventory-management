@@ -345,7 +345,7 @@ BEGIN
     INSERT INTO inventory.purchase_order_lines (tenant_id, po_id, line_number, catalog_item_id, qty_ordered, qty_received, unit_cost, status, last_event_id) VALUES
     (v_tenant_id, v_po_2, 1, v_item_rebar_4, 500, 300, 8.50, 'partially_received', gen_random_uuid()::text),
     (v_tenant_id, v_po_2, 2, v_item_rebar_5, 400, 200, 12.00, 'partially_received', gen_random_uuid()::text),
-    (v_tenant_id, v_po_2, 3, v_item_rebar_tie_wire, 200, 200, 1.25, 'closed', gen_random_uuid()::text);
+    (v_tenant_id, v_po_2, 3, v_item_rebar_tie_wire, 200, 200, 1.25, 'fully_received', gen_random_uuid()::text);
     
     -- PO 3: Draft concrete order
     INSERT INTO inventory.purchase_orders (id, tenant_id, po_number, vendor_location_id, status, order_date, expected_delivery_date, delivery_location_id, notes, last_event_id) VALUES
