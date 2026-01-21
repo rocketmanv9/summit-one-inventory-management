@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createClient } from '@supabase/supabase-js';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient();
+    // Use service role to bypass RLS
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
 
     // Get recent events from outbox
     const { data: events, error: eventsError } = await supabase
@@ -35,7 +45,6 @@ export async function GET(request: NextRequest) {
 
     // Get event definitions (catalog)
     const { data: definitions, error: defsError } = await supabase
-      .schema('public')
       .from('event_definitions')
       .select('*')
       .order('event_name', { ascending: true });
