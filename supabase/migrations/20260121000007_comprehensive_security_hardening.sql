@@ -268,18 +268,9 @@ COMMENT ON COLUMN inventory.catalog_items.deleted_by_user_id IS
     'User who soft-deleted this item';
 
 -- Update RLS policy to exclude soft-deleted items by default
-DROP POLICY IF EXISTS catalog_items_tenant_isolation ON inventory.catalog_items;
-CREATE POLICY catalog_items_tenant_isolation ON inventory.catalog_items
-    FOR ALL
-    USING (
-        tenant_id = (auth.jwt() ->> 'tenant_id')::UUID 
-        AND deleted_at IS NULL
-    );
-
--- Service role can see soft-deleted items
-CREATE POLICY catalog_items_service_role_all ON inventory.catalog_items
-    FOR ALL TO service_role
-    USING (true) WITH CHECK (true);
+-- NOTE: RLS disabled on this table - tenant isolation handled by API layer
+-- This table uses custom JWT auth, not Supabase auth.jwt()
+-- DO NOT re-enable RLS without updating to support custom auth
 
 -- Change foreign keys to RESTRICT now that we have soft delete
 DO $$
