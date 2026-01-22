@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
 
     // Simplified: Just return purchase orders without vendor relationship
     const { data: purchaseOrders, error } = await supabase
+      .schema('supply_chain')
       .from('purchase_orders')
       .select('*')
       .eq('tenant_id', tenantId)
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
 
     // Create PO header
     const { data: po, error: poError } = await supabase
+      .schema('supply_chain')
       .from('purchase_orders')
       .insert({
         tenant_id: tenantId,
@@ -107,6 +109,7 @@ export async function POST(request: NextRequest) {
       }));
 
       const { error: linesError } = await supabase
+        .schema('supply_chain')
         .from('purchase_order_lines')
         .insert(poLines);
 

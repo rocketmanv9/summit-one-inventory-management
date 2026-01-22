@@ -141,6 +141,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   // PROCUREMENT WIDGETS
   if (widgetKey === 'procurement.widget.open_purchase_orders') {
     const { data } = await supabase
+      .schema('supply_chain')
       .from('purchase_orders')
       .select(`
         po_number,
@@ -564,6 +565,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'procurement.widget.late_deliveries') {
     const today = new Date().toISOString().split('T')[0];
     const { data } = await supabase
+      .schema('supply_chain')
       .from('purchase_orders')
       .select(`
         po_number,
@@ -597,6 +599,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'procurement.widget.supplier_spend') {
     const days = config.period_days || 30;
     const { data } = await supabase
+      .schema('supply_chain')
       .from('purchase_orders')
       .select(`
         total_amount,

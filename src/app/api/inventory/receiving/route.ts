@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
 
     // Simplified: Return basic receipt data without complex joins
     const { data: receipts, error } = await supabase
+      .schema('supply_chain')
       .from('receipts')
       .select(`
         *,
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
 
     // Create receipt header
     const { data: receipt, error: receiptError } = await supabase
+      .schema('supply_chain')
       .from('receipts')
       .insert({
         tenant_id: tenantId,
@@ -98,6 +100,7 @@ export async function POST(request: NextRequest) {
       for (const line of lines) {
         // Insert receipt line
         await supabase
+          .schema('supply_chain')
           .from('receipt_lines')
           .insert({
             tenant_id: tenantId,

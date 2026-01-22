@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
     const supabase = createClient();
 
     const { data: vendors, error } = await supabase
+      .schema('supply_chain')
       .from('vendors')
       .select('*')
       .eq('tenant_id', tenantId)
@@ -66,6 +67,7 @@ export async function POST(request: NextRequest) {
     const supabase = createClient();
 
     const { data: vendor, error } = await supabase
+      .schema('supply_chain')
       .from('vendors')
       .insert({
         tenant_id: tenantId,
