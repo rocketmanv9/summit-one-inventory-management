@@ -27,18 +27,48 @@ export async function GET(request: NextRequest) {
       }
     );
     
-    const { data: tenant, error } = await supabase
+    // Try to fetch existing tenant
+    let { data: tenant, error } = await supabase
       .schema('public')
       .from('tenants')
       .select('*')
       .eq('id', tenantId)
       .single();
     
-    if (error) {
+    // Auto-provision tenant on first access if not found
+    if (error && error.code === 'PGRST116') {
+      console.log(`Auto-provisioning tenant: ${tenantId}`);
+      
+      // Create tenant record with default values
+      const { data: newTenant, error: createError } = await supabase
+        .schema('public')
+        .from('tenants')
+        .insert({
+          id: tenantId,
+          name: `Tenant ${tenantId.substring(0, 8)}`, // Default name, can be updated later
+          slug: `tenant-${tenantId.substring(0, 8)}`,
+          industry: 'general',
+          metadata: {}
+        })
+        .select()
+        .single();
+      
+      if (createError) {
+        console.error('Error auto-provisioning tenant:', createError);
+        return NextResponse.json(
+          { error: 'Failed to provision tenant', details: createError.message },
+          { status: 500 }
+        );
+      }
+      
+      tenant = newTenant;
+      console.log(`✓ Auto-provisioned tenant: ${tenantId}`);
+    } else if (error) {
+      // Other errors (not "not found")
       console.error('Error fetching tenant:', error);
       return NextResponse.json(
-        { error: 'Tenant not found' },
-        { status: 404 }
+        { error: 'Database error', details: error.message },
+        { status: 500 }
       );
     }
     
