@@ -23,11 +23,12 @@ export async function GET(request: NextRequest) {
 
     // Simplified: Just return assets data without the view
     const { data: assets, error } = await supabase
+      .schema('inventory')
       .from('assets')
       .select(`
         *,
         catalog_item:catalog_items(id, name, sku),
-        home_location:locations(id, name, location_type)
+        location:locations!assets_location_id_fkey(id, name, location_type)
       `)
       .eq('tenant_id', tenantId)
       .order('asset_tag');

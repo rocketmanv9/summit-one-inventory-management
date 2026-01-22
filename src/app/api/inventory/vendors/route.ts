@@ -78,7 +78,8 @@ export async function POST(request: NextRequest) {
         contact_phone,
         address,
         payment_terms,
-        lead_time_days,
+        lead_time_days: lead_time_days || null,
+        active: true,
       })
       .select()
       .single();

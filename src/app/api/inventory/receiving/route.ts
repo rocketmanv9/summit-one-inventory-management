@@ -27,8 +27,7 @@ export async function GET(request: NextRequest) {
       .from('receipts')
       .select(`
         *,
-        purchase_order:purchase_orders(id, po_number),
-        location:locations(id, name)
+        purchase_order:purchase_orders(id, po_number)
       `)
       .eq('tenant_id', tenantId)
       .order('received_at', { ascending: false });
