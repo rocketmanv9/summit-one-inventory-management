@@ -1,12 +1,18 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, SupabaseClient } from "@supabase/supabase-js";
+
+// Singleton instance
+let client: SupabaseClient | null = null;
 
 // Client-side Supabase client factory
-// Creates a new client instance with user session
+// Returns singleton instance to avoid multiple GoTrueClient warnings
 // Note: Use API routes for inventory schema access (permission denied on direct queries)
 export function createClient() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  if (!client) {
+    client = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }
+  return client;
 }
 
