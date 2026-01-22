@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
 
     // Simplified: Just return cycle counts without lines
     const { data: cycleCounts, error } = await supabase
+      .schema('inventory')
       .from('cycle_counts')
       .select(`
         *,

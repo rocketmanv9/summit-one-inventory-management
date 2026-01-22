@@ -44,7 +44,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'inventory.widget.total_inventory_value') {
     // Calculate total inventory value from read model
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('quantity_on_hand, last_unit_cost')
       .eq('tenant_id', tenantId);
     
@@ -56,7 +56,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.items_below_reorder') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('sku, description, quantity_on_hand, reorder_point, location_name')
       .eq('tenant_id', tenantId)
       .filter('quantity_on_hand', 'lte', supabase.raw('reorder_point'))
@@ -77,7 +77,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.items_below_min_stock') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('sku, description, quantity_on_hand, min_stock_level, location_name')
       .eq('tenant_id', tenantId)
       .filter('quantity_on_hand', 'lte', supabase.raw('min_stock_level'))
@@ -99,7 +99,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'inventory.widget.top_consumed_items') {
     // Get top issued items from stock_movements
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         catalog_item_id,
         quantity_delta,
@@ -173,7 +173,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   // FLOW WIDGETS
   if (widgetKey === 'flow.widget.recent_receipts') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -203,7 +203,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'flow.widget.recent_issues') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -236,7 +236,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.inventory_value_by_category') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('category_name, quantity_on_hand, last_unit_cost')
       .eq('tenant_id', tenantId);
     
@@ -258,7 +258,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.inventory_value_by_yard') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('location_name, quantity_on_hand, last_unit_cost')
       .eq('tenant_id', tenantId);
     
@@ -280,7 +280,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.critical_stock_alerts') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('sku, description, quantity_on_hand, min_stock_level, location_name')
       .eq('tenant_id', tenantId)
       .lte('quantity_on_hand', 0)
@@ -300,7 +300,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.overstocked_items') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('sku, description, quantity_on_hand, max_stock_level, location_name')
       .eq('tenant_id', tenantId)
       .filter('quantity_on_hand', 'gte', supabase.raw('max_stock_level'))
@@ -322,7 +322,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'inventory.widget.stock_received_timeseries') {
     const days = config.period_days || 30;
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select('occurred_at, quantity_delta')
       .eq('tenant_id', tenantId)
       .eq('movement_type', 'received')
@@ -348,7 +348,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   if (widgetKey === 'inventory.widget.stock_issued_timeseries') {
     const days = config.period_days || 30;
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select('occurred_at, quantity_delta')
       .eq('tenant_id', tenantId)
       .eq('movement_type', 'issued')
@@ -373,7 +373,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.stock_transfers') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -403,7 +403,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.stock_adjustments') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -436,7 +436,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.damaged_inventory') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -466,7 +466,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.returns_to_stock') {
     const { data } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select(`
         occurred_at,
         quantity_delta,
@@ -499,7 +499,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'inventory.widget.reservations_vs_available') {
     const { data: inventory } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('location_name, quantity_on_hand, quantity_reserved')
       .eq('tenant_id', tenantId);
 
@@ -532,13 +532,13 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
     
     // Get items with no recent movements
     const { data: allItems } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('id, sku, description, quantity_on_hand, location_name, last_unit_cost')
       .eq('tenant_id', tenantId)
       .gt('quantity_on_hand', 0);
 
     const { data: recentMovements } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select('catalog_item_id')
       .eq('tenant_id', tenantId)
       .gte('occurred_at', cutoffDate);
@@ -644,7 +644,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
     // Simple forecast based on current usage rate
     const forecastDays = config.forecast_days || 14;
     const { data: movements } = await supabase
-      .from('stock_movements')
+      .schema('inventory').from('stock_movements')
       .select('catalog_item_id, quantity_delta, occurred_at')
       .eq('tenant_id', tenantId)
       .eq('movement_type', 'issued')
@@ -657,7 +657,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
     }, {});
 
     const { data: inventory } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('id, sku, description, quantity_on_hand, location_name')
       .eq('tenant_id', tenantId);
 
@@ -696,7 +696,7 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
 
   if (widgetKey === 'exec.widget.carrying_cost') {
     const { data } = await supabase
-      .from('inventory_read_model')
+      .schema('inventory').from('inventory_read_model')
       .select('quantity_on_hand, last_unit_cost')
       .eq('tenant_id', tenantId);
     

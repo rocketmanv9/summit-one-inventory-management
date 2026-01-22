@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
     const allocationType = searchParams.get('allocation_type');
 
     let query = supabase
+      .schema('inventory')
       .from('reservations')
       .select(`
         *,

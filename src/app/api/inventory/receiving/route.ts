@@ -131,12 +131,14 @@ export async function POST(request: NextRequest) {
         // Update PO line qty_received
         if (line.purchase_order_line_id) {
           const { data: poLine } = await supabase
+            .schema('supply_chain')
             .from('purchase_order_lines')
             .select('qty_received')
             .eq('id', line.purchase_order_line_id)
             .single();
 
           await supabase
+            .schema('supply_chain')
             .from('purchase_order_lines')
             .update({
               qty_received: (poLine?.qty_received || 0) + line.qty_received

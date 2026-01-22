@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
 
     let query = supabase
+      .schema('inventory')
       .from('transfers')
       .select(`
         *,

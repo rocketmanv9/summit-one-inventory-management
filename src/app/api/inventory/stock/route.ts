@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
 
     // Fetch stock_balances data with qty_on_order and inventory_position
     const { data: stockBalances, error } = await supabase
+      .schema('inventory')
       .from('stock_balances')
       .select(`
         id,
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
 
     // Fetch qty_on_order from view
     const { data: onOrderData, error: onOrderError } = await supabase
+      .schema('inventory')
       .from('v_on_order_by_item_location')
       .select('catalog_item_id, location_id, qty_on_order')
       .eq('tenant_id', tenantId);

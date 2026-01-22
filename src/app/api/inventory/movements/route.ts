@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
 
     // Build query
     let query = supabase
+      .schema('inventory')
       .from('stock_movements')
       .select(`
         *,

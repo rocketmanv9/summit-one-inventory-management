@@ -38,6 +38,7 @@ export async function PATCH(request: NextRequest) {
     // Update each widget's layout individually
     for (const widget of widgets) {
       const { error } = await supabase
+        .schema('public')
         .from('dashboard_widgets')
         .update({
           layout: widget.layout,

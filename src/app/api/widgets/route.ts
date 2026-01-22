@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const supabase = createClient();
     
     const { data, error } = await supabase
+      .schema('public')
       .from('widget_registry')
       .select('*')
       .eq('is_enabled', true)

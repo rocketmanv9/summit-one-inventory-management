@@ -74,8 +74,7 @@ export async function POST(request: NextRequest) {
     const supabase = createClient();
     
     // CRITICAL: Always set tenant_id from session, NEVER from client input
-    const { data: item, error } = await supabase
-      .from('catalog_items')
+    const { data: item, error } = await supabase      .schema('inventory')      .from('catalog_items')
       .insert({
         tenant_id: tenantId, // From authenticated session
         name,
