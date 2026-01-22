@@ -139,7 +139,7 @@ export const SupplyChainRPC = {
   async getVendors() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('inventory.vendors')
+      .from('vendors')
       .select('*')
       .eq('active', true)
       .order('name');

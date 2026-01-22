@@ -99,37 +99,30 @@ export const InventoryRPC = {
     tracking_mode?: string;
     search?: string;
   }) {
-    const supabase = createClient();
-    let query = supabase
-      .from('inventory.catalog_items')
-      .select(`
-        *,
-        item_categories:category_id(name),
-        vendors:preferred_vendor_id(name)
-      `)
-      .is('deleted_at', null)
-      .order('name');
-
+    const params = new URLSearchParams();
     if (filters?.active !== undefined) {
-      query = query.eq('active', filters.active);
+      params.append('active', String(filters.active));
     }
     if (filters?.category_id) {
-      query = query.eq('category_id', filters.category_id);
+      params.append('category_id', filters.category_id);
     }
     if (filters?.tracking_mode) {
-      query = query.eq('tracking_mode', filters.tracking_mode);
+      params.append('tracking_mode', filters.tracking_mode);
     }
     if (filters?.search) {
-      query = query.or(`name.ilike.%${filters.search}%,sku.ilike.%${filters.search}%`);
+      params.append('search', filters.search);
     }
 
-    const { data, error } = await query;
+    const url = `/api/inventory/items${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
 
-    if (error) {
-      throw new Error(`Failed to fetch catalog items: ${error.message}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Failed to fetch catalog items: ${error.error || response.statusText}`);
     }
 
-    return data;
+    const result = await response.json();
+    return result.data;
   },
 
   /**
@@ -140,26 +133,24 @@ export const InventoryRPC = {
     type?: string;
     active?: boolean;
   }) {
-    const supabase = createClient();
-    let query = supabase
-      .from('inventory.locations')
-      .select('*')
-      .order('name');
-
+    const params = new URLSearchParams();
     if (filters?.type) {
-      query = query.eq('location_type', filters.type);
+      params.append('location_type', filters.type);
     }
     if (filters?.active !== undefined) {
-      query = query.eq('active', filters.active);
+      params.append('active', String(filters.active));
     }
 
-    const { data, error } = await query;
+    const url = `/api/inventory/locations${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
 
-    if (error) {
-      throw new Error(`Failed to fetch locations: ${error.message}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`Failed to fetch locations: ${error.error || response.statusText}`);
     }
 
-    return data;
+    const result = await response.json();
+    return result.data;
   },
 
   /**
@@ -173,7 +164,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('inventory.stock_balances')
+      .from('stock_balances')
       .select(`
         *,
         catalog_items:catalog_item_id(name, sku, unit_of_measure),
@@ -207,7 +198,7 @@ export const InventoryRPC = {
   async getLowStockItems() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('inventory.mv_low_stock_summary')
+      .from('mv_low_stock_summary')
       .select('*')
       .order('total_available');
 
@@ -225,7 +216,7 @@ export const InventoryRPC = {
   async getInventorySummary() {
     const supabase = createClient();
     const { data, error } = await supabase
-      .from('inventory.mv_inventory_summary')
+      .from('mv_inventory_summary')
       .select('*')
       .single();
 
@@ -247,7 +238,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('inventory.transfers')
+      .from('transfers')
       .select(`
         *,
         from_locations:from_location_id(name),
@@ -285,7 +276,7 @@ export const InventoryRPC = {
   }) {
     const supabase = createClient();
     let query = supabase
-      .from('inventory.reservations')
+      .from('reservations')
       .select(`
         *,
         catalog_items:catalog_item_id(name, sku),

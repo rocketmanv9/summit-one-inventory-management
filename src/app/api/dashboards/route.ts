@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
     console.log('[DASHBOARDS API] Fetching for tenant:', session.tenantId);
     
     const { data: dashboards, error } = await supabase
+      .schema('public')
       .from('dashboards')
       .select('*')
       .eq('tenant_id', session.tenantId)
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
     const supabase = createClient();
     
     const { data: dashboard, error } = await supabase
+      .schema('public')
       .from('dashboards')
       .insert({
         tenant_id: session.tenantId,

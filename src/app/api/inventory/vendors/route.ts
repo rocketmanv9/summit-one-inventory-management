@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const supabase = createClient();
 
     const { data: vendors, error } = await supabase
-      .from('inventory.vendors')
+      .from('vendors')
       .select('*')
       .eq('tenant_id', tenantId)
       .eq('active', true)
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     const supabase = createClient();
 
     const { data: vendor, error } = await supabase
-      .from('inventory.vendors')
+      .from('vendors')
       .insert({
         tenant_id: tenantId,
         name,

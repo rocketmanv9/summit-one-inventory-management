@@ -24,10 +24,10 @@ export async function GET(request: NextRequest) {
     // Query items - ALWAYS filter by tenant_id
     // This is critical for data isolation
     const { data: items, error } = await supabase
-      .from('inventory.catalog_items')
+      .from('catalog_items')
       .select(`
         *,
-        item_categories:inventory.item_categories(name)
+        item_categories:item_categories(name)
       `)
       .eq('tenant_id', tenantId)
       .is('deleted_at', null)
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     
     // CRITICAL: Always set tenant_id from session, NEVER from client input
     const { data: item, error } = await supabase
-      .from('inventory.catalog_items')
+      .from('catalog_items')
       .insert({
         tenant_id: tenantId, // From authenticated session
         name,
