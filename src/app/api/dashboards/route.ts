@@ -101,8 +101,9 @@ export async function POST(request: NextRequest) {
         name: name.trim(),
         description: description?.trim() || null,
         is_default: is_default || false,
-        scope: 'user', // User-scoped dashboard by default
-        owner_user_id: session.userId, // Set owner to current user
+        scope: 'user',
+        owner_user_id: session.userId,
+        created_by: session.userId,
       })
       .select()
       .single();
