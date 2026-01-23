@@ -29,6 +29,8 @@ interface Category {
   name: string;
 }
 
+type TrackingMode = CatalogItem['tracking_mode'];
+
 export default function ItemsPage() {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,7 +264,15 @@ function CreateItemModal({
   item?: CatalogItem;
 }) {
   const isEditing = !!item;
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    name: string;
+    sku: string;
+    description: string;
+    category_id: string;
+    unit_of_measure: string;
+    tracking_mode: TrackingMode;
+    reorder_point: string;
+  }>({
     name: item?.name || '',
     sku: item?.sku || '',
     description: item?.description || '',
@@ -410,7 +420,7 @@ function CreateItemModal({
               <label className="block text-sm font-medium mb-1">Tracking Mode</label>
               <select
                 value={form.tracking_mode}
-                onChange={(e) => setForm({ ...form, tracking_mode: e.target.value })}
+                onChange={(e) => setForm({ ...form, tracking_mode: e.target.value as TrackingMode })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="stock">Stock</option>
