@@ -580,6 +580,45 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; vendor_number: string }>>([]);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [catalogItems, setCatalogItems] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+
+  useEffect(() => {
+    fetchVendors();
+    fetchLocations();
+    fetchCatalogItems();
+  }, []);
+
+  const fetchVendors = async () => {
+    try {
+      const res = await fetch('/api/inventory/vendors');
+      const { data } = await res.json();
+      setVendors(data || []);
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+    }
+  };
+
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch('/api/inventory/locations');
+      const { data } = await res.json();
+      setLocations(data || []);
+    } catch (error) {
+      console.error('Error fetching locations:', error);
+    }
+  };
+
+  const fetchCatalogItems = async () => {
+    try {
+      const res = await fetch('/api/inventory/items?limit=1000');
+      const { data } = await res.json();
+      setCatalogItems(data || []);
+    } catch (error) {
+      console.error('Error fetching catalog items:', error);
+    }
+  };
 
   const addLine = () => {
     setForm({
@@ -655,26 +694,36 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Vendor ID *</label>
-              <input
-                type="text"
+              <label className="block text-sm font-medium mb-1">Vendor *</label>
+              <select
                 value={form.vendor_id}
                 onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                placeholder="Vendor UUID"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 required
-              />
+              >
+                <option value="">Select a vendor...</option>
+                {vendors.map(vendor => (
+                  <option key={vendor.id} value={vendor.id}>
+                    {vendor.vendor_number} - {vendor.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Ship To Location *</label>
-              <input
-                type="text"
+              <select
                 value={form.ship_to_location_id}
                 onChange={(e) => setForm({ ...form, ship_to_location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                placeholder="Location UUID"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 required
-              />
+              >
+                <option value="">Select a location...</option>
+                {locations.map(location => (
+                  <option key={location.id} value={location.id}>
+                    {location.name} ({location.location_type?.name || 'Unknown'})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -698,13 +747,18 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <div className="space-y-2">
               {form.lines.map((line, index) => (
                 <div key={index} className="flex gap-2 items-center">
-                  <input
-                    type="text"
+                  <select
                     value={line.catalog_item_id}
                     onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
-                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="Item UUID"
-                  />
+                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="">Select an item...</option>
+                    {catalogItems.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {item.sku} - {item.name}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     type="number"
                     value={line.qty}

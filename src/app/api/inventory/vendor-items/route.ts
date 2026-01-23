@@ -10,23 +10,11 @@ export async function GET(request: NextRequest) {
 
     const supabase = createClient();
 
+    // Fetch vendor items
     let query = supabase
       .schema('supply_chain')
       .from('vendor_items')
-      .select(`
-        *,
-        vendor:vendors!vendor_id (
-          id,
-          name,
-          code
-        ),
-        catalog_item:inventory.catalog_items!catalog_item_id (
-          id,
-          sku,
-          name,
-          description
-        )
-      `)
+      .select('*')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
@@ -38,14 +26,57 @@ export async function GET(request: NextRequest) {
       query = query.eq('catalog_item_id', catalogItemId);
     }
 
-    const { data, error } = await query;
+    const { data: vendorItems, error: viError } = await query;
 
-    if (error) {
-      console.error('Error fetching vendor items:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (viError) {
+      console.error('Error fetching vendor items:', viError);
+      return NextResponse.json({ error: viError.message }, { status: 500 });
     }
 
-    return NextResponse.json(data);
+    console.log(`[Vendor Items GET] Found ${vendorItems?.length || 0} vendor items for tenant ${tenantId}, vendorId filter: ${vendorId}`);
+
+    if (!vendorItems || vendorItems.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    // Fetch related vendors
+    const vendorIds = [...new Set(vendorItems.map(vi => vi.vendor_id))];
+    const { data: vendors, error: vendorError } = await supabase
+      .schema('supply_chain')
+      .from('vendors')
+      .select('id, name, code')
+      .in('id', vendorIds);
+
+    if (vendorError) {
+      console.error('Error fetching vendors:', vendorError);
+    }
+    console.log(`[Vendor Items GET] Fetched ${vendors?.length || 0} vendors`);
+
+    // Fetch related catalog items
+    const catalogItemIds = [...new Set(vendorItems.map(vi => vi.catalog_item_id))];
+    const { data: catalogItems, error: catalogError } = await supabase
+      .schema('inventory')
+      .from('catalog_items')
+      .select('id, sku, name, description')
+      .in('id', catalogItemIds);
+
+    if (catalogError) {
+      console.error('Error fetching catalog items:', catalogError);
+    }
+    console.log(`[Vendor Items GET] Fetched ${catalogItems?.length || 0} catalog items`);
+
+    // Join the data
+    const vendorMap = new Map(vendors?.map(v => [v.id, v]) || []);
+    const catalogMap = new Map(catalogItems?.map(c => [c.id, c]) || []);
+
+    const enrichedData = vendorItems.map(vi => ({
+      ...vi,
+      vendor: vendorMap.get(vi.vendor_id) || null,
+      catalog_item: catalogMap.get(vi.catalog_item_id) || null,
+    }));
+
+    console.log(`[Vendor Items GET] Returning ${enrichedData.length} enriched items`);
+    return NextResponse.json(enrichedData);
   } catch (error) {
     console.error('Error in vendor items GET:', error);
     return NextResponse.json(
@@ -62,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     const supabase = createClient();
 
-    const { data, error } = await supabase
+    const { data: vendorItem, error } = await supabase
       .schema('supply_chain')
       .from('vendor_items')
       .insert({
@@ -79,20 +110,7 @@ export async function POST(request: NextRequest) {
         min_order_qty: body.min_order_qty,
         notes: body.notes,
       })
-      .select(`
-        *,
-        vendor:vendors!vendor_id (
-          id,
-          name,
-          code
-        ),
-        catalog_item:inventory.catalog_items!catalog_item_id (
-          id,
-          sku,
-          name,
-          description
-        )
-      `)
+      .select('*')
       .single();
 
     if (error) {
@@ -109,7 +127,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(data, { status: 201 });
+    // Fetch related vendor
+    const { data: vendor } = await supabase
+      .schema('supply_chain')
+      .from('vendors')
+      .select('id, name, code')
+      .eq('id', vendorItem.vendor_id)
+      .single();
+
+    // Fetch related catalog item
+    const { data: catalogItem } = await supabase
+      .schema('inventory')
+      .from('catalog_items')
+      .select('id, sku, name, description')
+      .eq('id', vendorItem.catalog_item_id)
+      .single();
+
+    const enrichedData = {
+      ...vendorItem,
+      vendor: vendor || null,
+      catalog_item: catalogItem || null,
+    };
+
+    return NextResponse.json(enrichedData, { status: 201 });
   } catch (error) {
     console.error('Error in vendor items POST:', error);
     return NextResponse.json(

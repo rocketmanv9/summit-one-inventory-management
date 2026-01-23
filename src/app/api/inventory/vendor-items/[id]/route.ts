@@ -12,7 +12,7 @@ export async function PUT(
 
     const supabase = createClient();
 
-    const { data, error } = await supabase
+    const { data: vendorItem, error } = await supabase
       .schema('supply_chain')
       .from('vendor_items')
       .update({
@@ -28,20 +28,7 @@ export async function PUT(
       })
       .eq('id', id)
       .eq('tenant_id', tenantId)
-      .select(`
-        *,
-        vendor:vendors!vendor_id (
-          id,
-          name,
-          code
-        ),
-        catalog_item:inventory.catalog_items!catalog_item_id (
-          id,
-          sku,
-          name,
-          description
-        )
-      `)
+      .select('*')
       .single();
 
     if (error) {
@@ -49,11 +36,33 @@ export async function PUT(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    if (!data) {
+    if (!vendorItem) {
       return NextResponse.json({ error: 'Vendor item not found' }, { status: 404 });
     }
 
-    return NextResponse.json(data);
+    // Fetch related vendor
+    const { data: vendor } = await supabase
+      .schema('supply_chain')
+      .from('vendors')
+      .select('id, name, code')
+      .eq('id', vendorItem.vendor_id)
+      .single();
+
+    // Fetch related catalog item
+    const { data: catalogItem } = await supabase
+      .schema('inventory')
+      .from('catalog_items')
+      .select('id, sku, name, description')
+      .eq('id', vendorItem.catalog_item_id)
+      .single();
+
+    const enrichedData = {
+      ...vendorItem,
+      vendor: vendor || null,
+      catalog_item: catalogItem || null,
+    };
+
+    return NextResponse.json(enrichedData);
   } catch (error) {
     console.error('Error in vendor item PUT:', error);
     return NextResponse.json(

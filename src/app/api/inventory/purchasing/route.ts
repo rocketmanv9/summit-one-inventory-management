@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
-    // Simplified: Just return purchase orders without vendor relationship
+    // Fetch purchase orders
     const { data: purchaseOrders, error } = await supabase
       .schema('supply_chain')
       .from('purchase_orders')
@@ -37,9 +37,57 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (!purchaseOrders || purchaseOrders.length === 0) {
+      return NextResponse.json({
+        data: [],
+        meta: { tenantId, count: 0 }
+      });
+    }
+
+    // Fetch related vendors
+    const vendorIds = [...new Set(purchaseOrders.map(po => po.vendor_id).filter(Boolean))];
+    const { data: vendors } = await supabase
+      .schema('supply_chain')
+      .from('vendors')
+      .select('id, name, vendor_number')
+      .in('id', vendorIds);
+
+    // Fetch related locations
+    const locationIds = [...new Set(purchaseOrders.map(po => po.ship_to_location_id).filter(Boolean))];
+    const { data: locations } = await supabase
+      .schema('inventory')
+      .from('locations')
+      .select('id, name')
+      .in('id', locationIds);
+
+    // Fetch PO lines
+    const poIds = purchaseOrders.map(po => po.id);
+    const { data: lines } = await supabase
+      .schema('supply_chain')
+      .from('purchase_order_lines')
+      .select('*')
+      .in('purchase_order_id', poIds);
+
+    // Create lookup maps
+    const vendorMap = new Map(vendors?.map(v => [v.id, v]) || []);
+    const locationMap = new Map(locations?.map(l => [l.id, l]) || []);
+    const linesMap = new Map<string, any[]>();
+    lines?.forEach(line => {
+      const existing = linesMap.get(line.purchase_order_id) || [];
+      linesMap.set(line.purchase_order_id, [...existing, line]);
+    });
+
+    // Combine data
+    const enrichedPOs = purchaseOrders.map(po => ({
+      ...po,
+      vendors: po.vendor_id ? vendorMap.get(po.vendor_id) : null,
+      locations: po.ship_to_location_id ? locationMap.get(po.ship_to_location_id) : null,
+      purchase_order_lines: linesMap.get(po.id) || []
+    }));
+
     return NextResponse.json({
-      data: purchaseOrders || [],
-      meta: { tenantId, count: purchaseOrders?.length || 0 }
+      data: enrichedPOs,
+      meta: { tenantId, count: enrichedPOs.length }
     });
   } catch (error) {
     console.error('Unexpected error:', error);

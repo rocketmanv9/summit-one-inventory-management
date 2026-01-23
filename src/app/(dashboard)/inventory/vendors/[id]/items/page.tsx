@@ -91,7 +91,7 @@ export default function VendorItemsPage() {
     setLoading(true);
     try {
       const res = await fetch(`/api/inventory/vendor-items?vendor_id=${vendorId}`);
-      const { data } = await res.json();
+      const data = await res.json();
       setVendorItems(data || []);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
