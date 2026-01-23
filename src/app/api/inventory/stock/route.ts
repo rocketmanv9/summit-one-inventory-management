@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
         qty_reserved,
         qty_available,
         updated_at,
-        catalog_items(id, sku, name, uom),
+        catalog_items(id, sku, name, unit_of_measure),
         locations(id, name, location_type)
       `)
       .eq('tenant_id', tenantId);

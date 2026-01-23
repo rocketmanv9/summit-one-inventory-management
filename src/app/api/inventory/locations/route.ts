@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
@@ -22,16 +22,20 @@ export async function GET(request: NextRequest) {
     const supabase = createClient();
 
     const { searchParams } = new URL(request.url);
-    const locationType = searchParams.get('type');
+    const locationTypeId = searchParams.get('typeId');
 
     let query = supabase
+      .schema('inventory')
       .from('locations')
-      .select('*')
+      .select(`
+        *,
+        location_type:location_types!locations_location_type_id_fkey(name)
+      `)
       .eq('tenant_id', tenantId)
       .eq('active', true);
 
-    if (locationType) {
-      query = query.eq('location_type', locationType);
+    if (locationTypeId) {
+      query = query.eq('location_type_id', locationTypeId);
     }
 
     const { data: locations, error } = await query.order('name');
@@ -69,25 +73,40 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { name, location_type, address, parent_location_id } = body;
+    const { name, location_type_id, address, parent_location_id } = body;
+
+    const userId = getUserIdFromHeaders(request.headers);
+    console.log('Creating location with:', { name, location_type_id, address, parent_location_id, tenantId, userId });
+
+    if (!location_type_id) {
+      return NextResponse.json(
+        { error: 'Location type is required' },
+        { status: 400 }
+      );
+    }
 
     const supabase = createClient();
 
-    const { data: location, error } = await supabase      .schema('inventory')      .from('locations')
+    const { data: location, error } = await supabase
+      .schema('inventory')
+      .from('locations')
       .insert({
         tenant_id: tenantId,
         name,
-        location_type: location_type || 'warehouse',
+        location_type_id,
         address,
         parent_location_id,
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single();
 
     if (error) {
       console.error('Error creating location:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
       return NextResponse.json(
-        { error: 'Failed to create location' },
+        { error: error.message || 'Failed to create location' },
         { status: 500 }
       );
     }

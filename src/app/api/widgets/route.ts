@@ -39,8 +39,13 @@ export async function GET(request: NextRequest) {
       .order('name');
 
     if (error) {
-      console.error('Error fetching widget registry:', error);
+      console.error('[/api/widgets] Error fetching widget registry:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    console.log('[/api/widgets] Fetched widgets count:', data?.length || 0);
+    if (data && data.length > 0) {
+      console.log('[/api/widgets] Sample widget:', data[0]);
     }
 
     return NextResponse.json({ data });

@@ -24,11 +24,17 @@ interface CatalogItem {
   vendors?: { name: string };
 }
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 export default function ItemsPage() {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<CatalogItem | undefined>();
 
   useEffect(() => {
     fetchItems();
@@ -47,6 +53,31 @@ export default function ItemsPage() {
       console.error('Error fetching items:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManageCategories = () => {
+    window.location.href = '/inventory/categories';
+  };
+
+  const handleDelete = async (itemId: string, itemName: string) => {
+    if (!confirm(`Are you sure you want to delete "${itemName}"?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/inventory/items/${itemId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete item');
+      }
+
+      fetchItems(); // Refresh the list
+    } catch (error: any) {
+      alert(`Error: ${error.message}`);
     }
   };
 
@@ -105,6 +136,30 @@ export default function ItemsPage() {
         <StatusChip status={row.active ? 'active' : 'inactive'} />
       ),
     },
+    {
+      key: 'actions',
+      header: 'Actions',
+      className: 'text-right',
+      render: (row: CatalogItem) => (
+        <div className="flex gap-2 justify-end">
+          <button
+            onClick={() => {
+              setEditingItem(row);
+              setShowCreateModal(true);
+            }}
+            className="text-blue-600 hover:text-blue-800 px-3 py-1 text-sm font-medium"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => handleDelete(row.id, row.name)}
+            className="text-red-600 hover:text-red-800 px-3 py-1 text-sm font-medium"
+          >
+            Delete
+          </button>
+        </div>
+      ),
+    },
   ];
 
   const filterConfig = [
@@ -146,12 +201,20 @@ export default function ItemsPage() {
           title="Catalog Items"
           description="Manage your inventory catalog. Example: Define items like 'Hot Mix Asphalt (HMA)', 'Ready-Mix Concrete 3000 PSI', 'Rebar #4', 'Aggregate Base', or 'Diesel Fuel' - each with SKUs, units (tons, yards, gallons), and categories."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Add Item
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleManageCategories}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Manage Categories
+              </button>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Add Item
+              </button>
+            </div>
           }
         />
 
@@ -172,9 +235,14 @@ export default function ItemsPage() {
 
         {showCreateModal && (
           <CreateItemModal
-            onClose={() => setShowCreateModal(false)}
+            item={editingItem}
+            onClose={() => {
+              setShowCreateModal(false);
+              setEditingItem(undefined);
+            }}
             onCreated={() => {
               setShowCreateModal(false);
+              setEditingItem(undefined);
               fetchItems();
             }}
           />
@@ -184,17 +252,44 @@ export default function ItemsPage() {
   );
 }
 
-function CreateItemModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateItemModal({ 
+  onClose, 
+  onCreated,
+  item 
+}: { 
+  onClose: () => void; 
+  onCreated: () => void;
+  item?: CatalogItem;
+}) {
+  const isEditing = !!item;
   const [form, setForm] = useState({
-    name: '',
-    sku: '',
-    description: '',
-    unit_of_measure: 'EA',
-    tracking_mode: 'stock',
-    reorder_point: '',
+    name: item?.name || '',
+    sku: item?.sku || '',
+    description: item?.description || '',
+    category_id: item?.category_id || '',
+    unit_of_measure: item?.unit_of_measure || 'EA',
+    tracking_mode: item?.tracking_mode || 'stock',
+    reorder_point: item?.reorder_point?.toString() || '',
   });
+  const [categories, setCategories] = useState<Category[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/inventory/categories');
+      if (res.ok) {
+        const data = await res.json();
+        setCategories(data.data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,18 +297,22 @@ function CreateItemModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setError('');
 
     try {
-      const res = await fetch('/api/inventory/items', {
-        method: 'POST',
+      const url = isEditing ? `/api/inventory/items/${item.id}` : '/api/inventory/items';
+      const method = isEditing ? 'PUT' : 'POST';
+      
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          category_id: form.category_id || null,
           reorder_point: form.reorder_point ? parseInt(form.reorder_point) : null,
         }),
       });
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to create item');
+        throw new Error(data.error || `Failed to ${isEditing ? 'update' : 'create'} item`);
       }
 
       onCreated();
@@ -269,6 +368,22 @@ function CreateItemModal({ onClose, onCreated }: { onClose: () => void; onCreate
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               rows={2}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Category</label>
+            <select
+              value={form.category_id}
+              onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">-- Select Category (Optional) --</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -329,7 +444,7 @@ function CreateItemModal({ onClose, onCreated }: { onClose: () => void; onCreate
               disabled={saving}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
             >
-              {saving ? 'Creating...' : 'Create Item'}
+              {saving ? (isEditing ? 'Updating...' : 'Creating...') : (isEditing ? 'Update Item' : 'Create Item')}
             </button>
           </div>
         </form>

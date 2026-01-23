@@ -148,8 +148,11 @@ export function useWidgetRegistry() {
         if (!response.ok) throw new Error('Failed to fetch widget registry');
         
         const { data } = await response.json();
+        console.log('[useWidgetRegistry] Fetched widgets:', data?.length || 0, 'widgets');
+        console.log('[useWidgetRegistry] Sample:', data?.[0]);
         setWidgets(data || []);
       } catch (e) {
+        console.error('[useWidgetRegistry] Error:', e);
         setError(e as Error);
       } finally {
         setLoading(false);

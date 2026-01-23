@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -17,15 +18,18 @@ interface Vendor {
   address?: string;
   payment_terms?: string;
   lead_time_days?: number;
+  notes?: string;
   active: boolean;
   created_at: string;
 }
 
 export default function VendorsPage() {
+  const router = useRouter();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
 
   useEffect(() => {
     fetchVendors();
@@ -89,7 +93,54 @@ export default function VendorsPage() {
         <StatusChip status={row.active ? 'active' : 'inactive'} />
       ),
     },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row: Vendor) => (
+        <div className="flex gap-2">
+          <button
+            onClick={() => router.push(`/inventory/vendors/${row.id}/items`)}
+            className="text-sm text-green-600 hover:text-green-700"
+          >
+            Items
+          </button>
+          <button
+            onClick={() => setEditingVendor(row)}
+            className="text-sm text-blue-600 hover:text-blue-700"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => handleDelete(row)}
+            className="text-sm text-red-600 hover:text-red-700"
+          >
+            Delete
+          </button>
+        </div>
+      ),
+    },
   ];
+
+  const handleDelete = async (vendor: Vendor) => {
+    if (!confirm(`Delete vendor "${vendor.name}"?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/inventory/vendors/${vendor.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete vendor');
+      }
+
+      fetchVendors();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
 
   const filterConfig = [
     {
@@ -139,10 +190,21 @@ export default function VendorsPage() {
         />
 
         {showCreateModal && (
-          <CreateVendorModal
+          <VendorModal
             onClose={() => setShowCreateModal(false)}
-            onCreated={() => {
+            onSaved={() => {
               setShowCreateModal(false);
+              fetchVendors();
+            }}
+          />
+        )}
+
+        {editingVendor && (
+          <VendorModal
+            vendor={editingVendor}
+            onClose={() => setEditingVendor(null)}
+            onSaved={() => {
+              setEditingVendor(null);
               fetchVendors();
             }}
           />
@@ -152,15 +214,25 @@ export default function VendorsPage() {
   );
 }
 
-function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function VendorModal({ 
+  vendor, 
+  onClose, 
+  onSaved 
+}: { 
+  vendor?: Vendor;
+  onClose: () => void; 
+  onSaved: () => void;
+}) {
+  const isEdit = !!vendor;
   const [form, setForm] = useState({
-    name: '',
-    code: '',
-    contact_name: '',
-    contact_email: '',
-    contact_phone: '',
-    payment_terms: 'NET30',
-    lead_time_days: '',
+    name: vendor?.name || '',
+    code: vendor?.code || '',
+    contact_name: vendor?.contact_name || '',
+    contact_email: vendor?.contact_email || '',
+    contact_phone: vendor?.contact_phone || '',
+    payment_terms: vendor?.payment_terms || 'NET30',
+    lead_time_days: vendor?.lead_time_days?.toString() || '',
+    notes: vendor?.notes || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -171,8 +243,12 @@ function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCrea
     setError('');
 
     try {
-      const res = await fetch('/api/inventory/vendors', {
-        method: 'POST',
+      const url = isEdit 
+        ? `/api/inventory/vendors/${vendor.id}`
+        : '/api/inventory/vendors';
+      
+      const res = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
@@ -182,10 +258,10 @@ function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCrea
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to create vendor');
+        throw new Error(data.error || `Failed to ${isEdit ? 'update' : 'create'} vendor`);
       }
 
-      onCreated();
+      onSaved();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -197,7 +273,7 @@ function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCrea
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
-          <h3 className="text-lg font-semibold">Create Vendor</h3>
+          <h3 className="text-lg font-semibold">{isEdit ? 'Edit Vendor' : 'Create Vendor'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
         </div>
 
@@ -281,16 +357,27 @@ function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCrea
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Lead Time (days)</label>
+                <label className="block text-sm font-medium mb-1">Lead Time (Days)</label>
                 <input
                   type="number"
                   value={form.lead_time_days}
                   onChange={(e) => setForm({ ...form, lead_time_days: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  min="0"
+                  placeholder="e.g., 14"
                 />
               </div>
             </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              rows={3}
+              placeholder="Internal notes about this vendor..."
+            />
           </div>
 
           <div className="flex gap-3 pt-4">
@@ -306,7 +393,7 @@ function CreateVendorModal({ onClose, onCreated }: { onClose: () => void; onCrea
               disabled={saving}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
             >
-              {saving ? 'Creating...' : 'Create Vendor'}
+              {saving ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Vendor' : 'Create Vendor')}
             </button>
           </div>
         </form>

@@ -22,6 +22,23 @@ export function createClient() {
   );
 }
 
+/**
+ * Create an unscoped Supabase server client (no default schema)
+ * Use this for queries to supply_chain or public schemas
+ */
+export function createUnscopedClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    }
+  );
+}
+
 export interface SessionContext {
   tenantId: string;
   userId: string;

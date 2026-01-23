@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
+  const userId = getUserIdFromHeaders(request.headers);
   
   if (!tenantId) {
     return NextResponse.json(
@@ -86,6 +87,8 @@ export async function POST(request: NextRequest) {
         reorder_point,
         min_stock_level,
         max_stock_level,
+        created_by: userId,
+        updated_by: userId,
       })
       .select()
       .single();

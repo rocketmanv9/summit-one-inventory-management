@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         catalog_item:catalog_items(id, name, sku),
-        location:locations!assets_location_id_fkey(id, name, location_type)
+        location:locations!assets_location_id_fkey(id, name, location_type_id, location_type:location_types(id, name))
       `)
       .eq('tenant_id', tenantId)
       .order('asset_tag');

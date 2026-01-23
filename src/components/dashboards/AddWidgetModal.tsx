@@ -17,6 +17,9 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
   const [adding, setAdding] = useState(false);
   const supabase = createClient();
 
+  console.log('[AddWidgetModal] Registry widgets count:', registryWidgets.length);
+  console.log('[AddWidgetModal] Loading:', loading);
+
   const domains = ['all', ...Array.from(new Set(registryWidgets.map(w => w.domain)))];
   
   const filteredWidgets = selectedDomain === 'all'
