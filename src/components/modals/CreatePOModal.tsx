@@ -76,6 +76,20 @@ export function CreatePOModal({
   const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [jobs, setJobs] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [vendorItems, setVendorItems] = useState<Array<{
+    id: string;
+    vendor_id: string;
+    catalog_item_id: string;
+    vendor_sku: string;
+    unit_cost: number | null;
+    catalog_item: {
+      id: string;
+      sku: string;
+      name: string;
+      description: string | null;
+    } | null;
+  }>>([]);
+  const [loadingVendorItems, setLoadingVendorItems] = useState(false);
   
   // Initialize form
   useEffect(() => {
@@ -116,6 +130,35 @@ export function CreatePOModal({
       fetchVendorDefaults();
     }
   }, [form.vendor_id, fetchVendorDefaults]);
+  
+  // Fetch vendor items when vendor changes
+  useEffect(() => {
+    const fetchVendorItems = async () => {
+      if (!form.vendor_id) {
+        setVendorItems([]);
+        return;
+      }
+      
+      setLoadingVendorItems(true);
+      try {
+        const response = await fetch(`/api/inventory/vendor-items?vendor_id=${form.vendor_id}`);
+        if (response.ok) {
+          const data = await response.json();
+          setVendorItems(data);
+        } else {
+          console.error('Failed to fetch vendor items');
+          setVendorItems([]);
+        }
+      } catch (error) {
+        console.error('Error fetching vendor items:', error);
+        setVendorItems([]);
+      } finally {
+        setLoadingVendorItems(false);
+      }
+    };
+    
+    fetchVendorItems();
+  }, [form.vendor_id]);
   
   // Apply vendor defaults
   useEffect(() => {
@@ -405,6 +448,9 @@ export function CreatePOModal({
                   index={index}
                   onChange={(updates) => handleLineChange(index, updates)}
                   onRemove={() => handleRemoveLine(index)}
+                  vendorItems={vendorItems}
+                  loadingVendorItems={loadingVendorItems}
+                  hasVendorSelected={!!form.vendor_id}
                 />
               ))}
             </div>
@@ -580,9 +626,24 @@ interface LineItemInputProps {
   index: number;
   onChange: (updates: Partial<CreatePOLineInput>) => void;
   onRemove: () => void;
+  vendorItems: Array<{
+    id: string;
+    vendor_id: string;
+    catalog_item_id: string;
+    vendor_sku: string;
+    unit_cost: number | null;
+    catalog_item: {
+      id: string;
+      sku: string;
+      name: string;
+      description: string | null;
+    } | null;
+  }>;
+  loadingVendorItems: boolean;
+  hasVendorSelected: boolean;
 }
 
-function LineItemInput({ line, index, onChange, onRemove }: LineItemInputProps) {
+function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVendorItems, hasVendorSelected }: LineItemInputProps) {
   const [itemType, setItemType] = useState<'catalog' | 'freetext'>(
     line.catalog_item_id ? 'catalog' : 'freetext'
   );
@@ -631,11 +692,59 @@ function LineItemInput({ line, index, onChange, onRemove }: LineItemInputProps) 
         {itemType === 'catalog' ? (
           <div className="col-span-2 space-y-2">
             <Label className="text-sm">Item *</Label>
-            <Input
-              placeholder="Search catalog items..."
-              value={line.catalog_item_id || ''}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ catalog_item_id: e.target.value })}
-            />
+            {!hasVendorSelected ? (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  Please select a vendor first to see available catalog items
+                </AlertDescription>
+              </Alert>
+            ) : loadingVendorItems ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading vendor items...
+              </div>
+            ) : vendorItems.length === 0 ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  No catalog items found for this vendor. Use "Free Text" to add a custom item.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Select
+                value={line.catalog_item_id || ''}
+                onValueChange={(value: string) => {
+                  const selectedVendorItem = vendorItems.find(vi => vi.catalog_item_id === value);
+                  if (selectedVendorItem) {
+                    onChange({
+                      catalog_item_id: value,
+                      unit_cost: selectedVendorItem.unit_cost || undefined,
+                      price_basis: 'fixed'
+                    });
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select catalog item..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {vendorItems.map((vi) => (
+                    <SelectItem key={vi.id} value={vi.catalog_item_id}>
+                      <div className="flex flex-col">
+                        <span className="font-medium">
+                          {vi.catalog_item?.sku} - {vi.catalog_item?.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Vendor SKU: {vi.vendor_sku}
+                          {vi.unit_cost && ` • $${vi.unit_cost.toFixed(2)}`}
+                        </span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         ) : (
           <>

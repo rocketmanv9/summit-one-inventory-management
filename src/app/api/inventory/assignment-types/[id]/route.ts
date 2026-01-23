@@ -5,8 +5,9 @@ import { getTenantIdFromHeaders } from '@/lib/db-middleware';
 // PUT /api/inventory/assignment-types/[id] - Update assignment type
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const tenantId = getTenantIdFromHeaders(request.headers);
 
   if (!tenantId) {
@@ -27,7 +28,7 @@ export async function PUT(
       .schema('inventory')
       .from('assignment_types')
       .select('is_system')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('tenant_id', tenantId)
       .single();
 
@@ -64,7 +65,7 @@ export async function PUT(
       .schema('inventory')
       .from('assignment_types')
       .update(updates)
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('tenant_id', tenantId)
       .select()
       .single();
@@ -90,8 +91,9 @@ export async function PUT(
 // DELETE /api/inventory/assignment-types/[id] - Delete assignment type
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const tenantId = getTenantIdFromHeaders(request.headers);
 
   if (!tenantId) {
@@ -109,7 +111,7 @@ export async function DELETE(
       .schema('inventory')
       .from('assignment_types')
       .select('is_system, type_key')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('tenant_id', tenantId)
       .single();
 
@@ -148,7 +150,7 @@ export async function DELETE(
       .schema('inventory')
       .from('assignment_types')
       .delete()
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('tenant_id', tenantId);
 
     if (error) {
