@@ -12,7 +12,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
   
   // Skip auth check for public pages
-  const isPublicPage = pathname === '/dev-login' || pathname === '/error' || pathname === '/auth/callback';
+  const isPublicPage = pathname === '/' || pathname === '/dev-login' || pathname === '/error' || pathname === '/auth/callback';
   
   useEffect(() => {
     if (isPublicPage) {
@@ -65,13 +65,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
   
   function redirectToAuth() {
-    // In development, allow dev-login bypass
-    if (process.env.NODE_ENV === 'development') {
-      router.push('/dev-login');
-    } else {
-      // Production: Show error - user should access via Core dashboard
-      router.push('/error?message=Please access the Inventory Management service through the Summit One Core dashboard');
-    }
+    // Redirect to root login page (which has SSO and dev login options)
+    router.push('/');
   }
   
   if (isPublicPage) {
