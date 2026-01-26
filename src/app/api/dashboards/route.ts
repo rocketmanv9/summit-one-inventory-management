@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 async function getSessionData() {
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
   }
   
   try {
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     console.log('[DASHBOARDS API] Fetching for tenant:', session.tenantId);
     
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     const { data: dashboard, error } = await supabase
       .schema('public')
@@ -125,3 +125,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

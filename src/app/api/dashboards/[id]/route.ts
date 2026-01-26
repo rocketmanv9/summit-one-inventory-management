@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 async function getSessionData() {
@@ -41,7 +41,7 @@ export async function GET(
   
   try {
     const { id } = await params;
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     const { data: dashboard, error } = await supabase
       .from('dashboards')
@@ -93,7 +93,7 @@ export async function PATCH(
       );
     }
     
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     const { data: dashboard, error } = await supabase
       .from('dashboards')

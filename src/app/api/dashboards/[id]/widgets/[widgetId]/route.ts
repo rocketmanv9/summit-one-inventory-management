@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 async function getSessionData() {
@@ -36,7 +36,7 @@ export async function DELETE(
   
   try {
     const { id: dashboardId, widgetId } = await params;
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     const { error } = await supabase
       .from('dashboard_widgets')

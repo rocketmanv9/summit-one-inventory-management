@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 async function getSessionData() {
@@ -42,7 +42,7 @@ export async function GET(
   
   try {
     const { id: dashboardId } = await params;
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     const { data: widgets, error } = await supabase
       .from('dashboard_widgets')
@@ -94,7 +94,7 @@ export async function POST(
       );
     }
     
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
     
     // If no layout provided, calculate next available position
     let widgetLayout = layout;

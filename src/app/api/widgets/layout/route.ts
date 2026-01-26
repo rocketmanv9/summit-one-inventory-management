@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 export async function PATCH(request: NextRequest) {
@@ -33,7 +33,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request - widgets must be an array' }, { status: 400 });
     }
 
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
 
     // Update each widget's layout individually
     for (const widget of widgets) {
@@ -60,3 +60,4 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+

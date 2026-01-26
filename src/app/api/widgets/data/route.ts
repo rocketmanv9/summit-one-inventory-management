@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { widget_key, config } = body;
 
-    const supabase = createClient();
+    const supabase = createUnscopedClient();
 
     // Fetch widget data based on widget_key
     const data = await fetchWidgetData(supabase, widget_key, tenantId, config || {});
@@ -739,3 +739,4 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   // Default fallback
   return { value: 'No data', trend: 'neutral' };
 }
+

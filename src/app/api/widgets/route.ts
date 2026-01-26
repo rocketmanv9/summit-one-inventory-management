@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUnscopedClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
@@ -27,8 +27,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
     }
 
-    // Use service role to bypass RLS since widget_registry is global
-    const supabase = createClient();
+    // Use service role to access widget_registry
+    const supabase = createUnscopedClient();
     
     const { data, error } = await supabase
       .schema('public')
