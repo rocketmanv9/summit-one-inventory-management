@@ -68,6 +68,11 @@ export default function Home() {
           <p className="text-gray-600">
             {currentSession ? 'Switch Authentication' : 'Choose how to sign in'}
           </p>
+          {process.env.NODE_ENV === 'development' && (
+            <p className="text-sm text-amber-600 mt-2">
+              Local Development Mode
+            </p>
+          )}
         </div>
         
         {currentSession && (
@@ -88,13 +93,25 @@ export default function Home() {
             </button>
           )}
           
-          {!currentSession && (
+          {!currentSession && process.env.NODE_ENV === 'development' && (
             <button
-              onClick={handleSSOLogin}
+              onClick={handleDevLogin}
               className="w-full flex items-center justify-center px-4 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              Sign in with Core SSO
+              Quick Dev Login (Grant)
             </button>
+          )}
+          
+          {!currentSession && (
+            <>    Sign in with Core SSO
+              </button>
+              
+              {process.env.NODE_ENV === 'development' && (
+                <p className="text-xs text-center text-gray-500">
+                  Note: SSO requires Core app integration
+                </p>
+              )}
+            </>
           )}
           
           {!currentSession && process.env.NODE_ENV === 'development' && (
