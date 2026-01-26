@@ -7,6 +7,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Create a Supabase client configured for inventory schema
+ * NOTE: Service role bypasses RLS automatically
  */
 export function createClient() {
   return createSupabaseClient(
@@ -20,6 +21,25 @@ export function createClient() {
       }
     }
   );
+}
+
+/**
+ * Set tenant context in database session
+ * Call this before making queries that need RLS context
+ */
+export async function setDbTenantContext(tenantId: string, userId: string = 'system') {
+  const supabase = createUnscopedClient();
+  
+  const { error } = await supabase.rpc('set_session_context', {
+    p_tenant_id: tenantId,
+    p_user_id: userId,
+    p_role: 'service_role'
+  });
+  
+  if (error) {
+    console.error('Failed to set tenant context:', error);
+    throw error;
+  }
 }
 
 /**
