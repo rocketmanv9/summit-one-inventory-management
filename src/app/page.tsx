@@ -14,17 +14,9 @@ export default function Home() {
       .then(res => res.json())
       .then(data => {
         if (data.authenticated) {
-          // Check if it's coming from a logout or force_login param
-          const urlParams = new URLSearchParams(window.location.search);
-          if (urlParams.get('force_login') === 'true') {
-            setCurrentSession(data.session);
-            setCheckingSession(false);
-          } else {
-            router.push('/dashboard');
-          }
-        } else {
-          setCheckingSession(false);
+          setCurrentSession(data.session);
         }
+        setCheckingSession(false);
       })
       .catch(() => setCheckingSession(false));
   }, [router]);
