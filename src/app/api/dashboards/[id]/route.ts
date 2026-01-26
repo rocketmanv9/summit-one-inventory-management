@@ -48,6 +48,7 @@ export async function GET(
       .select('*')
       .eq('id', id)
       .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
       .single();
     
     if (error) {
@@ -84,22 +85,37 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { description } = body;
+    const { description, is_default } = body;
     
-    if (description === undefined) {
+    // Build update object with only provided fields
+    const updates: any = {};
+    if (description !== undefined) updates.description = description;
+    if (is_default !== undefined) updates.is_default = is_default;
+    
+    if (Object.keys(updates).length === 0) {
       return NextResponse.json(
-        { error: 'Description is required' },
+        { error: 'No fields to update' },
         { status: 400 }
       );
     }
     
     const supabase = createUnscopedClient();
     
+    // If setting as default, unset all other defaults for this tenant first
+    if (is_default === true) {
+      await supabase
+        .from('dashboards')
+        .update({ is_default: false })
+        .eq('tenant_id', session.tenantId)
+        .neq('id', id);
+    }
+    
     const { data: dashboard, error } = await supabase
       .from('dashboards')
-      .update({ description })
+      .update(updates)
       .eq('id', id)
       .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
       .select()
       .single();
     
@@ -112,6 +128,49 @@ export async function PATCH(
     }
     
     return NextResponse.json({ data: dashboard });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getSessionData();
+  
+  if (!session || !session.tenantId) {
+    return NextResponse.json(
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
+  try {
+    const { id } = await params;
+    const supabase = createUnscopedClient();
+    
+    // Soft delete the dashboard by setting deleted_at timestamp
+    const { error } = await supabase
+      .from('dashboards')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null);
+    
+    if (error) {
+      console.error('Error deleting dashboard:', error);
+      return NextResponse.json(
+        { error: 'Failed to delete dashboard' },
+        { status: 500 }
+      );
+    }
+    
+    return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error('Unexpected error:', error);
     return NextResponse.json(

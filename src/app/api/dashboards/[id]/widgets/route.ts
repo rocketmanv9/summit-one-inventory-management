@@ -44,6 +44,22 @@ export async function GET(
     const { id: dashboardId } = await params;
     const supabase = createUnscopedClient();
     
+    // Verify dashboard exists and is not deleted
+    const { data: dashboard } = await supabase
+      .from('dashboards')
+      .select('id')
+      .eq('id', dashboardId)
+      .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
+      .single();
+    
+    if (!dashboard) {
+      return NextResponse.json(
+        { error: 'Dashboard not found' },
+        { status: 404 }
+      );
+    }
+    
     const { data: widgets, error } = await supabase
       .from('dashboard_widgets')
       .select('*')
@@ -95,6 +111,22 @@ export async function POST(
     }
     
     const supabase = createUnscopedClient();
+    
+    // Verify dashboard exists and is not deleted
+    const { data: dashboard } = await supabase
+      .from('dashboards')
+      .select('id')
+      .eq('id', dashboardId)
+      .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
+      .single();
+    
+    if (!dashboard) {
+      return NextResponse.json(
+        { error: 'Dashboard not found' },
+        { status: 404 }
+      );
+    }
     
     // If no layout provided, calculate next available position
     let widgetLayout = layout;

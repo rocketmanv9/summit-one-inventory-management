@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
       .from('dashboards')
       .select('*')
       .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
       .order('is_default', { ascending: false })
       .order('name');
     

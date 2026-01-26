@@ -29,7 +29,37 @@ export default function DashboardDetailPage() {
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [editedDescription, setEditedDescription] = useState('');
   const [isSavingLayout, setIsSavingLayout] = useState(false);
+  const [isTogglingDefault, setIsTogglingDefault] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleToggleDefault = async () => {
+    if (!dashboard) return;
+    
+    setIsTogglingDefault(true);
+    try {
+      const response = await fetch(`/api/dashboards/${dashboardId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_default: !dashboard.is_default }),
+      });
+      
+      if (response.ok) {
+        refetch();
+      } else {
+        throw new Error('Failed to update default status');
+      }
+    } catch (error) {
+      console.error('Error toggling default:', error);
+      alert('Failed to update default status. Please try again.');
+    } finally {
+      setIsTogglingDefault(false);
+    }
+  };
+
+  const handleDashboardDelete = () => {
+    // Redirect to main dashboard page after deletion
+    router.push('/dashboard');
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -153,6 +183,20 @@ export default function DashboardDetailPage() {
                   Default
                 </span>
               )}
+              {isEditMode && (
+                <label className="flex items-center gap-2 px-3 py-1 bg-gray-50 border border-gray-300 rounded-md cursor-pointer hover:bg-gray-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={dashboard.is_default}
+                    onChange={handleToggleDefault}
+                    disabled={isTogglingDefault}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    {isTogglingDefault ? 'Updating...' : 'Set as Default'}
+                  </span>
+                </label>
+              )}
             </div>
             {isEditMode && isEditingDescription ? (
               <div className="flex items-center gap-2">
@@ -240,6 +284,7 @@ export default function DashboardDetailPage() {
             onWidgetDelete={deleteWidget}
             onLayoutSaved={() => refetch()}
             onExitEditMode={() => setIsEditMode(false)}
+            onDashboardDelete={handleDashboardDelete}
           />
         ) : (
           /* Empty State */

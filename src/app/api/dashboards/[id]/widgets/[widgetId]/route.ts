@@ -38,6 +38,22 @@ export async function DELETE(
     const { id: dashboardId, widgetId } = await params;
     const supabase = createUnscopedClient();
     
+    // Verify dashboard exists and is not deleted
+    const { data: dashboard } = await supabase
+      .from('dashboards')
+      .select('id')
+      .eq('id', dashboardId)
+      .eq('tenant_id', session.tenantId)
+      .is('deleted_at', null)
+      .single();
+    
+    if (!dashboard) {
+      return NextResponse.json(
+        { error: 'Dashboard not found' },
+        { status: 404 }
+      );
+    }
+    
     const { error } = await supabase
       .from('dashboard_widgets')
       .delete()
