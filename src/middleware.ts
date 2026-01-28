@@ -24,26 +24,44 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(callbackUrl);
   }
   
-  const response = NextResponse.next();
-  
-  // Get the dev session cookie
+  // Get the session cookie
   const sessionCookie = request.cookies.get('inventory_session');
+  
+  console.log('[Middleware] Path:', pathname);
+  console.log('[Middleware] Session cookie exists:', !!sessionCookie);
   
   if (sessionCookie) {
     try {
       const session = JSON.parse(sessionCookie.value);
+      console.log('[Middleware] Session parsed:', { tenantId: session.tenantId, userId: session.userId, role: session.role });
       
-      // Set headers for API routes to use
-      response.headers.set('x-tenant-id', session.tenantId);
-      response.headers.set('x-user-id', session.userId);
-      response.headers.set('x-user-role', session.role || 'user');
+      // Clone the request headers and add tenant context
+      const requestHeaders = new Headers(request.headers);
+      requestHeaders.set('x-tenant-id', session.tenantId);
+      requestHeaders.set('x-user-id', session.userId);
+      requestHeaders.set('x-user-role', session.role || 'user');
+      
+      console.log('[Middleware] Setting headers:', {
+        'x-tenant-id': session.tenantId,
+        'x-user-id': session.userId,
+        'x-user-role': session.role || 'user'
+      });
+      
+      // Return a new response with the modified request headers
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
       
     } catch (error) {
-      console.error('Failed to parse session cookie:', error);
+      console.error('[Middleware] Failed to parse session cookie:', error);
     }
+  } else {
+    console.log('[Middleware] No session cookie found');
   }
   
-  return response;
+  return NextResponse.next();
 }
 
 // Apply middleware to dashboard and API routes

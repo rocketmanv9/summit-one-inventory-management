@@ -19,18 +19,40 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const { searchParams } = new URL(request.url);
+    const poId = searchParams.get('po_id');
+
     const supabase = createClient();
 
-    // Simplified: Return basic receipt data without complex joins
-    const { data: receipts, error } = await supabase
+    // Build query
+    let query = supabase
       .schema('supply_chain')
       .from('receipts')
       .select(`
-        *,
-        purchase_order:purchase_orders(id, po_number)
+        id,
+        receipt_number,
+        received_at,
+        po_id,
+        location_id,
+        received_by_user_id,
+        notes,
+        locations:location_id(id, name),
+        users:received_by_user_id(id, email),
+        receipt_lines(
+          id,
+          catalog_item_id,
+          qty_received,
+          catalog_items:catalog_item_id(id, name, sku)
+        )
       `)
-      .eq('tenant_id', tenantId)
-      .order('received_at', { ascending: false });
+      .eq('tenant_id', tenantId);
+
+    // Filter by PO if provided
+    if (poId) {
+      query = query.eq('po_id', poId);
+    }
+
+    const { data: receipts, error } = await query.order('received_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching receipts:', error);
@@ -68,20 +90,36 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { purchase_order_id, location_id, lines, notes } = body;
 
+    if (!location_id) {
+      return NextResponse.json(
+        { error: 'location_id is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!lines || lines.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one line item is required' },
+        { status: 400 }
+      );
+    }
+
     const supabase = createClient();
 
-    // Create receipt header
+    // Step 1: Create receipt header
+    const eventId = `receipt-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     const { data: receipt, error: receiptError } = await supabase
       .schema('supply_chain')
       .from('receipts')
       .insert({
         tenant_id: tenantId,
-        purchase_order_id,
+        po_id: purchase_order_id || null,
         location_id,
-        received_by: userId,
+        received_by_user_id: userId,
         received_at: new Date().toISOString(),
-        notes,
-        last_event_id: `receipt-${Date.now()}-${Math.random().toString(36).substring(7)}`
+        notes: notes || null,
+        receipt_number: `RCV-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Auto-generate receipt number
+        last_event_id: eventId
       })
       .select()
       .single();
@@ -89,70 +127,126 @@ export async function POST(request: NextRequest) {
     if (receiptError) {
       console.error('Error creating receipt:', receiptError);
       return NextResponse.json(
-        { error: 'Failed to create receipt' },
+        { error: 'Failed to create receipt', details: receiptError.message },
         { status: 500 }
       );
     }
 
-    // Create receipt lines and update stock via stock_movements
-    if (lines && lines.length > 0) {
-      for (const line of lines) {
-        // Insert receipt line
+    // Step 2: Create receipt lines
+    const receiptLinesToInsert = lines.map((line: any, index: number) => ({
+      tenant_id: tenantId,
+      receipt_id: receipt.id,
+      po_line_id: line.purchase_order_line_id || null,
+      catalog_item_id: line.catalog_item_id,
+      qty_received: line.qty_received,
+      line_number: index + 1
+    }));
+
+    const { error: linesError } = await supabase
+      .schema('supply_chain')
+      .from('receipt_lines')
+      .insert(receiptLinesToInsert);
+
+    if (linesError) {
+      console.error('Error creating receipt lines:', linesError);
+      // Rollback: delete the receipt header
+      await supabase
+        .schema('supply_chain')
+        .from('receipts')
+        .delete()
+        .eq('id', receipt.id);
+      
+      return NextResponse.json(
+        { error: 'Failed to create receipt lines', details: linesError.message },
+        { status: 500 }
+      );
+    }
+
+    // Step 3: Post receipt to inventory using ATOMIC RPC
+    const { data: postResult, error: postError } = await supabase.rpc('rpc_post_receipt_to_inventory', {
+      p_receipt_id: receipt.id,
+      p_actor_user_id: userId
+    });
+
+    if (postError) {
+      console.error('Error posting receipt to inventory:', postError);
+      return NextResponse.json(
+        { error: 'Failed to post receipt to inventory', details: postError.message },
+        { status: 500 }
+      );
+    }
+
+    // Step 4: Update PO line status if linked to PO
+    if (purchase_order_id) {
+      // Get all PO lines
+      const { data: poLines } = await supabase
+        .schema('supply_chain')
+        .from('purchase_order_lines')
+        .select('id, qty_ordered, qty_received')
+        .eq('purchase_order_id', purchase_order_id);
+
+      if (poLines) {
+        for (const line of lines) {
+          if (line.purchase_order_line_id) {
+            const poLine = poLines.find((pl: any) => pl.id === line.purchase_order_line_id);
+            if (poLine) {
+              const newQtyReceived = (poLine.qty_received || 0) + line.qty_received;
+              let lineStatus = 'open';
+              
+              if (newQtyReceived >= poLine.qty_ordered) {
+                lineStatus = 'fully_received';
+              } else if (newQtyReceived > 0) {
+                lineStatus = 'partially_received';
+              }
+
+              await supabase
+                .schema('supply_chain')
+                .from('purchase_order_lines')
+                .update({
+                  qty_received: newQtyReceived,
+                  status: lineStatus
+                })
+                .eq('id', line.purchase_order_line_id);
+            }
+          }
+        }
+      }
+
+      // Step 5: Update PO header status based on line statuses
+      const { data: updatedPoLines } = await supabase
+        .schema('supply_chain')
+        .from('purchase_order_lines')
+        .select('status')
+        .eq('purchase_order_id', purchase_order_id);
+
+      if (updatedPoLines && updatedPoLines.length > 0) {
+        const allFullyReceived = updatedPoLines.every((line: any) => line.status === 'fully_received');
+        const anyPartiallyReceived = updatedPoLines.some((line: any) => line.status === 'partially_received');
+        
+        let poStatus = 'placed';
+        if (allFullyReceived) {
+          poStatus = 'fully_received';
+        } else if (anyPartiallyReceived) {
+          poStatus = 'partially_received';
+        }
+
         await supabase
           .schema('supply_chain')
-          .from('receipt_lines')
-          .insert({
-            tenant_id: tenantId,
-            receipt_id: receipt.id,
-            purchase_order_line_id: line.purchase_order_line_id,
-            catalog_item_id: line.catalog_item_id,
-            qty_received: line.qty_received,
-            qty_accepted: line.qty_accepted || line.qty_received,
-            qty_rejected: line.qty_rejected || 0,
-            rejection_reason: line.rejection_reason
-          });
-
-        // Insert stock movement for received qty
-        if (line.qty_accepted > 0) {
-          await supabase.rpc('insert_stock_movement', {
-            p_tenant_id: tenantId,
-            p_catalog_item_id: line.catalog_item_id,
-            p_location_id: location_id,
-            p_movement_type: 'received',
-            p_qty: line.qty_accepted,
-            p_reference_type: 'receipt',
-            p_reference_id: receipt.id,
-            p_user_id: userId,
-            p_notes: `Received from PO`,
-            p_last_event_id: `rcv-${line.catalog_item_id}-${Date.now()}`
-          });
-        }
-
-        // Update PO line qty_received
-        if (line.purchase_order_line_id) {
-          const { data: poLine } = await supabase
-            .schema('supply_chain')
-            .from('purchase_order_lines')
-            .select('qty_received')
-            .eq('id', line.purchase_order_line_id)
-            .single();
-
-          await supabase
-            .schema('supply_chain')
-            .from('purchase_order_lines')
-            .update({
-              qty_received: (poLine?.qty_received || 0) + line.qty_received
-            })
-            .eq('id', line.purchase_order_line_id);
-        }
+          .from('purchase_orders')
+          .update({ status: poStatus })
+          .eq('id', purchase_order_id);
       }
     }
 
-    return NextResponse.json({ data: receipt }, { status: 201 });
-  } catch (error) {
+    return NextResponse.json({ 
+      data: receipt,
+      postResult,
+      message: `Receipt created successfully. Posted ${postResult?.posted_lines || 0} line(s) to inventory.`
+    }, { status: 201 });
+  } catch (error: any) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: error.message },
       { status: 500 }
     );
   }

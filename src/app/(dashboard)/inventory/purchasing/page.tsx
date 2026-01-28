@@ -34,6 +34,7 @@ export default function PurchasingPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export default function PurchasingPage() {
 
       const res = await fetch(`/api/inventory/purchasing?${params}`);
       const { data } = await res.json();
+      console.log('Fetched orders:', data);
       setOrders(data || []);
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
@@ -153,6 +155,36 @@ export default function PurchasingPage() {
     }
   };
 
+  const handleDeletePO = async (poId: string, status: string, poNumber: string) => {
+    if (!['draft', 'awaiting_approval'].includes(status)) {
+      alert(`Cannot delete PO in status: ${status}. Only draft or awaiting approval POs can be deleted.`);
+      return;
+    }
+
+    if (!confirm(`Delete PO ${poNumber}? This will cancel the purchase order.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/inventory/purchasing/${poId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert(`Error: ${result.error}`);
+        return;
+      }
+
+      alert('PO deleted successfully!');
+      fetchOrders();
+    } catch (error) {
+      console.error('Error deleting PO:', error);
+      alert('Failed to delete PO. Please try again.');
+    }
+  };
+
   const columns = [
     {
       key: 'po_number',
@@ -236,146 +268,108 @@ export default function PurchasingPage() {
         const isDraft = row.status === 'draft';
         const isAwaitingApproval = row.status === 'awaiting_approval';
         const isApproved = row.status === 'approved';
-        const isPlaced = row.status === 'placed';
-        const isAcknowledged = row.status === 'acknowledged';
+        const isPlaced = row.status === 'placed' || row.status === 'acknowledged';
         const isPartiallyReceived = row.status === 'partially_received';
         const isFullyReceived = row.status === 'fully_received';
-        const isCancelled = row.status === 'cancelled';
         const isClosed = row.status === 'closed';
         
         return (
-          <div className="flex flex-col gap-1 min-w-[120px]">
-            {/* Draft state actions */}
+          <div className="flex gap-2">
+            {/* Submit button - only for draft */}
             {isDraft && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSubmitForApproval(row.id, row.status);
-                  }}
-                  className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
-                >
-                  Submit for Approval
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-700 text-white rounded"
-                >
-                  Edit
-                </button>
-              </>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSubmitForApproval(row.id, row.status);
+                }}
+                className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
+                title="Submit for approval"
+              >
+                Submit
+              </button>
             )}
-            
-            {/* Awaiting approval state actions */}
+
+            {/* Approve button - only for awaiting approval */}
             {isAwaitingApproval && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleApprovePO(row.id, row.status);
-                  }}
-                  className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded"
-                >
-                  View Details
-                </button>
-              </>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleApprovePO(row.id, row.status);
+                }}
+                className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white"
+                title="Approve purchase order"
+              >
+                Approve
+              </button>
             )}
-            
-            {/* Approved state actions */}
+
+            {/* Place Order button - only for approved */}
             {isApproved && (
-              <>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePlacePO(row.id, row.status);
-                  }}
-                  className="px-3 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white rounded"
-                >
-                  Place Order
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded"
-                >
-                  View Details
-                </button>
-              </>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePlacePO(row.id, row.status);
+                }}
+                className="px-3 py-1 text-sm rounded bg-purple-600 hover:bg-purple-700 text-white"
+                title="Place order with vendor"
+              >
+                Place Order
+              </button>
             )}
-            
-            {/* Placed/Acknowledged/Partially Received state */}
-            {(isPlaced || isAcknowledged || isPartiallyReceived) && (
-              <>
-                {isPartiallyReceived && (
-                  <span className="text-xs text-gray-600 font-medium">Receiving...</span>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded"
-                >
-                  {isPartiallyReceived ? 'Continue Receiving' : 'Receive Items'}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded"
-                >
-                  View Details
-                </button>
-              </>
+
+            {/* Receive button - for placed, acknowledged, or partially received */}
+            {(isPlaced || isPartiallyReceived) && (
+              <a
+                href={`/inventory/receiving?po=${row.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white inline-block text-center"
+                title="Receive items"
+              >
+                Receive
+              </a>
             )}
-            
-            {/* Fully received state */}
-            {isFullyReceived && (
-              <>
-                <span className="text-xs text-green-600 font-medium">Fully Received</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded"
-                >
-                  View Details
-                </button>
-              </>
+
+            {/* Edit button - only for draft */}
+            {isDraft && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedOrder(row);
+                  setShowEditModal(true);
+                }}
+                className="px-3 py-1 text-sm rounded bg-gray-600 hover:bg-gray-700 text-white"
+                title="Edit purchase order"
+              >
+                Edit
+              </button>
             )}
-            
-            {/* Closed/Cancelled states */}
-            {(isClosed || isCancelled) && (
-              <>
-                <span className="text-xs text-gray-600 font-medium">
-                  {isClosed ? 'Closed' : 'Cancelled'}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedOrder(row);
-                  }}
-                  className="px-3 py-1 text-xs bg-gray-500 hover:bg-gray-600 text-white rounded"
-                >
-                  View Details
-                </button>
-              </>
+
+            {/* Delete button - for draft or awaiting approval */}
+            {(isDraft || isAwaitingApproval) && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeletePO(row.id, row.status, row.po_number);
+                }}
+                className="px-3 py-1 text-sm rounded bg-red-600 hover:bg-red-700 text-white"
+                title="Delete purchase order"
+              >
+                Delete
+              </button>
+            )}
+
+            {/* View button - for all non-draft statuses */}
+            {!isDraft && !isClosed && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedOrder(row);
+                }}
+                className="px-3 py-1 text-sm rounded bg-gray-500 hover:bg-gray-600 text-white"
+                title="View details"
+              >
+                View
+              </button>
             )}
           </div>
         );
@@ -464,7 +458,7 @@ export default function PurchasingPage() {
           onRowClick={setSelectedOrder}
         />
 
-        {selectedOrder && (
+        {selectedOrder && !showEditModal && (
           <PODetailPanel
             po={selectedOrder}
             onClose={() => setSelectedOrder(null)}
@@ -480,12 +474,110 @@ export default function PurchasingPage() {
             }}
           />
         )}
+
+        {showEditModal && selectedOrder && (
+          <EditPOModal
+            po={selectedOrder}
+            onClose={() => {
+              setShowEditModal(false);
+              setSelectedOrder(null);
+            }}
+            onUpdated={() => {
+              setShowEditModal(false);
+              setSelectedOrder(null);
+              fetchOrders();
+            }}
+          />
+        )}
       </div>
     </AppShell>
   );
 }
 
 function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+  const [receipts, setReceipts] = useState<Array<{
+    id: string;
+    receipt_number: string;
+    received_at: string;
+    locations?: { name: string };
+    users?: { email: string };
+    receipt_lines?: Array<{
+      catalog_item_id: string;
+      qty_received: number;
+      catalog_items?: { name: string };
+    }>;
+  }>>([]);
+  const [loadingReceipts, setLoadingReceipts] = useState(true);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  useEffect(() => {
+    fetchReceipts();
+  }, [po.id]);
+
+  const fetchReceipts = async () => {
+    setLoadingReceipts(true);
+    try {
+      const res = await fetch(`/api/inventory/receiving?po_id=${po.id}`);
+      const { data } = await res.json();
+      setReceipts(data || []);
+    } catch (error) {
+      console.error('Error fetching receipts:', error);
+    } finally {
+      setLoadingReceipts(false);
+    }
+  };
+
+  const updateStatus = async (newStatus: string) => {
+    setUpdatingStatus(true);
+    try {
+      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update status');
+      }
+
+      // Refresh the page to show updated PO
+      window.location.reload();
+    } catch (error: any) {
+      console.error('Error updating status:', error);
+      alert(`Failed to update status: ${error.message}`);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const deletePO = async () => {
+    if (!confirm(`Are you sure you want to delete PO ${po.po_number}? This will cancel the purchase order.`)) {
+      return;
+    }
+
+    setUpdatingStatus(true);
+    try {
+      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to delete purchase order');
+      }
+
+      // Close panel and refresh to remove deleted PO from list
+      onClose();
+      window.location.reload();
+    } catch (error: any) {
+      console.error('Error deleting PO:', error);
+      alert(`Failed to delete PO: ${error.message}`);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
   return (
     <div className="fixed inset-y-0 right-0 w-[28rem] bg-white shadow-xl border-l z-40 overflow-y-auto">
       <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-white">
@@ -556,13 +648,123 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
         )}
 
         <div className="border-t pt-4">
-          <div className="flex gap-2">
-            <a
-              href={`/inventory/receiving?po=${po.id}`}
-              className="flex-1 px-4 py-2 text-center bg-green-600 text-white rounded-md hover:bg-green-700"
-            >
-              Receive Items
-            </a>
+          <h4 className="font-medium mb-3">Receipt History</h4>
+          {loadingReceipts ? (
+            <div className="p-3 bg-muted/30 rounded-lg animate-pulse">
+              <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+              <div className="h-3 bg-muted rounded w-1/2"></div>
+            </div>
+          ) : receipts.length > 0 ? (
+            <div className="space-y-2">
+              {receipts.map((receipt) => (
+                <div key={receipt.id} className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-sm font-medium">{receipt.receipt_number}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(receipt.received_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-2">
+                    Location: {receipt.locations?.name || 'Unknown'}
+                  </div>
+                  <div className="space-y-1">
+                    {receipt.receipt_lines?.map((line, idx) => (
+                      <div key={idx} className="text-sm flex justify-between">
+                        <span className="text-muted-foreground">{line.catalog_items?.name}</span>
+                        <span className="font-mono font-medium">{line.qty_received}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">No receipts yet</p>
+          )}
+        </div>
+
+        <div className="border-t pt-4">
+          <div className="flex flex-col gap-2">
+            {/* Status-specific actions */}
+            {po.status === 'draft' && (
+              <>
+                <button
+                  onClick={() => updateStatus('awaiting_approval')}
+                  disabled={updatingStatus}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {updatingStatus ? 'Updating...' : 'Submit for Approval'}
+                </button>
+                <button
+                  onClick={deletePO}
+                  disabled={updatingStatus}
+                  className="w-full px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50"
+                >
+                  {updatingStatus ? 'Deleting...' : 'Delete PO'}
+                </button>
+              </>
+            )}
+
+            {po.status === 'awaiting_approval' && (
+              <>
+                <button
+                  onClick={() => updateStatus('approved')}
+                  disabled={updatingStatus}
+                  className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                >
+                  {updatingStatus ? 'Updating...' : 'Approve PO'}
+                </button>
+                <button
+                  onClick={() => updateStatus('cancelled')}
+                  disabled={updatingStatus}
+                  className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+                >
+                  {updatingStatus ? 'Updating...' : 'Reject'}
+                </button>
+                <button
+                  onClick={deletePO}
+                  disabled={updatingStatus}
+                  className="w-full px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50"
+                >
+                  {updatingStatus ? 'Deleting...' : 'Delete PO'}
+                </button>
+              </>
+            )}
+
+            {po.status === 'approved' && (
+              <button
+                onClick={() => updateStatus('placed')}
+                disabled={updatingStatus}
+                className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+              >
+                {updatingStatus ? 'Updating...' : 'Place Order (Send to Vendor)'}
+              </button>
+            )}
+
+            {(po.status === 'placed' || po.status === 'acknowledged' || po.status === 'partially_received') && (
+              <a
+                href={`/inventory/receiving?po=${po.id}`}
+                className="w-full px-4 py-2 text-center bg-green-600 text-white rounded-md hover:bg-green-700 block"
+              >
+                Receive Items
+              </a>
+            )}
+
+            {(po.status === 'partially_received' || po.status === 'fully_received') && (
+              <button
+                onClick={() => updateStatus('closed')}
+                disabled={updatingStatus}
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                {updatingStatus ? 'Updating...' : 'Close PO'}
+              </button>
+            )}
+
+            {po.status === 'closed' && (
+              <div className="w-full px-4 py-2 text-center text-muted-foreground bg-muted/30 rounded-md">
+                PO Closed
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -580,15 +782,22 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string; vendor_number: string }>>([]);
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
-  const [catalogItems, setCatalogItems] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
 
   useEffect(() => {
     fetchVendors();
     fetchLocations();
-    fetchCatalogItems();
   }, []);
+
+  useEffect(() => {
+    if (form.vendor_id) {
+      fetchVendorItems(form.vendor_id);
+    } else {
+      setVendorItems([]);
+    }
+  }, [form.vendor_id]);
 
   const fetchVendors = async () => {
     try {
@@ -610,13 +819,14 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     }
   };
 
-  const fetchCatalogItems = async () => {
+  const fetchVendorItems = async (vendorId: string) => {
     try {
-      const res = await fetch('/api/inventory/items?limit=1000');
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/items`);
       const { data } = await res.json();
-      setCatalogItems(data || []);
+      setVendorItems(data || []);
     } catch (error) {
-      console.error('Error fetching catalog items:', error);
+      console.error('Error fetching vendor items:', error);
+      setVendorItems([]);
     }
   };
 
@@ -646,6 +856,14 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     setError('');
 
     try {
+      const linesToSend = form.lines
+        .filter(l => l.catalog_item_id && l.qty)
+        .map(l => ({
+          catalog_item_id: l.catalog_item_id,
+          qty: parseInt(l.qty),
+          unit_cost: parseFloat(l.unit_cost) || 0,
+        }));
+
       const res = await fetch('/api/inventory/purchasing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -654,13 +872,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           ship_to_location_id: form.ship_to_location_id,
           expected_delivery_date: form.expected_delivery_date || null,
           notes: form.notes || null,
-          lines: form.lines
-            .filter(l => l.catalog_item_id && l.qty)
-            .map(l => ({
-              catalog_item_id: l.catalog_item_id,
-              qty: parseInt(l.qty),
-              unit_cost: parseFloat(l.unit_cost) || 0,
-            })),
+          lines: linesToSend,
         }),
       });
 
@@ -668,6 +880,9 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
         const data = await res.json();
         throw new Error(data.error || 'Failed to create purchase order');
       }
+
+      const result = await res.json();
+      console.log('PO created:', result);
 
       onCreated();
     } catch (err: any) {
@@ -697,14 +912,20 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
               <label className="block text-sm font-medium mb-1">Vendor *</label>
               <select
                 value={form.vendor_id}
-                onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}
+                onChange={(e) => {
+                  setForm({ 
+                    ...form, 
+                    vendor_id: e.target.value,
+                    lines: [{ catalog_item_id: '', qty: '', unit_cost: '' }] // Reset lines when vendor changes
+                  });
+                }}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 required
               >
                 <option value="">Select a vendor...</option>
                 {vendors.map(vendor => (
                   <option key={vendor.id} value={vendor.id}>
-                    {vendor.vendor_number} - {vendor.name}
+                    {vendor.code} - {vendor.name}
                   </option>
                 ))}
               </select>
@@ -745,17 +966,34 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
               </button>
             </div>
             <div className="space-y-2">
+              {!form.vendor_id && (
+                <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
+                  Select a vendor first to see available items
+                </p>
+              )}
               {form.lines.map((line, index) => (
                 <div key={index} className="flex gap-2 items-center">
                   <select
                     value={line.catalog_item_id}
-                    onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
+                    onChange={(e) => {
+                      const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
+                      
+                      // Update both catalog_item_id and unit_cost in a single state update
+                      const newLines = [...form.lines];
+                      newLines[index] = {
+                        ...newLines[index],
+                        catalog_item_id: e.target.value,
+                        unit_cost: selectedItem?.unit_cost ? selectedItem.unit_cost.toString() : newLines[index].unit_cost,
+                      };
+                      setForm({ ...form, lines: newLines });
+                    }}
                     className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={!form.vendor_id}
                   >
                     <option value="">Select an item...</option>
-                    {catalogItems.map(item => (
-                      <option key={item.id} value={item.id}>
-                        {item.sku} - {item.name}
+                    {vendorItems.map(vi => (
+                      <option key={vi.id} value={vi.catalog_items?.id}>
+                        {vi.vendor_sku} - {vi.catalog_items?.name}
                       </option>
                     ))}
                   </select>
@@ -806,6 +1044,283 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
             >
               {saving ? 'Creating...' : 'Create PO'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: () => void; onUpdated: () => void }) {
+  const [form, setForm] = useState({
+    vendor_id: po.vendor_id || '',
+    ship_to_location_id: po.ship_to_location_id || '',
+    expected_delivery_date: po.expected_delivery_date || '',
+    notes: po.notes || '',
+    lines: po.purchase_order_lines?.map(line => ({
+      id: line.id,
+      catalog_item_id: line.catalog_item_id,
+      qty: line.qty_ordered.toString(),
+      unit_cost: line.unit_cost.toString(),
+    })) || [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
+
+  useEffect(() => {
+    fetchVendors();
+    fetchLocations();
+    if (form.vendor_id) {
+      fetchVendorItems(form.vendor_id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (form.vendor_id && form.vendor_id !== po.vendor_id) {
+      fetchVendorItems(form.vendor_id);
+    }
+  }, [form.vendor_id]);
+
+  const fetchVendors = async () => {
+    try {
+      const res = await fetch('/api/inventory/vendors');
+      const { data } = await res.json();
+      setVendors(data || []);
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+    }
+  };
+
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch('/api/inventory/locations');
+      const { data } = await res.json();
+      setLocations(data || []);
+    } catch (error) {
+      console.error('Error fetching locations:', error);
+    }
+  };
+
+  const fetchVendorItems = async (vendorId: string) => {
+    try {
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/items`);
+      const { data } = await res.json();
+      setVendorItems(data || []);
+    } catch (error) {
+      console.error('Error fetching vendor items:', error);
+      setVendorItems([]);
+    }
+  };
+
+  const addLine = () => {
+    setForm({
+      ...form,
+      lines: [...form.lines, { id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+    });
+  };
+
+  const removeLine = (index: number) => {
+    setForm({
+      ...form,
+      lines: form.lines.filter((_, i) => i !== index),
+    });
+  };
+
+  const updateLine = (index: number, field: string, value: string) => {
+    const newLines = [...form.lines];
+    newLines[index] = { ...newLines[index], [field]: value };
+    setForm({ ...form, lines: newLines });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    try {
+      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendor_id: form.vendor_id,
+          ship_to_location_id: form.ship_to_location_id,
+          expected_delivery_date: form.expected_delivery_date || null,
+          notes: form.notes || null,
+          lines: form.lines
+            .filter(l => l.catalog_item_id && l.qty)
+            .map(l => ({
+              id: l.id || undefined,
+              catalog_item_id: l.catalog_item_id,
+              qty: parseInt(l.qty),
+              unit_cost: parseFloat(l.unit_cost) || 0,
+            })),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update purchase order');
+      }
+
+      onUpdated();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
+          <h3 className="text-lg font-semibold">Edit PO - {po.po_number}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Vendor *</label>
+              <select
+                value={form.vendor_id}
+                onChange={(e) => {
+                  setForm({ 
+                    ...form, 
+                    vendor_id: e.target.value,
+                    lines: [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }]
+                  });
+                }}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              >
+                <option value="">Select a vendor...</option>
+                {vendors.map(vendor => (
+                  <option key={vendor.id} value={vendor.id}>
+                    {vendor.code} - {vendor.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Ship To Location *</label>
+              <select
+                value={form.ship_to_location_id}
+                onChange={(e) => setForm({ ...form, ship_to_location_id: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              >
+                <option value="">Select a location...</option>
+                {locations.map(location => (
+                  <option key={location.id} value={location.id}>
+                    {location.name} ({location.location_type?.name || 'Unknown'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Expected Delivery</label>
+            <input
+              type="date"
+              value={form.expected_delivery_date}
+              onChange={(e) => setForm({ ...form, expected_delivery_date: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium">Line Items</h4>
+              <button type="button" onClick={addLine} className="text-sm text-primary hover:underline">
+                + Add Line
+              </button>
+            </div>
+            <div className="space-y-2">
+              {!form.vendor_id && (
+                <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
+                  Select a vendor first to see available items
+                </p>
+              )}
+              {form.lines.map((line, index) => (
+                <div key={index} className="flex gap-2 items-center">
+                  <select
+                    value={line.catalog_item_id}
+                    onChange={(e) => {
+                      const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
+                      updateLine(index, 'catalog_item_id', e.target.value);
+                      if (selectedItem?.unit_cost && !line.unit_cost) {
+                        updateLine(index, 'unit_cost', selectedItem.unit_cost.toString());
+                      }
+                    }}
+                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={!form.vendor_id}
+                  >
+                    <option value="">Select an item...</option>
+                    {vendorItems.map(vi => (
+                      <option key={vi.id} value={vi.catalog_items?.id}>
+                        {vi.vendor_sku} - {vi.catalog_items?.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    value={line.qty}
+                    onChange={(e) => updateLine(index, 'qty', e.target.value)}
+                    className="w-20 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Qty"
+                    min="1"
+                  />
+                  <input
+                    type="number"
+                    value={line.unit_cost}
+                    onChange={(e) => updateLine(index, 'unit_cost', e.target.value)}
+                    className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="$/unit"
+                    step="0.01"
+                    min="0"
+                  />
+                  {form.lines.length > 1 && (
+                    <button type="button" onClick={() => removeLine(index)} className="text-red-500 hover:text-red-700">
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              rows={2}
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>

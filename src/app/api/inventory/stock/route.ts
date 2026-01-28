@@ -8,9 +8,17 @@ import { getTenantIdFromHeaders } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
+  console.log('[Stock API] Request headers:', {
+    'x-tenant-id': request.headers.get('x-tenant-id'),
+    'x-user-id': request.headers.get('x-user-id'),
+    'x-user-role': request.headers.get('x-user-role')
+  });
+  
   const tenantId = getTenantIdFromHeaders(request.headers);
+  console.log('[Stock API] Tenant ID from headers:', tenantId);
 
   if (!tenantId) {
+    console.error('[Stock API] No tenant ID found - returning 401');
     return NextResponse.json(
       { error: 'Not authenticated' },
       { status: 401 }
@@ -33,7 +41,7 @@ export async function GET(request: NextRequest) {
         qty_available,
         updated_at,
         catalog_items(id, sku, name, unit_of_measure),
-        locations(id, name, location_type)
+        locations(id, name, location_type_id, location_types(name))
       `)
       .eq('tenant_id', tenantId);
 

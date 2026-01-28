@@ -2864,7 +2864,7 @@ BEGIN
     -- Publish event
     PERFORM inventory.publish_event(
         p_tenant_id => p_tenant_id,
-        p_scope => 'inventory',
+        p_scope => 'tenant',
         p_event_type => 'transfer.created',
         p_aggregate_type => 'transfer',
         p_aggregate_id => v_transfer_id,

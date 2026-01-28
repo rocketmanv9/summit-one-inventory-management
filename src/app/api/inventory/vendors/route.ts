@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient, setDbTenantContext } from '@/lib/db-middleware';
+import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   const tenantId = getTenantIdFromHeaders(request.headers);
@@ -63,9 +63,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, code, contact_name, contact_email, contact_phone, address, payment_terms, lead_time_days } = body;
 
-    // Set tenant context for RLS
-    await setDbTenantContext(tenantId);
-    
     const supabase = createClient();
 
     const { data: vendor, error } = await supabase

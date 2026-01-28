@@ -29,8 +29,8 @@ export async function GET(request: NextRequest) {
       .from('transfers')
       .select(`
         *,
-        from_location:locations!transfers_from_location_id_fkey(id, name, location_type),
-        to_location:locations!transfers_to_location_id_fkey(id, name, location_type),
+        from_location:locations!transfers_from_location_id_fkey(id, name, location_type_id, location_types(name)),
+        to_location:locations!transfers_to_location_id_fkey(id, name, location_type_id, location_types(name)),
         transfer_lines(
           id,
           catalog_item_id,

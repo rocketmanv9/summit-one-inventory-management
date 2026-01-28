@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
     // Query items - ALWAYS filter by tenant_id
     // This is critical for data isolation
     const { data: items, error } = await supabase
+      .schema('inventory')
       .from('catalog_items')
       .select(`
         *,
@@ -35,11 +36,14 @@ export async function GET(request: NextRequest) {
     
     if (error) {
       console.error('Error fetching items:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
       return NextResponse.json(
-        { error: 'Failed to fetch items' },
+        { error: 'Failed to fetch items', details: error },
         { status: 500 }
       );
     }
+    
+    console.log(`[Items API] Fetched ${items?.length || 0} items for tenant ${tenantId}`);
     
     return NextResponse.json({ 
       data: items,

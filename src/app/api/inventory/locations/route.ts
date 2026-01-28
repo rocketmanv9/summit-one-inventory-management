@@ -42,11 +42,14 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('Error fetching locations:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
       return NextResponse.json(
-        { error: 'Failed to fetch locations' },
+        { error: 'Failed to fetch locations', details: error },
         { status: 500 }
       );
     }
+
+    console.log(`[Locations API] Fetched ${locations?.length || 0} locations for tenant ${tenantId}`);
 
     return NextResponse.json({
       data: locations,

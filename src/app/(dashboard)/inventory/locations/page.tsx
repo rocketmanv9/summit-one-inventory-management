@@ -305,10 +305,16 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
       const url = isEditing ? `/api/inventory/locations/${location.id}` : '/api/inventory/locations';
       const method = isEditing ? 'PUT' : 'POST';
       
+      // Convert empty string to null for parent_location_id
+      const payload = {
+        ...form,
+        parent_location_id: form.parent_location_id || null,
+      };
+      
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {

@@ -297,39 +297,40 @@ BEGIN
     -- ========================================================================
     -- VENDOR PERFORMANCE EVENTS
     -- ========================================================================
-    RAISE NOTICE '';
-    RAISE NOTICE '=== Creating Vendor Performance Events ===';
+    -- DISABLED: vendor_performance_events table not yet created in schema
+    -- RAISE NOTICE '';
+    -- RAISE NOTICE '=== Creating Vendor Performance Events ===';
     
     -- PO Created event
-    INSERT INTO supply_chain.vendor_performance_events (
-        tenant_id, vendor_id, event_type, event_date,
-        po_id, quantity, amount
-    ) VALUES (
-        v_tenant_id, v_vendor1_id, 'po_created', CURRENT_DATE - INTERVAL '10 days',
-        v_po1_id, 50.0, 6250.00
-    );
+    -- INSERT INTO supply_chain.vendor_performance_events (
+    --     tenant_id, vendor_id, event_type, event_date,
+    --     po_id, quantity, amount
+    -- ) VALUES (
+    --     v_tenant_id, v_vendor1_id, 'po_created', CURRENT_DATE - INTERVAL '10 days',
+    --     v_po1_id, 50.0, 6250.00
+    -- );
     
     -- Delivery on time event
-    INSERT INTO supply_chain.vendor_performance_events (
-        tenant_id, vendor_id, event_type, event_date,
-        po_id, receipt_id, quantity,
-        expected_date, actual_date, days_late
-    ) VALUES (
-        v_tenant_id, v_vendor1_id, 'delivery_on_time', CURRENT_DATE - INTERVAL '5 days',
-        v_po1_id, v_receipt1_id, 30.0,
-        CURRENT_DATE - INTERVAL '5 days', CURRENT_DATE - INTERVAL '5 days', 0
-    );
+    -- INSERT INTO supply_chain.vendor_performance_events (
+    --     tenant_id, vendor_id, event_type, event_date,
+    --     po_id, receipt_id, quantity,
+    --     expected_date, actual_date, days_late
+    -- ) VALUES (
+    --     v_tenant_id, v_vendor1_id, 'delivery_on_time', CURRENT_DATE - INTERVAL '5 days',
+    --     v_po1_id, v_receipt1_id, 30.0,
+    --     CURRENT_DATE - INTERVAL '5 days', CURRENT_DATE - INTERVAL '5 days', 0
+    -- );
     
     -- Items received event
-    INSERT INTO supply_chain.vendor_performance_events (
-        tenant_id, vendor_id, event_type, event_date,
-        po_id, receipt_id, quantity
-    ) VALUES (
-        v_tenant_id, v_vendor1_id, 'items_received', CURRENT_DATE - INTERVAL '5 days',
-        v_po1_id, v_receipt1_id, 30.0
-    );
+    -- INSERT INTO supply_chain.vendor_performance_events (
+    --     tenant_id, vendor_id, event_type, event_date,
+    --     po_id, receipt_id, quantity
+    -- ) VALUES (
+    --     v_tenant_id, v_vendor1_id, 'items_received', CURRENT_DATE - INTERVAL '5 days',
+    --     v_po1_id, v_receipt1_id, 30.0
+    -- );
     
-    RAISE NOTICE '✓ Created 3 vendor performance events';
+    -- RAISE NOTICE '✓ Created 3 vendor performance events';
     
     -- ========================================================================
     -- ACCOUNTING EXPENSES (Simulated invoice)

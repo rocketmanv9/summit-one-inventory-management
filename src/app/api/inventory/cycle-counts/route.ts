@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
       .from('cycle_counts')
       .select(`
         *,
-        location:locations(id, name, location_type)
+        location:locations(id, name, location_type_id, location_types(name))
       `)
       .eq('tenant_id', tenantId)
       .order('scheduled_for', { ascending: false });

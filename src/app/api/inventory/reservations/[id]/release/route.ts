@@ -1,44 +1,33 @@
 // API Route: Release/cancel reservation
 // Non-negotiable: Auth, Tenant isolation, Idempotency
 
-import { createClient } from '@/supabase/client';
+import { createClient } from '@/lib/db-middleware';
+import { getTenantIdFromHeaders } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
+  const tenantId = getTenantIdFromHeaders(request.headers);
+
+  if (!tenantId) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
   try {
-    const { id } = await params;
+    const { id } = await Promise.resolve(params);
     const supabase = createClient();
-    
-    // Verify authentication
-    const { data: { session }, error: authError } = await supabase.auth.getSession();
-    if (authError || !session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-    
-    // Get tenant_id from JWT
-    const tenantId = session.user.app_metadata?.tenant_id;
-    if (!tenantId) {
-      return NextResponse.json(
-        { error: 'No tenant ID in session' },
-        { status: 400 }
-      );
-    }
     
     // Optional: Parse request body for idempotency key
     const body = await request.json().catch(() => ({}));
     const lastEventId = body.last_event_id || null;
     
-    // Call RPC function (already exists in DB)
+    // Call RPC function: rpc_inv_release_reservation(p_tenant_id, p_reservation_id, p_cancelled_by_user_id, p_last_event_id)
     const { data, error } = await supabase.rpc('rpc_inv_release_reservation', {
       p_tenant_id: tenantId,
       p_reservation_id: id,
-      p_cancelled_by_user_id: session.user.id,
+      p_cancelled_by_user_id: null, // TODO: Get from headers if needed
       p_last_event_id: lastEventId
     });
     

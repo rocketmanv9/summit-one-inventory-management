@@ -24,12 +24,9 @@ interface Receipt {
   locations?: { id: string; name: string };
   receipt_lines?: Array<{
     id: string;
-    purchase_order_line_id?: string;
+    po_line_id?: string;
     catalog_item_id?: string;
     qty_received: number;
-    qty_accepted: number;
-    qty_rejected: number;
-    rejection_reason?: string;
     catalog_items?: { id: string; name: string; sku: string };
   }>;
 }
@@ -108,27 +105,15 @@ export default function ReceivingPage() {
     },
     {
       key: 'lines',
-      header: 'Items',
+      header: 'Items Received',
       render: (row: Receipt) => (
         <div>
           <div>{row.receipt_lines?.length || 0} line(s)</div>
           <div className="text-xs text-muted-foreground">
-            {row.receipt_lines?.reduce((sum, l) => sum + l.qty_accepted, 0) || 0} accepted
+            Total: {row.receipt_lines?.reduce((sum, l) => sum + Number(l.qty_received), 0) || 0}
           </div>
         </div>
       ),
-    },
-    {
-      key: 'rejected',
-      header: 'Rejected',
-      render: (row: Receipt) => {
-        const rejected = row.receipt_lines?.reduce((sum, l) => sum + l.qty_rejected, 0) || 0;
-        return rejected > 0 ? (
-          <span className="text-red-600 font-medium">{rejected}</span>
-        ) : (
-          <span className="text-muted-foreground">0</span>
-        );
-      },
     },
   ];
 
@@ -173,7 +158,7 @@ export default function ReceivingPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="text-2xl font-bold text-green-700">
               {receipts.length}
@@ -182,15 +167,9 @@ export default function ReceivingPage() {
           </div>
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="text-2xl font-bold text-blue-700">
-              {receipts.reduce((sum, r) => sum + (r.receipt_lines?.reduce((s, l) => s + l.qty_accepted, 0) || 0), 0)}
+              {receipts.reduce((sum, r) => sum + (r.receipt_lines?.reduce((s, l) => s + Number(l.qty_received), 0) || 0), 0)}
             </div>
             <div className="text-sm text-blue-600">Items Received</div>
-          </div>
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <div className="text-2xl font-bold text-red-700">
-              {receipts.reduce((sum, r) => sum + (r.receipt_lines?.reduce((s, l) => s + l.qty_rejected, 0) || 0), 0)}
-            </div>
-            <div className="text-sm text-red-600">Items Rejected</div>
           </div>
         </div>
 
@@ -223,6 +202,7 @@ export default function ReceivingPage() {
 
 function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onClose: () => void; onComplete: () => void }) {
   const [po, setPO] = useState<PurchaseOrder | null>(null);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(!!poId);
   const [form, setForm] = useState({
     purchase_order_id: poId || '',
@@ -235,19 +215,27 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
       qty_ordered: number;
       qty_previously_received: number;
       qty_received: string;
-      qty_accepted: string;
-      qty_rejected: string;
-      rejection_reason: string;
     }>,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    fetchLocations();
     if (poId) {
       fetchPO(poId);
     }
   }, [poId]);
+
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch('/api/inventory/locations');
+      const { data } = await res.json();
+      setLocations(data || []);
+    } catch (error) {
+      console.error('Error fetching locations:', error);
+    }
+  };
 
   const fetchPO = async (id: string) => {
     setLoading(true);
@@ -267,9 +255,6 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
             qty_ordered: line.qty_ordered,
             qty_previously_received: line.qty_received,
             qty_received: '',
-            qty_accepted: '',
-            qty_rejected: '0',
-            rejection_reason: '',
           })) || [],
         });
       }
@@ -283,19 +268,6 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
   const updateLine = (index: number, field: string, value: string) => {
     const newLines = [...form.lines];
     newLines[index] = { ...newLines[index], [field]: value };
-
-    // Auto-calculate accepted if received changes
-    if (field === 'qty_received') {
-      const received = parseInt(value) || 0;
-      const rejected = parseInt(newLines[index].qty_rejected) || 0;
-      newLines[index].qty_accepted = String(Math.max(0, received - rejected));
-    }
-    if (field === 'qty_rejected') {
-      const received = parseInt(newLines[index].qty_received) || 0;
-      const rejected = parseInt(value) || 0;
-      newLines[index].qty_accepted = String(Math.max(0, received - rejected));
-    }
-
     setForm({ ...form, lines: newLines });
   };
 
@@ -318,9 +290,6 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
               purchase_order_line_id: l.purchase_order_line_id,
               catalog_item_id: l.catalog_item_id,
               qty_received: parseInt(l.qty_received),
-              qty_accepted: parseInt(l.qty_accepted),
-              qty_rejected: parseInt(l.qty_rejected) || 0,
-              rejection_reason: l.rejection_reason || null,
             })),
         }),
       });
@@ -365,14 +334,17 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
 
             <div>
               <label className="block text-sm font-medium mb-1">Receive To Location *</label>
-              <input
-                type="text"
+              <select
                 value={form.location_id}
                 onChange={(e) => setForm({ ...form, location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                placeholder="Location UUID"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 required
-              />
+              >
+                <option value="">Select location...</option>
+                {locations.map(loc => (
+                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                ))}
+              </select>
             </div>
 
             {form.lines.length > 0 && (
@@ -387,9 +359,9 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
                           Ordered: {line.qty_ordered} | Previously received: {line.qty_previously_received}
                         </div>
                       </div>
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-1 gap-2">
                         <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Received</label>
+                          <label className="block text-xs text-muted-foreground mb-1">Quantity Received</label>
                           <input
                             type="number"
                             value={line.qty_received}
@@ -397,38 +369,7 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
                             className="w-full px-2 py-1.5 border rounded text-sm"
                             min="0"
                             max={line.qty_ordered - line.qty_previously_received}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Accepted</label>
-                          <input
-                            type="number"
-                            value={line.qty_accepted}
-                            onChange={(e) => updateLine(index, 'qty_accepted', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm bg-green-50"
-                            min="0"
-                            readOnly
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Rejected</label>
-                          <input
-                            type="number"
-                            value={line.qty_rejected}
-                            onChange={(e) => updateLine(index, 'qty_rejected', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm bg-red-50"
-                            min="0"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Reason</label>
-                          <input
-                            type="text"
-                            value={line.rejection_reason}
-                            onChange={(e) => updateLine(index, 'rejection_reason', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm"
-                            placeholder="If rejected..."
-                            disabled={!line.qty_rejected || line.qty_rejected === '0'}
+                            placeholder="Enter quantity received"
                           />
                         </div>
                       </div>
