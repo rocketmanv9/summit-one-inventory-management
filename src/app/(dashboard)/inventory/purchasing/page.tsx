@@ -317,18 +317,6 @@ export default function PurchasingPage() {
               </button>
             )}
 
-            {/* Receive button - for placed, acknowledged, or partially received */}
-            {(isPlaced || isPartiallyReceived) && (
-              <a
-                href={`/inventory/receiving?po=${row.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white inline-block text-center"
-                title="Receive items"
-              >
-                Receive
-              </a>
-            )}
-
             {/* Edit button - only for draft */}
             {isDraft && (
               <button

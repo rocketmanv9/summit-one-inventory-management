@@ -132,3 +132,34 @@ export function getTenantIdFromHeaders(headers: Headers): string | null {
 export function getUserIdFromHeaders(headers: Headers): string | null {
   return headers.get('x-user-id');
 }
+
+/**
+ * Get user email from request headers (set by middleware)
+ */
+export function getUserEmailFromHeaders(headers: Headers): string | null {
+  return headers.get('x-user-email');
+}
+
+/**
+ * Track user activity by upserting user info
+ * Call this in API routes to keep user cache fresh
+ */
+export async function trackUserActivity(
+  tenantId: string,
+  userId: string,
+  email?: string | null,
+  name?: string | null
+) {
+  try {
+    const supabase = createClient();
+    await supabase.rpc('upsert_user_info', {
+      p_user_id: userId,
+      p_tenant_id: tenantId,
+      p_email: email,
+      p_name: name
+    });
+  } catch (error) {
+    // Don't throw - tracking is non-critical
+    console.error('Failed to track user activity:', error);
+  }
+}

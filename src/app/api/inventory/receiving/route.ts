@@ -1,7 +1,7 @@
 /**
  * Receiving API
- * GET /api/inventory/receiving - List receipts
- * POST /api/inventory/receiving - Create receipt (receive against PO)
+ * GET /api/inventory/receiving - List open POs for receiving
+ * POST - Use /api/supply-chain/receipts instead
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,51 +20,32 @@ export async function GET(request: NextRequest) {
 
   try {
     const { searchParams } = new URL(request.url);
-    const poId = searchParams.get('po_id');
+    const vendorId = searchParams.get('vendor_id');
+    const search = searchParams.get('search');
 
     const supabase = createClient();
 
-    // Build query
-    let query = supabase
+    // Call the new RPC to get open POs for receiving
+    const { data: openPOs, error } = await supabase
       .schema('supply_chain')
-      .from('receipts')
-      .select(`
-        id,
-        receipt_number,
-        received_at,
-        po_id,
-        location_id,
-        received_by_user_id,
-        notes,
-        locations:location_id(id, name),
-        users:received_by_user_id(id, email),
-        receipt_lines(
-          id,
-          catalog_item_id,
-          qty_received,
-          catalog_items:catalog_item_id(id, name, sku)
-        )
-      `)
-      .eq('tenant_id', tenantId);
-
-    // Filter by PO if provided
-    if (poId) {
-      query = query.eq('po_id', poId);
-    }
-
-    const { data: receipts, error } = await query.order('received_at', { ascending: false });
+      .rpc('rpc_get_open_pos_for_receiving', {
+        p_tenant_id: tenantId,
+        p_vendor_id: vendorId || null,
+        p_search: search || null,
+        p_limit: 100
+      });
 
     if (error) {
-      console.error('Error fetching receipts:', error);
+      console.error('Error fetching open POs:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch receipts', details: error },
+        { error: 'Failed to fetch open POs', details: error },
         { status: 500 }
       );
     }
 
     return NextResponse.json({
-      data: receipts || [],
-      meta: { tenantId, count: receipts?.length || 0 }
+      data: openPOs || [],
+      meta: { tenantId, count: openPOs?.length || 0 }
     });
   } catch (error) {
     console.error('Unexpected error:', error);
