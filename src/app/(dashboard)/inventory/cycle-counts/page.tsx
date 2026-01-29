@@ -9,23 +9,25 @@ import { StatusChip } from '@/components/ui/StatusChip';
 
 interface CycleCount {
   id: string;
+  count_number: string;
+  tenant_id: string;
   location_id: string;
   count_type: string;
+  is_blind: boolean;
   status: string;
-  created_at: string;
+  scheduled_for?: string;
+  started_at?: string;
+  snapshot_at?: string;
   completed_at?: string;
-  approved_by?: string;
   approved_at?: string;
-  locations?: { id: string; name: string; location_type: string };
-  cycle_count_lines?: Array<{
-    id: string;
-    catalog_item_id: string;
-    expected_qty: number;
-    counted_qty?: number;
-    variance_qty?: number;
-    variance_approved?: boolean;
-    catalog_items?: { id: string; name: string; sku: string };
-  }>;
+  approved_by_user_id?: string;
+  posted_at?: string;
+  created_at: string;
+  location?: { 
+    id: string; 
+    name: string; 
+    location_types?: { name: string }; 
+  };
 }
 
 export default function CycleCountsPage() {
@@ -55,22 +57,43 @@ export default function CycleCountsPage() {
     }
   };
 
-  const calculateVariance = (cc: CycleCount) => {
-    if (!cc.cycle_count_lines) return { total: 0, percent: 0 };
-    const totalExpected = cc.cycle_count_lines.reduce((sum, l) => sum + l.expected_qty, 0);
-    const totalVariance = cc.cycle_count_lines.reduce((sum, l) => sum + Math.abs(l.variance_qty || 0), 0);
-    return {
-      total: totalVariance,
-      percent: totalExpected > 0 ? Math.round((totalVariance / totalExpected) * 100) : 0,
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      draft: 'bg-gray-100 text-gray-700',
+      scheduled: 'bg-cyan-100 text-cyan-700',
+      in_progress: 'bg-blue-100 text-blue-700',
+      under_review: 'bg-purple-100 text-purple-700',
+      approved: 'bg-green-100 text-green-700',
+      posted: 'bg-emerald-100 text-emerald-700',
+      closed: 'bg-gray-100 text-gray-600',
+      cancelled: 'bg-red-100 text-red-700',
     };
+    return colors[status] || 'bg-gray-100 text-gray-600';
+  };
+
+  const formatDate = (dateString: string | undefined) => {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
   };
 
   const columns = [
     {
-      key: 'id',
+      key: 'cycle_count_number',
       header: 'Count #',
       render: (row: CycleCount) => (
-        <span className="font-mono text-sm">{row.id.slice(0, 8).toUpperCase()}</span>
+        <div>
+          <div className="font-mono text-sm font-medium">{row.cycle_count_number}</div>
+          {row.is_blind && (
+            <div className="text-xs text-amber-600 mt-0.5">🔒 Blind Count</div>
+          )}
+        </div>
       ),
     },
     {
@@ -79,9 +102,9 @@ export default function CycleCountsPage() {
       sortable: true,
       render: (row: CycleCount) => (
         <div>
-          <div className="font-medium">{row.locations?.name || '-'}</div>
+          <div className="font-medium">{row.location?.name || '-'}</div>
           <div className="text-xs text-muted-foreground capitalize">
-            {row.locations?.location_type?.replace('_', ' ') || ''}
+            {row.location?.location_types?.name || ''}
           </div>
         </div>
       ),
@@ -90,73 +113,90 @@ export default function CycleCountsPage() {
       key: 'count_type',
       header: 'Type',
       render: (row: CycleCount) => (
-        <StatusChip status={row.count_type} />
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 capitalize">
+          {row.count_type.replace('_', ' ')}
+        </span>
       ),
     },
     {
-      key: 'lines',
-      header: 'Items',
+      key: 'scheduled_for',
+      header: 'Scheduled',
       render: (row: CycleCount) => (
-        <div>
-          <div>{row.cycle_count_lines?.length || 0} item(s)</div>
-          <div className="text-xs text-muted-foreground">
-            {row.cycle_count_lines?.filter(l => l.counted_qty !== null && l.counted_qty !== undefined).length || 0} counted
-          </div>
+        <div className="text-sm">
+          {formatDate(row.scheduled_for || row.started_at || row.created_at)}
         </div>
       ),
-    },
-    {
-      key: 'variance',
-      header: 'Variance',
-      render: (row: CycleCount) => {
-        const variance = calculateVariance(row);
-        if (row.status === 'scheduled' || row.status === 'in_progress') return '-';
-        return (
-          <div className={variance.percent > 5 ? 'text-red-600' : variance.percent > 0 ? 'text-yellow-600' : 'text-green-600'}>
-            <div className="font-medium">{variance.total} units</div>
-            <div className="text-xs">{variance.percent}%</div>
-          </div>
-        );
-      },
     },
     {
       key: 'status',
       header: 'Status',
       render: (row: CycleCount) => (
-        <StatusChip status={row.status} />
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(row.status)}`}>
+          {row.status === 'submitted_for_review' ? 'Pending Review' : row.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+        </span>
       ),
     },
     {
-      key: 'created_at',
-      header: 'Created',
-      sortable: true,
-      render: (row: CycleCount) => new Date(row.created_at).toLocaleDateString(),
+      key: 'progress',
+      header: 'Progress',
+      render: (row: CycleCount) => {
+        if (row.status === 'draft') return <span className="text-sm text-muted-foreground">Not started</span>;
+        if (row.status === 'posted' || row.status === 'closed') {
+          return <span className="text-sm text-green-600 font-medium">✓ Complete</span>;
+        }
+        if (row.snapshot_captured_at) {
+          return <span className="text-sm text-blue-600">Snapshot captured</span>;
+        }
+        return <span className="text-sm text-muted-foreground">In progress...</span>;
+      },
     },
     {
       key: 'actions',
       header: '',
       render: (row: CycleCount) => (
-        <div className="flex gap-2">
+        <div className="flex gap-2 justify-end">
+          {row.status === 'draft' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStartCount(row);
+              }}
+              className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+            >
+              Start Count
+            </button>
+          )}
           {row.status === 'in_progress' && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedCount(row);
               }}
-              className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+              className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
             >
-              Enter Counts
+              View Details
             </button>
           )}
-          {row.status === 'completed' && (
+          {row.status === 'under_review' && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedCount(row);
               }}
-              className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded hover:bg-green-200"
+              className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
             >
               Review
+            </button>
+          )}
+          {(row.status === 'approved' || row.status === 'posted') && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedCount(row);
+              }}
+              className="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 font-medium"
+            >
+              View
             </button>
           )}
         </div>
@@ -164,15 +204,38 @@ export default function CycleCountsPage() {
     },
   ];
 
+  const handleStartCount = async (cycleCount: CycleCount) => {
+    if (!confirm(`Start cycle count ${cycleCount.count_number}?`)) return;
+
+    try {
+      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to start count');
+      }
+
+      fetchCycleCounts();
+    } catch (error: any) {
+      alert(`Error: ${error.message}`);
+    }
+  };
+
   const filterConfig = [
     {
       key: 'status',
       label: 'Status',
       type: 'select' as const,
       options: [
+        { value: 'draft', label: 'Draft' },
         { value: 'scheduled', label: 'Scheduled' },
         { value: 'in_progress', label: 'In Progress' },
-        { value: 'completed', label: 'Completed' },
+        { value: 'under_review', label: 'Under Review' },
+        { value: 'approved', label: 'Approved' },
+        { value: 'posted', label: 'Posted' },
+        { value: 'closed', label: 'Closed' },
         { value: 'cancelled', label: 'Cancelled' },
       ],
     },
@@ -195,29 +258,29 @@ export default function CycleCountsPage() {
         />
 
         <div className="grid grid-cols-4 gap-4">
-          <div className="p-4 bg-cyan-50 border border-cyan-200 rounded-lg">
-            <div className="text-2xl font-bold text-cyan-700">
-              {cycleCounts.filter(c => c.status === 'scheduled').length}
-            </div>
-            <div className="text-sm text-cyan-600">Scheduled</div>
-          </div>
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="text-2xl font-bold text-blue-700">
+              {cycleCounts.filter(c => c.status === 'draft').length}
+            </div>
+            <div className="text-sm text-blue-600">Draft</div>
+          </div>
+          <div className="p-4 bg-cyan-50 border border-cyan-200 rounded-lg">
+            <div className="text-2xl font-bold text-cyan-700">
               {cycleCounts.filter(c => c.status === 'in_progress').length}
             </div>
-            <div className="text-sm text-blue-600">In Progress</div>
+            <div className="text-sm text-cyan-600">In Progress</div>
           </div>
-          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="text-2xl font-bold text-yellow-700">
-              {cycleCounts.filter(c => c.status === 'completed' && !c.approved_at).length}
+          <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <div className="text-2xl font-bold text-purple-700">
+              {cycleCounts.filter(c => c.status === 'under_review').length}
             </div>
-            <div className="text-sm text-yellow-600">Pending Approval</div>
+            <div className="text-sm text-purple-600">Under Review</div>
           </div>
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="text-2xl font-bold text-green-700">
-              {cycleCounts.filter(c => c.approved_at).length}
+              {cycleCounts.filter(c => c.status === 'posted' || c.status === 'closed').length}
             </div>
-            <div className="text-sm text-green-600">Approved</div>
+            <div className="text-sm text-green-600">Completed</div>
           </div>
         </div>
 
@@ -264,150 +327,365 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   onClose: () => void;
   onUpdate: () => void;
 }) {
-  const [lines, setLines] = useState(cycleCount.cycle_count_lines || []);
-  const [saving, setSaving] = useState(false);
+  const [countLines, setCountLines] = useState<any[]>([]);
+  const [loadingLines, setLoadingLines] = useState(true);
 
-  const updateCount = (lineId: string, countedQty: string) => {
-    setLines(lines.map(l => {
-      if (l.id === lineId) {
-        const counted = parseInt(countedQty) || 0;
-        return {
-          ...l,
-          counted_qty: counted,
-          variance_qty: counted - l.expected_qty,
-        };
-      }
-      return l;
-    }));
-  };
+  useEffect(() => {
+    if (cycleCount.status === 'in_progress' || cycleCount.status === 'under_review') {
+      fetchCountLines();
+    } else {
+      setCountLines([]);
+      setLoadingLines(false);
+    }
+  }, [cycleCount.id, cycleCount.status]);
 
-  const handleSaveCounts = async () => {
-    setSaving(true);
+  const fetchCountLines = async () => {
+    setLoadingLines(true);
     try {
-      for (const line of lines) {
-        if (line.counted_qty !== null && line.counted_qty !== undefined) {
-          await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/record`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              catalog_item_id: line.catalog_item_id,
-              counted_qty: line.counted_qty,
-            }),
-          });
-        }
-      }
-      onUpdate();
+      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines`);
+      const { data } = await res.json();
+      setCountLines(data || []);
     } catch (error) {
-      console.error('Error saving counts:', error);
+      console.error('Error fetching count lines:', error);
     } finally {
-      setSaving(false);
+      setLoadingLines(false);
     }
   };
 
-  const handleApprove = async () => {
-    if (!confirm('Approve this cycle count and apply adjustments?')) return;
-
+  const updateCountLine = async (lineId: string, actualQty: number) => {
     try {
-      await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/approve`, {
-        method: 'POST',
+      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actual_qty: actualQty })
       });
-      onUpdate();
-      onClose();
+      if (!res.ok) throw new Error('Failed to update count');
+      fetchCountLines();
     } catch (error) {
-      console.error('Error approving cycle count:', error);
+      alert('Error updating count');
     }
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[32rem] bg-white shadow-xl border-l z-40 overflow-y-auto">
-      <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-white">
+    <div className="fixed inset-y-0 right-0 w-[48rem] bg-white shadow-xl border-l z-40 overflow-y-auto">
+      <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-white z-10">
         <h3 className="font-semibold">Cycle Count Details</h3>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl">✕</button>
       </div>
 
-      <div className="p-4 space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="font-mono">{cycleCount.id.slice(0, 8).toUpperCase()}</span>
-          <StatusChip status={cycleCount.status} />
-        </div>
+      <div className="p-6 space-y-6">
+        {/* Header Info */}
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="font-mono text-lg font-bold">{cycleCount.count_number}</span>
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+              cycleCount.status === 'posted' ? 'bg-green-100 text-green-800' :
+              cycleCount.status === 'under_review' ? 'bg-purple-100 text-purple-800' :
+              cycleCount.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {cycleCount.status === 'under_review' ? 'Under Review' : 
+               cycleCount.status === 'in_progress' ? 'In Progress' :
+               cycleCount.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            </span>
+          </div>
 
-        <div className="p-3 bg-muted/30 rounded-lg">
-          <div className="text-xs text-muted-foreground">Location</div>
-          <div className="font-medium">{cycleCount.locations?.name}</div>
-        </div>
-
-        <div className="border-t pt-4">
-          <h4 className="font-medium mb-3">Count Lines</h4>
-          <div className="space-y-2">
-            {lines.map((line) => (
-              <div key={line.id} className="p-3 bg-muted/30 rounded-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-medium">{line.catalog_items?.name || 'Unknown'}</div>
-                  <div className="text-xs text-muted-foreground">{line.catalog_items?.sku}</div>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <div className="text-xs text-muted-foreground">Expected</div>
-                    <div className="font-mono">{line.expected_qty}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Counted</div>
-                    {cycleCount.status === 'in_progress' ? (
-                      <input
-                        type="number"
-                        value={line.counted_qty ?? ''}
-                        onChange={(e) => updateCount(line.id, e.target.value)}
-                        className="w-full px-2 py-1 border rounded font-mono text-sm"
-                        min="0"
-                      />
-                    ) : (
-                      <div className="font-mono">{line.counted_qty ?? '-'}</div>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Variance</div>
-                    <div className={`font-mono ${
-                      (line.variance_qty || 0) > 0 ? 'text-green-600' :
-                      (line.variance_qty || 0) < 0 ? 'text-red-600' : ''
-                    }`}>
-                      {line.variance_qty !== null && line.variance_qty !== undefined
-                        ? (line.variance_qty > 0 ? '+' : '') + line.variance_qty
-                        : '-'}
-                    </div>
+          {cycleCount.is_blind && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+              <div className="flex items-start gap-2">
+                <span className="text-amber-600">🔒</span>
+                <div>
+                  <div className="text-sm font-medium text-amber-900">Blind Count Active</div>
+                  <div className="text-xs text-amber-700 mt-0.5">
+                    Expected quantities are hidden from counter to reduce bias
                   </div>
                 </div>
-                {line.variance_approved !== undefined && (
-                  <div className="mt-2">
-                    <StatusChip
-                      status={line.variance_approved ? 'approved' : 'pending'}
-                      size="sm"
-                    />
-                  </div>
-                )}
               </div>
-            ))}
+            </div>
+          )}
+        </div>
+
+        {/* Location Info */}
+        <div className="p-4 bg-gray-50 rounded-lg border">
+          <div className="text-xs text-muted-foreground mb-1">Location</div>
+          <div className="font-medium text-lg">{cycleCount.location?.name || 'Unknown'}</div>
+          <div className="text-sm text-muted-foreground capitalize">
+            {cycleCount.location?.location_types?.name || ''}
           </div>
         </div>
 
-        <div className="border-t pt-4 flex gap-2">
-          {cycleCount.status === 'in_progress' && (
-            <button
-              onClick={handleSaveCounts}
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Counts'}
-            </button>
-          )}
-          {cycleCount.status === 'completed' && !cycleCount.approved_at && (
-            <button
-              onClick={handleApprove}
-              className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-            >
-              Approve & Apply
-            </button>
-          )}
+        {/* Count Type */}
+        <div>
+          <div className="text-xs text-muted-foreground mb-2">Count Type</div>
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 capitalize">
+            {cycleCount.count_type.replace('_', ' ')}
+          </span>
         </div>
+
+        {/* Item Counting Section */}
+        {(cycleCount.status === 'in_progress' || cycleCount.status === 'under_review') && (
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium">Items to Count</div>
+              <div className="text-xs text-muted-foreground">
+                {countLines.filter(l => l.qty_counted !== null).length} / {countLines.length} counted
+              </div>
+            </div>
+
+            {loadingLines ? (
+              <div className="text-center py-8 text-muted-foreground">Loading items...</div>
+            ) : countLines.length === 0 ? (
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="text-sm text-yellow-800">
+                  No items found at this location. This could mean:
+                  <ul className="list-disc ml-4 mt-2 space-y-1">
+                    <li>The location is empty</li>
+                    <li>Stock balances haven't been initialized</li>
+                    <li>Items need to be received first</li>
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {countLines.map((line) => (
+                  <div key={line.id} className="p-3 border rounded-lg hover:bg-gray-50">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <div className="font-medium text-sm">{line.catalog_item?.name || 'Unknown Item'}</div>
+                        <div className="text-xs text-muted-foreground">{line.catalog_item?.sku}</div>
+                      </div>
+                      {!cycleCount.is_blind && (
+                        <div className="text-xs text-muted-foreground">
+                          Expected: <span className="font-medium">{line.qty_expected}</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {cycleCount.status === 'in_progress' ? (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-muted-foreground">Actual Count:</label>
+                        <input
+                          type="number"
+                          defaultValue={line.qty_counted ?? ''}
+                          onBlur={(e) => {
+                            const value = e.target.value === '' ? null : parseFloat(e.target.value);
+                            if (value !== line.qty_counted) {
+                              updateCountLine(line.id, value);
+                            }
+                          }}
+                          className="flex-1 px-2 py-1 border rounded text-sm"
+                          placeholder="Enter count"
+                          step="0.01"
+                        />
+                        {line.qty_counted !== null && !cycleCount.is_blind && (
+                          <span className={`text-xs font-medium ${
+                            Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01
+                              ? 'text-red-600'
+                              : 'text-green-600'
+                          }`}>
+                            {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
+                            {((line.qty_counted || 0) - line.qty_expected).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm">
+                          Counted: <span className="font-medium">{line.qty_counted ?? 'Not counted'}</span>
+                        </div>
+                        {line.qty_counted !== null && (
+                          <span className={`text-xs font-medium ${
+                            Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01
+                              ? 'text-red-600'
+                              : 'text-green-600'
+                          }`}>
+                            Variance: {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
+                            {((line.qty_counted || 0) - line.qty_expected).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Timeline */}
+        <div className="border-t pt-4">
+          <div className="text-sm font-medium mb-3">Timeline</div>
+          <div className="space-y-3">
+            {cycleCount.scheduled_for && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-blue-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Scheduled</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.scheduled_for).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cycleCount.started_at && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-cyan-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-cyan-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Started</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.started_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cycleCount.snapshot_at && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-purple-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Snapshot Captured</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.snapshot_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cycleCount.completed_at && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-yellow-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Completed</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.completed_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cycleCount.approved_at && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-green-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Approved</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.approved_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+            {cycleCount.posted_at && (
+              <div className="flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-2 h-2 rounded-full bg-emerald-600"></div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Posted to Inventory</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(cycleCount.posted_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Next Steps */}
+        {cycleCount.status === 'draft' && (
+          <div className="border-t pt-4 space-y-3">
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-sm font-medium text-blue-900 mb-2">Ready to Start</div>
+              <div className="text-sm text-blue-700">
+                Click "Start Count" below to begin counting. This will snapshot the current inventory
+                quantities and allow you to enter actual counts.
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (!confirm(`Start cycle count ${cycleCount.count_number}?`)) return;
+                try {
+                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
+                    method: 'POST',
+                  });
+                  if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to start count');
+                  }
+                  onClose();
+                  onUpdate();
+                } catch (error: any) {
+                  alert(error.message || 'Error starting cycle count');
+                }
+              }}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+            >
+              Start Count
+            </button>
+          </div>
+        )}
+        
+        {cycleCount.status === 'in_progress' && (
+          <div className="border-t pt-4 space-y-3">
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-sm font-medium text-blue-900 mb-2">Next Steps</div>
+              <div className="text-sm text-blue-700">
+                Use a handheld RFID scanner or manually enter counts for items in this location.
+                Once complete, submit the count for review.
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (!confirm('Submit this cycle count for review?')) return;
+                try {
+                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/submit`, {
+                    method: 'POST',
+                  });
+                  if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to submit');
+                  }
+                  onUpdate();
+                  onClose();
+                } catch (error: any) {
+                  alert(error.message || 'Error submitting cycle count');
+                }
+              }}
+              className="w-full px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
+            >
+              Submit for Review
+            </button>
+          </div>
+        )}
+
+        {cycleCount.status === 'under_review' && (
+          <div className="border-t pt-4">
+            <button
+              onClick={async () => {
+                if (!confirm('Approve this cycle count and post adjustments?')) return;
+                try {
+                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/approve`, {
+                    method: 'POST',
+                  });
+                  if (!res.ok) throw new Error('Failed to approve');
+                  onUpdate();
+                  onClose();
+                } catch (error) {
+                  alert('Error approving cycle count');
+                }
+              }}
+              className="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
+            >
+              Approve & Post to Inventory
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -417,9 +695,33 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
   const [form, setForm] = useState({
     location_id: '',
     count_type: 'full',
+    is_blind: false,
+    scheduled_for: '',
+    include_assets: true,
+    include_bulk_items: true,
+    specific_items: [] as string[],
+    notes: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [loadingLocations, setLoadingLocations] = useState(true);
+
+  useEffect(() => {
+    fetchLocations();
+  }, []);
+
+  const fetchLocations = async () => {
+    try {
+      const res = await fetch('/api/inventory/locations');
+      const { data } = await res.json();
+      setLocations(data || []);
+    } catch (error) {
+      console.error('Error fetching locations:', error);
+    } finally {
+      setLoadingLocations(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -430,7 +732,13 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
       const res = await fetch('/api/inventory/cycle-counts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          location_id: form.location_id,
+          count_type: form.count_type,
+          is_blind: form.is_blind,
+          scheduled_for: form.scheduled_for || undefined,
+          catalog_item_ids: form.specific_items.length > 0 ? form.specific_items : null,
+        }),
       });
 
       if (!res.ok) {
@@ -446,56 +754,191 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
     }
   };
 
+  // Set default scheduled time to now
+  useEffect(() => {
+    const now = new Date();
+    const formatted = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+    setForm(prev => ({ ...prev, scheduled_for: formatted }));
+  }, []);
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div className="px-6 py-4 border-b flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Start Cycle Count</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white px-6 py-4 border-b flex items-center justify-between z-10">
+          <div>
+            <h3 className="text-lg font-semibold">Schedule Cycle Count</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Create a new inventory count for physical verification
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {error}
+            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-start gap-2">
+              <span className="text-lg">⚠️</span>
+              <div>
+                <div className="font-medium">Error</div>
+                <div>{error}</div>
+              </div>
             </div>
           )}
 
+          {/* Location Selection */}
           <div>
-            <label className="block text-sm font-medium mb-1">Location *</label>
+            <label className="block text-sm font-medium mb-2">
+              Location <span className="text-red-500">*</span>
+            </label>
+            {loadingLocations ? (
+              <div className="text-sm text-muted-foreground">Loading locations...</div>
+            ) : (
+              <select
+                value={form.location_id}
+                onChange={(e) => setForm({ ...form, location_id: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                required
+              >
+                <option value="">Select a location to count...</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name} {loc.location_type?.name ? `(${loc.location_type.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              Choose the warehouse, yard, or bin location to count
+            </p>
+          </div>
+
+          {/* Count Type */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Count Type</label>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, count_type: 'full' })}
+                className={`p-4 border-2 rounded-lg text-center transition-all ${
+                  form.count_type === 'full'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium">Full Count</div>
+                <div className="text-xs text-muted-foreground mt-1">All items</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, count_type: 'partial' })}
+                className={`p-4 border-2 rounded-lg text-center transition-all ${
+                  form.count_type === 'partial'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium">Partial Count</div>
+                <div className="text-xs text-muted-foreground mt-1">Selected items</div>
+              </button>
+            </div>
+          </div>
+
+          {/* Scheduled Date/Time */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Scheduled For</label>
             <input
-              type="text"
-              value={form.location_id}
-              onChange={(e) => setForm({ ...form, location_id: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
-              placeholder="Location UUID"
-              required
+              type="datetime-local"
+              value={form.scheduled_for}
+              onChange={(e) => setForm({ ...form, scheduled_for: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              When should this count be performed? Leave blank to start immediately.
+            </p>
+          </div>
+
+          {/* Blind Count Option */}
+          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <input
+              type="checkbox"
+              id="blind-count"
+              checked={form.is_blind}
+              onChange={(e) => setForm({ ...form, is_blind: e.target.checked })}
+              className="mt-1 h-4 w-4 rounded border-gray-300"
+            />
+            <div className="flex-1">
+              <label htmlFor="blind-count" className="text-sm font-medium cursor-pointer">
+                Blind Count (Hide Expected Quantities)
+              </label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Recommended for accuracy. Counter won't see system quantities, reducing bias.
+              </p>
+            </div>
+          </div>
+
+          {/* What to Count */}
+          <div>
+            <label className="block text-sm font-medium mb-2">What to Count</label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.include_bulk_items}
+                  onChange={(e) => setForm({ ...form, include_bulk_items: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <div>
+                  <div className="text-sm font-medium">Bulk Items (SKUs)</div>
+                  <div className="text-xs text-muted-foreground">
+                    Fungible items tracked by quantity (e.g., concrete mix, rebar)
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.include_assets}
+                  onChange={(e) => setForm({ ...form, include_assets: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <div>
+                  <div className="text-sm font-medium">Serialized Assets</div>
+                  <div className="text-xs text-muted-foreground">
+                    Individual equipment tracked by serial number (e.g., forklifts, tools)
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Add any special instructions or context for this count..."
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Count Type</label>
-            <select
-              value={form.count_type}
-              onChange={(e) => setForm({ ...form, count_type: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+          {/* Action Buttons */}
+          <div className="flex gap-3 pt-4 border-t">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
             >
-              <option value="full">Full Count</option>
-              <option value="spot">Spot Check</option>
-              <option value="abc">ABC Analysis</option>
-            </select>
-          </div>
-
-          <div className="flex gap-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">
               Cancel
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
+              disabled={saving || !form.location_id}
+              className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
-              {saving ? 'Starting...' : 'Start Count'}
+              {saving ? 'Creating...' : form.scheduled_for ? 'Schedule Count' : 'Start Count Now'}
             </button>
           </div>
         </form>

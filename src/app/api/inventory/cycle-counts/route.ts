@@ -21,16 +21,42 @@ export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
-    // Simplified: Just return cycle counts without lines
-    const { data: cycleCounts, error } = await supabase
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+
+    let query = supabase
       .schema('inventory')
       .from('cycle_counts')
       .select(`
-        *,
-        location:locations(id, name, location_type_id, location_types(name))
+        id,
+        count_number,
+        tenant_id,
+        location_id,
+        count_type,
+        is_blind,
+        status,
+        scheduled_for,
+        started_at,
+        snapshot_at,
+        completed_at,
+        approved_at,
+        approved_by_user_id,
+        posted_at,
+        created_at,
+        location:locations(
+          id, 
+          name, 
+          location_types(name)
+        )
       `)
       .eq('tenant_id', tenantId)
-      .order('scheduled_for', { ascending: false });
+      .order('created_at', { ascending: false });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data: cycleCounts, error } = await query;
 
     if (error) {
       console.error('Error fetching cycle counts:', error);
@@ -66,34 +92,65 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { location_id, count_type, catalog_item_ids, item_category_id } = body;
+    const { location_id, count_type, is_blind, scheduled_for, catalog_item_ids } = body;
+
+    if (!location_id) {
+      return NextResponse.json(
+        { error: 'location_id is required' },
+        { status: 400 }
+      );
+    }
 
     const supabase = createClient();
 
-    // Use the RPC for starting cycle counts
-    const { data, error } = await supabase.rpc('rpc_inv_cycle_count_start', {
-      p_tenant_id: tenantId,
-      p_location_id: location_id,
-      p_count_type: count_type || 'full',
-      p_catalog_item_ids: catalog_item_ids || null,
-      p_item_category_id: item_category_id || null,
-      p_counted_by_user_id: userId,
-      p_last_event_id: `cc-start-${Date.now()}-${Math.random().toString(36).substring(7)}`
-    });
+    // Generate count_number (format: CC-YYYYMMDD-XXXXX)
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const randomStr = Math.random().toString(36).substring(2, 7).toUpperCase();
+    const count_number = `CC-${dateStr}-${randomStr}`;
 
-    if (error) {
-      console.error('Error starting cycle count:', error);
+    // Generate event ID
+    const event_id = `cc-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+    // Create cycle count directly with INSERT since RPC doesn't handle count_number
+    const { data: cycleCount, error: insertError } = await supabase
+      .schema('inventory')
+      .from('cycle_counts')
+      .insert({
+        tenant_id: tenantId,
+        count_number: count_number,
+        location_id: location_id,
+        count_type: count_type || 'full',
+        is_blind: is_blind || false,
+        scheduled_for: scheduled_for ? new Date(scheduled_for).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        status: 'draft',
+        counted_by_user_id: userId,
+        last_event_id: event_id,
+        created_by: userId,
+        updated_by: userId
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('Error creating cycle count:', insertError);
       return NextResponse.json(
-        { error: error.message || 'Failed to start cycle count' },
+        { error: insertError.message || 'Failed to create cycle count' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ data: { id: data } }, { status: 201 });
-  } catch (error) {
+    return NextResponse.json({ 
+      data: { 
+        id: cycleCount.id,
+        count_number: count_number,
+        message: 'Cycle count created successfully'
+      } 
+    }, { status: 201 });
+  } catch (error: any) {
     console.error('Unexpected error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: error.message || 'Internal server error' },
       { status: 500 }
     );
   }
