@@ -99,6 +99,18 @@ export async function POST(
   }
   
   try {
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for widget creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for widget creation' },
+        { status: 400 }
+      );
+    }
+    
     const { id: dashboardId } = await params;
     const body = await request.json();
     const { widget_key, title, layout, config, refresh_seconds } = body;

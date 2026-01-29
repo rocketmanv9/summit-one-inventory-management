@@ -5,28 +5,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
 
     // Fetch purchase orders (exclude cancelled/deleted POs by default)
     const { data: purchaseOrders, error } = await supabase
       .schema('supply_chain')
       .from('purchase_orders')
       .select('*')
-      .eq('tenant_id', tenantId)
       .neq('status', 'cancelled')
       .order('created_at', { ascending: false });
 
@@ -46,7 +35,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch related vendors
-    const vendorIds = [...new Set(purchaseOrders.map(po => po.vendor_id).filter(Boolean))];
+    const vendorIds = [...new Set(purchaseOrders.map((po: any) => po.vendor_id).filter(Boolean))];
     console.log('Vendor IDs to fetch:', vendorIds);
     const { data: vendors } = await supabase
       .schema('supply_chain')
@@ -56,7 +45,7 @@ export async function GET(request: NextRequest) {
     console.log('Fetched vendors:', vendors);
 
     // Fetch related locations
-    const locationIds = [...new Set(purchaseOrders.map(po => po.delivery_location_id).filter(Boolean))];
+    const locationIds = [...new Set(purchaseOrders.map((po: any) => po.delivery_location_id).filter(Boolean))];
     const { data: locations } = await supabase
       .schema('inventory')
       .from('locations')
@@ -64,7 +53,7 @@ export async function GET(request: NextRequest) {
       .in('id', locationIds);
 
     // Fetch PO lines
-    const poIds = purchaseOrders.map(po => po.id);
+    const poIds = purchaseOrders.map((po: any) => po.id);
     console.log('PO IDs to fetch lines for:', poIds);
     const { data: lines, error: linesError } = await supabase
       .schema('supply_chain')
@@ -76,20 +65,20 @@ export async function GET(request: NextRequest) {
     console.log('Lines error:', linesError);
 
     // Fetch catalog items for the lines (separate query because it's cross-schema)
-    const catalogItemIds = [...new Set(lines?.map(l => l.catalog_item_id).filter(Boolean) || [])];
+    const catalogItemIds = [...new Set(lines?.map((l: any) => l.catalog_item_id).filter(Boolean) || [])];
     const { data: catalogItems } = await supabase
       .schema('inventory')
       .from('catalog_items')
       .select('id, name, sku, unit_of_measure')
       .in('id', catalogItemIds);
     
-    const catalogItemMap = new Map(catalogItems?.map(ci => [ci.id, ci]) || []);
+    const catalogItemMap = new Map(catalogItems?.map((ci: any) => [ci.id, ci]) || []);
 
     // Create lookup maps
-    const vendorMap = new Map(vendors?.map(v => [v.id, v]) || []);
-    const locationMap = new Map(locations?.map(l => [l.id, l]) || []);
+    const vendorMap = new Map(vendors?.map((v: any) => [v.id, v]) || []);
+    const locationMap = new Map(locations?.map((l: any) => [l.id, l]) || []);
     const linesMap = new Map<string, any[]>();
-    lines?.forEach(line => {
+    lines?.forEach((line: any) => {
       const existing = linesMap.get(line.po_id) || [];
       // Attach catalog item data to each line
       const enrichedLine = {
@@ -100,7 +89,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Combine data
-    const enrichedPOs = purchaseOrders.map(po => ({
+    const enrichedPOs = purchaseOrders.map((po: any) => ({
       ...po,
       vendors: po.vendor_id ? vendorMap.get(po.vendor_id) : null,
       locations: po.delivery_location_id ? locationMap.get(po.delivery_location_id) : null,
@@ -123,138 +112,83 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for PO creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for purchase order creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { vendor_id, ship_to_location_id, lines, expected_delivery_date, notes } = body;
 
     console.log('Creating PO with:', { vendor_id, ship_to_location_id, lineCount: lines?.length, lines });
-
-    const supabase = createClient();
 
     // Get tenant settings for PO numbering format
     const { data: settings } = await supabase
       .schema('supply_chain')
       .rpc('get_or_create_tenant_settings', { p_tenant_id: tenantId });
 
-    // Generate PO number based on tenant settings
-    let poNumber: string;
+    // Generate PO number using atomic database function to prevent race conditions
     const format = settings?.po_number_format || 'sequential-year';
     const prefix = settings?.po_number_prefix || '';
-
-    if (format === 'sequential-year') {
-      // Format: YY-#### (e.g., 26-0001)
-      const year = new Date().getFullYear().toString().slice(-2);
-      const yearPrefix = prefix ? `${prefix}-${year}-` : `${year}-`;
-      
-      const { data: latestPOs } = await supabase
-        .schema('supply_chain')
-        .from('purchase_orders')
-        .select('po_number')
-        .eq('tenant_id', tenantId)
-        .like('po_number', `${yearPrefix}%`)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      let nextNumber = 1;
-      if (latestPOs && latestPOs.length > 0) {
-        const parts = latestPOs[0].po_number.split('-');
-        const lastNumber = parseInt(parts[parts.length - 1] || '0');
-        nextNumber = lastNumber + 1;
-      }
-      
-      poNumber = `${yearPrefix}${nextNumber.toString().padStart(4, '0')}`;
-    } else if (format === 'sequential') {
-      // Format: #### or PREFIX-#### (e.g., PO-0001)
-      const seqPrefix = prefix ? `${prefix}-` : '';
-      
-      const { data: latestPOs } = await supabase
-        .schema('supply_chain')
-        .from('purchase_orders')
-        .select('po_number')
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      let nextNumber = 1;
-      if (latestPOs && latestPOs.length > 0) {
-        const parts = latestPOs[0].po_number.split('-');
-        const lastNumber = parseInt(parts[parts.length - 1] || '0');
-        nextNumber = lastNumber + 1;
-      }
-      
-      poNumber = `${seqPrefix}${nextNumber.toString().padStart(4, '0')}`;
-    } else if (format === 'timestamp') {
-      // Format: PREFIX-TIMESTAMP (e.g., PO-MKY42T62)
-      const tsPrefix = prefix || 'PO';
-      poNumber = `${tsPrefix}-${Date.now().toString(36).toUpperCase()}`;
-    } else {
-      // Default fallback
-      poNumber = `PO-${Date.now().toString(36).toUpperCase()}`;
-    }
-
-    // Create PO header
-    const { data: po, error: poError } = await supabase
+    
+    const { data: poNumber, error: poNumberError } = await supabase
       .schema('supply_chain')
-      .from('purchase_orders')
-      .insert({
-        tenant_id: tenantId,
-        po_number: poNumber,
-        vendor_id,
-        delivery_location_id: ship_to_location_id,
-        status: 'draft',
-        order_date: new Date().toISOString().split('T')[0], // Today's date in YYYY-MM-DD format
-        expected_delivery_date,
-        notes,
-        created_by_user_id: userId,
-        last_event_id: `po-create-${Date.now()}-${Math.random().toString(36).substring(7)}`
-      })
-      .select()
-      .single();
-
-    if (poError) {
-      console.error('Error creating PO:', poError);
+      .rpc('generate_po_number', {
+        p_tenant_id: tenantId,
+        p_format: format,
+        p_prefix: prefix
+      });
+    
+    if (poNumberError || !poNumber) {
+      console.error('Error generating PO number:', poNumberError);
       return NextResponse.json(
-        { error: 'Failed to create purchase order' },
+        { error: 'Failed to generate PO number' },
         { status: 500 }
       );
     }
 
-    // Create PO lines
+    // Use RPC for atomic PO creation with lines
+    const { data: result, error: rpcError } = await supabase
+      .schema('supply_chain')
+      .rpc('rpc_create_purchase_order', {
+        p_vendor_id: vendor_id,
+        p_po_number: poNumber,
+        p_delivery_location_id: ship_to_location_id,
+        p_lines: lines || [],
+        p_expected_delivery_date: expected_delivery_date,
+        p_notes: notes
+      });
+
+    if (rpcError) {
+      console.error('Error creating PO via RPC:', rpcError);
+      return NextResponse.json(
+        { error: 'Failed to create purchase order', details: rpcError.message },
+        { status: 500 }
+      );
+    }
+
+    const po = result?.purchase_order;
+    if (!po) {
+      return NextResponse.json(
+        { error: 'PO creation did not return data' },
+        { status: 500 }
+      );
+    }
+
+    console.log('PO created successfully via RPC:', po.id);
+
+    // Process auto-approval if enabled
     if (lines && lines.length > 0) {
-      const poLines = lines.map((line: any, index: number) => ({
-        tenant_id: tenantId,
-        po_id: po.id,
-        line_number: index + 1,
-        catalog_item_id: line.catalog_item_id,
-        qty_ordered: line.qty,
-        unit_cost: line.unit_cost,
-        status: 'open',
-        last_event_id: `pol-${Date.now()}-${index}-${Math.random().toString(36).substring(7)}`
-      }));
-
-      console.log('Inserting PO lines:', poLines);
-
-      const { error: linesError } = await supabase
-        .schema('supply_chain')
-        .from('purchase_order_lines')
-        .insert(poLines);
-
-      if (linesError) {
-        console.error('Error creating PO lines:', linesError);
-        // PO was created but lines failed - return partial success
-      } else {
-        console.log('PO lines created successfully');
-      }
 
       // Check for auto-approval (vendor-specific or global limit)
       if (settings?.auto_approve_enabled) {
@@ -317,3 +251,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

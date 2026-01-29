@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id } = await params;
-    const supabase = createClient();
 
     // Update transfer status to cancelled
     const { data, error } = await supabase
@@ -26,7 +19,6 @@ export async function POST(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .eq('status', 'draft') // Only cancel if in draft status
       .select()
       .single();

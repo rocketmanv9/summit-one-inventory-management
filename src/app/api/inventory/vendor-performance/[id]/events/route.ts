@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
     const { id } = await params;
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     // Fetch vendor performance events
     const { data, error } = await supabase

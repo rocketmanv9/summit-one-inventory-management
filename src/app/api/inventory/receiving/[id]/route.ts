@@ -5,21 +5,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient, createClient } from '@/lib/db-middleware';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
 
     const { data, error } = await supabase
       .schema('supply_chain')

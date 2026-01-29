@@ -7,13 +7,12 @@ import { cookies } from 'next/headers';
  * DO NOT USE IN PRODUCTION - This bypasses SSO authentication
  */
 export async function POST(req: NextRequest) {
-  // Only allow in development
-  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_SESSION !== 'true') {
-    return NextResponse.json(
-      { error: 'Dev session not allowed in production' },
-      { status: 403 }
-    );
-  }
+  // SECURITY: This endpoint is disabled for security reasons
+  // Use proper Supabase authentication instead
+  return NextResponse.json(
+    { error: 'This endpoint has been disabled. Use proper authentication.' },
+    { status: 404 }
+  );
 
   try {
     const body = await req.json();
@@ -65,3 +64,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

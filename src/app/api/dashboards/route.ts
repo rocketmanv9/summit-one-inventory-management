@@ -82,6 +82,18 @@ export async function POST(request: NextRequest) {
   }
   
   try {
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for dashboard creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for dashboard creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name, description, is_default } = body;
     
@@ -126,4 +138,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

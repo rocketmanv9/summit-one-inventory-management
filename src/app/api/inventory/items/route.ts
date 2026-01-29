@@ -2,27 +2,19 @@
  * Inventory Items API - Demonstrates tenant isolation
  * GET /api/inventory/items - List items for authenticated tenant
  * POST /api/inventory/items - Create new item
+ * 
+ * SECURITY: Uses JWT + RLS (no service role, no manual tenant filtering)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  // Get tenant ID from request headers (set by middleware)
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    const supabase = createClient();
+    // Authenticate via JWT - RLS will enforce tenant isolation
+    const { supabase, tenantId } = await createUserClient(request);
     
-    // Query items - ALWAYS filter by tenant_id
-    // This is critical for data isolation
+    // NO manual tenant_id filter needed - RLS handles it automatically
     const { data: items, error } = await supabase
       .schema('inventory')
       .from('catalog_items')
@@ -30,7 +22,6 @@ export async function GET(request: NextRequest) {
         *,
         item_categories:item_categories(name)
       `)
-      .eq('tenant_id', tenantId)
       .is('deleted_at', null)
       .order('name');
     
@@ -48,7 +39,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ 
       data: items,
       meta: {
-        tenantId,
+        tenantId: tenantId,
         count: items?.length || 0
       }
     });
@@ -62,26 +53,31 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    // Authenticate via JWT - RLS will enforce tenant isolation
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for item creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for item creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level } = body;
     
-    const supabase = createClient();
-    
-    // CRITICAL: Always set tenant_id from session, NEVER from client input
-    const { data: item, error } = await supabase      .schema('inventory')      .from('catalog_items')
+    // NO manual tenant_id needed - RLS policy will inject it automatically
+    // RLS ensures inserted row gets context.tenantId
+    const { data: item, error } = await supabase
+      .schema('inventory')
+      .from('catalog_items')
       .insert({
-        tenant_id: tenantId, // From authenticated session
         name,
         sku,
         description,
@@ -114,4 +110,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

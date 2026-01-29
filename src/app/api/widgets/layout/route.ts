@@ -1,9 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
+import { createUnscopedClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 export async function PATCH(request: NextRequest) {
   try {
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'PATCH');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PATCH operations' },
+        { status: 400 }
+      );
+    }
+    
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('inventory_session');
     
@@ -60,4 +75,5 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
 

@@ -1,4 +1,4 @@
-import { createClient, getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function PUT(
@@ -6,11 +6,26 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const tenantId = getTenantIdFromHeaders(request.headers);
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PUT operations' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { id } = await params;
-
-    const supabase = createClient();
 
     const { data: vendorItem, error } = await supabase
       .schema('supply_chain')
@@ -27,7 +42,6 @@ export async function PUT(
         notes: body.notes,
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select('*')
       .single();
 
@@ -77,17 +91,31 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const tenantId = getTenantIdFromHeaders(request.headers);
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
-
-    const supabase = createClient();
 
     const { error } = await supabase
       .schema('supply_chain')
       .from('vendor_items')
       .delete()
-      .eq('id', id)
-      .eq('tenant_id', tenantId);
+      .eq('id', id);
 
     if (error) {
       console.error('Error deleting vendor item:', error);

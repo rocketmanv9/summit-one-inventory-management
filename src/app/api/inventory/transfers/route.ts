@@ -5,22 +5,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
-
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
@@ -37,8 +26,7 @@ export async function GET(request: NextRequest) {
           qty,
           catalog_items(id, name, sku)
         )
-      `)
-      .eq('tenant_id', tenantId);
+      `);
 
     if (status) {
       query = query.eq('status', status);
@@ -68,21 +56,29 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for transfer creation' },
+        { status: 400 }
+      );
+    }
+
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for transfer creation' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { from_location_id, to_location_id, lines, notes } = body;
-
-    const supabase = createClient();
 
     // Use the RPC for creating transfers
     const { data, error } = await supabase.rpc('rpc_inv_transfer_create', {
@@ -92,7 +88,7 @@ export async function POST(request: NextRequest) {
       p_lines: lines, // Array of { catalog_item_id, qty }
       p_initiated_by_user_id: userId,
       p_notes: notes,
-      p_last_event_id: `transfer-${Date.now()}-${Math.random().toString(36).substring(7)}`
+      p_last_event_id: idempotencyKey
     });
 
     if (error) {
@@ -112,3 +108,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -4,29 +4,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id: vendorId } = await Promise.resolve(params);
-    const supabase = createClient();
 
     // Get vendor items
     const { data: vendorItems, error: viError } = await supabase
       .schema('supply_chain')
       .from('vendor_items')
       .select('id, vendor_sku, unit_cost, catalog_item_id')
-      .eq('tenant_id', tenantId)
       .eq('vendor_id', vendorId)
       .order('vendor_sku');
 
@@ -43,7 +35,7 @@ export async function GET(
     }
 
     // Get catalog items
-    const catalogItemIds = vendorItems.map(vi => vi.catalog_item_id);
+    const catalogItemIds = vendorItems.map((vi: any) => vi.catalog_item_id);
     const { data: catalogItems } = await supabase
       .schema('inventory')
       .from('catalog_items')
@@ -51,8 +43,8 @@ export async function GET(
       .in('id', catalogItemIds);
 
     // Combine data
-    const catalogMap = new Map(catalogItems?.map(ci => [ci.id, ci]) || []);
-    const enrichedVendorItems = vendorItems.map(vi => ({
+    const catalogMap = new Map(catalogItems?.map((ci: any) => [ci.id, ci]) || []);
+    const enrichedVendorItems = vendorItems.map((vi: any) => ({
       ...vi,
       catalog_items: catalogMap.get(vi.catalog_item_id) || null
     }));

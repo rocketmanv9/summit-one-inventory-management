@@ -142,9 +142,12 @@ export default function TransfersPage() {
     try {
       const res = await fetch(`/api/inventory/transfers/${transferId}/undo-cancel`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID()
+        },
         body: JSON.stringify({
-          last_event_id: `undo_cancel_${transferId}_${Date.now()}`
+          last_event_id: `undo_cancel_${transferId}_${crypto.randomUUID()}`
         })
       });
       
@@ -1237,7 +1240,12 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
 }
 
 function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfer; onClose: () => void; onUpdated: () => void }) {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    from_location_id: string;
+    to_location_id: string;
+    notes: string;
+    lines: Array<{ id?: string; catalog_item_id: string; qty: string }>;
+  }>({
     from_location_id: transfer.from_location?.id || '',
     to_location_id: transfer.to_location?.id || '',
     notes: transfer.notes || '',
@@ -1329,7 +1337,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
           lines: form.lines
             .filter(l => l.catalog_item_id && l.qty)
             .map(l => ({
-              id: l.id,
+              ...(l.id && { id: l.id }),
               catalog_item_id: l.catalog_item_id,
               qty: parseInt(l.qty),
             })),

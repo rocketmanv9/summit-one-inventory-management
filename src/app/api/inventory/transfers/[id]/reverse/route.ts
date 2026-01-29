@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * POST /api/inventory/transfers/:id/reverse
@@ -10,19 +9,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const { notes } = body;
-    
-    const supabase = createClient();
+    const { notes, last_event_id } = body;
 
     // Create reversal transfer using RPC
     const { data: reversalId, error } = await supabase.rpc('rpc_inv_transfer_create_reversal', {
@@ -30,7 +21,7 @@ export async function POST(
       p_original_transfer_id: id,
       p_initiated_by_user_id: userId,
       p_notes: notes || null,
-      p_last_event_id: `transfer-reversal-${id}-${Date.now()}`
+      p_last_event_id: last_event_id || null
     });
 
     if (error) {

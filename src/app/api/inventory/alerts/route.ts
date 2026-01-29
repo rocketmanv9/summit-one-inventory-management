@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     // Build query
     let query = supabase
@@ -47,3 +41,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
+

@@ -4,22 +4,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
-
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type') || 'movements'; // movements, events, or both
     const catalogItemId = searchParams.get('catalog_item_id');
@@ -40,8 +30,7 @@ export async function GET(request: NextRequest) {
           *,
           catalog_items(id, name, sku),
           locations(id, name)
-        `)
-        .eq('tenant_id', tenantId);
+        `);
 
       if (catalogItemId) {
         movementQuery = movementQuery.eq('catalog_item_id', catalogItemId);
@@ -119,3 +108,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

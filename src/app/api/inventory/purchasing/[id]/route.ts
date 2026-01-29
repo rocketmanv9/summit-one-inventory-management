@@ -5,25 +5,30 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const { id } = await Promise.resolve(params);
+    const { supabase, tenantId } = await createUserClient(request);
+    const { id } = await params;
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for PO updates
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for PO updates' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { vendor_id, ship_to_location_id, expected_delivery_date, notes, lines } = body;
-
-    const supabase = createClient();
 
     // Check if PO is in draft status
     const { data: po, error: fetchError } = await supabase
@@ -31,7 +36,6 @@ export async function PUT(
       .from('purchase_orders')
       .select('status')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (fetchError || !po) {
@@ -56,8 +60,7 @@ export async function PUT(
         notes,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
-      .eq('tenant_id', tenantId);
+      .eq('id', id);
 
     if (updateError) {
       console.error('Error updating PO:', updateError);
@@ -71,8 +74,7 @@ export async function PUT(
         .schema('supply_chain')
         .from('purchase_order_lines')
         .delete()
-        .eq('po_id', id)
-        .eq('tenant_id', tenantId);
+        .eq('po_id', id);
 
       // Insert new lines
       const poLines = lines.map((line: any, index: number) => ({
@@ -83,7 +85,7 @@ export async function PUT(
         qty_ordered: line.qty,
         unit_cost: line.unit_cost,
         status: 'open',
-        last_event_id: `pol-${Date.now()}-${index}-${Math.random().toString(36).substring(7)}`
+        last_event_id: `${idempotencyKey}-line-${index}`
       }));
 
       const { error: linesError } = await supabase
@@ -103,7 +105,6 @@ export async function PUT(
       .from('purchase_orders')
       .select('*')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     return NextResponse.json({ data: updated });
@@ -115,20 +116,13 @@ export async function PUT(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const { id } = await Promise.resolve(params);
+    const { supabase, tenantId } = await createUserClient(request);
+    const { id } = await params;
     const body = await request.json();
     const { status } = body;
-
-    const supabase = createClient();
     
     // Get current user info from session cookie
     const sessionCookie = request.cookies.get('inventory_session');
@@ -144,7 +138,6 @@ export async function PATCH(
         .from('purchase_orders')
         .select('created_by_user_id')
         .eq('id', id)
-        .eq('tenant_id', tenantId)
         .single();
 
       // Non-admins cannot approve their own POs (separation of duties)
@@ -166,7 +159,6 @@ export async function PATCH(
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)
-        .eq('tenant_id', tenantId)
         .select()
         .single();
 
@@ -187,7 +179,6 @@ export async function PATCH(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select()
       .single();
 
@@ -205,17 +196,11 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const { id } = await Promise.resolve(params);
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
+    const { id } = await params;
 
     // Check if PO exists and get its status
     const { data: po, error: fetchError } = await supabase
@@ -223,7 +208,6 @@ export async function DELETE(
       .from('purchase_orders')
       .select('status, po_number, notes')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (fetchError || !po) {
@@ -247,8 +231,7 @@ export async function DELETE(
         notes: po.notes ? `${po.notes}\n\n[DELETED: ${new Date().toISOString()}]` : `[DELETED: ${new Date().toISOString()}]`,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
-      .eq('tenant_id', tenantId);
+      .eq('id', id);
 
     if (deleteError) {
       console.error('Error deleting PO:', deleteError);

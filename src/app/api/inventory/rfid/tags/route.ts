@@ -1,35 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * GET /api/inventory/rfid/tags
  * List all RFID tags for the tenant
  */
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const asset_id = searchParams.get('asset_id');
-
-    const supabase = createClient();
 
     let query = supabase
       .from('rfid_tags')
       .select(`
         *,
         asset:assets(id, asset_number, catalog_item_id, catalog_items(name))
-      `)
-      .eq('tenant_id', tenantId);
+      `);
 
     if (status) {
       query = query.eq('status', status);
@@ -63,3 +52,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

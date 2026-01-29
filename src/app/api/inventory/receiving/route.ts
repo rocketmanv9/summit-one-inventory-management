@@ -5,25 +5,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const vendorId = searchParams.get('vendor_id');
     const search = searchParams.get('search');
-
-    const supabase = createClient();
 
     // Call the new RPC to get open POs for receiving
     const { data: openPOs, error } = await supabase
@@ -57,17 +47,27 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for receipt creation' },
+        { status: 400 }
+      );
+    }
+
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for receipt creation' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { purchase_order_id, location_id, lines, notes } = body;
 
@@ -85,144 +85,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createClient();
+    // Generate receipt number from idempotency key or create unique number
+    const receiptNumber = `RCV-${idempotencyKey.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 16)}`;
 
-    // Step 1: Create receipt header
-    const eventId = `receipt-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-    const { data: receipt, error: receiptError } = await supabase
+    // Use RPC for atomic receipt creation and posting
+    const { data: result, error: rpcError } = await supabase
       .schema('supply_chain')
-      .from('receipts')
-      .insert({
-        tenant_id: tenantId,
-        po_id: purchase_order_id || null,
-        location_id,
-        received_by_user_id: userId,
-        received_at: new Date().toISOString(),
-        notes: notes || null,
-        receipt_number: `RCV-${Date.now()}-${Math.floor(Math.random() * 1000)}`, // Auto-generate receipt number
-        last_event_id: eventId
-      })
-      .select()
-      .single();
+      .rpc('rpc_create_receipt_v2', {
+        p_receipt_number: receiptNumber,
+        p_location_id: location_id,
+        p_lines: lines,
+        p_po_id: purchase_order_id || null,
+        p_vendor_id: null, // Will be auto-populated from PO if linked
+        p_received_at: new Date().toISOString(),
+        p_notes: notes || null,
+        p_status: 'confirmed',
+        p_auto_post: true // Automatically post to inventory
+      });
 
-    if (receiptError) {
-      console.error('Error creating receipt:', receiptError);
+    if (rpcError) {
+      console.error('Error creating receipt via RPC:', rpcError);
       return NextResponse.json(
-        { error: 'Failed to create receipt', details: receiptError.message },
+        { error: 'Failed to create receipt', details: rpcError.message },
         { status: 500 }
       );
     }
 
-    // Step 2: Create receipt lines
-    const receiptLinesToInsert = lines.map((line: any, index: number) => ({
-      tenant_id: tenantId,
-      receipt_id: receipt.id,
-      po_line_id: line.purchase_order_line_id || null,
-      catalog_item_id: line.catalog_item_id,
-      qty_received: line.qty_received,
-      line_number: index + 1
-    }));
-
-    const { error: linesError } = await supabase
-      .schema('supply_chain')
-      .from('receipt_lines')
-      .insert(receiptLinesToInsert);
-
-    if (linesError) {
-      console.error('Error creating receipt lines:', linesError);
-      // Rollback: delete the receipt header
-      await supabase
-        .schema('supply_chain')
-        .from('receipts')
-        .delete()
-        .eq('id', receipt.id);
-      
+    const receipt = result?.receipt;
+    if (!receipt) {
       return NextResponse.json(
-        { error: 'Failed to create receipt lines', details: linesError.message },
+        { error: 'Receipt creation did not return data' },
         { status: 500 }
       );
     }
 
-    // Step 3: Post receipt to inventory using ATOMIC RPC
-    const { data: postResult, error: postError } = await supabase.rpc('rpc_post_receipt_to_inventory', {
-      p_receipt_id: receipt.id,
-      p_actor_user_id: userId
-    });
-
-    if (postError) {
-      console.error('Error posting receipt to inventory:', postError);
-      return NextResponse.json(
-        { error: 'Failed to post receipt to inventory', details: postError.message },
-        { status: 500 }
-      );
-    }
-
-    // Step 4: Update PO line status if linked to PO
-    if (purchase_order_id) {
-      // Get all PO lines
-      const { data: poLines } = await supabase
-        .schema('supply_chain')
-        .from('purchase_order_lines')
-        .select('id, qty_ordered, qty_received')
-        .eq('purchase_order_id', purchase_order_id);
-
-      if (poLines) {
-        for (const line of lines) {
-          if (line.purchase_order_line_id) {
-            const poLine = poLines.find((pl: any) => pl.id === line.purchase_order_line_id);
-            if (poLine) {
-              const newQtyReceived = (poLine.qty_received || 0) + line.qty_received;
-              let lineStatus = 'open';
-              
-              if (newQtyReceived >= poLine.qty_ordered) {
-                lineStatus = 'fully_received';
-              } else if (newQtyReceived > 0) {
-                lineStatus = 'partially_received';
-              }
-
-              await supabase
-                .schema('supply_chain')
-                .from('purchase_order_lines')
-                .update({
-                  qty_received: newQtyReceived,
-                  status: lineStatus
-                })
-                .eq('id', line.purchase_order_line_id);
-            }
-          }
-        }
-      }
-
-      // Step 5: Update PO header status based on line statuses
-      const { data: updatedPoLines } = await supabase
-        .schema('supply_chain')
-        .from('purchase_order_lines')
-        .select('status')
-        .eq('purchase_order_id', purchase_order_id);
-
-      if (updatedPoLines && updatedPoLines.length > 0) {
-        const allFullyReceived = updatedPoLines.every((line: any) => line.status === 'fully_received');
-        const anyPartiallyReceived = updatedPoLines.some((line: any) => line.status === 'partially_received');
-        
-        let poStatus = 'placed';
-        if (allFullyReceived) {
-          poStatus = 'fully_received';
-        } else if (anyPartiallyReceived) {
-          poStatus = 'partially_received';
-        }
-
-        await supabase
-          .schema('supply_chain')
-          .from('purchase_orders')
-          .update({ status: poStatus })
-          .eq('id', purchase_order_id);
-      }
-    }
+    console.log('Receipt created and posted successfully via RPC:', receipt.id);
 
     return NextResponse.json({ 
       data: receipt,
-      postResult,
-      message: `Receipt created successfully. Posted ${postResult?.posted_lines || 0} line(s) to inventory.`
+      message: `Receipt created successfully. ${result.posted_lines || 0} line(s) posted to inventory.`,
+      posted_result: result.post_result
     }, { status: 201 });
   } catch (error: any) {
     console.error('Unexpected error:', error);
@@ -232,3 +134,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

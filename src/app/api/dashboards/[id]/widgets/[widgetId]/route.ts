@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
+import { createUnscopedClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 async function getSessionData() {
@@ -35,6 +35,21 @@ export async function DELETE(
   }
   
   try {
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'DELETE');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id: dashboardId, widgetId } = await params;
     const supabase = createUnscopedClient();
     

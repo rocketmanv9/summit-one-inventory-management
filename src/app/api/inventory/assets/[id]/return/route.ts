@@ -4,26 +4,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: assetId } = await params;
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId || !userId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
 
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID not found' }, { status: 401 });
+    }
+
     const body = await request.json();
     const { notes, condition } = body;
-
-    const supabase = createClient();
 
     // Find active assignment
     const { data: assignment, error: findError } = await supabase
@@ -41,35 +38,26 @@ export async function POST(
       );
     }
 
-    // Update assignment with return info
-    const { error: returnError } = await supabase
+    // Use RPC for atomic asset return
+    const { data: result, error: rpcError } = await supabase
       .schema('inventory')
-      .from('asset_assignments')
-      .update({
-        returned_at: new Date().toISOString(),
-        returned_by_user_id: userId,
-        return_notes: notes,
-        return_condition: condition,
-      })
-      .eq('id', assignment.id);
+      .rpc('rpc_inv_asset_return', {
+        p_asset_id: assetId,
+        p_actor_user_id: userId,
+        p_return_notes: notes,
+        p_return_condition: condition
+      });
 
-    if (returnError) {
-      console.error('Error returning asset:', returnError);
-      return NextResponse.json({ error: 'Failed to return asset' }, { status: 500 });
+    if (rpcError) {
+      console.error('Error returning asset via RPC:', rpcError);
+      return NextResponse.json(
+        { error: rpcError.message || 'Failed to return asset' },
+        { status: 500 }
+      );
     }
 
-    // Update asset status back to available
-    await supabase
-      .schema('inventory')
-      .from('assets')
-      .update({ 
-        status: 'available',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', assetId)
-      .eq('tenant_id', tenantId);
-
     return NextResponse.json({ 
+      data: result,
       success: true,
       message: 'Asset returned successfully' 
     });

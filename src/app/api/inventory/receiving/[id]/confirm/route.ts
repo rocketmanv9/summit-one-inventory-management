@@ -1,23 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, getUserEmailFromHeaders, trackUserActivity } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-  const userEmail = getUserEmailFromHeaders(request.headers);
-
-  if (!tenantId || !userId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
-  // Track user activity
-  await trackUserActivity(tenantId, userId, userEmail);
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID not found' }, { status: 401 });
+    }
+
+    const { id } = await params;
     const { id: receiptId } = await Promise.resolve(params);
     const body = await request.json();
     const { lines } = body;
@@ -25,8 +20,6 @@ export async function POST(
     if (!lines || !Array.isArray(lines) || lines.length === 0) {
       return NextResponse.json({ error: 'Receipt lines are required' }, { status: 400 });
     }
-
-    const supabase = createClient();
 
     // Call the confirm receipt RPC with lines data
     const { data, error } = await supabase

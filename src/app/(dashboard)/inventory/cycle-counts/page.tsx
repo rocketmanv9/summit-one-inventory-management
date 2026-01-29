@@ -18,6 +18,7 @@ interface CycleCount {
   scheduled_for?: string;
   started_at?: string;
   snapshot_at?: string;
+  snapshot_captured_at?: string;
   completed_at?: string;
   approved_at?: string;
   approved_by_user_id?: string;
@@ -89,7 +90,7 @@ export default function CycleCountsPage() {
       header: 'Count #',
       render: (row: CycleCount) => (
         <div>
-          <div className="font-mono text-sm font-medium">{row.cycle_count_number}</div>
+          <div className="font-mono text-sm font-medium">{row.count_number}</div>
           {row.is_blind && (
             <div className="text-xs text-amber-600 mt-0.5">🔒 Blind Count</div>
           )}
@@ -344,7 +345,28 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
     try {
       const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines`);
       const { data } = await res.json();
-      setCountLines(data || []);
+      
+      console.log('Fetched lines:', data);
+      
+      // For each line, fetch assets if it's a serialized item
+      const linesWithAssets = await Promise.all((data || []).map(async (line: any) => {
+        console.log(`Line ${line.catalog_item?.name} tracking mode:`, line.catalog_item?.tracking_mode);
+        if (line.catalog_item?.tracking_mode === 'serialized') {
+          console.log(`Fetching assets for serialized item: ${line.catalog_item.name}`);
+          const assetsRes = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${line.id}/assets`);
+          const assetsData = await assetsRes.json();
+          console.log('Assets data:', assetsData);
+          return {
+            ...line,
+            expected_assets: assetsData.data?.expected_assets || [],
+            counted_assets: assetsData.data?.counted_assets || []
+          };
+        }
+        return line;
+      }));
+      
+      console.log('Lines with assets:', linesWithAssets);
+      setCountLines(linesWithAssets);
     } catch (error) {
       console.error('Error fetching count lines:', error);
     } finally {
@@ -352,7 +374,26 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
     }
   };
 
-  const updateCountLine = async (lineId: string, actualQty: number) => {
+  const updateAssetCount = async (lineId: string, assetIds: string[]) => {
+    try {
+      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_ids: assetIds })
+      });
+      
+      if (!res.ok) {
+        throw new Error('Failed to update asset count');
+      }
+      
+      fetchCountLines();
+    } catch (error) {
+      console.error('Error updating asset count:', error);
+      alert('Failed to update asset count');
+    }
+  };
+
+  const updateCountLine = async (lineId: string, actualQty: number | null) => {
     try {
       const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}`, {
         method: 'PATCH',
@@ -363,6 +404,23 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
       fetchCountLines();
     } catch (error) {
       alert('Error updating count');
+    }
+  };
+
+  const handleVarianceDecision = async (lineId: string, decision: string, reason?: string) => {
+    try {
+      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, reason })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to record decision');
+      }
+      fetchCountLines();
+    } catch (error: any) {
+      alert(error.message || 'Error recording variance decision');
     }
   };
 
@@ -462,30 +520,171 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                     </div>
                     
                     {cycleCount.status === 'in_progress' ? (
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs text-muted-foreground">Actual Count:</label>
-                        <input
-                          type="number"
-                          defaultValue={line.qty_counted ?? ''}
-                          onBlur={(e) => {
-                            const value = e.target.value === '' ? null : parseFloat(e.target.value);
-                            if (value !== line.qty_counted) {
-                              updateCountLine(line.id, value);
-                            }
-                          }}
-                          className="flex-1 px-2 py-1 border rounded text-sm"
-                          placeholder="Enter count"
-                          step="0.01"
-                        />
-                        {line.qty_counted !== null && !cycleCount.is_blind && (
-                          <span className={`text-xs font-medium ${
-                            Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01
-                              ? 'text-red-600'
-                              : 'text-green-600'
-                          }`}>
-                            {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
-                            {((line.qty_counted || 0) - line.qty_expected).toFixed(2)}
-                          </span>
+                      line.catalog_item?.tracking_mode === 'serialized' ? (
+                        // Serialized: Show asset checkboxes
+                        <div className="space-y-2">
+                          <div className="text-xs font-medium text-gray-700">Select assets found:</div>
+                          {line.expected_assets && line.expected_assets.length > 0 ? (
+                            <div className="space-y-1">
+                              {line.expected_assets.map((asset: any) => {
+                                const isChecked = line.counted_assets?.some((ca: any) => ca.asset_id === asset.id) || false;
+                                return (
+                                  <label key={asset.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 p-2 rounded">
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        const currentAssetIds = line.counted_assets?.map((ca: any) => ca.asset_id) || [];
+                                        const newAssetIds = e.target.checked
+                                          ? [...currentAssetIds, asset.id]
+                                          : currentAssetIds.filter((id: string) => id !== asset.id);
+                                        updateAssetCount(line.id, newAssetIds);
+                                      }}
+                                      className="rounded"
+                                    />
+                                    <span className="flex-1">
+                                      {asset.asset_tag || asset.serial_number || 'Unnamed Asset'}
+                                      <span className="text-xs text-gray-500 ml-2">({asset.status})</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">No assets expected at this location</div>
+                          )}
+                          {line.qty_counted !== null && !cycleCount.is_blind && (
+                            <div className="text-xs text-gray-600 mt-2">
+                              Found: <span className="font-medium">{line.qty_counted}</span> / Expected: {line.qty_expected}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        // Fungible: Show quantity input
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-muted-foreground">Actual Count:</label>
+                          <input
+                            type="number"
+                            defaultValue={line.qty_counted ?? ''}
+                            onBlur={(e) => {
+                              const value = e.target.value === '' ? null : parseFloat(e.target.value);
+                              if (value !== line.qty_counted) {
+                                updateCountLine(line.id, value);
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 border rounded text-sm"
+                            placeholder="Enter count"
+                            step="0.01"
+                          />
+                          {line.qty_counted !== null && !cycleCount.is_blind && (
+                            <span className={`text-xs font-medium ${
+                              Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01
+                                ? 'text-red-600'
+                                : 'text-green-600'
+                            }`}>
+                              {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
+                              {((line.qty_counted || 0) - line.qty_expected).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    ) : cycleCount.status === 'under_review' ? (
+                      // Variance decision UI
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm">
+                            Counted: <span className="font-medium">{line.qty_counted ?? 'Not counted'}</span>
+                          </div>
+                          {line.qty_counted !== null && Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01 && (
+                            <span className="text-xs font-medium text-red-600">
+                              Variance: {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
+                              {((line.qty_counted || 0) - line.qty_expected).toFixed(2)} ({(((line.qty_counted || 0) - line.qty_expected) / line.qty_expected * 100).toFixed(1)}%)
+                            </span>
+                          )}
+                        </div>
+
+                        {/* For serialized items, show which assets are missing/extra */}
+                        {line.catalog_item?.tracking_mode === 'serialized' && line.expected_assets && line.expected_assets.length > 0 && (
+                          <div className="text-xs space-y-1">
+                            {line.expected_assets.map((asset: any) => {
+                              const wasCounted = line.counted_assets?.some((ca: any) => ca.asset_id === asset.id);
+                              return (
+                                <div key={asset.id} className={`flex items-center gap-2 ${!wasCounted ? 'text-red-600' : 'text-green-600'}`}>
+                                  <span>{wasCounted ? '✓' : '✗'}</span>
+                                  <span>{asset.asset_tag || asset.serial_number || 'Unnamed Asset'}</span>
+                                  <span className="text-gray-500">({wasCounted ? 'Found' : 'Missing'})</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Show variance decision UI if variance exists */}
+                        {line.qty_counted !== null && Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01 && (
+                          <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                            {line.decision_status === 'pending' || !line.decision_status ? (
+                              <div className="space-y-2">
+                                <div className="text-xs font-medium text-yellow-900">Decision Required</div>
+                                <select
+                                  className="w-full text-xs px-2 py-1 border rounded"
+                                  defaultValue=""
+                                  onChange={(e) => {
+                                    const reason = e.target.value;
+                                    if (reason) {
+                                      handleVarianceDecision(line.id, 'accepted', reason);
+                                    }
+                                  }}
+                                >
+                                  <option value="">Select reason to accept...</option>
+                                  <option value="usage_not_recorded">Usage not recorded</option>
+                                  <option value="transfer_not_recorded">Transfer not recorded</option>
+                                  <option value="loss_theft">Loss/Theft</option>
+                                  <option value="damage_disposal">Damage/Disposal</option>
+                                  <option value="counting_error">Counting error</option>
+                                  <option value="receiving_error">Receiving error</option>
+                                  <option value="bulk_drift">Bulk estimation drift</option>
+                                  <option value="unknown">Unknown</option>
+                                </select>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleVarianceDecision(line.id, 'investigating')}
+                                    className="flex-1 px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200"
+                                  >
+                                    Investigate
+                                  </button>
+                                  <button
+                                    onClick={() => handleVarianceDecision(line.id, 'rejected')}
+                                    className="flex-1 px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                  >
+                                    Reject Count
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                  line.decision_status === 'accepted' ? 'bg-green-100 text-green-800' :
+                                  line.decision_status === 'investigating' ? 'bg-orange-100 text-orange-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {line.decision_status === 'accepted' ? `✓ Accepted: ${line.decision_reason?.replace(/_/g, ' ')}` :
+                                   line.decision_status === 'investigating' ? '⚠ Investigating' :
+                                   '✗ Rejected'}
+                                </span>
+                                <button
+                                  onClick={() => handleVarianceDecision(line.id, 'pending')}
+                                  className="text-xs text-blue-600 hover:text-blue-800 underline"
+                                >
+                                  Change
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* No variance - auto-accepted */}
+                        {line.qty_counted !== null && Math.abs((line.qty_counted || 0) - line.qty_expected) <= 0.01 && (
+                          <div className="text-xs text-green-600">✓ Match - no adjustment needed</div>
                         )}
                       </div>
                     ) : (
@@ -665,22 +864,187 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         )}
 
         {cycleCount.status === 'under_review' && (
-          <div className="border-t pt-4">
+          <div className="border-t pt-4 space-y-3">
+            {/* Check if all variance has been decided */}
+            {(() => {
+              const varianceLines = countLines.filter(l => 
+                l.qty_counted !== null && Math.abs((l.qty_counted || 0) - l.qty_expected) > 0.01
+              );
+              const undecidedLines = varianceLines.filter(l => 
+                !l.decision_status || l.decision_status === 'pending'
+              );
+              
+              if (undecidedLines.length > 0) {
+                return (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="text-sm font-medium text-amber-900 mb-2">⚠ Variance Requires Decisions</div>
+                    <div className="text-sm text-amber-700">
+                      {undecidedLines.length} item(s) with variance need decisions before posting.
+                      Please accept (with reason), investigate, or reject each variance above.
+                    </div>
+                  </div>
+                );
+              }
+
+              const acceptedLines = varianceLines.filter(l => l.decision_status === 'accepted');
+              const investigatingLines = varianceLines.filter(l => l.decision_status === 'investigating');
+              const rejectedLines = varianceLines.filter(l => l.decision_status === 'rejected');
+
+              // Format reason for display
+              const formatReason = (reason: string | null) => {
+                if (!reason) return 'No reason';
+                return reason.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+              };
+
+              return (
+                <>
+                  {/* Combined Preview of Changes */}
+                  {(acceptedLines.length > 0 || investigatingLines.length > 0 || rejectedLines.length > 0 || varianceLines.length === 0) && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium text-blue-900">📋 What Will Happen When You Approve:</div>
+                        <div className="text-xs font-medium text-green-700 bg-green-100 px-2 py-1 rounded">✓ Ready to Post</div>
+                      </div>
+                      
+                      <div className="text-xs text-blue-700 space-y-0.5 pb-2 border-b border-blue-200">
+                        {acceptedLines.length > 0 && <div>• {acceptedLines.length} variance(s) will be adjusted</div>}
+                        {investigatingLines.length > 0 && <div>• {investigatingLines.length} variance(s) marked for investigation</div>}
+                        {rejectedLines.length > 0 && <div>• {rejectedLines.length} count(s) rejected</div>}
+                        {varianceLines.length === 0 && <div>• No variance detected - counts match expected</div>}
+                      </div>
+                      
+                      {acceptedLines.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Stock Adjustments (Inventory Will Change):</div>
+                          {acceptedLines.map((line) => {
+                            const item = line.catalog_item;
+                            const delta = (line.qty_counted || 0) - line.qty_expected;
+                            const newQty = line.qty_expected + delta;
+                            return (
+                              <div key={line.id} className="pl-3 border-l-2 border-blue-300">
+                                <div className="text-xs font-medium text-blue-900">{item?.name || 'Unknown Item'}</div>
+                                <div className="text-xs text-blue-700 mt-0.5">
+                                  <span className="font-medium">Reason:</span> {formatReason(line.decision_reason)}
+                                </div>
+                                <div className="text-xs text-blue-700 flex items-center gap-2 mt-0.5">
+                                  <span>Stock: {line.qty_expected} {item?.unit_of_measure || 'units'}</span>
+                                  <span className={delta < 0 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
+                                    {delta >= 0 ? '+' : ''}{delta}
+                                  </span>
+                                  <span>→ {newQty} {item?.unit_of_measure || 'units'}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {investigatingLines.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-orange-800 uppercase tracking-wide">Flagged for Investigation (No Stock Change):</div>
+                          {investigatingLines.map((line) => {
+                            const item = line.catalog_item;
+                            const delta = (line.qty_counted || 0) - line.qty_expected;
+                            return (
+                              <div key={line.id} className="pl-3 border-l-2 border-orange-300">
+                                <div className="text-xs font-medium text-orange-900">{item?.name || 'Unknown Item'}</div>
+                                <div className="text-xs text-orange-700">
+                                  Variance: {delta >= 0 ? '+' : ''}{delta} {item?.unit_of_measure || 'units'} - Requires follow-up
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {rejectedLines.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-red-800 uppercase tracking-wide">Rejected Counts (No Stock Change):</div>
+                          {rejectedLines.map((line) => {
+                            const item = line.catalog_item;
+                            return (
+                              <div key={line.id} className="pl-3 border-l-2 border-red-300">
+                                <div className="text-xs font-medium text-red-900">{item?.name || 'Unknown Item'}</div>
+                                <div className="text-xs text-red-700">
+                                  Count marked invalid - preserved for audit only
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
             <button
               onClick={async () => {
-                if (!confirm('Approve this cycle count and post adjustments?')) return;
+                // Final validation
+                const varianceLines = countLines.filter(l => 
+                  l.qty_counted !== null && Math.abs((l.qty_counted || 0) - l.qty_expected) > 0.01
+                );
+                const undecidedLines = varianceLines.filter(l => 
+                  !l.decision_status || l.decision_status === 'pending'
+                );
+
+                if (undecidedLines.length > 0) {
+                  alert(`Cannot post: ${undecidedLines.length} variance line(s) require decisions.`);
+                  return;
+                }
+
+                if (!confirm('Approve this cycle count and post adjustments to inventory? This will:\n\n• Create stock movements for accepted variances\n• Update inventory quantities\n• Flag items for investigation\n• Preserve rejected counts for audit\n\nThis action cannot be undone.')) {
+                  return;
+                }
+
                 try {
                   const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/approve`, {
                     method: 'POST',
                   });
-                  if (!res.ok) throw new Error('Failed to approve');
+                  
+                  if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to approve');
+                  }
+
+                  const result = await res.json();
+                  
+                  // Show success message with summary
+                  if (result.data?.adjustments_created > 0) {
+                    alert(`✓ Cycle count posted successfully!\n\n${result.data.adjustments_created} adjustment(s) created\n${result.data.reorder_suggestions?.length || 0} reorder suggestion(s) generated`);
+                  } else {
+                    alert('✓ Cycle count posted successfully! No adjustments needed.');
+                  }
+
                   onUpdate();
                   onClose();
-                } catch (error) {
-                  alert('Error approving cycle count');
+                } catch (error: any) {
+                  alert(`Error: ${error.message || 'Failed to approve cycle count'}`);
                 }
               }}
-              className="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
+              disabled={(() => {
+                const varianceLines = countLines.filter(l => 
+                  l.qty_counted !== null && Math.abs((l.qty_counted || 0) - l.qty_expected) > 0.01
+                );
+                const undecidedLines = varianceLines.filter(l => 
+                  !l.decision_status || l.decision_status === 'pending'
+                );
+                return undecidedLines.length > 0;
+              })()}
+              className={`w-full px-4 py-3 rounded-md font-medium transition-colors ${
+                (() => {
+                  const varianceLines = countLines.filter(l => 
+                    l.qty_counted !== null && Math.abs((l.qty_counted || 0) - l.qty_expected) > 0.01
+                  );
+                  const undecidedLines = varianceLines.filter(l => 
+                    !l.decision_status || l.decision_status === 'pending'
+                  );
+                  return undecidedLines.length > 0
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-green-600 text-white hover:bg-green-700';
+                })()
+              }`}
             >
               Approve & Post to Inventory
             </button>

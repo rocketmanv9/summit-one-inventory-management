@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id: cycleCountId } = await params;
-    const supabase = createClient();
 
     // First, get the cycle count details
     const { data: cycleCount, error: fetchError } = await supabase
@@ -26,7 +15,6 @@ export async function POST(
       .from('cycle_counts')
       .select('location_id, count_type, is_blind')
       .eq('id', cycleCountId)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (fetchError || !cycleCount) {
@@ -41,7 +29,6 @@ export async function POST(
       .schema('inventory')
       .from('stock_balances')
       .select('catalog_item_id, qty_on_hand')
-      .eq('tenant_id', tenantId)
       .eq('location_id', cycleCount.location_id)
       .gt('qty_on_hand', 0);
 
@@ -55,7 +42,7 @@ export async function POST(
 
     // Create cycle count lines from stock balances
     if (stockBalances && stockBalances.length > 0) {
-      const lines = stockBalances.map((sb, index) => ({
+      const lines = stockBalances.map((sb: any, index: number) => ({
         tenant_id: tenantId,
         cycle_count_id: cycleCountId,
         line_number: index + 1,
@@ -96,8 +83,7 @@ export async function POST(
       .schema('inventory')
       .from('cycle_counts')
       .update(updateData)
-      .eq('id', cycleCountId)
-      .eq('tenant_id', tenantId);
+      .eq('id', cycleCountId);
 
     if (updateError) {
       console.error('Error updating cycle count:', updateError);

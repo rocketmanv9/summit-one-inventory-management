@@ -4,20 +4,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const catalogItemId = searchParams.get('catalog_item_id');
     const locationId = searchParams.get('location_id');
@@ -31,8 +22,6 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const supabase = createClient();
 
     // Use the RPC function to find available assets
     const { data: assets, error } = await supabase.rpc('rpc_inv_find_available_assets', {
@@ -64,3 +53,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

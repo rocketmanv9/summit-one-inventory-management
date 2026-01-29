@@ -1,32 +1,40 @@
 // API Route: Undo release reservation
 // Reverses a released reservation back to active status
 
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
     
-    const body = await request.json().catch(() => ({}));
-    const lastEventId = body.last_event_id || null;
+    // ENFORCE IDEMPOTENCY: Require idempotency key
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for undo-release' },
+        { status: 400 }
+      );
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for undo-release' },
+        { status: 400 }
+      );
+    }
     
     const { data, error } = await supabase.rpc('rpc_inv_undo_release_reservation', {
       p_tenant_id: tenantId,
       p_reservation_id: id,
-      p_user_id: null,
-      p_last_event_id: lastEventId
+      p_user_id: userId,
+      p_last_event_id: idempotencyKey
     });
     
     if (error) {

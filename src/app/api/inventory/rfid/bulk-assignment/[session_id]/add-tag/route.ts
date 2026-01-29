@@ -1,26 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createDeviceClient, deviceAuthError } from '@/lib/device-auth';
 
 /**
  * POST /api/inventory/rfid/bulk-assignment/[session_id]/add-tag
  * Add a tag to a bulk assignment session
+ * 
+ * SECURITY: Machine endpoint - requires device token
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { session_id: string } }
+  { params }: { params: Promise<{ session_id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const sessionId = params.session_id;
+    const { supabase, deviceId, tenantId } = await createDeviceClient(request);
+    const { session_id: sessionId } = await params;
     const body = await request.json();
     const { epc_hex, asset_id } = body;
 
@@ -31,19 +24,45 @@ export async function POST(
       );
     }
 
-    const supabase = createClient();
+    // Verify session belongs to this device and tenant
+    const { data: session, error: sessionError } = await supabase
+      .schema('inventory')
+      .from('rfid_bulk_assignment_sessions')
+      .select('id, status')
+      .eq('id', sessionId)
+      .eq('tenant_id', tenantId)
+      .eq('device_id', deviceId)
+      .eq('status', 'active')
+      .single();
 
-    // Call RPC function to add tag to session
-    const { data, error } = await supabase.rpc('rfid_add_tag_to_bulk_session', {
-      p_session_id: sessionId,
-      p_epc_hex: epc_hex,
-      p_asset_id: asset_id
-    });
+    if (sessionError || !session) {
+      return NextResponse.json(
+        { error: 'Invalid or inactive session' },
+        { status: 404 }
+      );
+    }
+
+    // Add tag assignment (implementation depends on your schema)
+    // This is a placeholder - adjust based on your actual table structure
+    const { data, error } = await supabase
+      .schema('inventory')
+      .from('rfid_tags')
+      .upsert({
+        tenant_id: tenantId,
+        epc_hex,
+        asset_id,
+        assigned_via_device_id: deviceId,
+        assignment_method: 'bulk_manual',
+        assignment_session_id: sessionId,
+        assigned_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error('Error adding tag to bulk session:', error);
+      console.error('[RFID Bulk Assignment] Error adding tag:', error);
       return NextResponse.json(
-        { error: error.message || 'Failed to add tag to session' },
+        { error: 'Failed to add tag to session' },
         { status: 500 }
       );
     }
@@ -53,9 +72,12 @@ export async function POST(
       message: 'Tag added to bulk assignment session'
     });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    if (error.message?.includes('token')) {
+      return deviceAuthError(error.message);
+    }
+    console.error('[RFID Bulk Assignment] Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

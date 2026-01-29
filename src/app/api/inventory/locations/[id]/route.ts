@@ -5,27 +5,34 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PUT operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id: locationId } = await params;
     const body = await request.json();
     const { name, location_type_id, address, parent_location_id, active } = body;
-
-    const userId = getUserIdFromHeaders(request.headers);
 
     if (!name?.trim()) {
       return NextResponse.json(
@@ -49,15 +56,12 @@ export async function PUT(
       );
     }
 
-    const supabase = createClient();
-
     // Verify location type exists and belongs to tenant
     const { data: typeCheck, error: typeError } = await supabase
       .schema('inventory')
       .from('location_types')
       .select('id')
       .eq('id', location_type_id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (typeError || !typeCheck) {
@@ -80,8 +84,7 @@ export async function PUT(
         updated_at: new Date().toISOString(),
         updated_by: userId,
       })
-      .eq('id', locationId)
-      .eq('tenant_id', tenantId);
+      .eq('id', locationId);
 
     if (updateError) {
       console.error('Error updating location:', updateError);
@@ -105,18 +108,26 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id: locationId } = await params;
-    const supabase = createClient();
 
     // Check if location has any stock
     const { data: stockCheck, error: stockError } = await supabase

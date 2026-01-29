@@ -1,30 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
+import { getIdempotencyKey } from '@/lib/db-middleware';
 
 // GET /api/inventory/vendors/[id] - Get single vendor
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const { client: supabase, context } = auth;
 
   try {
     const { id } = await params;
-    const supabase = createClient();
 
+    // RLS automatically filters by tenant_id
     const { data: vendor, error } = await supabase
       .schema('supply_chain')
       .from('vendors')
       .select('*')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (error) {
@@ -50,16 +46,28 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const { client: supabase, context } = auth;
 
   try {
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PUT operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
     const body = await request.json();
     const {
@@ -74,8 +82,7 @@ export async function PUT(
       active,
     } = body;
 
-    const supabase = createClient();
-
+    // RLS automatically filters by tenant_id
     const { data: vendor, error } = await supabase
       .schema('supply_chain')
       .from('vendors')
@@ -92,7 +99,6 @@ export async function PUT(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select()
       .single();
 
@@ -142,25 +148,35 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const { client: supabase, context } = auth;
 
   try {
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
-    const supabase = createClient();
 
-    // Check if vendor has associated purchase orders
+    // Check if vendor has associated purchase orders (RLS filters automatically)
     const { count: poCount } = await supabase
       .schema('supply_chain')
       .from('purchase_orders')
       .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId)
       .eq('vendor_location_id', id);
 
     if (poCount && poCount > 0) {
@@ -170,7 +186,7 @@ export async function DELETE(
       );
     }
 
-    // Soft delete by setting active to false
+    // Soft delete by setting active to false (RLS filters automatically)
     const { data: vendor, error } = await supabase
       .schema('supply_chain')
       .from('vendors')
@@ -179,7 +195,6 @@ export async function DELETE(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select()
       .single();
 

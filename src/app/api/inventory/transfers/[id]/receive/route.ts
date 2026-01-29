@@ -1,24 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id } = await params;
-    const body = await request.json().catch(() => ({}));
-    const { line_quantities } = body; // Expected: object like { "line_id_1": 5, "line_id_2": 3 }
     
-    const supabase = createClient();
+    // ENFORCE IDEMPOTENCY: Require idempotency key
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for transfer receive' },
+        { status: 400 }
+      );
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for transfer receive' },
+        { status: 400 }
+      );
+    }
+    
+    const body = await request.json().catch(() => ({}));
+    const { line_quantities } = body;
 
     // If partial quantities specified, use partial receive RPC
     if (line_quantities && typeof line_quantities === 'object' && Object.keys(line_quantities).length > 0) {
@@ -27,7 +37,6 @@ export async function POST(
         .from('transfers')
         .select('*, transfer_lines!inner(*)')
         .eq('id', id)
-        .eq('tenant_id', tenantId)
         .single();
 
       if (fetchError || !transfer) {
@@ -61,7 +70,7 @@ export async function POST(
         p_transfer_id: id,
         p_received_by_user_id: userId,
         p_line_quantities: lineQuantitiesArray,
-        p_last_event_id: `transfer-receive-partial-${id}-${Date.now()}`
+        p_last_event_id: idempotencyKey
       });
 
       if (error) {
@@ -80,7 +89,7 @@ export async function POST(
       p_tenant_id: tenantId,
       p_transfer_id: id,
       p_received_by_user_id: userId,
-      p_last_event_id: `transfer-receive-${id}-${Date.now()}`
+      p_last_event_id: idempotencyKey
     });
 
     if (error) {

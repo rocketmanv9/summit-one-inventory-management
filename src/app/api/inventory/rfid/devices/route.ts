@@ -1,28 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * GET /api/inventory/rfid/devices
  * List all RFID devices for the tenant
  */
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
 
     const { data: devices, error } = await supabase
       .from('rfid_devices')
       .select('*')
-      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -51,17 +40,9 @@ export async function GET(request: NextRequest) {
  * Register a new RFID device
  */
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
     const body = await request.json();
     const { device_code, device_type, scopes, notes } = body;
 
@@ -80,8 +61,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const supabase = createClient();
 
     // Call RPC function to register device
     const { data, error } = await supabase.rpc('rfid_register_device', {
@@ -113,3 +92,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

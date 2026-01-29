@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId || !userId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID not found' }, { status: 401 });
+    }
+
     const { id: receiptId } = await Promise.resolve(params);
-    const supabase = createClient();
 
     const { data, error } = await supabase.rpc('rpc_reverse_receipt', {
       p_tenant_id: tenantId,

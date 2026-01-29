@@ -2,29 +2,24 @@
  * Reservations API
  * GET /api/inventory/reservations - List reservations
  * POST /api/inventory/reservations - Create new reservation via RPC
+ * 
+ * SECURITY: Uses JWT + RLS for tenant isolation
+ * IDEMPOTENCY: Requires Idempotency-Key header for POST
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
+    // Authenticate user via JWT
+    const { supabase, tenantId } = await createUserClient(request);
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const allocationType = searchParams.get('allocation_type');
 
+    // RLS automatically filters by tenant_id
     let query = supabase
       .schema('inventory')
       .from('reservations')
@@ -33,8 +28,7 @@ export async function GET(request: NextRequest) {
         catalog_items(id, name, sku, tracking_mode),
         locations(id, name),
         assets(id, asset_tag, serial_number, vin)
-      `)
-      .eq('tenant_id', tenantId);
+      `);
 
     if (status) {
       query = query.eq('status', status);
@@ -58,8 +52,13 @@ export async function GET(request: NextRequest) {
       data: reservations,
       meta: { tenantId, count: reservations?.length || 0 }
     });
-  } catch (error) {
-    console.error('Unexpected error:', error);
+  } catch (error: any) {
+    console.error('[Reservations GET] Error:', error);
+    
+    if (error.message?.includes('authenticated') || error.message?.includes('session')) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+    
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -68,17 +67,28 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    // Authenticate user via JWT
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require idempotency key for all writes
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for reservation creation' },
+        { status: 400 }
+      );
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header or last_event_id in body required' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const {
       // Common fields
@@ -98,14 +108,12 @@ export async function POST(request: NextRequest) {
       asset_id,
     } = body;
 
-    const supabase = createClient();
-
     let reservationId: string;
 
     // Determine reservation type based on input
     if (asset_id) {
       // Create serialized asset reservation
-      console.log('Creating serialized reservation for asset:', asset_id);
+      console.log('[Reservations] Creating serialized reservation:', { asset_id, idempotencyKey });
       
       const { data, error } = await supabase.rpc('rpc_inv_reserve_asset', {
         p_tenant_id: tenantId,
@@ -118,7 +126,7 @@ export async function POST(request: NextRequest) {
         p_reserved_from: reserved_from,
         p_reserved_until: reserved_until,
         p_notes: notes,
-        p_last_event_id: `reserve-asset-${Date.now()}-${Math.random().toString(36).substring(7)}`
+        p_last_event_id: idempotencyKey  // Use client-provided idempotency key
       });
 
       if (error) {
@@ -132,7 +140,7 @@ export async function POST(request: NextRequest) {
       reservationId = data;
     } else if (catalog_item_id && location_id && qty) {
       // Create fungible stock reservation
-      console.log('Creating fungible reservation:', { catalog_item_id, location_id, qty });
+      console.log('[Reservations] Creating fungible reservation:', { catalog_item_id, location_id, qty, idempotencyKey });
       
       const { data, error } = await supabase.rpc('rpc_inv_reserve_fungible', {
         p_tenant_id: tenantId,
@@ -147,7 +155,7 @@ export async function POST(request: NextRequest) {
         p_reserved_from: reserved_from,
         p_reserved_until: reserved_until,
         p_notes: notes,
-        p_last_event_id: `reserve-fungible-${Date.now()}-${Math.random().toString(36).substring(7)}`
+        p_last_event_id: idempotencyKey  // Use client-provided idempotency key
       });
 
       if (error) {
@@ -168,7 +176,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: { id: reservationId } }, { status: 201 });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    console.error('[Reservations POST] Error:', error);
+    
+    if (error.message?.includes('authenticated') || error.message?.includes('session')) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+    
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

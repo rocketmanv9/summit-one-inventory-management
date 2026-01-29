@@ -1,20 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'PATCH');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PATCH operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
     const { status, dispute_reason } = await request.json();
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     // Update expense status
     const updateData: any = {

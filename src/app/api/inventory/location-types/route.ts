@@ -5,25 +5,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
     
     const { data: locationTypes, error } = await supabase
       .from('location_types')
       .select('id, name, description')
-      .eq('tenant_id', tenantId)
       .eq('active', true)
       .order('name');
     
@@ -36,7 +26,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Transform to value/label format for dropdowns
-    const formattedTypes = (locationTypes || []).map(type => ({
+    const formattedTypes = (locationTypes || []).map((type: any) => ({
       value: type.id,
       label: type.name,
       description: type.description,
@@ -53,16 +43,21 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for location type creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for location type creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name, description } = body;
     
@@ -79,12 +74,9 @@ export async function POST(request: NextRequest) {
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
     
-    const supabase = createClient();
-    
     const { data, error } = await supabase
       .from('location_types')
       .insert({
-        tenant_id: tenantId,
         code,
         name,
         description: description || null,
@@ -116,3 +108,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const { id: reportId } = await Promise.resolve(params);
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
+    const { id: reportId } = await params;
 
     let data, error;
 

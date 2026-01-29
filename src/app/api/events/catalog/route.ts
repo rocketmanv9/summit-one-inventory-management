@@ -1,27 +1,40 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextRequest, NextResponse } from 'next/server';
+import { createUserClient } from '@/lib/db-middleware';
 
 // Force dynamic
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  try {
-    // Try service role first, fall back to anon key
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey || anonKey,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+/**
+ * GET /api/events/catalog
+ * Returns event definitions catalog
+ * 
+ * SECURITY: Admin-only endpoint, production-gated
+ * - Requires JWT authentication via createUserClient()
+ * - Requires admin role from verified JWT claims
+ * - Disabled in production (returns 404)
+ */
+export async function GET(request: NextRequest) {
+  // PRODUCTION GATE: This endpoint should not exist in production
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEBUG_ROUTES !== 'true') {
+    return NextResponse.json(
+      { error: 'Not found' },
+      { status: 404 }
     );
+  }
 
-    // Get event definitions
+  try {
+    // SECURITY: Require JWT authentication
+    const { supabase, role } = await createUserClient(request);
+    
+    // SECURITY: Require admin role from verified JWT claims
+    if (role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Forbidden - admin access required' },
+        { status: 403 }
+      );
+    }
+
+    // Get event definitions (using JWT-authenticated client with RLS)
     const { data: events, error } = await supabase
       .schema('public')
       .from('event_definitions')
@@ -49,3 +62,4 @@ export async function GET() {
     );
   }
 }
+

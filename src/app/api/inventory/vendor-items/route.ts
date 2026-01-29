@@ -1,21 +1,18 @@
-import { createClient, getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
   try {
-    const tenantId = getTenantIdFromHeaders(request.headers);
+    const { supabase, tenantId } = await createUserClient(request);
     const searchParams = request.nextUrl.searchParams;
     const vendorId = searchParams.get('vendor_id');
     const catalogItemId = searchParams.get('catalog_item_id');
-
-    const supabase = createClient();
 
     // Fetch vendor items
     let query = supabase
       .schema('supply_chain')
       .from('vendor_items')
       .select('*')
-      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
     if (vendorId) {
@@ -40,7 +37,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch related vendors
-    const vendorIds = [...new Set(vendorItems.map(vi => vi.vendor_id))];
+    const vendorIds = [...new Set(vendorItems.map((vi: any) => vi.vendor_id))];
     const { data: vendors, error: vendorError } = await supabase
       .schema('supply_chain')
       .from('vendors')
@@ -53,7 +50,7 @@ export async function GET(request: NextRequest) {
     console.log(`[Vendor Items GET] Fetched ${vendors?.length || 0} vendors`);
 
     // Fetch related catalog items
-    const catalogItemIds = [...new Set(vendorItems.map(vi => vi.catalog_item_id))];
+    const catalogItemIds = [...new Set(vendorItems.map((vi: any) => vi.catalog_item_id))];
     const { data: catalogItems, error: catalogError } = await supabase
       .schema('inventory')
       .from('catalog_items')
@@ -66,10 +63,10 @@ export async function GET(request: NextRequest) {
     console.log(`[Vendor Items GET] Fetched ${catalogItems?.length || 0} catalog items`);
 
     // Join the data
-    const vendorMap = new Map(vendors?.map(v => [v.id, v]) || []);
-    const catalogMap = new Map(catalogItems?.map(c => [c.id, c]) || []);
+    const vendorMap = new Map(vendors?.map((v: any) => [v.id, v]) || []);
+    const catalogMap = new Map(catalogItems?.map((c: any) => [c.id, c]) || []);
 
-    const enrichedData = vendorItems.map(vi => ({
+    const enrichedData = vendorItems.map((vi: any) => ({
       ...vi,
       vendor: vendorMap.get(vi.vendor_id) || null,
       catalog_item: catalogMap.get(vi.catalog_item_id) || null,
@@ -88,16 +85,26 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const tenantId = getTenantIdFromHeaders(request.headers);
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for vendor item creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for vendor item creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
-
-    const supabase = createClient();
 
     const { data: vendorItem, error } = await supabase
       .schema('supply_chain')
       .from('vendor_items')
       .insert({
-        tenant_id: tenantId,
         vendor_id: body.vendor_id,
         catalog_item_id: body.catalog_item_id,
         vendor_sku: body.vendor_sku,
@@ -158,3 +165,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

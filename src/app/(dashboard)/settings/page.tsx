@@ -9,6 +9,8 @@ interface TenantSettings {
   tenant_id: string;
   po_number_format: string;
   po_number_prefix: string | null;
+  cycle_count_number_format: string;
+  cycle_count_number_prefix: string | null;
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
@@ -34,6 +36,8 @@ export default function SettingsPage() {
   const [form, setForm] = useState({
     po_number_format: 'sequential-year',
     po_number_prefix: '',
+    cycle_count_number_format: 'date-sequential',
+    cycle_count_number_prefix: 'CC',
     auto_approve_enabled: false,
     auto_approve_limit: '',
   });
@@ -77,6 +81,8 @@ export default function SettingsPage() {
         setForm({
           po_number_format: data.po_number_format || 'sequential-year',
           po_number_prefix: data.po_number_prefix || '',
+          cycle_count_number_format: data.cycle_count_number_format || 'date-sequential',
+          cycle_count_number_prefix: data.cycle_count_number_prefix || 'CC',
           auto_approve_enabled: data.auto_approve_enabled || false,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
         });
@@ -85,7 +91,7 @@ export default function SettingsPage() {
         const limits: Record<string, string> = {};
         if (data.vendor_auto_approve_limits) {
           Object.entries(data.vendor_auto_approve_limits).forEach(([vendorId, limit]) => {
-            limits[vendorId] = limit.toString();
+            limits[vendorId] = (limit as number).toString();
           });
         }
         setVendorLimits(limits);
@@ -125,6 +131,8 @@ export default function SettingsPage() {
         body: JSON.stringify({
           po_number_format: form.po_number_format,
           po_number_prefix: form.po_number_prefix || null,
+          cycle_count_number_format: form.cycle_count_number_format,
+          cycle_count_number_prefix: form.cycle_count_number_prefix || null,
           auto_approve_enabled: form.auto_approve_enabled,
           auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
           vendor_auto_approve_limits: vendorLimitsObj,
@@ -157,6 +165,12 @@ export default function SettingsPage() {
     'timestamp': 'PO-MKY42T62 (timestamp-based)',
   };
 
+  const cycleCountFormatExamples = {
+    'date-sequential': 'CC-20260129-00001 (date + sequential)',
+    'sequential-year': 'CC-26-0001 (year + sequential)',
+    'sequential': 'CC-0001 (continuous)',
+  };
+
   if (loading) {
     return (
       <AppShell>
@@ -171,7 +185,7 @@ export default function SettingsPage() {
     <AppShell>
       <PageHeader
         title="Tenant Settings"
-        subtitle="Configure purchase order numbering and approval rules"
+        description="Configure purchase order numbering and approval rules"
       />
 
       {!isAdmin && (
@@ -222,6 +236,48 @@ export default function SettingsPage() {
                 />
                 <p className="text-sm text-gray-500 mt-1">
                   Optional prefix to add before the number (e.g., "PO" → PO-26-0001)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Cycle Count Numbering Section */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4 pb-2 border-b">Cycle Count Numbering</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Number Format</label>
+                <select
+                  value={form.cycle_count_number_format}
+                  onChange={(e) => setForm({ ...form, cycle_count_number_format: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={!isAdmin}
+                >
+                  <option value="date-sequential">Date + Sequential (CC-20260129-00001)</option>
+                  <option value="sequential-year">Sequential with Year (CC-26-0001)</option>
+                  <option value="sequential">Sequential (CC-0001)</option>
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  {cycleCountFormatExamples[form.cycle_count_number_format as keyof typeof cycleCountFormatExamples]}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Number Prefix (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={form.cycle_count_number_prefix}
+                  onChange={(e) => setForm({ ...form, cycle_count_number_prefix: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="e.g., CC, COUNT"
+                  maxLength={10}
+                  disabled={!isAdmin}
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  Optional prefix to add before the number (e.g., "CC" → CC-20260129-00001)
                 </p>
               </div>
             </div>

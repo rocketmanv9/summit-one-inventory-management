@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'DELETE');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
 
     // Check if reservation exists and is in a deletable state
     const { data: reservation, error: fetchError } = await supabase
@@ -22,7 +31,6 @@ export async function DELETE(
       .from('reservations')
       .select('status, qty, reservation_type, catalog_item_id, location_id, asset_id')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (fetchError || !reservation) {
@@ -46,7 +54,6 @@ export async function DELETE(
           .schema('inventory')
           .from('stock_balances')
           .select('qty_reserved')
-          .eq('tenant_id', tenantId)
           .eq('catalog_item_id', reservation.catalog_item_id)
           .eq('location_id', reservation.location_id)
           .single();
@@ -66,7 +73,6 @@ export async function DELETE(
             qty_reserved: Math.max(0, stockBalance.qty_reserved - reservation.qty),
             updated_at: new Date().toISOString(),
           })
-          .eq('tenant_id', tenantId)
           .eq('catalog_item_id', reservation.catalog_item_id)
           .eq('location_id', reservation.location_id);
       }
@@ -80,8 +86,7 @@ export async function DELETE(
             status: 'available',
             updated_at: new Date().toISOString(),
           })
-          .eq('id', reservation.asset_id)
-          .eq('tenant_id', tenantId);
+          .eq('id', reservation.asset_id);
       }
     }
 
@@ -90,8 +95,7 @@ export async function DELETE(
       .schema('inventory')
       .from('reservations')
       .delete()
-      .eq('id', id)
-      .eq('tenant_id', tenantId);
+      .eq('id', id);
 
     if (deleteError) {
       console.error('Error deleting reservation:', deleteError);

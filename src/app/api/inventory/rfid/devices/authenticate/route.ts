@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { authenticateDevice } from '@/lib/device-auth';
 
 /**
  * POST /api/inventory/rfid/devices/authenticate
  * Authenticate an RFID device using device_code and api_key
+ * 
+ * SECURITY: Machine endpoint - no user JWT required
+ * - Validates device credentials (device_code + api_key)
+ * - Issues signed device token (JWT) for subsequent requests
+ * - Token contains: device_id, tenant_id, scopes
  */
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
     const body = await request.json();
     const { device_code, api_key } = body;
@@ -27,24 +22,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createClient();
+    // Authenticate device and issue token
+    const result = await authenticateDevice(device_code, api_key);
 
-    // Call RPC function to authenticate device
-    const { data, error } = await supabase.rpc('rfid_authenticate_device', {
-      p_tenant_id: tenantId,
-      p_device_code: device_code,
-      p_api_key: api_key
-    });
-
-    if (error) {
-      console.error('Error authenticating RFID device:', error);
-      return NextResponse.json(
-        { error: 'Authentication failed' },
-        { status: 401 }
-      );
-    }
-
-    if (!data || data.length === 0) {
+    if (!result) {
       return NextResponse.json(
         { error: 'Invalid credentials' },
         { status: 401 }
@@ -52,14 +33,17 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ 
-      data: data[0],
+      token: result.token,
+      device_id: result.deviceId,
+      tenant_id: result.tenantId,
       message: 'Device authenticated successfully'
     });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    console.error('[RFID Auth] Unexpected error:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }
     );
   }
 }
+

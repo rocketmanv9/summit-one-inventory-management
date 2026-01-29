@@ -5,28 +5,34 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PUT operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
     const body = await request.json();
     const { name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level, active } = body;
-    
-    const supabase = createClient();
     
     // Update the item
     const { data: item, error } = await supabase
@@ -47,7 +53,6 @@ export async function PUT(
         updated_by: userId,
       })
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select()
       .single();
     
@@ -73,26 +78,32 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
-    const supabase = createClient();
     
     // Check if item has stock first
     const { data: stockBalances, error: stockError } = await supabase
       .from('stock_balances')
       .select('qty_on_hand')
-      .eq('catalog_item_id', id)
-      .eq('tenant_id', tenantId);
+      .eq('catalog_item_id', id);
     
     if (stockError) {
       console.error('Error checking stock:', stockError);
@@ -102,7 +113,7 @@ export async function DELETE(
       );
     }
     
-    const totalStock = stockBalances?.reduce((sum, balance) => sum + Number(balance.qty_on_hand), 0) || 0;
+    const totalStock = stockBalances?.reduce((sum: number, balance: any) => sum + Number(balance.qty_on_hand), 0) || 0;
     
     if (totalStock > 0) {
       return NextResponse.json(
@@ -121,8 +132,7 @@ export async function DELETE(
         updated_at: new Date().toISOString(),
         updated_by: userId,
       })
-      .eq('id', id)
-      .eq('tenant_id', tenantId); // Always check tenant for security
+      .eq('id', id);
     
     if (deleteError) {
       console.error('Error deleting item:', deleteError);

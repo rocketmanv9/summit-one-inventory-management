@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient, createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
 
     const { data, error } = await supabase
       .schema('supply_chain')
@@ -29,3 +23,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+

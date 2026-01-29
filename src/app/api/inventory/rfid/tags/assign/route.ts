@@ -1,23 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * POST /api/inventory/rfid/tags/assign
  * Assign an RFID tag to an asset
  */
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
     const body = await request.json();
     const { epc_hex, asset_id, assignment_method } = body;
 
@@ -27,8 +18,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const supabase = createClient();
 
     // Call RPC function to assign tag to asset
     const { data, error } = await supabase.rpc('rfid_assign_tag_to_asset', {
@@ -59,3 +48,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * GET /api/inventory/locations/:id/items
@@ -10,15 +9,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id: locationId } = await params;
-    const supabase = createClient();
 
     // Get fungible/stock items that have stock balances at this location
     const { data: stockBalances, error: stockError } = await supabase
@@ -35,7 +28,6 @@ export async function GET(
           tracking_mode
         )
       `)
-      .eq('tenant_id', tenantId)
       .eq('location_id', locationId)
       .gt('qty_on_hand', 0);
 
@@ -62,7 +54,7 @@ export async function GET(
           tracking_mode
         )
       `)
-      .eq('tenant_id', tenantId)
+
       .eq('location_id', locationId)
       .in('status', ['available', 'assigned']); // Include both available and assigned assets
 

@@ -1,52 +1,37 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@supabase/supabase-js';
-
 /**
  * GET /api/tenant - Get current tenant information
+ * SECURITY: Uses JWT + RLS for tenant isolation
  */
+import { NextRequest, NextResponse } from 'next/server';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
+
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const { client: supabase, context } = auth;
   
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    );
-    
-    // Try to fetch existing tenant
+    // Fetch tenant using tenant_id from JWT (RLS enforces automatically)
     let { data: tenant, error } = await supabase
       .schema('public')
       .from('tenants')
       .select('*')
-      .eq('id', tenantId)
+      .eq('id', context.tenantId)
       .single();
     
     // Auto-provision tenant on first access if not found
     if (error && error.code === 'PGRST116') {
-      console.log(`Auto-provisioning tenant: ${tenantId}`);
+      console.log(`Auto-provisioning tenant: ${context.tenantId}`);
       
       // Create tenant record with default values
       const { data: newTenant, error: createError } = await supabase
         .schema('public')
         .from('tenants')
         .insert({
-          id: tenantId,
-          name: `Tenant ${tenantId.substring(0, 8)}`, // Default name, can be updated later
-          slug: `tenant-${tenantId.substring(0, 8)}`,
+          id: context.tenantId,
+          name: `Tenant ${context.tenantId.substring(0, 8)}`, // Default name, can be updated later
+          slug: `tenant-${context.tenantId.substring(0, 8)}`,
           industry: 'general',
           metadata: {}
         })
@@ -62,7 +47,7 @@ export async function GET(request: NextRequest) {
       }
       
       tenant = newTenant;
-      console.log(`✓ Auto-provisioned tenant: ${tenantId}`);
+      console.log(`✓ Auto-provisioned tenant: ${context.tenantId}`);
     } else if (error) {
       // Other errors (not "not found")
       console.error('Error fetching tenant:', error);

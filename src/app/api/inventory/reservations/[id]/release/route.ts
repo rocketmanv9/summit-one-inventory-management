@@ -1,34 +1,41 @@
 // API Route: Release/cancel reservation
 // Non-negotiable: Auth, Tenant isolation, Idempotency
 
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
     
-    // Optional: Parse request body for idempotency key
-    const body = await request.json().catch(() => ({}));
-    const lastEventId = body.last_event_id || null;
+    // ENFORCE IDEMPOTENCY: Require idempotency key
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'POST');
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for release' },
+        { status: 400 }
+      );
+    }
     
-    // Call RPC function: rpc_inv_release_reservation(p_tenant_id, p_reservation_id, p_cancelled_by_user_id, p_last_event_id)
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for reservation release' },
+        { status: 400 }
+      );
+    }
+    
+    // Call RPC function with idempotency key
     const { data, error } = await supabase.rpc('rpc_inv_release_reservation', {
       p_tenant_id: tenantId,
       p_reservation_id: id,
-      p_cancelled_by_user_id: null, // TODO: Get from headers if needed
-      p_last_event_id: lastEventId
+      p_cancelled_by_user_id: userId,
+      p_last_event_id: idempotencyKey
     });
     
     if (error) {

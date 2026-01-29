@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
     const { id: cycleCountId } = await params;
-    const supabase = createClient();
 
     // Submit the cycle count for review
     const updateData: any = { 
@@ -35,8 +24,7 @@ export async function POST(
       .schema('inventory')
       .from('cycle_counts')
       .update(updateData)
-      .eq('id', cycleCountId)
-      .eq('tenant_id', tenantId);
+      .eq('id', cycleCountId);
 
     if (error) {
       console.error('Error submitting cycle count:', error);

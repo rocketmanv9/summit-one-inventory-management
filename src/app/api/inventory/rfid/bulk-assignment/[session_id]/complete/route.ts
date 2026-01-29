@@ -1,39 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createDeviceClient, deviceAuthError } from '@/lib/device-auth';
 
 /**
  * POST /api/inventory/rfid/bulk-assignment/[session_id]/complete
  * Complete a bulk assignment session
+ * 
+ * SECURITY: Machine endpoint - requires device token
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { session_id: string } }
+  { params }: { params: Promise<{ session_id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const sessionId = params.session_id;
+    const { supabase, deviceId, tenantId } = await createDeviceClient(request);
+    const { session_id: sessionId } = await params;
 
-    const supabase = createClient();
-
-    // Call RPC function to complete bulk assignment session
-    const { data, error } = await supabase.rpc('rfid_complete_bulk_assignment_session', {
-      p_session_id: sessionId
-    });
+    // Complete the session
+    const { data, error } = await supabase
+      .schema('inventory')
+      .from('rfid_bulk_assignment_sessions')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      })
+      .eq('id', sessionId)
+      .eq('tenant_id', tenantId)
+      .eq('device_id', deviceId)
+      .eq('status', 'active')
+      .select()
+      .single();
 
     if (error) {
-      console.error('Error completing bulk assignment session:', error);
+      console.error('[RFID Bulk Assignment] Error completing session:', error);
       return NextResponse.json(
-        { error: error.message || 'Failed to complete bulk assignment session' },
+        { error: 'Failed to complete bulk assignment session' },
         { status: 500 }
+      );
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: 'Session not found or already completed' },
+        { status: 404 }
       );
     }
 
@@ -42,9 +50,12 @@ export async function POST(
       message: 'Bulk assignment session completed successfully'
     });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    if (error.message?.includes('token')) {
+      return deviceAuthError(error.message);
+    }
+    console.error('[RFID Bulk Assignment] Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

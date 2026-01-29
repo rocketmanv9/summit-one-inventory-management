@@ -1,14 +1,20 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { NextRequest, NextResponse } from 'next/server';
+import { createUserClient } from '@/lib/db-middleware';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient();
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { supabase } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for alert refresh' },
+        { status: 400 }
+      );
     }
 
     // Call the generate_reorder_alerts function
@@ -33,3 +39,4 @@ export async function POST() {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
+

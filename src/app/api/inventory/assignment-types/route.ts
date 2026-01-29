@@ -1,26 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 // GET /api/inventory/assignment-types - List assignment types
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
 
     const { data: types, error } = await supabase
       .schema('inventory')
       .from('assignment_types')
       .select('*')
-      .eq('tenant_id', tenantId)
       .eq('is_active', true)
       .order('sort_order')
       .order('display_name');
@@ -45,16 +34,21 @@ export async function GET(request: NextRequest) {
 
 // POST /api/inventory/assignment-types - Create new assignment type
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for assignment type creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for assignment type creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { type_key, display_name, icon, description, sort_order, requires_id } = body;
 
@@ -73,13 +67,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = createClient();
-
     const { data: newType, error } = await supabase
       .schema('inventory')
       .from('assignment_types')
       .insert({
-        tenant_id: tenantId,
         type_key,
         display_name,
         icon: icon || null,
@@ -117,3 +108,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

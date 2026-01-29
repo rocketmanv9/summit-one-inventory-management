@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase } = await createUserClient(request);
     const { id } = await params;
-    const supabase = createClient();
 
     const { data: transfer, error } = await supabase
       .schema('inventory')
@@ -29,7 +22,6 @@ export async function GET(
         )
       `)
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (error || !transfer) {
@@ -47,18 +39,31 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id } = await params;
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for transfer edits
+    let idempotencyKey: string | null;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for transfer edits' },
+        { status: 400 }
+      );
+    }
+
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for transfer edits' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { from_location_id, to_location_id, notes, lines } = body;
-
-    const supabase = createClient();
 
     // Validate the transfer exists, belongs to this tenant, and is in draft status
     const { data: existingTransfer, error: fetchError } = await supabase
@@ -66,7 +71,6 @@ export async function PUT(
       .from('transfers')
       .select('id, status')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (fetchError || !existingTransfer) {
@@ -90,7 +94,6 @@ export async function PUT(
           .from('catalog_items')
           .select('name, tracking_mode')
           .eq('id', line.catalog_item_id)
-          .eq('tenant_id', tenantId)
           .single();
 
         if (itemError || !item) {
@@ -106,7 +109,6 @@ export async function PUT(
           .from('locations')
           .select('name')
           .eq('id', from_location_id)
-          .eq('tenant_id', tenantId)
           .single();
 
         // Handle based on tracking mode
@@ -116,7 +118,6 @@ export async function PUT(
             .schema('inventory')
             .from('assets')
             .select('id')
-            .eq('tenant_id', tenantId)
             .eq('catalog_item_id', line.catalog_item_id)
             .eq('location_id', from_location_id)
             .in('status', ['available', 'assigned']);
@@ -135,7 +136,6 @@ export async function PUT(
             .schema('inventory')
             .from('stock_balances')
             .select('qty_on_hand')
-            .eq('tenant_id', tenantId)
             .eq('catalog_item_id', line.catalog_item_id)
             .eq('location_id', from_location_id)
             .single();
@@ -171,8 +171,7 @@ export async function PUT(
         notes,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
-      .eq('tenant_id', tenantId);
+      .eq('id', id);
 
     if (updateError) {
       console.error('Error updating transfer:', updateError);
@@ -184,8 +183,7 @@ export async function PUT(
       .schema('inventory')
       .from('transfer_lines')
       .delete()
-      .eq('transfer_id', id)
-      .eq('tenant_id', tenantId);
+      .eq('transfer_id', id);
 
     if (deleteError) {
       console.error('Error deleting transfer lines:', deleteError);
@@ -194,14 +192,13 @@ export async function PUT(
 
     // Insert new lines
     if (lines && lines.length > 0) {
-      const eventId = `transfer-edit-${id}-${Date.now()}`;
       const lineData = lines.map((line: any, index: number) => ({
         tenant_id: tenantId,
         transfer_id: id,
         catalog_item_id: line.catalog_item_id,
         qty: line.qty,
         line_number: index + 1,
-        last_event_id: `${eventId}-line-${index + 1}`,
+        last_event_id: `${idempotencyKey}-line-${index + 1}`,
       }));
 
       const { error: linesError } = await supabase

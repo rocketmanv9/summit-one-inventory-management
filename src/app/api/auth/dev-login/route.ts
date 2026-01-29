@@ -7,13 +7,12 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 export async function POST() {
-  // Only allow in development
-  if (process.env.NODE_ENV !== 'development') {
-    return NextResponse.json(
-      { error: 'Not available in production' },
-      { status: 403 }
-    );
-  }
+  // SECURITY: This endpoint is disabled for security reasons
+  // Use proper Supabase authentication instead
+  return NextResponse.json(
+    { error: 'This endpoint has been disabled. Use proper authentication.' },
+    { status: 404 }
+  );
 
   try {
     const tenantId = process.env.NEXT_PUBLIC_TENANT_ID || 'ae837809-1a24-4ab5-ba06-34fd98c05f48';
@@ -50,3 +49,4 @@ export async function POST() {
     );
   }
 }
+

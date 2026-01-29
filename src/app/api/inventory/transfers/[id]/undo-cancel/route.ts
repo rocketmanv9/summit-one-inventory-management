@@ -1,23 +1,16 @@
 // API Route: Undo cancel transfer
 // Reverses a cancelled transfer back to draft status
 
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, createClient } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
     
     const body = await request.json().catch(() => ({}));
     const lastEventId = body.last_event_id || null;

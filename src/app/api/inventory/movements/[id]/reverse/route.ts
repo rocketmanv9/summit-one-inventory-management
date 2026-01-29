@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
     const { id } = await params;
     const { reason_code } = await request.json();
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     // Call the RPC function to reverse the movement
     const { data, error } = await supabase.rpc('rpc_reverse_stock_movement', {

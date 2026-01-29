@@ -5,19 +5,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
 
     // Use the function to get or create default settings
     const { data: settings, error } = await supabase
@@ -40,14 +33,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
     // Check if user is admin via cookie session
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('inventory_session');
@@ -75,6 +63,8 @@ export async function PUT(request: NextRequest) {
     const {
       po_number_format,
       po_number_prefix,
+      cycle_count_number_format,
+      cycle_count_number_prefix,
       auto_approve_enabled,
       auto_approve_limit,
       vendor_auto_approve_limits
@@ -85,6 +75,15 @@ export async function PUT(request: NextRequest) {
     if (po_number_format && !validFormats.includes(po_number_format)) {
       return NextResponse.json(
         { error: `Invalid po_number_format. Must be one of: ${validFormats.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
+    // Validate cycle_count_number_format
+    const validCycleCountFormats = ['date-sequential', 'sequential-year', 'sequential'];
+    if (cycle_count_number_format && !validCycleCountFormats.includes(cycle_count_number_format)) {
+      return NextResponse.json(
+        { error: `Invalid cycle_count_number_format. Must be one of: ${validCycleCountFormats.join(', ')}` },
         { status: 400 }
       );
     }
@@ -100,7 +99,6 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    const supabase = createClient();
 
     // First ensure settings exist (get or create)
     await supabase
@@ -118,6 +116,12 @@ export async function PUT(request: NextRequest) {
     }
     if (po_number_prefix !== undefined) {
       updateData.po_number_prefix = po_number_prefix || null;
+    }
+    if (cycle_count_number_format !== undefined) {
+      updateData.cycle_count_number_format = cycle_count_number_format || 'date-sequential';
+    }
+    if (cycle_count_number_prefix !== undefined) {
+      updateData.cycle_count_number_prefix = cycle_count_number_prefix || null;
     }
     if (auto_approve_enabled !== undefined) {
       updateData.auto_approve_enabled = auto_approve_enabled ?? false;
@@ -174,3 +178,4 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+

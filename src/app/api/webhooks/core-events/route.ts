@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createServiceClientVerified } from '@/lib/db-middleware';
 import { createHmac } from 'crypto';
 
 interface TenantProfileData {
@@ -64,10 +64,30 @@ export async function POST(req: NextRequest) {
     const body = JSON.parse(rawBody);
     const payload = body.payload;
     
-    // 2. Check idempotency using delivery_id or event_id from body
-    const deliveryId = body.delivery_id || body.event_id || `${eventType}-${Date.now()}`;
+    // 2. Extract and verify tenant_id from VERIFIED payload (after HMAC check)
+    const tenantId = payload?.new?.tenant_id || payload?.tenant_id;
     
-    const supabase = createClient();
+    if (!tenantId) {
+      console.error('No tenant_id in verified webhook payload');
+      return NextResponse.json(
+        { error: 'Missing tenant_id in payload' },
+        { status: 400 }
+      );
+    }
+    
+    // 3. Create service client with VERIFIED tenant_id
+    const supabase = createServiceClientVerified(tenantId);
+    
+    // 4. REQUIRE delivery_id for idempotency - no fallback generation
+    const deliveryId = body.delivery_id || body.event_id;
+    
+    if (!deliveryId) {
+      console.error('Missing delivery_id or event_id in webhook payload');
+      return NextResponse.json(
+        { error: 'delivery_id or event_id required for webhook idempotency' },
+        { status: 400 }
+      );
+    }
     
     const { data: existing } = await supabase
       .from('processed_events')
@@ -79,16 +99,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'already_processed' });
     }
     
-    // 3. Process event based on type
+    // 5. Process event based on type
     await processEvent(supabase, eventType, payload);
     
-    // 4. Record processing
+    // 6. Record processing
     await supabase
       .from('processed_events')
       .insert({
         delivery_id: deliveryId,
         event_type: eventType,
-        tenant_id: payload?.new?.tenant_id || payload?.tenant_id || null,
+        tenant_id: tenantId,
         payload: payload,
       });
     
@@ -315,4 +335,5 @@ async function handleProductEntitlementDeleted(supabase: any, payload: any) {
   // Could soft-delete or archive tenant data
   // Or block access via middleware check
 }
+
 

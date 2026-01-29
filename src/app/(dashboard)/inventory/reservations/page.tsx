@@ -14,7 +14,7 @@ interface Reservation {
   qty: number;
   reservation_type: 'fungible' | 'serialized';
   asset_id?: string;
-  allocation_type: 'job' | 'project' | 'customer_order' | 'internal_order' | 'other' | null;
+  allocation_type: 'job' | 'project' | 'customer_order' | 'internal_order' | 'kit' | 'other' | null;
   status: string;
   job_ref?: string;
   external_order_ref?: string;
@@ -68,9 +68,12 @@ export default function ReservationsPage() {
     try {
       const res = await fetch(`/api/inventory/reservations/${reservationId}/fulfill`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID()
+        },
         body: JSON.stringify({
-          last_event_id: `fulfill_${reservationId}_${Date.now()}`
+          last_event_id: `fulfill_${reservationId}_${crypto.randomUUID()}`
         })
       });
       
@@ -104,9 +107,12 @@ export default function ReservationsPage() {
     try {
       const res = await fetch(`/api/inventory/reservations/${reservationId}/release`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID()
+        },
         body: JSON.stringify({
-          last_event_id: `release_${reservationId}_${Date.now()}`
+          last_event_id: `release_${reservationId}_${crypto.randomUUID()}`
         })
       });
       
@@ -134,9 +140,12 @@ export default function ReservationsPage() {
     try {
       const res = await fetch(`/api/inventory/reservations/${reservationId}/undo-fulfill`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID()
+        },
         body: JSON.stringify({
-          last_event_id: `undo_fulfill_${reservationId}_${Date.now()}`
+          last_event_id: `undo_fulfill_${reservationId}_${crypto.randomUUID()}`
         })
       });
       
@@ -163,9 +172,12 @@ export default function ReservationsPage() {
     try {
       const res = await fetch(`/api/inventory/reservations/${reservationId}/undo-release`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID()
+        },
         body: JSON.stringify({
-          last_event_id: `undo_release_${reservationId}_${Date.now()}`
+          last_event_id: `undo_release_${reservationId}_${crypto.randomUUID()}`
         })
       });
       

@@ -1,58 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createDeviceClient, deviceAuthError } from '@/lib/device-auth';
 
 /**
  * POST /api/inventory/rfid/devices/heartbeat
  * Record device heartbeat
+ * 
+ * SECURITY: Machine endpoint - requires device token
  */
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, deviceId, tenantId } = await createDeviceClient(request);
+
     const body = await request.json();
-    const { device_id, battery_level, signal_strength } = body;
+    const { battery_level, signal_strength } = body;
 
-    if (!device_id) {
-      return NextResponse.json(
-        { error: 'device_id is required' },
-        { status: 400 }
-      );
-    }
-
-    const supabase = createClient();
-
-    // Call RPC function to record heartbeat
-    const { data, error } = await supabase.rpc('rfid_device_heartbeat', {
-      p_device_id: device_id,
-      p_battery_level: battery_level || null,
-      p_signal_strength: signal_strength || null
-    });
+    // Update device heartbeat
+    const { error } = await supabase
+      .schema('inventory')
+      .from('rfid_devices')
+      .update({
+        last_seen_at: new Date().toISOString(),
+        last_ip_address: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
+        heartbeat_count: supabase.raw('heartbeat_count + 1')
+      })
+      .eq('id', deviceId)
+      .eq('tenant_id', tenantId);
 
     if (error) {
-      console.error('Error recording device heartbeat:', error);
+      console.error('[RFID Heartbeat] Error:', error);
       return NextResponse.json(
-        { error: error.message || 'Failed to record heartbeat' },
+        { error: 'Failed to record heartbeat' },
         { status: 500 }
       );
     }
 
     return NextResponse.json({ 
-      data,
-      message: 'Heartbeat recorded'
+      message: 'Heartbeat recorded',
+      device_id: deviceId
     });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    if (error.message?.includes('token')) {
+      return deviceAuthError(error.message);
+    }
+    console.error('[RFID Heartbeat] Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
 }
+

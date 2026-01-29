@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { id } = await params;
-    const supabase = createClient();
 
     console.log('[Ship Transfer] Attempting to ship transfer:', { id, tenantId });
 
@@ -34,7 +27,6 @@ export async function POST(
         )
       `)
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (transferError || !transfer) {
@@ -58,7 +50,6 @@ export async function POST(
         .schema('inventory')
         .from('stock_balances')
         .select('qty_on_hand')
-        .eq('tenant_id', tenantId)
         .eq('catalog_item_id', line.catalog_item_id)
         .eq('location_id', transfer.from_location_id)
         .single();

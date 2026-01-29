@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   try {
-    // Try service role first, fall back to anon key
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    // SECURITY: Admin-only debug endpoint
+    const { supabase, role } = await createUserClient(request);
     
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey || anonKey,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    );
+    if (role !== 'admin') {
+      return NextResponse.json(
+        { error: 'Forbidden - admin access required' },
+        { status: 403 }
+      );
+    }
 
     // Get all event definitions with stats
     const { data: stats, error: statsError } = await supabase
@@ -40,7 +35,7 @@ export async function GET(request: NextRequest) {
       .order('event_name', { ascending: true });
 
     console.log('Fetched event definitions count:', definitions?.length, 'Total count:', count);
-    console.log('Event names with inventory prefix:', definitions?.filter(d => d.event_name.startsWith('inventory.')).map(d => d.event_name));
+    console.log('Event names with inventory prefix:', definitions?.filter((d: any) => d.event_name.startsWith('inventory.')).map((d: any) => d.event_name));
 
     if (defsError) {
       console.error('Error fetching event definitions:', defsError);
@@ -73,3 +68,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

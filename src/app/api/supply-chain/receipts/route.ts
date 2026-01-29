@@ -5,23 +5,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const poId = searchParams.get('po_id');
     const status = searchParams.get('status');
     const limit = parseInt(searchParams.get('limit') || '100', 10);
-
-    const supabase = createClient();
 
     // Build query
     let query = supabase
@@ -42,8 +35,7 @@ export async function GET(request: NextRequest) {
         notes,
         created_at,
         updated_at
-      `)
-      .eq('tenant_id', tenantId);
+      `);
 
     // Filters
     if (poId) {
@@ -83,14 +75,21 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for receipt creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for receipt creation' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const {
       receipt_number,
@@ -127,8 +126,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'qty_received must be > 0 for all lines' }, { status: 400 });
       }
     }
-
-    const supabase = createClient();
 
     // Call enhanced RPC to create receipt
     const { data, error } = await supabase
@@ -176,3 +173,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

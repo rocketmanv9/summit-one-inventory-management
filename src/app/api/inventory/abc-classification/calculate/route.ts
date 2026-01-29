@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient();
-    const { method = 'value' } = await request.json();
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { supabase } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for ABC classification calculation' },
+        { status: 400 }
+      );
     }
+    
+    const { method = 'value' } = await request.json();
 
     // Call the RPC function to calculate ABC classification
     const { data, error } = await supabase.rpc('rpc_calculate_abc_classification', {
@@ -44,3 +51,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
+

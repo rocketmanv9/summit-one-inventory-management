@@ -5,22 +5,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
-
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const locationTypeId = searchParams.get('typeId');
 
@@ -31,7 +20,6 @@ export async function GET(request: NextRequest) {
         *,
         location_type:location_types!locations_location_type_id_fkey(name)
       `)
-      .eq('tenant_id', tenantId)
       .eq('active', true);
 
     if (locationTypeId) {
@@ -65,20 +53,24 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for location creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for location creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name, location_type_id, address, parent_location_id } = body;
 
-    const userId = getUserIdFromHeaders(request.headers);
     console.log('Creating location with:', { name, location_type_id, address, parent_location_id, tenantId, userId });
 
     if (!location_type_id) {
@@ -87,8 +79,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const supabase = createClient();
 
     const { data: location, error } = await supabase
       .schema('inventory')
@@ -123,3 +113,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -1,31 +1,29 @@
 /**
  * PO Receiving Detail API
  * GET /api/supply-chain/purchase-orders/[id]/receiving - Get PO detail for receiving
+ * SECURITY: Uses JWT + RLS for tenant isolation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
+  const { client: supabase, context } = auth;
 
   try {
     const { id } = await Promise.resolve(params);
-    const supabase = createClient();
 
-    // Call RPC to get PO receiving detail
+    // Call RPC with tenant_id from JWT (RLS enforces automatically)
     const { data, error } = await supabase
       .schema('supply_chain')
       .rpc('rpc_get_po_receiving_detail', {
-        p_tenant_id: tenantId,
+        p_tenant_id: context.tenantId,
         p_po_id: id,
       });
 

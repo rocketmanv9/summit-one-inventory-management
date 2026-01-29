@@ -1,15 +1,9 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@/supabase/client';
+import { NextRequest, NextResponse } from 'next/server';
+import { createUserClient } from '@/lib/db-middleware';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient();
-
-    // Authentication check
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const { supabase } = await createUserClient(request);
 
     // Fetch current ABC classification
     const { data, error } = await supabase
@@ -28,3 +22,4 @@ export async function GET() {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
+

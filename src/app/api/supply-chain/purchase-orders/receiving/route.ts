@@ -4,23 +4,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { createClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
     const { searchParams } = new URL(request.url);
     const vendorId = searchParams.get('vendor_id');
     const search = searchParams.get('search');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
-
-    const supabase = createClient();
 
     // Call RPC to get open POs
     const { data, error } = await supabase
@@ -54,3 +47,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

@@ -5,25 +5,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, getUserIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    const supabase = createClient();
+    const { supabase } = await createUserClient(request);
     
     const { data: categories, error } = await supabase
       .from('item_categories')
       .select('id, name, created_at, updated_at')
-      .eq('tenant_id', tenantId)
       .order('name');
     
     if (error) {
@@ -45,17 +35,21 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  const userId = getUserIdFromHeaders(request.headers);
-  
-  if (!tenantId || !userId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for category creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for category creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name } = body;
     
@@ -66,13 +60,10 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const supabase = createClient();
-    
     // Check for duplicate name
     const { data: existing } = await supabase
       .from('item_categories')
       .select('id')
-      .eq('tenant_id', tenantId)
       .eq('name', name.trim())
       .single();
     
@@ -111,3 +102,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

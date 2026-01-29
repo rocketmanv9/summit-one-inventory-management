@@ -740,3 +740,4 @@ async function fetchWidgetData(supabase: any, widgetKey: string, tenantId: strin
   return { value: 'No data', trend: 'neutral' };
 }
 
+

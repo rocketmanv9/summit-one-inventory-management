@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/db-middleware';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 // PUT /api/inventory/assignment-types/[id] - Update assignment type
 export async function PUT(
@@ -8,20 +7,27 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
 
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'PUT');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for PUT operations' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { display_name, icon, description, sort_order, is_active, requires_id } = body;
-
-    const supabase = createClient();
 
     // First verify the assignment type belongs to this tenant and is not system type
     const { data: existingType } = await supabase
@@ -29,7 +35,6 @@ export async function PUT(
       .from('assignment_types')
       .select('is_system')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (!existingType) {
@@ -66,7 +71,6 @@ export async function PUT(
       .from('assignment_types')
       .update(updates)
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .select()
       .single();
 
@@ -94,17 +98,24 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
 
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'DELETE');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
 
     // Verify the assignment type belongs to this tenant
     const { data: assignmentType } = await supabase
@@ -112,7 +123,6 @@ export async function DELETE(
       .from('assignment_types')
       .select('is_system, type_key')
       .eq('id', id)
-      .eq('tenant_id', tenantId)
       .single();
 
     if (!assignmentType) {

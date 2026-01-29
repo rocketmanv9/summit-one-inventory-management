@@ -2,29 +2,26 @@
  * Vendors API
  * GET /api/inventory/vendors - List all vendors
  * POST /api/inventory/vendors - Create new vendor
+ * 
+ * SECURITY: Uses JWT + RLS for tenant isolation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  // Validate JWT and get authenticated client
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth; // Return 401 if not authenticated
 
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const { client: supabase, context } = auth;
 
   try {
-    const supabase = createClient();
-
+    // Query with RLS - tenant_id automatically filtered by RLS policy
     const { data: vendors, error } = await supabase
       .schema('supply_chain')
       .from('vendors')
       .select('*')
-      .eq('tenant_id', tenantId)
       .eq('active', true)
       .order('name');
 
@@ -38,7 +35,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       data: vendors,
-      meta: { tenantId, count: vendors?.length || 0 }
+      meta: { tenantId: context.tenantId, count: vendors?.length || 0 }
     });
   } catch (error) {
     console.error('Unexpected error:', error);
@@ -50,26 +47,34 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
+  // Validate JWT and get authenticated client
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
+  const { client: supabase, context } = auth;
 
   try {
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for vendor creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for vendor creation' },
+        { status: 400 }
+      );
+    }
+    
     const body = await request.json();
     const { name, code, contact_name, contact_email, contact_phone, address, payment_terms, lead_time_days } = body;
 
-    const supabase = createClient();
-
+    // Insert with tenant_id from JWT context (tamper-proof)
     const { data: vendor, error } = await supabase
       .schema('supply_chain')
       .from('vendors')
       .insert({
-        tenant_id: tenantId,
+        tenant_id: context.tenantId, // From JWT app_metadata
         name,
         code,
         contact_name,
@@ -100,3 +105,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -4,24 +4,31 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders, createClient } from '@/lib/db-middleware';
+import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-  
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string | null;
+    try {
+      idempotencyKey = await getIdempotencyKey(request, 'DELETE');
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'Idempotency-Key header required for DELETE operations' },
+        { status: 400 }
+      );
+    }
+    
     const { id: typeId } = await params;
-    const supabase = createClient();
 
     // Check if any locations are using this type
     const { data: locationCheck, error: checkError } = await supabase
@@ -41,7 +48,7 @@ export async function DELETE(
     }
 
     if (locationCheck && locationCheck.length > 0) {
-      const locationNames = locationCheck.map(l => l.name).join(', ');
+      const locationNames = locationCheck.map((l: any) => l.name).join(', ');
       return NextResponse.json(
         { 
           error: `Cannot delete location type because it is used by ${locationCheck.length} location(s): ${locationNames}${locationCheck.length === 5 ? ', ...' : ''}` 
@@ -55,8 +62,7 @@ export async function DELETE(
       .schema('inventory')
       .from('location_types')
       .delete()
-      .eq('id', typeId)
-      .eq('tenant_id', tenantId); // Ensure tenant isolation
+      .eq('id', typeId);
 
     if (deleteError) {
       console.error('Error deleting location type:', deleteError);

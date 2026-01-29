@@ -1,0 +1,27 @@
+﻿DIRECT WRITES ANALYSIS:
+
+CRITICAL - Already Converted to RPCs:
+ PO Creation (purchasing POST) - now using rpc_create_purchase_order
+ Asset Assignment - now using rpc_inv_asset_assign
+ Asset Return - now using rpc_inv_asset_return
+ Receipt Creation (supply-chain) - already using rpc_create_receipt_v2
+ Receipt Posting to Inventory - already using rpc_post_receipt_to_inventory
+ Reservation Fulfill - already using rpc_inv_fulfill_reservation_issue
+ Reservation Release - already using rpc_inv_release_reservation
+ Transfer Execute - already using rpc_inv_transfer_execute
+ Cycle Count Submit - already using rpc_inv_cycle_count_record
+
+SIMPLE CRUD - Keep Direct Writes (RLS Protected):
+ Items CREATE/UPDATE/DELETE (simple catalog management)
+ Locations CREATE/UPDATE/DELETE (simple reference data)
+ Categories CREATE/UPDATE/DELETE (simple reference data)
+ Vendors CREATE/UPDATE/DELETE (simple reference data)
+ Settings UPDATE (simple config)
+ Dashboard/Widget management (UI config)
+
+COMPLEX OPERATIONS - Need RPCs But Not Yet Created:
+ Receiving POST (inventory/receiving) - creates receipt + lines, should use RPC
+ Transfer Ship - updates lines + status, some business logic
+ Transfer Reverse - complex reversal logic
+ PO Update/Delete - status management
+ Cycle Count Start - creates lines, could benefit from RPC

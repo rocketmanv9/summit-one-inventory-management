@@ -35,24 +35,12 @@ export function middleware(request: NextRequest) {
       const session = JSON.parse(sessionCookie.value);
       console.log('[Middleware] Session parsed:', { tenantId: session.tenantId, userId: session.userId, role: session.role });
       
-      // Clone the request headers and add tenant context
-      const requestHeaders = new Headers(request.headers);
-      requestHeaders.set('x-tenant-id', session.tenantId);
-      requestHeaders.set('x-user-id', session.userId);
-      requestHeaders.set('x-user-role', session.role || 'user');
+      // SECURITY: Do NOT set x-tenant-id or x-user-id headers
+      // All routes use createUserClient() which validates JWT and extracts tenant_id from app_metadata
+      // Headers are not used for authentication or authorization
       
-      console.log('[Middleware] Setting headers:', {
-        'x-tenant-id': session.tenantId,
-        'x-user-id': session.userId,
-        'x-user-role': session.role || 'user'
-      });
-      
-      // Return a new response with the modified request headers
-      return NextResponse.next({
-        request: {
-          headers: requestHeaders,
-        },
-      });
+      // Just pass through - no header modification needed
+      return NextResponse.next();
       
     } catch (error) {
       console.error('[Middleware] Failed to parse session cookie:', error);

@@ -1,56 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createDeviceClient, deviceAuthError } from '@/lib/device-auth';
 
 /**
  * POST /api/inventory/rfid/devices/sync
  * Sync cycle counts for an RFID device
+ * 
+ * SECURITY: Machine endpoint - requires device token
  */
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const body = await request.json();
-    const { device_id } = body;
+    const { supabase, deviceId, tenantId } = await createDeviceClient(request);
 
-    if (!device_id) {
-      return NextResponse.json(
-        { error: 'device_id is required' },
-        { status: 400 }
-      );
-    }
-
-    const supabase = createClient();
-
-    // Call RPC function to sync cycle counts
-    const { data, error } = await supabase.rpc('rfid_device_sync_cycle_counts', {
-      p_device_id: device_id
-    });
+    // Get pending cycle counts for this device
+    const { data: cycleCounts, error } = await supabase
+      .schema('inventory')
+      .from('cycle_counts')
+      .select(`
+        id,
+        count_number,
+        location_id,
+        status,
+        assigned_to_device_id,
+        scheduled_start,
+        expected_duration_minutes
+      `)
+      .eq('tenant_id', tenantId)
+      .eq('assigned_to_device_id', deviceId)
+      .in('status', ['pending', 'in_progress'])
+      .order('scheduled_start', { ascending: true });
 
     if (error) {
-      console.error('Error syncing cycle counts:', error);
+      console.error('[RFID Sync] Error fetching cycle counts:', error);
       return NextResponse.json(
-        { error: error.message || 'Failed to sync cycle counts' },
+        { error: 'Failed to sync cycle counts' },
         { status: 500 }
       );
     }
 
     return NextResponse.json({ 
-      data: data || [],
+      data: cycleCounts || [],
+      device_id: deviceId,
       message: 'Cycle counts synced successfully'
     });
   } catch (error: any) {
-    console.error('Unexpected error:', error);
+    if (error.message?.includes('token')) {
+      return deviceAuthError(error.message);
+    }
+    console.error('[RFID Sync] Unexpected error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
 }
+

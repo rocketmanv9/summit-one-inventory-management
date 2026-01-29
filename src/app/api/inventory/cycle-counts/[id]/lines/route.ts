@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * GET /api/inventory/cycle-counts/[id]/lines
@@ -10,28 +9,18 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase } = await createUserClient(request);
     const { id: cycleCountId } = await params;
-    const supabase = createClient();
 
     const { data: lines, error } = await supabase
       .schema('inventory')
       .from('cycle_count_lines')
       .select(`
         *,
-        catalog_item:catalog_items(id, name, sku, unit_of_measure)
+        catalog_item:catalog_items(id, name, sku, unit_of_measure, tracking_mode)
       `)
       .eq('cycle_count_id', cycleCountId)
-      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: true });
 
     if (error) {

@@ -228,7 +228,6 @@ export default function ReceiptDetailPage() {
         <PageHeader
           title={`Receive: ${poDetail.po_number}`}
           description={`Vendor: ${poDetail.vendor_name} | Delivery to: ${poDetail.delivery_location_name}`}
-          backHref="/inventory/receiving"
           actions={
             <div className="flex gap-2">
               {receiptStatus === 'confirmed' ? (

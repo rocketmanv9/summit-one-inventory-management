@@ -5,21 +5,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getTenantIdFromHeaders } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
-    const supabase = createClient();
+    const { supabase, tenantId } = await createUserClient(request);
 
     // Simplified: Just return assets data without the view
     const { data: assets, error } = await supabase
@@ -30,7 +20,6 @@ export async function GET(request: NextRequest) {
         catalog_item:catalog_items(id, name, sku),
         location:locations!assets_location_id_fkey(id, name, location_type_id, location_type:location_types(id, name))
       `)
-      .eq('tenant_id', tenantId)
       .order('asset_tag');
 
     if (error) {
@@ -55,25 +44,27 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const tenantId = getTenantIdFromHeaders(request.headers);
-
-  if (!tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-
   try {
+    const { supabase, tenantId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for asset creation
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for asset creation' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { catalog_item_id, asset_tag, serial_number, location_id, purchase_date, purchase_cost, warranty_expires } = body;
-
-    const supabase = createClient();
 
     const { data: asset, error } = await supabase
       .from('assets')
       .insert({
-        tenant_id: tenantId,
         catalog_item_id,
         asset_tag,
         serial_number,
@@ -103,3 +94,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
