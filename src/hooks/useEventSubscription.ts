@@ -8,6 +8,8 @@
  * @see EVENT_QUICK_REFERENCE.md for integration examples
  */
 
+'use client';
+
 import { useEffect, useState } from 'react';
 import { createClient } from '@/supabase/client';
 

@@ -8,9 +8,9 @@
  * @see /EVENT_CATALOG.md for complete event reference
  */
 
-export const dynamic = 'force-dynamic';
-
 'use client';
+
+export const dynamic = 'force-dynamic';
 
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
