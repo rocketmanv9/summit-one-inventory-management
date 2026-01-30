@@ -5,6 +5,7 @@
  */
 
 import { createClient } from '@/supabase/client';
+import { authenticatedFetch, buildQueryString } from '@/lib/api-client';
 
 export interface IssueInventoryParams {
   location_id: string;
@@ -99,22 +100,15 @@ export const InventoryRPC = {
     tracking_mode?: string;
     search?: string;
   }) {
-    const params = new URLSearchParams();
-    if (filters?.active !== undefined) {
-      params.append('active', String(filters.active));
-    }
-    if (filters?.category_id) {
-      params.append('category_id', filters.category_id);
-    }
-    if (filters?.tracking_mode) {
-      params.append('tracking_mode', filters.tracking_mode);
-    }
-    if (filters?.search) {
-      params.append('search', filters.search);
-    }
+    const queryString = buildQueryString({
+      active: filters?.active !== undefined ? String(filters.active) : undefined,
+      category_id: filters?.category_id,
+      tracking_mode: filters?.tracking_mode,
+      search: filters?.search
+    });
 
-    const url = `/api/inventory/items${params.toString() ? `?${params.toString()}` : ''}`;
-    const response = await fetch(url);
+    const url = `/api/inventory/items${queryString}`;
+    const response = await authenticatedFetch(url);
 
     if (!response.ok) {
       const error = await response.json();
@@ -133,16 +127,13 @@ export const InventoryRPC = {
     type?: string;
     active?: boolean;
   }) {
-    const params = new URLSearchParams();
-    if (filters?.type) {
-      params.append('location_type', filters.type);
-    }
-    if (filters?.active !== undefined) {
-      params.append('active', String(filters.active));
-    }
+    const queryString = buildQueryString({
+      location_type: filters?.type,
+      active: filters?.active !== undefined ? String(filters.active) : undefined
+    });
 
-    const url = `/api/inventory/locations${params.toString() ? `?${params.toString()}` : ''}`;
-    const response = await fetch(url);
+    const url = `/api/inventory/locations${queryString}`;
+    const response = await authenticatedFetch(url);
 
     if (!response.ok) {
       const error = await response.json();

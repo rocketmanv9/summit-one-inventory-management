@@ -25,6 +25,13 @@ export async function GET() {
           { status: 401 }
         );
       }
+
+      if (!session.coreToken) {
+        return NextResponse.json(
+          { error: 'Session missing core token' },
+          { status: 401 }
+        );
+      }
       
       return NextResponse.json(session);
     } catch (error) {

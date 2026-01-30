@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS supply_chain.po_number_sequences (
 -- Enable RLS on the sequences table
 ALTER TABLE supply_chain.po_number_sequences ENABLE ROW LEVEL SECURITY;
 
--- Create RLS policy for sequences table
+-- Create RLS policy for sequences table (drop if exists first)
+DROP POLICY IF EXISTS "Users can manage their tenant's PO sequences" ON supply_chain.po_number_sequences;
 CREATE POLICY "Users can manage their tenant's PO sequences"
   ON supply_chain.po_number_sequences
   FOR ALL

@@ -1,32 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-interface JWTPayload {
-  id: string;
-  email: string;
-  app_metadata: {
-    active_tenant_id: string;
-    tenant_id: string;
-    role: string;
-    core_user_id: string;
-  };
-  user_metadata: {
-    full_name: string;
-    core_user_id: string;
-  };
-  exp: number;
-}
-
 export async function GET(req: NextRequest) {
   try {
     const searchParams = req.nextUrl.searchParams;
     const coreToken = searchParams.get('core_token');
-    const coreEnv = searchParams.get('core_env');
+    const coreEnv = searchParams.get('core_env') || 'dev';
     const targetOrg = searchParams.get('target_org');
     
     console.log('SSO Callback received:', { coreEnv, targetOrg, hasToken: !!coreToken });
@@ -36,31 +19,56 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/error?message=no_token', req.url));
     }
     
-    // Verify JWT from Core using jose
-    const secret = new TextEncoder().encode(process.env.CORE_SSO_SECRET);
-    
-    if (!secret || !process.env.CORE_SSO_SECRET) {
-      console.error('CORE_SSO_SECRET not configured');
+    const normalizedEnv = ['dev', 'development'].includes(coreEnv) ? 'dev'
+      : ['stage', 'staging'].includes(coreEnv) ? 'stage'
+      : ['prod', 'production'].includes(coreEnv) ? 'prod'
+      : 'dev';
+
+    const coreApiUrl =
+      (normalizedEnv === 'dev' ? process.env.CORE_API_URL_DEV : undefined) ||
+      (normalizedEnv === 'stage' ? process.env.CORE_API_URL_STAGE : undefined) ||
+      (normalizedEnv === 'prod' ? process.env.CORE_API_URL_PROD : undefined) ||
+      process.env.NEXT_PUBLIC_CORE_URL ||
+      'http://localhost:3000';
+
+    const validateResponse = await fetch(`${coreApiUrl}/api/auth/validate-sso-token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${coreToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ token: coreToken, env: normalizedEnv })
+    });
+
+    if (!validateResponse.ok) {
+      console.error('Core token validation failed:', validateResponse.status);
       return NextResponse.redirect(new URL('/error?message=invalid_token', req.url));
     }
-    
-    let payload: JWTPayload;
-    try {
-      const { payload: verifiedPayload } = await jwtVerify(coreToken, secret);
-      payload = verifiedPayload as unknown as JWTPayload;
-      console.log('Token verified successfully for user:', payload.email);
-    } catch (error) {
-      console.error('JWT verification failed:', error);
+
+    const validatePayload = await validateResponse.json();
+    const user = validatePayload.user || validatePayload;
+
+    const tenantId =
+      user?.tenant_id ||
+      user?.tenantId ||
+      user?.app_metadata?.active_tenant_id ||
+      user?.app_metadata?.tenant_id ||
+      targetOrg;
+
+    if (!tenantId || !user?.user_id && !user?.id) {
+      console.error('Invalid Core validation payload:', validatePayload);
       return NextResponse.redirect(new URL('/error?message=invalid_token', req.url));
     }
-    
+
     // Create local session
     const session = {
-      userId: payload.id,
-      email: payload.email,
-      tenantId: payload.app_metadata.active_tenant_id,
-      role: payload.app_metadata.role,
-      fullName: payload.user_metadata.full_name,
+      userId: user.user_id || user.id,
+      email: user.email,
+      tenantId,
+      tenantSlug: user.tenant_slug,
+      role: user.role || user.app_metadata?.role,
+      fullName: user.full_name || user.user_metadata?.full_name,
+      coreToken,
       expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000), // 7 days from now
     };
     

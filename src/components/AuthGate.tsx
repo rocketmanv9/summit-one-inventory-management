@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { createClient } from '@/supabase/client';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const supabase = createClient();
@@ -20,7 +21,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       setAuthenticated(true);
       return;
     }
-    
+
+    const coreToken = searchParams.get('core_token');
+    if (coreToken) {
+      const coreEnv = searchParams.get('core_env') || 'dev';
+      const targetOrg = searchParams.get('target_org');
+      const callbackUrl = new URL('/auth/callback', window.location.origin);
+      callbackUrl.searchParams.set('core_token', coreToken);
+      callbackUrl.searchParams.set('core_env', coreEnv);
+      if (targetOrg) {
+        callbackUrl.searchParams.set('target_org', targetOrg);
+      }
+      router.replace(callbackUrl.pathname + callbackUrl.search);
+      return;
+    }
+
     checkSession();
     
     // Listen for auth changes
@@ -37,7 +52,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, [pathname, isPublicPage]);
+  }, [pathname, isPublicPage, searchParams, router]);
   
   async function checkSession() {
     try {

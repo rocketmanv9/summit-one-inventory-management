@@ -21,6 +21,10 @@ export async function GET() {
       return NextResponse.json({ authenticated: false, reason: 'expired' });
     }
 
+    if (!session.coreToken) {
+      return NextResponse.json({ authenticated: false, reason: 'missing_core_token' });
+    }
+
     return NextResponse.json({ 
       authenticated: true,
       session: {

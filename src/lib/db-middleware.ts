@@ -11,6 +11,7 @@
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
+import { AuthenticationError, AuthorizationError } from './auth-errors';
 
 /**
  * @deprecated DELETED - DO NOT USE
@@ -48,14 +49,48 @@ export interface AuthenticatedContext {
  * @throws Error if not authenticated or no valid session
  */
 export async function createUserClient(request?: NextRequest): Promise<AuthenticatedContext> {
-  const cookieStore = await cookies();
+  let token: string | null = null;
+  let sessionFromCookie: {
+    userId?: string;
+    tenantId?: string;
+    role?: string;
+    email?: string;
+    expiresAt?: number;
+    coreToken?: string;
+  } | null = null;
   
-  // Get Supabase auth session cookie (set by Supabase client)
-  const authCookie = cookieStore.get('sb-access-token') || cookieStore.get('sb-refresh-token');
+  // Try Authorization header first (Bearer token)
+  if (request) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+  }
   
-  if (!authCookie) {
-    // SECURITY: No fallback to inventory_session cookie - JWT-only authentication
-    throw new Error('Not authenticated - no valid session found');
+  // Fall back to session cookie if no Authorization header
+  if (!token) {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('inventory_session');
+
+    if (!sessionCookie) {
+      throw new AuthenticationError('Not authenticated - no valid session found');
+    }
+
+    try {
+      sessionFromCookie = JSON.parse(sessionCookie.value);
+    } catch (error) {
+      throw new AuthenticationError('Invalid session cookie');
+    }
+
+    if (sessionFromCookie.expiresAt && sessionFromCookie.expiresAt < Date.now()) {
+      throw new AuthenticationError('Session expired');
+    }
+
+    if (!sessionFromCookie.coreToken) {
+      throw new AuthenticationError('Not authenticated - missing core token');
+    }
+
+    token = sessionFromCookie.coreToken;
   }
   
   // Create anon client to validate JWT
@@ -67,25 +102,41 @@ export async function createUserClient(request?: NextRequest): Promise<Authentic
       auth: {
         autoRefreshToken: false,
         persistSession: false
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
       }
     }
   );
   
-  // Get user from session
-  const { data: { user }, error } = await supabase.auth.getUser(authCookie.value);
-  
-  if (error || !user) {
-    throw new Error('Invalid authentication token');
+  if (sessionFromCookie) {
+    return {
+      userId: sessionFromCookie.userId || '',
+      tenantId: sessionFromCookie.tenantId || '',
+      role: sessionFromCookie.role || 'user',
+      email: sessionFromCookie.email,
+      supabase
+    };
   }
-  
+
+  // Get user from session when Authorization header is used
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+
+  if (error || !user) {
+    console.error('[Auth] Failed to validate token:', error);
+    throw new AuthenticationError('Invalid authentication token');
+  }
+
   // Get tenant_id from user's app_metadata (set during signup/invite)
   const tenantId = user.app_metadata?.tenant_id;
   const role = user.app_metadata?.role || 'user';
-  
+
   if (!tenantId) {
-    throw new Error('User not associated with a tenant');
+    throw new AuthorizationError('User not associated with a tenant');
   }
-  
+
   return {
     userId: user.id,
     tenantId,
