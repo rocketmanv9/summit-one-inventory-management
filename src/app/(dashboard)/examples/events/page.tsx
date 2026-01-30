@@ -8,6 +8,8 @@
  * @see /EVENT_CATALOG.md for complete event reference
  */
 
+export const dynamic = 'force-dynamic';
+
 'use client';
 
 import { useState } from 'react';
