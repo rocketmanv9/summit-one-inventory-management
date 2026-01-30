@@ -82,6 +82,10 @@ export async function createUserClient(request?: NextRequest): Promise<Authentic
       throw new AuthenticationError('Invalid session cookie');
     }
 
+    if (!sessionFromCookie) {
+      throw new AuthenticationError('Invalid session cookie');
+    }
+
     if (sessionFromCookie.expiresAt && sessionFromCookie.expiresAt < Date.now()) {
       throw new AuthenticationError('Session expired');
     }
