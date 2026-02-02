@@ -28,13 +28,40 @@ export async function createAuthenticatedClient(
   request: NextRequest
 ): Promise<{ client: any; context: AuthenticatedContext } | null> {
   const authHeader = request.headers.get('authorization');
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.error('[Secure Client] No Bearer token in Authorization header');
-    return null;
+  let token: string | null = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
   }
 
-  const token = authHeader.substring(7);
+  if (!token) {
+    const sessionCookie = request.cookies.get('inventory_session');
+    if (!sessionCookie) {
+      console.error('[Secure Client] No Authorization header or session cookie');
+      return null;
+    }
+
+    try {
+      const session = JSON.parse(sessionCookie.value);
+      if (session?.expiresAt && session.expiresAt < Date.now()) {
+        console.error('[Secure Client] Session expired');
+        return null;
+      }
+      if (!session?.supabaseToken) {
+        console.error('[Secure Client] Missing supabaseToken in session');
+        return null;
+      }
+      token = session.supabaseToken;
+    } catch (error) {
+      console.error('[Secure Client] Invalid session cookie');
+      return null;
+    }
+  }
+
+  if (!token) {
+    console.error('[Secure Client] Missing token after header/cookie parsing');
+    return null;
+  }
 
   // Create client using anon key (NOT service role)
   const supabase = createClient(

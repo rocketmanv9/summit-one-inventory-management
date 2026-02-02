@@ -7,6 +7,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { apiWrite } from '@/lib/api-client';
 
 interface CatalogItem {
   id: string;
@@ -68,7 +69,7 @@ export default function ItemsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/items/${itemId}`, {
+      const res = await apiWrite(`/api/inventory/items/${itemId}`, {
         method: 'DELETE',
       });
 
@@ -310,14 +311,13 @@ function CreateItemModal({
       const url = isEditing ? `/api/inventory/items/${item.id}` : '/api/inventory/items';
       const method = isEditing ? 'PUT' : 'POST';
       
-      const res = await fetch(url, {
+      const res = await apiWrite(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           ...form,
           category_id: form.category_id || null,
           reorder_point: form.reorder_point ? parseInt(form.reorder_point) : null,
-        }),
+        },
       });
 
       if (!res.ok) {

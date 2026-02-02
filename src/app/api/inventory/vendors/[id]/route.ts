@@ -97,6 +97,7 @@ export async function PUT(
         notes: notes || null,
         active: active !== undefined ? active : true,
         updated_at: new Date().toISOString(),
+        last_event_id: idempotencyKey,
       })
       .eq('id', id)
       .select()
@@ -193,6 +194,7 @@ export async function DELETE(
       .update({
         active: false,
         updated_at: new Date().toISOString(),
+        last_event_id: idempotencyKey,
       })
       .eq('id', id)
       .select()

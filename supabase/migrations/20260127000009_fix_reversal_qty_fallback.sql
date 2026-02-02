@@ -62,8 +62,11 @@ BEGIN
         RAISE EXCEPTION 'Transfer has already been reversed';
     END IF;
     
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'transfer_reversal_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Generate transfer number
     v_transfer_number := 'REV-' || v_original_transfer.transfer_number;

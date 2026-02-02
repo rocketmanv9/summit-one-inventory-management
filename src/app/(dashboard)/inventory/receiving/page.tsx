@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface OpenPO {
   po_id: string;
@@ -94,10 +95,9 @@ export default function ReceivingPage() {
     setReceivingPO(po_id);
     try {
       // Create draft receipt for this PO
-      const res = await fetch('/api/inventory/receiving/draft', {
+      const res = await apiWrite('/api/inventory/receiving/draft', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ po_id }),
+        body: { po_id },
       });
 
       const data = await res.json();
@@ -423,10 +423,9 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
         return;
       }
 
-      const res = await fetch('/api/supply-chain/receipts', {
+      const res = await apiWrite('/api/supply-chain/receipts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           po_id: form.po_id || null,
           location_id: form.location_id,
           packing_slip_no: form.packing_slip_no || null,
@@ -435,7 +434,7 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
           source_type: 'delivery',
           auto_post: true,
           lines: linesToReceive,
-        }),
+        },
       });
 
       if (!res.ok) {

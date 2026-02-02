@@ -1,8 +1,11 @@
 'use client';
 
+'use client';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiWrite } from '@/lib/api-client';
 
 interface Category {
   id: string;
@@ -42,7 +45,7 @@ export default function CategoriesPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/categories/${id}`, {
+      const res = await apiWrite(`/api/inventory/categories/${id}`, {
         method: 'DELETE',
       });
 
@@ -179,10 +182,9 @@ function CreateCategoryModal({
         ? `/api/inventory/categories/${category.id}`
         : '/api/inventory/categories';
       
-      const res = await fetch(url, {
+      const res = await apiWrite(url, {
         method: isEditing ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: { name },
       });
 
       if (!res.ok) {

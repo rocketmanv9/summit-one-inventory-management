@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface Transfer {
   id: string;
@@ -63,7 +64,7 @@ export default function TransfersPage() {
     if (!confirm('Ship this transfer?')) return;
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transferId}/ship`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transferId}/ship`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -78,7 +79,7 @@ export default function TransfersPage() {
     if (!confirm('Confirm full receipt of this transfer?')) return;
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transferId}/receive`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transferId}/receive`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -109,7 +110,7 @@ export default function TransfersPage() {
     if (!confirm('Create a return transfer (physical movement back)? This creates a new transfer in the opposite direction.')) return;
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transferId}/reverse`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transferId}/reverse`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -125,7 +126,7 @@ export default function TransfersPage() {
     if (!confirm('Cancel this transfer?')) return;
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transferId}/cancel`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transferId}/cancel`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -140,15 +141,8 @@ export default function TransfersPage() {
     if (!confirm('Undo cancellation? This will restore the transfer to draft status.')) return;
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transferId}/undo-cancel`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transferId}/undo-cancel`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID()
-        },
-        body: JSON.stringify({
-          last_event_id: `undo_cancel_${transferId}_${crypto.randomUUID()}`
-        })
       });
       
       const result = await res.json();
@@ -558,10 +552,9 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
         return;
       }
 
-      const res = await fetch(`/api/inventory/transfers/${transfer.id}/receive`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transfer.id}/receive`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ line_quantities: quantities }),
+        body: { line_quantities: quantities },
       });
 
       if (!res.ok) {
@@ -713,10 +706,9 @@ function FixMistakeModal({ transfer, onClose, onFixed }: { transfer: Transfer; o
         successMessage = 'Receipt reversed. Stock corrected and transfer reverted to in-transit.';
       }
 
-      const res = await fetch(endpoint, {
+      const res = await apiWrite(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason, notes: notes || null }),
+        body: { reason, notes: notes || null },
       });
 
       if (!res.ok) {
@@ -789,7 +781,7 @@ function FixMistakeModal({ transfer, onClose, onFixed }: { transfer: Transfer; o
                     onClose();
                     // Trigger return directly
                     if (confirm('Create a return transfer (physical movement back)? This creates a new transfer in the opposite direction.')) {
-                      fetch(`/api/inventory/transfers/${transfer.id}/reverse`, {
+                      apiWrite(`/api/inventory/transfers/${transfer.id}/reverse`, {
                         method: 'POST',
                       }).then(() => {
                         alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
@@ -1053,10 +1045,9 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const res = await fetch('/api/inventory/transfers', {
+      const res = await apiWrite('/api/inventory/transfers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           from_location_id: form.from_location_id,
           to_location_id: form.to_location_id,
           notes: form.notes || null,
@@ -1066,7 +1057,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
               catalog_item_id: l.catalog_item_id,
               qty: parseInt(l.qty),
             })),
-        }),
+        },
       });
 
       if (!res.ok) {
@@ -1327,10 +1318,9 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
     setError('');
 
     try {
-      const res = await fetch(`/api/inventory/transfers/${transfer.id}`, {
+      const res = await apiWrite(`/api/inventory/transfers/${transfer.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           from_location_id: form.from_location_id,
           to_location_id: form.to_location_id,
           notes: form.notes || null,
@@ -1341,7 +1331,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
               catalog_item_id: l.catalog_item_id,
               qty: parseInt(l.qty),
             })),
-        }),
+        },
       });
 
       if (!res.ok) {

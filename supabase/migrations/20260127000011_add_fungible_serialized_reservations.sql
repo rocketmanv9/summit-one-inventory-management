@@ -426,8 +426,12 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
     
-    -- Generate event ID (idempotency key)
-    v_event_id := COALESCE(p_last_event_id, 'reserve_fungible_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required'
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Validate availability
     SELECT * INTO v_validation
@@ -570,8 +574,12 @@ BEGIN
         USING ERRCODE = 'invalid_parameter_value';
     END IF;
     
-    -- Generate event ID (idempotency key)
-    v_event_id := COALESCE(p_last_event_id, 'reserve_asset_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required'
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get asset details
     SELECT 

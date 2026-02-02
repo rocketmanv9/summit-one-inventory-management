@@ -38,17 +38,125 @@ export interface AuthenticatedContext {
 
 /**
  * Create authenticated client for USER routes
- * Uses Supabase session/JWT + RLS (NOT service role)
+ * 
+ * TICKET-BASED FLOW (NEW - SSO):
+ * 1. Extract SSO ticket from header or cookie
+ * 2. Validate ticket with Core API (or mock)
+ * 3. Mint a scoped JWT on the fly
+ * 4. Initialize Supabase client with JWT
+ * 
+ * SESSION-BASED FLOW (LEGACY - for backward compatibility):
+ * 1. Extract inventory_session cookie
+ * 2. Use supabaseToken from session
+ * 3. Return user context
  * 
  * SECURITY:
- * - Validates Supabase auth session from cookie
+ * - Validates authentication via ticket or session
  * - Returns client bound to user's JWT
  * - RLS policies automatically enforce tenant isolation
- * - tenant_id comes from server-verified membership, NOT from headers/cookies
+ * - tenant_id comes from verified ticket or session
  * 
- * @throws Error if not authenticated or no valid session
+ * @throws Error if not authenticated or no valid session/ticket
  */
 export async function createUserClient(request?: NextRequest): Promise<AuthenticatedContext> {
+  // Try ticket-based auth first (NEW - SSO)
+  if (request) {
+    try {
+      return await createUserClientFromTicket(request);
+    } catch (ticketError) {
+      console.debug('[createUserClient] Ticket auth failed, trying session auth', {
+        error: ticketError instanceof Error ? ticketError.message : String(ticketError)
+      });
+      // Fall through to session-based auth
+    }
+  }
+
+  // Fall back to session-based auth (LEGACY)
+  return await createUserClientFromSession(request);
+}
+
+/**
+ * Create authenticated client from SSO ticket (NEW)
+ * 
+ * Ticket sources (in order of precedence):
+ * 1. x-sso-ticket header
+ * 2. inventory_ticket cookie
+ * 3. ticket query parameter
+ */
+async function createUserClientFromTicket(request: NextRequest): Promise<AuthenticatedContext> {
+  // Extract ticket from various sources
+  let ticket: string | null = null;
+
+  // Priority 1: x-sso-ticket header
+  ticket = request.headers.get('x-sso-ticket');
+
+  // Priority 2: inventory_ticket cookie
+  if (!ticket) {
+    const ticketCookie = request.cookies.get('inventory_ticket');
+    if (ticketCookie) {
+      ticket = ticketCookie.value;
+    }
+  }
+
+  // Priority 3: query parameter (mostly for testing)
+  if (!ticket) {
+    const { searchParams } = new URL(request.url);
+    ticket = searchParams.get('ticket');
+  }
+
+  if (!ticket) {
+    throw new AuthenticationError('No SSO ticket provided');
+  }
+
+  // Validate ticket with Core API (or mock)
+  const ticketPayload = await validateTicketWithCore(ticket);
+
+  const userId = ticketPayload.user_id;
+  const tenantId = ticketPayload.tenant_id;
+  const email = ticketPayload.email;
+  const role = ticketPayload.role || 'authenticated';
+
+  if (!userId || !tenantId) {
+    throw new AuthenticationError('Invalid ticket: missing user_id or tenant_id');
+  }
+
+  // Mint a scoped JWT for Supabase RLS
+  const jwt = await mintScopedJWT(userId, tenantId, role);
+
+  // Initialize Supabase client with JWT
+  const supabase = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      db: { schema: 'inventory' },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${jwt}`
+        }
+      }
+    }
+  );
+
+  return {
+    userId,
+    tenantId,
+    role,
+    email,
+    supabase
+  };
+}
+
+/**
+ * Create authenticated client from existing session (LEGACY)
+ * 
+ * This maintains backward compatibility with the old inventory_session cookie format.
+ * New implementations should use ticket-based auth via createUserClientFromTicket.
+ */
+async function createUserClientFromSession(request?: NextRequest): Promise<AuthenticatedContext> {
   let token: string | null = null;
   let sessionFromCookie: {
     userId?: string;
@@ -57,6 +165,7 @@ export async function createUserClient(request?: NextRequest): Promise<Authentic
     email?: string;
     expiresAt?: number;
     coreToken?: string;
+    supabaseToken?: string;
   } | null = null;
   
   // Try Authorization header first (Bearer token)
@@ -94,7 +203,12 @@ export async function createUserClient(request?: NextRequest): Promise<Authentic
       throw new AuthenticationError('Not authenticated - missing core token');
     }
 
-    token = sessionFromCookie.coreToken;
+    // Use Supabase token for database queries (not Core token)
+    if (!sessionFromCookie.supabaseToken) {
+      throw new AuthenticationError('Not authenticated - missing supabase token');
+    }
+
+    token = sessionFromCookie.supabaseToken;
   }
   
   // Create anon client to validate JWT
@@ -148,6 +262,185 @@ export async function createUserClient(request?: NextRequest): Promise<Authentic
     email: user.email,
     supabase
   };
+}
+
+/**
+ * Validate SSO ticket with Core API
+ * 
+ * In production: GET https://core.summit-one.app/api/auth/validate-sso-ticket?ticket={ticket}
+ * In development: GET http://localhost:3000/api/mock/sso/validate?ticket={ticket}
+ */
+async function validateTicketWithCore(ticket: string): Promise<{
+  user_id: string;
+  tenant_id: string;
+  email?: string;
+  role?: string;
+}> {
+  // Use real Core endpoint in production
+  const validatorUrl = process.env.NEXT_PUBLIC_CORE_URL
+    ? `${process.env.NEXT_PUBLIC_CORE_URL}/api/auth/validate-sso-ticket`
+    : `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/mock/sso/validate`;
+
+  console.log('[createUserClient] Validating ticket via:', validatorUrl);
+
+  try {
+    const response = await fetch(`${validatorUrl}?ticket=${encodeURIComponent(ticket)}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('[createUserClient] Ticket validation failed:', {
+        status: response.status,
+        body: text
+      });
+      throw new AuthenticationError(`Ticket validation failed: ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+
+    if (!payload.user_id || !payload.tenant_id) {
+      throw new AuthenticationError('Invalid ticket payload');
+    }
+
+    return payload;
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw error;
+    }
+    throw new AuthenticationError(`Ticket validation error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Mint a scoped JWT for Supabase RLS
+ * 
+ * JWT is signed with SUPABASE_JWT_SECRET and includes:
+ * - sub: user_id
+ * - role: authenticated
+ * - app_metadata: { tenant_id }
+ * 
+ * This allows Supabase RLS policies to work without service role.
+ */
+async function mintScopedJWT(userId: string, tenantId: string, role: string = 'authenticated'): Promise<string> {
+  // Try using jose (recommended)
+  try {
+    // Dynamic import to avoid build-time errors if not installed
+    const joseModule = require('jose');
+    
+    if (!process.env.SUPABASE_JWT_SECRET) {
+      throw new Error('SUPABASE_JWT_SECRET not configured');
+    }
+
+    const secret = new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET);
+    const now = Math.floor(Date.now() / 1000);
+    const expiresIn = 3600; // 1 hour
+
+    // Try newer jose API first
+    if (typeof joseModule.SignJWT === 'function') {
+      try {
+        const signedToken = await new joseModule.SignJWT({
+          sub: userId,
+          role,
+          app_metadata: {
+            tenant_id: tenantId
+          }
+        })
+          .setProtectedHeader({ alg: 'HS256' })
+          .setIssuedAt(now)
+          .setExpirationTime(now + expiresIn)
+          .sign(secret);
+
+        console.debug('[Mint JWT] Minted JWT for user:', {
+          userId,
+          tenantId,
+          expiresIn
+        });
+
+        return signedToken;
+      } catch (signError) {
+        console.debug('[Mint JWT] SignJWT failed, trying jwtSign:', signError);
+        // Fall through to jwtSign
+      }
+    }
+
+    // Fallback to older jose API
+    if (typeof joseModule.jwtSign === 'function') {
+      const jwt = joseModule.jwtSign(
+        {
+          sub: userId,
+          role,
+          app_metadata: {
+            tenant_id: tenantId
+          },
+          iat: now,
+          exp: now + expiresIn
+        },
+        secret,
+        {
+          algorithm: 'HS256',
+          header: {
+            alg: 'HS256',
+            typ: 'JWT'
+          }
+        }
+      );
+
+      console.debug('[Mint JWT] Minted JWT for user:', {
+        userId,
+        tenantId,
+        expiresIn
+      });
+
+      return jwt;
+    }
+
+    throw new Error('jose module does not have expected API');
+  } catch (joseError) {
+    // Fall back to jsonwebtoken
+    console.debug('[Mint JWT] jose not available, trying jsonwebtoken');
+
+    try {
+      const jwtModule = require('jsonwebtoken');
+
+      if (!process.env.SUPABASE_JWT_SECRET) {
+        throw new Error('SUPABASE_JWT_SECRET not configured');
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = 3600; // 1 hour
+
+      const token = jwtModule.sign(
+        {
+          sub: userId,
+          role,
+          app_metadata: {
+            tenant_id: tenantId
+          },
+          iat: now,
+          exp: now + expiresIn
+        },
+        process.env.SUPABASE_JWT_SECRET,
+        {
+          algorithm: 'HS256'
+        }
+      );
+
+      console.debug('[Mint JWT] Minted JWT for user:', {
+        userId,
+        tenantId,
+        expiresIn
+      });
+
+      return token;
+    } catch (jwtError) {
+      console.error('[Mint JWT] Failed to mint JWT:', jwtError);
+      throw new Error('Failed to mint authentication token');
+    }
+  }
 }
 
 /**

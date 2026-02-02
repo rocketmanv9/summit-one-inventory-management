@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface Vendor {
   id: string;
@@ -127,7 +128,7 @@ export default function VendorsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendor.id}`, {
+      const res = await apiWrite(`/api/inventory/vendors/${vendor.id}`, {
         method: 'DELETE',
       });
 
@@ -247,13 +248,12 @@ function VendorModal({
         ? `/api/inventory/vendors/${vendor.id}`
         : '/api/inventory/vendors';
       
-      const res = await fetch(url, {
+      const res = await apiWrite(url, {
         method: isEdit ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           ...form,
           lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
-        }),
+        },
       });
 
       if (!res.ok) {

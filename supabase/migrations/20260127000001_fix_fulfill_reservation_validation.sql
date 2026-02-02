@@ -15,7 +15,10 @@ DECLARE
     v_event_id TEXT;
     v_current_qty_on_hand NUMERIC;
 BEGIN
-    v_event_id := COALESCE(p_last_event_id, 'fulfill_' || gen_random_uuid()::TEXT);
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get reservation
     SELECT * INTO v_reservation

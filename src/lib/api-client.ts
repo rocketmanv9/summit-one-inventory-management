@@ -48,11 +48,49 @@ export async function authenticatedFetch(
 }
 
 /**
- * Helper to build query string
+ * Authenticated write with idempotency
+ * CRITICAL: Generates stable idempotency key ONCE per call, reused on retries
+ * 
+ * @param url - API endpoint
+ * @param options - Fetch options (method, body, etc.)
+ * @param idempotencyKey - Optional override; if not provided, generates one automatically
+ * @returns Response
  */
-export function buildQueryString(
-  params: Record<string, string | number | boolean | undefined | null>
-): string {
+export async function apiWrite(
+  url: string,
+  options: {
+    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    body?: any;
+    idempotencyKey?: string;
+  }
+): Promise<Response> {
+  // Generate idempotency key ONCE if not provided
+  const idempotencyKey = options.idempotencyKey || crypto.randomUUID();
+  
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Idempotency-Key': idempotencyKey,
+    ...(await getAuthHeader()) as Record<string, string>
+  };
+
+  const bodyData = options.body ? {
+    ...options.body,
+    last_event_id: options.body.last_event_id || idempotencyKey
+  } : undefined;
+
+  return fetch(url, {
+    method: options.method,
+    headers,
+    body: bodyData ? JSON.stringify(bodyData) : undefined
+  });
+}
+
+/**
+ * Build query string from object
+ * @param params - Object of query parameters
+ * @returns Query string (without leading ?)
+ */
+export function buildQueryString(params: Record<string, any>): string {
   const searchParams = new URLSearchParams();
   
   for (const [key, value] of Object.entries(params)) {
@@ -61,6 +99,5 @@ export function buildQueryString(
     }
   }
   
-  const queryString = searchParams.toString();
-  return queryString ? `?${queryString}` : '';
+  return searchParams.toString();
 }

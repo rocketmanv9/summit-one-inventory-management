@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiWrite } from '@/lib/api-client';
 
 interface POLine {
   line_id: string;
@@ -131,7 +132,7 @@ export default function ReceiptDetailPage() {
     setError('');
 
     try {
-      const res = await fetch(`/api/inventory/receiving/${receipt_id}/reverse`, {
+      const res = await apiWrite(`/api/inventory/receiving/${receipt_id}/reverse`, {
         method: 'POST'
       });
 
@@ -174,10 +175,9 @@ export default function ReceiptDetailPage() {
       }
 
       // Call confirm receipt API endpoint
-      const res = await fetch(`/api/inventory/receiving/${receipt_id}/confirm`, {
+      const res = await apiWrite(`/api/inventory/receiving/${receipt_id}/confirm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lines: nonZeroLines })
+        body: { lines: nonZeroLines }
       });
       
       if (!res.ok) {

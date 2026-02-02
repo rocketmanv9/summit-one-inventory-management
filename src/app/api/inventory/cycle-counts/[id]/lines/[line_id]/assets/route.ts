@@ -80,6 +80,16 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const { id: cycleCountId, line_id: lineId } = await params;
     const body = await request.json();
     const { asset_ids } = body; // Array of asset IDs that were found

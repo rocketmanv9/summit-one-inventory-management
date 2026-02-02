@@ -3,7 +3,7 @@
  * SECURITY: Uses JWT + RLS for tenant isolation
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
+import { createAuthenticatedClientOrThrow, createVerifiedServiceClient } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
   const auth = await createAuthenticatedClientOrThrow(request);
@@ -24,8 +24,11 @@ export async function GET(request: NextRequest) {
     if (error && error.code === 'PGRST116') {
       console.log(`Auto-provisioning tenant: ${context.tenantId}`);
       
+      // Use service role to bypass RLS for tenant creation (bootstrapping operation)
+      const { client: serviceClient } = createVerifiedServiceClient(context.tenantId);
+      
       // Create tenant record with default values
-      const { data: newTenant, error: createError } = await supabase
+      const { data: newTenant, error: createError } = await serviceClient
         .schema('public')
         .from('tenants')
         .insert({
@@ -39,15 +42,37 @@ export async function GET(request: NextRequest) {
         .single();
       
       if (createError) {
-        console.error('Error auto-provisioning tenant:', createError);
-        return NextResponse.json(
-          { error: 'Failed to provision tenant', details: createError.message },
-          { status: 500 }
-        );
+        // If duplicate key error, tenant was created by another request (race condition)
+        // Use service role client to read it (since it was just created by service role)
+        if (createError.code === '23505') {
+          console.log(`Tenant already exists (race condition), reading via service role...`);
+          const { data: existingTenant, error: readError } = await serviceClient
+            .schema('public')
+            .from('tenants')
+            .select('*')
+            .eq('id', context.tenantId)
+            .single();
+          
+          if (readError) {
+            console.error('Error reading existing tenant after insert conflict:', readError);
+            return NextResponse.json(
+              { error: 'Failed to fetch tenant', details: readError.message },
+              { status: 500 }
+            );
+          }
+          
+          tenant = existingTenant;
+        } else {
+          console.error('Error auto-provisioning tenant:', createError);
+          return NextResponse.json(
+            { error: 'Failed to provision tenant', details: createError.message },
+            { status: 500 }
+          );
+        }
+      } else {
+        tenant = newTenant;
+        console.log(`✓ Auto-provisioned tenant: ${context.tenantId}`);
       }
-      
-      tenant = newTenant;
-      console.log(`✓ Auto-provisioned tenant: ${context.tenantId}`);
     } else if (error) {
       // Other errors (not "not found")
       console.error('Error fetching tenant:', error);

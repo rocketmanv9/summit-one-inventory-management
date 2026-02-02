@@ -5,12 +5,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
-import { createClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
+
 
 export async function GET(request: NextRequest) {
   try {
-    const { supabase, tenantId } = await createUserClient(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+    
+    const { client: supabase, context } = auth;
+    const { tenantId } = context;
     const { searchParams } = new URL(request.url);
     const vendorId = searchParams.get('vendor_id');
     const search = searchParams.get('search');
@@ -48,22 +52,20 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { supabase, tenantId, userId } = await createUserClient(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+    
+    const { client: supabase, context } = auth;
+    const { tenantId, userId } = context;
 
     // ENFORCE IDEMPOTENCY: Require Idempotency-Key header
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'POST');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Idempotency-Key header required for receipt creation' },
-        { status: 400 }
-      );
-    }
-
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header required for receipt creation' },
         { status: 400 }
       );
     }

@@ -1,7 +1,7 @@
 // API Route: Undo release reservation
 // Reverses a released reservation back to active status
 
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
@@ -13,19 +13,13 @@ export async function POST(
     const { id } = await Promise.resolve(params);
     
     // ENFORCE IDEMPOTENCY: Require idempotency key
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'POST');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Idempotency-Key header required for undo-release' },
-        { status: 400 }
-      );
-    }
-    
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header required for undo-release' },
         { status: 400 }
       );
     }

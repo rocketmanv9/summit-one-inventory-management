@@ -12,6 +12,15 @@ import { authenticateDevice } from '@/lib/device-auth';
  */
 export async function POST(request: NextRequest) {
   try {
+    // ENFORCE IDEMPOTENCY (even for machine auth - prevents duplicate device sessions)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const body = await request.json();
     const { device_code, api_key } = body;
 

@@ -11,6 +11,15 @@ export async function POST(request: NextRequest) {
   try {
     const { supabase, deviceId, tenantId } = await createDeviceClient(request);
 
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const body = await request.json();
     const { location_id, assignment_method, notes } = body;
 

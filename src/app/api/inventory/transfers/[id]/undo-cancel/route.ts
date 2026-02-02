@@ -1,7 +1,7 @@
 // API Route: Undo cancel transfer
 // Reverses a cancelled transfer back to draft status
 
-import { createUserClient, createClient } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(
@@ -10,16 +10,26 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId } = await createUserClient(request);
-    const { id } = await Promise.resolve(params);
     
-    const body = await request.json().catch(() => ({}));
-    const lastEventId = body.last_event_id || null;
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for undo cancel' },
+        { status: 400 }
+      );
+    }
+    
+    const { id } = await Promise.resolve(params);
     
     const { data, error } = await supabase.rpc('rpc_inv_transfer_undo_cancel', {
       p_tenant_id: tenantId,
       p_transfer_id: id,
       p_user_id: null,
-      p_last_event_id: lastEventId
+      p_last_event_id: idempotencyKey
     });
     
     if (error) {

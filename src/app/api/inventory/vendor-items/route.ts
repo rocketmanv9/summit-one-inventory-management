@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
         lead_time_days: body.lead_time_days,
         min_order_qty: body.min_order_qty,
         notes: body.notes,
+        last_event_id: idempotencyKey,
       })
       .select('*')
       .single();

@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface Asset {
   id: string;
@@ -79,7 +80,7 @@ export default function AssetsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/assets/${asset.id}`, {
+      const res = await apiWrite(`/api/inventory/assets/${asset.id}`, {
         method: 'DELETE',
       });
 
@@ -416,10 +417,9 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
           warranty_expires: form.warranty_expires || null,
         };
 
-        const res = await fetch('/api/inventory/assets', {
+        const res = await apiWrite('/api/inventory/assets', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(assetData),
+          body: assetData,
         });
 
         if (!res.ok) {
@@ -708,10 +708,9 @@ function EditAssetModal({
     setError('');
 
     try {
-      const res = await fetch(`/api/inventory/assets/${asset.id}`, {
+      const res = await apiWrite(`/api/inventory/assets/${asset.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           catalog_item_id: form.catalog_item_id || null,
           asset_tag: form.asset_tag,
           serial_number: form.serial_number || null,
@@ -719,7 +718,7 @@ function EditAssetModal({
           purchase_date: form.purchase_date || null,
           purchase_cost: form.purchase_cost ? parseFloat(form.purchase_cost) : null,
           warranty_expires: form.warranty_expires || null,
-        }),
+        },
       });
 
       if (!res.ok) {
@@ -894,12 +893,12 @@ function AssetAssignModal({
         ? { notes: form.notes }
         : form;
 
-      const res = await fetch(endpoint, {
+      const res = await apiWrite(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: isReturn
+          ? { notes: form.notes }
+          : form,
       });
-
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Operation failed');

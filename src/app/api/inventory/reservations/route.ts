@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,19 +72,13 @@ export async function POST(request: NextRequest) {
     const { supabase, tenantId, userId } = await createUserClient(request);
     
     // ENFORCE IDEMPOTENCY: Require idempotency key for all writes
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'POST');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Idempotency-Key header required for reservation creation' },
-        { status: 400 }
-      );
-    }
-    
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header or last_event_id in body required' },
         { status: 400 }
       );
     }

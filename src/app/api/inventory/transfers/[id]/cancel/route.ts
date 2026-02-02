@@ -7,6 +7,19 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for cancelling transfer' },
+        { status: 400 }
+      );
+    }
+    
     const { id } = await params;
 
     // Update transfer status to cancelled

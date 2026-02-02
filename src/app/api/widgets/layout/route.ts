@@ -1,41 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient, getIdempotencyKey } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function PATCH(request: NextRequest) {
   try {
-    // ENFORCE IDEMPOTENCY
-    let idempotencyKey: string | null;
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'PATCH');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    
-    if (!idempotencyKey) {
       return NextResponse.json(
-        { error: 'Idempotency-Key header required for PATCH operations' },
+        { error: error.message || 'Idempotency-Key header required for PATCH operations' },
         { status: 400 }
       );
     }
     
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('inventory_session');
-    
-    if (!sessionCookie) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // SECURITY: Use JWT + RLS instead of service role
+    // Validates JWT signature and extracts tenant_id from app_metadata
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
 
-    let session;
-    try {
-      session = JSON.parse(sessionCookie.value);
-    } catch {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
-
-    if (!session.tenantId) {
-      return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
-    }
+    const { client: supabase, context } = auth;
+    const tenantId = context.tenantId;
 
     const body = await request.json();
     const { dashboardId, widgets } = body;
@@ -48,8 +34,6 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request - widgets must be an array' }, { status: 400 });
     }
 
-    const supabase = createUnscopedClient();
-
     // Update each widget's layout individually
     for (const widget of widgets) {
       const { error } = await supabase
@@ -60,7 +44,7 @@ export async function PATCH(request: NextRequest) {
           updated_at: new Date().toISOString(),
         })
         .eq('id', widget.id)
-        .eq('tenant_id', session.tenantId)
+        .eq('tenant_id', tenantId)
         .eq('dashboard_id', dashboardId);
 
       if (error) {

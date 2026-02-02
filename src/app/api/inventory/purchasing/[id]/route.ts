@@ -120,6 +120,16 @@ export async function PATCH(
 ) {
   try {
     const { supabase, tenantId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { status } = body;
@@ -200,6 +210,16 @@ export async function DELETE(
 ) {
   try {
     const { supabase, tenantId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const { id } = await params;
 
     // Check if PO exists and get its status

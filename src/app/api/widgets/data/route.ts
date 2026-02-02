@@ -1,32 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function POST(request: NextRequest) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('inventory_session');
-    
-    if (!sessionCookie) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    let session;
+    // ENFORCE IDEMPOTENCY (even for data fetch to prevent duplicate queries)
+    let idempotencyKey: string;
     try {
-      session = JSON.parse(sessionCookie.value);
-    } catch {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    const tenantId = session.tenantId;
-    if (!tenantId) {
-      return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
-    }
+    // SECURITY: Use JWT + RLS instead of service role
+    // Validates JWT signature and extracts tenant_id from app_metadata
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
+    const tenantId = context.tenantId;
 
     const body = await request.json();
     const { widget_key, config } = body;
-
-    const supabase = createUnscopedClient();
 
     // Fetch widget data based on widget_key
     const data = await fetchWidgetData(supabase, widget_key, tenantId, config || {});

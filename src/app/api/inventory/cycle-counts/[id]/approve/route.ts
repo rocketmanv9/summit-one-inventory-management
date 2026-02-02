@@ -24,11 +24,14 @@ export async function POST(
   try {
     const { id: cycleCountId } = await params;
     
-    // Get Idempotency-Key header (REQUIRED for safety)
-    const idempotencyKey = request.headers.get('idempotency-key');
-    if (!idempotencyKey) {
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
       return NextResponse.json(
-        { error: 'Idempotency-Key header required for cycle count approval' },
+        { error: error.message || 'Idempotency-Key header required for cycle count approval' },
         { status: 400 }
       );
     }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiWrite } from '@/lib/api-client';
 
 interface AssignmentType {
   id: string;
@@ -51,7 +52,7 @@ export default function AssignmentTypesSettingsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/assignment-types/${type.id}`, {
+      const res = await apiWrite(`/api/inventory/assignment-types/${type.id}`, {
         method: 'DELETE',
       });
 
@@ -70,10 +71,9 @@ export default function AssignmentTypesSettingsPage() {
 
   const handleToggleActive = async (type: AssignmentType) => {
     try {
-      const res = await fetch(`/api/inventory/assignment-types/${type.id}`, {
+      const res = await apiWrite(`/api/inventory/assignment-types/${type.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !type.is_active }),
+        body: { is_active: !type.is_active },
       });
 
       if (!res.ok) {

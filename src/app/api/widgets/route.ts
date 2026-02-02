@@ -1,35 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('inventory_session');
+    // SECURITY: Use JWT + RLS instead of service role
+    // Validates JWT signature and extracts tenant_id from app_metadata
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
     
-    console.log('[/api/widgets] Session cookie exists:', !!sessionCookie);
+    const { client: supabase } = auth;
     
-    if (!sessionCookie) {
-      return NextResponse.json({ error: 'Unauthorized - No session cookie' }, { status: 401 });
-    }
-
-    let session;
-    try {
-      session = JSON.parse(sessionCookie.value);
-      console.log('[/api/widgets] Session parsed:', { tenantId: session.tenantId, userId: session.userId });
-    } catch (e) {
-      console.error('[/api/widgets] Failed to parse session:', e);
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
-
-    if (!session.tenantId) {
-      console.error('[/api/widgets] No tenantId in session');
-      return NextResponse.json({ error: 'No tenant in session' }, { status: 401 });
-    }
-
-    // Use service role to access widget_registry
-    const supabase = createUnscopedClient();
-    
+    // Query widget_registry with authenticated client
+    // RLS will enforce tenant isolation if widget_registry has tenant_id column
     const { data, error } = await supabase
       .schema('public')
       .from('widget_registry')

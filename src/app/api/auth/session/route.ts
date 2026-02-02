@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { requireIdempotencyKey } from '@/lib/db-middleware';
 
 export async function GET() {
   try {
@@ -50,8 +51,13 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
   try {
+    // STRICT IDEMPOTENCY: Require Idempotency-Key header for session delete
+    await requireIdempotencyKey(request);
+
+    // Note: session DELETE is a cleanup operation
+    // Idempotency: cookie.delete() is idempotent - multiple calls safe
     const cookieStore = await cookies();
     cookieStore.delete('inventory_session');
     

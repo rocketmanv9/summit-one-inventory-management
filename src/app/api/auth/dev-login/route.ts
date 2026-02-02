@@ -3,11 +3,16 @@
  * Creates a mock session for testing without Core SSO
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { requireIdempotencyKey } from '@/lib/db-middleware';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  // STRICT IDEMPOTENCY: Require Idempotency-Key header even for disabled endpoint
+  await requireIdempotencyKey(request);
+
   // SECURITY: This endpoint is disabled for security reasons
+  // Note: dev-only endpoint exempted from idempotency (disabled in prod)
   // Use proper Supabase authentication instead
   return NextResponse.json(
     { error: 'This endpoint has been disabled. Use proper authentication.' },

@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, createClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
-  try {
-    const { supabase, tenantId } = await createUserClient(request);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
 
+  const { client: supabase, context } = auth;
+
+  try {
     const { data, error } = await supabase
       .schema('supply_chain')
       .rpc('rpc_get_recent_receipts', {
-        p_tenant_id: tenantId,
+        p_tenant_id: context.tenantId,
         p_days: 30
       });
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { requireIdempotencyKey } from '@/lib/db-middleware';
 
 /**
  * POST /api/dev-session
@@ -7,7 +8,11 @@ import { cookies } from 'next/headers';
  * DO NOT USE IN PRODUCTION - This bypasses SSO authentication
  */
 export async function POST(req: NextRequest) {
+  // STRICT IDEMPOTENCY: Require Idempotency-Key header even for disabled endpoint
+  await requireIdempotencyKey(req);
+
   // SECURITY: This endpoint is disabled for security reasons
+  // Note: dev-only endpoint exempted from idempotency (disabled/404 in prod)
   // Use proper Supabase authentication instead
   return NextResponse.json(
     { error: 'This endpoint has been disabled. Use proper authentication.' },

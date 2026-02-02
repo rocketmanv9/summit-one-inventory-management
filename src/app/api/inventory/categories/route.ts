@@ -5,15 +5,46 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
+import { createUnscopedClient } from '@/lib/db-middleware';
+import { cookies } from 'next/headers';
+
+async function getSessionData() {
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get('inventory_session');
+  
+  if (!sessionCookie) {
+    return null;
+  }
+  
+  try {
+    const session = JSON.parse(sessionCookie.value);
+    if (session.expiresAt && session.expiresAt < Date.now()) {
+      return null;
+    }
+    return session;
+  } catch (error) {
+    return null;
+  }
+}
 
 export async function GET(request: NextRequest) {
+  const session = await getSessionData();
+  
+  if (!session || !session.tenantId) {
+    return NextResponse.json(
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
   try {
-    const { supabase } = await createUserClient(request);
+    const supabase = createUnscopedClient();
     
     const { data: categories, error } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .select('id, name, created_at, updated_at')
+      .eq('tenant_id', session.tenantId)
       .order('name');
     
     if (error) {
@@ -35,9 +66,16 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const session = await getSessionData();
+  
+  if (!session || !session.tenantId) {
+    return NextResponse.json(
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
   try {
-    const { supabase, tenantId, userId } = await createUserClient(request);
-    
     // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for category creation
     let idempotencyKey: string;
     try {
@@ -60,10 +98,14 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    const supabase = createUnscopedClient();
+    
     // Check for duplicate name
     const { data: existing } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .select('id')
+      .eq('tenant_id', session.tenantId)
       .eq('name', name.trim())
       .single();
     
@@ -75,12 +117,14 @@ export async function POST(request: NextRequest) {
     }
     
     const { data: category, error } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .insert({
-        tenant_id: tenantId,
+        tenant_id: session.tenantId,
         name: name.trim(),
-        created_by: userId,
-        updated_by: userId,
+        created_by: session.userId,
+        updated_by: session.userId,
+        last_event_id: idempotencyKey,
       })
       .select('id, name, created_at, updated_at')
       .single();

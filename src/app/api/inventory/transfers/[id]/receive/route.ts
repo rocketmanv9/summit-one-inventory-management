@@ -9,20 +9,14 @@ export async function POST(
     const { supabase, tenantId, userId } = await createUserClient(request);
     const { id } = await params;
     
-    // ENFORCE IDEMPOTENCY: Require idempotency key
-    let idempotencyKey: string | null;
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'POST');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Idempotency-Key header required for transfer receive' },
-        { status: 400 }
-      );
-    }
-    
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header required for transfer receive' },
         { status: 400 }
       );
     }

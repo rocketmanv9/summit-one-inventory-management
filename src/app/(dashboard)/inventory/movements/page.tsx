@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface StockMovement {
   id: string;
@@ -62,10 +63,9 @@ export default function StockMovementsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/movements/${movementId}/reverse`, {
+      const res = await apiWrite(`/api/inventory/movements/${movementId}/reverse`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason_code: reason })
+        body: { reason_code: reason }
       });
 
       if (!res.ok) {

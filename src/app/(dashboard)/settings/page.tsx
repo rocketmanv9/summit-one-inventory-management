@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiWrite } from '@/lib/api-client';
 
 interface TenantSettings {
   id: string;
@@ -125,10 +126,9 @@ export default function SettingsPage() {
         }
       });
 
-      const res = await fetch('/api/settings/tenant', {
+      const res = await apiWrite('/api/settings/tenant', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           po_number_format: form.po_number_format,
           po_number_prefix: form.po_number_prefix || null,
           cycle_count_number_format: form.cycle_count_number_format,
@@ -136,7 +136,7 @@ export default function SettingsPage() {
           auto_approve_enabled: form.auto_approve_enabled,
           auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
           vendor_auto_approve_limits: vendorLimitsObj,
-        }),
+        }
       });
 
       const result = await res.json();

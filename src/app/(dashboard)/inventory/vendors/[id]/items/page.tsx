@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Plus, Edit, Trash2, Star, Package, ArrowLeft } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiWrite } from '@/lib/api-client';
 
 interface Vendor {
   id: string;
@@ -134,10 +135,9 @@ export default function VendorItemsPage() {
       
       const method = editingItem ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiWrite(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: payload,
       });
 
       if (!res.ok) {
@@ -174,7 +174,7 @@ export default function VendorItemsPage() {
     if (!confirm('Delete this vendor item mapping?')) return;
 
     try {
-      const res = await fetch(`/api/inventory/vendor-items/${id}`, {
+      const res = await apiWrite(`/api/inventory/vendor-items/${id}`, {
         method: 'DELETE',
       });
 

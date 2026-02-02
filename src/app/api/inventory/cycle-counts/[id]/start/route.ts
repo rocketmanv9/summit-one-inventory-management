@@ -7,6 +7,19 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId, userId } = await createUserClient(request);
+    
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for starting cycle count' },
+        { status: 400 }
+      );
+    }
+    
     const { id: cycleCountId } = await params;
 
     // First, get the cycle count details

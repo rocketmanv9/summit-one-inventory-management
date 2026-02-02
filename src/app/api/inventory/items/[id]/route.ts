@@ -51,6 +51,7 @@ export async function PUT(
         active,
         updated_at: new Date().toISOString(),
         updated_by: userId,
+        last_event_id: idempotencyKey,
       })
       .eq('id', id)
       .select()
@@ -131,6 +132,7 @@ export async function DELETE(
         deleted_by_user_id: userId,
         updated_at: new Date().toISOString(),
         updated_by: userId,
+        last_event_id: idempotencyKey,
       })
       .eq('id', id);
     

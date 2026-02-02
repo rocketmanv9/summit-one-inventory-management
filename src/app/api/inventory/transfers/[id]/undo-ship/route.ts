@@ -12,9 +12,19 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId, userId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const { id } = await params;
     const body = await request.json();
-    const { reason, notes, last_event_id } = body;
+    const { reason, notes } = body;
     
     if (!reason) {
       return NextResponse.json(
@@ -29,7 +39,7 @@ export async function POST(
       p_undone_by_user_id: userId,
       p_reason: reason,
       p_notes: notes || null,
-      p_last_event_id: last_event_id || null
+      p_last_event_id: idempotencyKey
     });
 
     if (error) {

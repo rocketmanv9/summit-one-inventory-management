@@ -11,9 +11,19 @@ export async function POST(
 ) {
   try {
     const { supabase, tenantId, userId } = await createUserClient(request);
+
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const { notes, last_event_id } = body;
+      const { notes } = body;
 
     // Create reversal transfer using RPC
     const { data: reversalId, error } = await supabase.rpc('rpc_inv_transfer_create_reversal', {
@@ -21,7 +31,7 @@ export async function POST(
       p_original_transfer_id: id,
       p_initiated_by_user_id: userId,
       p_notes: notes || null,
-      p_last_event_id: last_event_id || null
+      p_last_event_id: idempotencyKey
     });
 
     if (error) {

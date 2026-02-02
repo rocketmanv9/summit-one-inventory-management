@@ -8,6 +8,15 @@ export async function POST(
   try {
     const { supabase, tenantId, userId } = await createUserClient(request);
 
+    // ENFORCE IDEMPOTENCY
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
     if (!userId) {
       return NextResponse.json({ error: 'User ID not found' }, { status: 401 });
     }

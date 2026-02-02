@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/supabase/client';
+import { apiWrite } from '@/lib/api-client';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 
 export function useDashboards() {
@@ -35,30 +36,35 @@ export function useDashboard(id: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
+  const fetchDashboard = async () => {
     if (!id) {
       setLoading(false);
       return;
     }
 
-    async function fetchDashboard() {
-      try {
-        const response = await fetch(`/api/dashboards/${id}`);
-        if (!response.ok) throw new Error('Failed to fetch dashboard');
-        
-        const { data } = await response.json();
-        setDashboard(data);
-      } catch (e) {
-        setError(e as Error);
-      } finally {
-        setLoading(false);
-      }
+    try {
+      const response = await fetch(`/api/dashboards/${id}`);
+      if (!response.ok) throw new Error('Failed to fetch dashboard');
+      
+      const { data } = await response.json();
+      setDashboard(data);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
     }
+  };
 
+  useEffect(() => {
     fetchDashboard();
   }, [id]);
 
-  return { dashboard, loading, error };
+  const refetch = () => {
+    setLoading(true);
+    return fetchDashboard();
+  };
+
+  return { dashboard, loading, error, refetch };
 }
 
 export function useDashboardWidgets(dashboardId: string | null) {
@@ -107,7 +113,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     console.log('Deleting widget:', widgetId);
     
     try {
-      const response = await fetch(`/api/dashboards/${dashboardId}/widgets/${widgetId}`, {
+      const response = await apiWrite(`/api/dashboards/${dashboardId}/widgets/${widgetId}`, {
         method: 'DELETE',
       });
       
@@ -167,12 +173,9 @@ export function useWidgetRegistry() {
 
 export async function saveLayout(dashboardId: string, widgets: DashboardWidget[]) {
   try {
-    const response = await fetch('/api/widgets/layout', {
+    const response = await apiWrite('/api/widgets/layout', {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ dashboardId, widgets }),
+      body: { dashboardId, widgets },
     });
 
     if (!response.ok) {

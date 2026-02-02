@@ -36,6 +36,18 @@ export async function PUT(request: NextRequest) {
   try {
     const { supabase, tenantId, userId } = await createUserClient(request);
 
+    // ENFORCE IDEMPOTENCY (STRICT)
+    let idempotencyKey: string;
+    try {
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
+    } catch (error: any) {
+      return NextResponse.json(
+        { error: error.message || 'Idempotency-Key header required for updating settings' },
+        { status: 400 }
+      );
+    }
+
     // Check if user is admin via cookie session
     const cookieStore = await cookies();
     const sessionCookie = cookieStore.get('inventory_session');

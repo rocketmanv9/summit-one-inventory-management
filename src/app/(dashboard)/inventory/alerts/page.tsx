@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface ReorderAlert {
   id: string;
@@ -56,7 +57,7 @@ export default function ReorderAlertsPage() {
   const handleRefreshAlerts = async () => {
     setRefreshing(true);
     try {
-      const res = await fetch('/api/inventory/alerts/refresh', { method: 'POST' });
+      const res = await apiWrite('/api/inventory/alerts/refresh', { method: 'POST' });
       const result = await res.json();
       
       if (res.ok) {
@@ -75,7 +76,7 @@ export default function ReorderAlertsPage() {
 
   const handleAcknowledge = async (alertId: string) => {
     try {
-      const res = await fetch(`/api/inventory/alerts/${alertId}/acknowledge`, { method: 'POST' });
+      const res = await apiWrite(`/api/inventory/alerts/${alertId}/acknowledge`, { method: 'POST' });
       
       if (!res.ok) {
         const result = await res.json();
@@ -96,10 +97,9 @@ export default function ReorderAlertsPage() {
     if (!reason) return;
 
     try {
-      const res = await fetch(`/api/inventory/alerts/${alertId}/dismiss`, {
+      const res = await apiWrite(`/api/inventory/alerts/${alertId}/dismiss`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason })
+        body: { reason }
       });
 
       if (!res.ok) {

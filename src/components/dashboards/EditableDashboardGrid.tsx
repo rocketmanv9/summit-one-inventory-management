@@ -5,6 +5,7 @@ import GridLayout from 'react-grid-layout';
 import type { DashboardWidget } from '@/types/dashboard';
 import { WidgetContainer } from '@/components/widgets/WidgetContainer';
 import { saveLayout } from '@/hooks/useDashboards';
+import { apiWrite } from '@/lib/api-client';
 import 'react-grid-layout/css/styles.css';
 
 type LayoutItem = {
@@ -133,7 +134,7 @@ export function EditableDashboardGrid({
     }
 
     try {
-      const response = await fetch(`/api/dashboards/${dashboardId}`, {
+      const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
         method: 'DELETE',
       });
 

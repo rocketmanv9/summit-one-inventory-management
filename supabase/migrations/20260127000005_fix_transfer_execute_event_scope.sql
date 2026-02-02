@@ -16,8 +16,11 @@ DECLARE
     v_event_id TEXT;
     v_now TIMESTAMPTZ := NOW();
 BEGIN
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'transfer_execute_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get transfer
     SELECT * INTO v_transfer

@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface Reservation {
   id: string;
@@ -66,15 +67,8 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/reservations/${reservationId}/fulfill`, {
+      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/fulfill`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID()
-        },
-        body: JSON.stringify({
-          last_event_id: `fulfill_${reservationId}_${crypto.randomUUID()}`
-        })
       });
       
       const result = await res.json();
@@ -105,15 +99,8 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/reservations/${reservationId}/release`, {
+      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/release`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID()
-        },
-        body: JSON.stringify({
-          last_event_id: `release_${reservationId}_${crypto.randomUUID()}`
-        })
       });
       
       const result = await res.json();
@@ -138,15 +125,8 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/reservations/${reservationId}/undo-fulfill`, {
+      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/undo-fulfill`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID()
-        },
-        body: JSON.stringify({
-          last_event_id: `undo_fulfill_${reservationId}_${crypto.randomUUID()}`
-        })
       });
       
       const result = await res.json();
@@ -170,15 +150,8 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/reservations/${reservationId}/undo-release`, {
+      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/undo-release`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID()
-        },
-        body: JSON.stringify({
-          last_event_id: `undo_release_${reservationId}_${crypto.randomUUID()}`
-        })
       });
       
       const result = await res.json();
@@ -208,7 +181,7 @@ export default function ReservationsPage() {
             {row.catalog_items?.sku || ''}
             {row.reservation_type === 'serialized' && row.assets && (
               <span className="ml-2 text-blue-600">
-                🏷️ {row.assets.asset_tag}
+                {row.assets.asset_tag}
                 {row.assets.serial_number && ` (${row.assets.serial_number})`}
               </span>
             )}
@@ -591,10 +564,9 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
         payload.qty = parseInt(form.qty);
       }
 
-      const res = await fetch('/api/inventory/reservations', {
+      const res = await apiWrite('/api/inventory/reservations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: payload,
       });
 
       const result = await res.json();

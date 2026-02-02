@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface PurchaseOrder {
   id: string;
@@ -77,10 +78,9 @@ export default function PurchasingPage() {
     if (!confirm('Submit this PO for approval?')) return;
     
     try {
-      const res = await fetch(`/api/inventory/purchasing/${poId}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'awaiting_approval' })
+        body: { status: 'awaiting_approval' }
       });
       
       if (!res.ok) {
@@ -106,10 +106,9 @@ export default function PurchasingPage() {
     if (!confirm('Approve this PO?')) return;
     
     try {
-      const res = await fetch(`/api/inventory/purchasing/${poId}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'approved' })
+        body: { status: 'approved' }
       });
       
       if (!res.ok) {
@@ -135,10 +134,9 @@ export default function PurchasingPage() {
     if (!confirm('Place this PO with vendor?')) return;
     
     try {
-      const res = await fetch(`/api/inventory/purchasing/${poId}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'placed' })
+        body: { status: 'placed' }
       });
       
       if (!res.ok) {
@@ -166,7 +164,7 @@ export default function PurchasingPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/purchasing/${poId}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
         method: 'DELETE',
       });
 
@@ -518,10 +516,9 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
   const updateStatus = async (newStatus: string) => {
     setUpdatingStatus(true);
     try {
-      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: { status: newStatus },
       });
 
       if (!res.ok) {
@@ -546,8 +543,8 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
 
     setUpdatingStatus(true);
     try {
-      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
-        method: 'DELETE',
+      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
+        method: 'DELETE'
       });
 
       if (!res.ok) {
@@ -852,16 +849,15 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           unit_cost: parseFloat(l.unit_cost) || 0,
         }));
 
-      const res = await fetch('/api/inventory/purchasing', {
+      const res = await apiWrite('/api/inventory/purchasing', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           vendor_id: form.vendor_id,
           ship_to_location_id: form.ship_to_location_id,
           expected_delivery_date: form.expected_delivery_date || null,
           notes: form.notes || null,
           lines: linesToSend,
-        }),
+        },
       });
 
       if (!res.ok) {
@@ -1130,10 +1126,9 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
     setError('');
 
     try {
-      const res = await fetch(`/api/inventory/purchasing/${po.id}`, {
+      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           vendor_id: form.vendor_id,
           ship_to_location_id: form.ship_to_location_id,
           expected_delivery_date: form.expected_delivery_date || null,
@@ -1146,7 +1141,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
               qty: parseInt(l.qty),
               unit_cost: parseFloat(l.unit_cost) || 0,
             })),
-        }),
+        },
       });
 
       if (!res.ok) {

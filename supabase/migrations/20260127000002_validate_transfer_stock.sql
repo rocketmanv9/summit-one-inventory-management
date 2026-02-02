@@ -67,8 +67,11 @@ BEGIN
         END IF;
     END LOOP;
     
-    -- Generate event ID if not provided
-    v_event_id := COALESCE(p_last_event_id, 'transfer_create_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Generate transfer number
     SELECT 'TRF-' || to_char(NOW(), 'YYYYMMDD') || '-' || LPAD((

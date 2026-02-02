@@ -84,11 +84,26 @@ export async function POST(request: NextRequest) {
         payment_terms,
         lead_time_days: lead_time_days || null,
         active: true,
+        last_event_id: idempotencyKey,
       })
       .select()
       .single();
 
     if (error) {
+      if (error.code === '23505') {
+        const { data: existingVendor } = await supabase
+          .schema('supply_chain')
+          .from('vendors')
+          .select('*')
+          .eq('tenant_id', context.tenantId)
+          .eq('last_event_id', idempotencyKey)
+          .single();
+
+        if (existingVendor) {
+          return NextResponse.json({ data: existingVendor }, { status: 200 });
+        }
+      }
+
       console.error('Error creating vendor:', error);
       return NextResponse.json(
         { error: 'Failed to create vendor' },

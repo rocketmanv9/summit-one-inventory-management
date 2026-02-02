@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 /**
  * PATCH /api/inventory/cycle-counts/[id]/lines/[line_id]
@@ -13,18 +13,12 @@ export async function PATCH(
     const { supabase, tenantId } = await createUserClient(request);
     
     // ENFORCE IDEMPOTENCY
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'PATCH');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header required for PATCH operations' },
-        { status: 400 }
-      );
     }
     
     const { id: cycleCountId, line_id: lineId } = await params;

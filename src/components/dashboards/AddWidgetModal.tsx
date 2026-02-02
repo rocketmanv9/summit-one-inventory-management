@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useWidgetRegistry } from '@/hooks/useDashboards';
 import type { WidgetRegistryEntry } from '@/types/dashboard';
 import { createClient } from '@/supabase/client';
+import { apiWrite } from '@/lib/api-client';
 
 interface AddWidgetModalProps {
   dashboardId: string;
@@ -43,12 +44,9 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
       });
 
       // Insert new widget via API
-      const response = await fetch(`/api/dashboards/${dashboardId}/widgets`, {
+      const response = await apiWrite(`/api/dashboards/${dashboardId}/widgets`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        body: {
           widget_key: widget.widget_key,
           title: widget.name,
           layout: {
@@ -59,7 +57,7 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
           },
           config: widget.default_config || {},
           refresh_seconds: 300,
-        }),
+        }
       });
 
       if (!response.ok) {

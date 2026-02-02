@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 
 export async function DELETE(
   request: NextRequest,
@@ -14,18 +14,12 @@ export async function DELETE(
     const { supabase, tenantId } = await createUserClient(request);
     
     // ENFORCE IDEMPOTENCY
-    let idempotencyKey: string | null;
+    let idempotencyKey: string;
     try {
-      idempotencyKey = await getIdempotencyKey(request, 'DELETE');
+      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
+      idempotencyKey = await requireIdempotencyKey(request);
     } catch (error: any) {
       return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    
-    if (!idempotencyKey) {
-      return NextResponse.json(
-        { error: 'Idempotency-Key header required for DELETE operations' },
-        { status: 400 }
-      );
     }
     
     const { id: typeId } = await params;

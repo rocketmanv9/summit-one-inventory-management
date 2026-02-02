@@ -7,12 +7,13 @@ import { EditableDashboardGrid } from '@/components/dashboards/EditableDashboard
 import { AddWidgetModal } from '@/components/dashboards/AddWidgetModal';
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { apiWrite } from '@/lib/api-client';
 
 export default function DashboardDetailPage() {
   const params = useParams();
   const router = useRouter();
   const dashboardId = params.id as string;
-  const { dashboard, loading: dashboardLoading, error: dashboardError } = useDashboard(dashboardId);
+  const { dashboard, loading: dashboardLoading, error: dashboardError, refetch: refetchDashboard } = useDashboard(dashboardId);
   const { dashboards } = useDashboards();
   const {
     widgets,
@@ -37,14 +38,13 @@ export default function DashboardDetailPage() {
     
     setIsTogglingDefault(true);
     try {
-      const response = await fetch(`/api/dashboards/${dashboardId}`, {
+      const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_default: !dashboard.is_default }),
+        body: { is_default: !dashboard.is_default },
       });
       
       if (response.ok) {
-        refetch();
+        refetchDashboard();
       } else {
         throw new Error('Failed to update default status');
       }
@@ -209,14 +209,13 @@ export default function DashboardDetailPage() {
                 />
                 <button
                   onClick={async () => {
-                    const response = await fetch(`/api/dashboards/${dashboardId}`, {
+                    const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
                       method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ description: editedDescription }),
+                      body: { description: editedDescription },
                     });
                     if (response.ok) {
                       setIsEditingDescription(false);
-                      refetch();
+                      refetchDashboard();
                     }
                   }}
                   className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700"
@@ -355,16 +354,13 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const response = await fetch('/api/dashboards', {
+      const response = await apiWrite('/api/dashboards', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        body: {
           name: name.trim(),
           description: description.trim() || null,
           is_default: isDefault,
-        }),
+        },
       });
 
       if (!response.ok) {

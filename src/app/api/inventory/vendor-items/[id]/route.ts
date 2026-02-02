@@ -1,4 +1,4 @@
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUserClient } from '@/lib/db-middleware';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function PUT(
@@ -40,6 +40,7 @@ export async function PUT(
         lead_time_days: body.lead_time_days,
         min_order_qty: body.min_order_qty,
         notes: body.notes,
+        last_event_id: idempotencyKey,
       })
       .eq('id', id)
       .select('*')

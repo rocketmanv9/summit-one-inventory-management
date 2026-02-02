@@ -10,7 +10,11 @@
     "sb:start": "supabase start",
     "sb:stop": "supabase stop --no-backup",
     "sb:status": "supabase status",
-    "dev:local": "npm run sb:start && npm run dev"
+    "dev:local": "npm run sb:start && npm run dev",
+    "check:idempotency:backend": "node scripts/check-idempotency.mjs",
+    "check:idempotency:frontend": "node scripts/check-frontend-idempotency.mjs",
+    "check:idempotency": "npm run check:idempotency:backend && npm run check:idempotency:frontend",
+    "audit:idempotency": "node scripts/audit-idempotency.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -34,6 +38,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

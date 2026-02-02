@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface CycleCount {
   id: string;
@@ -209,7 +210,7 @@ export default function CycleCountsPage() {
     if (!confirm(`Start cycle count ${cycleCount.count_number}?`)) return;
 
     try {
-      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
         method: 'POST',
       });
 
@@ -376,10 +377,9 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 
   const updateAssetCount = async (lineId: string, assetIds: string[]) => {
     try {
-      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/assets`, {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/assets`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ asset_ids: assetIds })
+        body: { asset_ids: assetIds }
       });
       
       if (!res.ok) {
@@ -395,10 +395,9 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 
   const updateCountLine = async (lineId: string, actualQty: number | null) => {
     try {
-      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}`, {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actual_qty: actualQty })
+        body: { actual_qty: actualQty }
       });
       if (!res.ok) throw new Error('Failed to update count');
       fetchCountLines();
@@ -409,10 +408,9 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 
   const handleVarianceDecision = async (lineId: string, decision: string, reason?: string) => {
     try {
-      const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/decide`, {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/decide`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, reason })
+        body: { decision, reason }
       });
       if (!res.ok) {
         const data = await res.json();
@@ -810,7 +808,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
               onClick={async () => {
                 if (!confirm(`Start cycle count ${cycleCount.count_number}?`)) return;
                 try {
-                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
+                  const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/start`, {
                     method: 'POST',
                   });
                   if (!res.ok) {
@@ -843,7 +841,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
               onClick={async () => {
                 if (!confirm('Submit this cycle count for review?')) return;
                 try {
-                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/submit`, {
+                  const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/submit`, {
                     method: 'POST',
                   });
                   if (!res.ok) {
@@ -999,7 +997,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                 }
 
                 try {
-                  const res = await fetch(`/api/inventory/cycle-counts/${cycleCount.id}/approve`, {
+                  const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/approve`, {
                     method: 'POST',
                   });
                   
@@ -1093,16 +1091,15 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
     setError('');
 
     try {
-      const res = await fetch('/api/inventory/cycle-counts', {
+      const res = await apiWrite('/api/inventory/cycle-counts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           location_id: form.location_id,
           count_type: form.count_type,
           is_blind: form.is_blind,
           scheduled_for: form.scheduled_for || undefined,
           catalog_item_ids: form.specific_items.length > 0 ? form.specific_items : null,
-        }),
+        },
       });
 
       if (!res.ok) {

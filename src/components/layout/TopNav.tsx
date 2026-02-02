@@ -1,13 +1,32 @@
 'use client';
 
-import { Bell, Search, User, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Bell, Search, User, ChevronDown, LogOut, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function TopNav() {
+  const router = useRouter();
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
   // TODO: Get from auth context
   const tenantName = 'Acme Asphalt & Concrete';
   const userName = 'Admin User';
   const userRole = 'Administrator';
+
+  const handleLogout = async () => {
+    try {
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        router.push('/dev-login');
+      }
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background px-6">
@@ -49,16 +68,47 @@ export function TopNav() {
         </div>
 
         {/* User Menu */}
-        <button className="flex items-center gap-2 rounded-lg p-2 hover:bg-muted">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground">
-            {userName.charAt(0)}
-          </div>
-          <div className="hidden text-left lg:block">
-            <p className="text-sm font-medium">{userName}</p>
-            <p className="text-xs text-muted-foreground">{userRole}</p>
-          </div>
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-2 rounded-lg p-2 hover:bg-muted"
+          >
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground">
+              {userName.charAt(0)}
+            </div>
+            <div className="hidden text-left lg:block">
+              <p className="text-sm font-medium">{userName}</p>
+              <p className="text-xs text-muted-foreground">{userRole}</p>
+            </div>
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          </button>
+
+          {/* User Dropdown Menu */}
+          {showUserMenu && (
+            <div className="absolute right-0 mt-2 w-48 rounded-lg border border-border bg-popover shadow-md">
+              <div className="p-2">
+                <a
+                  href="/settings"
+                  onClick={() => setShowUserMenu(false)}
+                  className="flex items-center gap-3 rounded px-3 py-2 text-sm hover:bg-muted"
+                >
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </a>
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    handleLogout();
+                  }}
+                  className="flex w-full items-center gap-3 rounded px-3 py-2 text-sm text-destructive hover:bg-muted"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

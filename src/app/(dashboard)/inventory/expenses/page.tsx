@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface AccountingExpense {
   id: string;
@@ -54,10 +55,9 @@ export default function AccountingExpensesPage() {
 
   const handleMatch = async (expenseId: string, poId: string) => {
     try {
-      const res = await fetch(`/api/inventory/accounting/expenses/${expenseId}/match`, {
+      const res = await apiWrite(`/api/inventory/accounting/expenses/${expenseId}/match`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ po_id: poId })
+        body: { po_id: poId }
       });
 
       if (!res.ok) {
@@ -81,10 +81,9 @@ export default function AccountingExpensesPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/accounting/expenses/${expenseId}`, {
+      const res = await apiWrite(`/api/inventory/accounting/expenses/${expenseId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'ignored' })
+        body: { status: 'ignored' }
       });
 
       if (!res.ok) {
@@ -106,10 +105,9 @@ export default function AccountingExpensesPage() {
     if (!reason) return;
 
     try {
-      const res = await fetch(`/api/inventory/accounting/expenses/${expenseId}`, {
+      const res = await apiWrite(`/api/inventory/accounting/expenses/${expenseId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'disputed', dispute_reason: reason })
+        body: { status: 'disputed', dispute_reason: reason }
       });
 
       if (!res.ok) {

@@ -13,26 +13,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
   
   // Skip auth check for public pages
-  const isPublicPage = pathname === '/' || pathname === '/dev-login' || pathname === '/error' || pathname === '/auth/callback';
+  const isPublicPage = pathname === '/' || pathname === '/dev-login' || pathname === '/error' || pathname === '/auth-gate';
   
   useEffect(() => {
     if (isPublicPage) {
       setLoading(false);
       setAuthenticated(true);
-      return;
-    }
-
-    const coreToken = searchParams.get('core_token');
-    if (coreToken) {
-      const coreEnv = searchParams.get('core_env') || 'dev';
-      const targetOrg = searchParams.get('target_org');
-      const callbackUrl = new URL('/auth/callback', window.location.origin);
-      callbackUrl.searchParams.set('core_token', coreToken);
-      callbackUrl.searchParams.set('core_env', coreEnv);
-      if (targetOrg) {
-        callbackUrl.searchParams.set('target_org', targetOrg);
-      }
-      router.replace(callbackUrl.pathname + callbackUrl.search);
       return;
     }
 

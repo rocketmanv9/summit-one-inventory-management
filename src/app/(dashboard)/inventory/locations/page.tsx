@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { apiWrite } from '@/lib/api-client';
 
 interface Location {
   id: string;
@@ -69,7 +70,7 @@ export default function LocationsPage() {
     }
 
     try {
-      const res = await fetch(`/api/inventory/locations/${id}`, {
+      const res = await apiWrite(`/api/inventory/locations/${id}`, {
         method: 'DELETE',
       });
 
@@ -460,7 +461,7 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
     }
 
     try {
-      const res = await fetch(`/api/inventory/location-types/${id}`, {
+      const res = await apiWrite(`/api/inventory/location-types/${id}`, {
         method: 'DELETE',
       });
 
@@ -482,10 +483,9 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
     setError('');
 
     try {
-      const res = await fetch('/api/inventory/location-types', {
+      const res = await apiWrite('/api/inventory/location-types', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: form,
       });
 
       if (!res.ok) {

@@ -5,15 +5,42 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { createUnscopedClient, getIdempotencyKey } from '@/lib/db-middleware';
+import { cookies } from 'next/headers';
+
+async function getSessionData() {
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get('inventory_session');
+  
+  if (!sessionCookie) {
+    return null;
+  }
+  
+  try {
+    const session = JSON.parse(sessionCookie.value);
+    if (session.expiresAt && session.expiresAt < Date.now()) {
+      return null;
+    }
+    return session;
+  } catch (error) {
+    return null;
+  }
+}
 
 export async function PUT(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  const session = await getSessionData();
+  
+  if (!session || !session.tenantId) {
+    return NextResponse.json(
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
   try {
-    const { supabase, tenantId, userId } = await createUserClient(request);
-    
     // ENFORCE IDEMPOTENCY
     let idempotencyKey: string | null;
     try {
@@ -41,10 +68,14 @@ export async function PUT(
       );
     }
     
+    const supabase = createUnscopedClient();
+    
     // Check for duplicate name (excluding current category)
     const { data: existing } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .select('id')
+      .eq('tenant_id', session.tenantId)
       .eq('name', name.trim())
       .neq('id', categoryId)
       .single();
@@ -57,12 +88,14 @@ export async function PUT(
     }
     
     const { data: category, error } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .update({
         name: name.trim(),
-        updated_by: userId,
+        updated_by: session.userId,
       })
       .eq('id', categoryId)
+      .eq('tenant_id', session.tenantId)
       .select('id, name, created_at, updated_at')
       .single();
     
@@ -95,9 +128,16 @@ export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  const session = await getSessionData();
+  
+  if (!session || !session.tenantId) {
+    return NextResponse.json(
+      { error: 'Not authenticated' },
+      { status: 401 }
+    );
+  }
+  
   try {
-    const { supabase, tenantId } = await createUserClient(request);
-    
     // ENFORCE IDEMPOTENCY
     let idempotencyKey: string | null;
     try {
@@ -115,12 +155,15 @@ export async function DELETE(
     }
     
     const { id: categoryId } = await context.params;
+    const supabase = createUnscopedClient();
     
     // Check if category is in use
     const { data: itemsUsingCategory, error: checkError } = await supabase
+      .schema('inventory')
       .from('catalog_items')
       .select('id')
       .eq('category_id', categoryId)
+      .eq('tenant_id', session.tenantId)
       .limit(1);
     
     if (checkError) {
@@ -139,10 +182,11 @@ export async function DELETE(
     }
     
     const { error } = await supabase
+      .schema('inventory')
       .from('item_categories')
       .delete()
       .eq('id', categoryId)
-      .eq('tenant_id', tenantId);
+      .eq('tenant_id', session.tenantId);
     
     if (error) {
       console.error('Error deleting category:', error);

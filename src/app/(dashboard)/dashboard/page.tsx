@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/supabase/client';
 import { useRouter } from 'next/navigation';
+import { apiWrite } from '@/lib/api-client';
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
@@ -162,16 +163,13 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const response = await fetch('/api/dashboards', {
+      const response = await apiWrite('/api/dashboards', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+        body: {
           name: name.trim(),
           description: description.trim() || null,
           is_default: isDefault,
-        }),
+        },
       });
 
       if (!response.ok) {

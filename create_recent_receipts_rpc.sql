@@ -1,4 +1,3 @@
--- RPC to get recent receipts (last 30 days) for reversal
 CREATE OR REPLACE FUNCTION supply_chain.rpc_get_recent_receipts(
     p_tenant_id UUID,
     p_days INTEGER DEFAULT 30
@@ -31,17 +30,16 @@ BEGIN
         r.status,
         COALESCE(SUM(rl.qty_received), 0) as total_qty,
         r.updated_at as confirmed_at,
-        COALESCE(u.name, u.email, r.updated_by::text) as confirmed_by_name
+        r.updated_by::text as confirmed_by_name
     FROM supply_chain.receipts r
     JOIN supply_chain.purchase_orders po ON r.po_id = po.id
     LEFT JOIN supply_chain.vendors v ON po.vendor_id = v.id
     LEFT JOIN inventory.locations l ON r.location_id = l.id
     LEFT JOIN supply_chain.receipt_lines rl ON rl.receipt_id = r.id
-    LEFT JOIN public.users u ON r.updated_by = u.id
     WHERE r.tenant_id = p_tenant_id
       AND r.status = 'confirmed'
       AND r.updated_at >= NOW() - (p_days || ' days')::INTERVAL
-    GROUP BY r.id, r.receipt_number, r.po_id, po.po_number, v.name, l.name, r.status, r.updated_at, r.updated_by, u.name, u.email
+    GROUP BY r.id, r.receipt_number, r.po_id, po.po_number, v.name, l.name, r.status, r.updated_at, r.updated_by
     ORDER BY r.updated_at DESC;
 END;
 $$;

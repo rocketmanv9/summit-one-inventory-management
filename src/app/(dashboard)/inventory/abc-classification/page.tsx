@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
+import { apiWrite } from '@/lib/api-client';
 
 interface ABCItem {
   catalog_item_id: string;
@@ -48,12 +49,11 @@ export default function ABCClassificationPage() {
 
     setCalculating(true);
     try {
-      const res = await fetch('/api/inventory/abc-classification/calculate', {
+      const res = await apiWrite('/api/inventory/abc-classification/calculate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: {
           method: 'value', // value, usage, or hybrid
-        })
+        }
       });
 
       const result = await res.json();

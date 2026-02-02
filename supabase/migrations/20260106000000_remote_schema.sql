@@ -1948,8 +1948,11 @@ BEGIN
         RAISE EXCEPTION 'tenant_id and asset_id are required';
     END IF;
     
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'asset_assign_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get asset
     SELECT * INTO v_asset
@@ -2063,8 +2066,11 @@ DECLARE
     v_asset RECORD;
     v_event_id TEXT;
 BEGIN
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'asset_return_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get active assignment
     SELECT * INTO v_assignment
@@ -2302,7 +2308,10 @@ DECLARE
     v_event_id TEXT;
     v_item RECORD;
 BEGIN
-    v_event_id := COALESCE(p_last_event_id, 'count_start_' || gen_random_uuid()::TEXT);
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Validate count_type
     IF p_count_type NOT IN ('full', 'partial', 'spot_check') THEN
@@ -2437,7 +2446,10 @@ DECLARE
     v_movement_id UUID;
     v_event_id TEXT;
 BEGIN
-    v_event_id := COALESCE(p_last_event_id, 'fulfill_' || gen_random_uuid()::TEXT);
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get reservation
     SELECT * INTO v_reservation
@@ -2552,7 +2564,10 @@ DECLARE
     v_reservation RECORD;
     v_event_id TEXT;
 BEGIN
-    v_event_id := COALESCE(p_last_event_id, 'release_' || gen_random_uuid()::TEXT);
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get reservation
     SELECT * INTO v_reservation
@@ -2629,8 +2644,11 @@ BEGIN
         RAISE EXCEPTION 'qty must be greater than 0';
     END IF;
     
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'reserve_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Check available quantity
     SELECT COALESCE(qty_available, 0) INTO v_available_qty
@@ -2794,8 +2812,11 @@ BEGIN
         RAISE EXCEPTION 'from_location_id and to_location_id must be different';
     END IF;
     
-    -- Generate event ID if not provided
-    v_event_id := COALESCE(p_last_event_id, 'transfer_create_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Generate transfer number
     SELECT 'TRF-' || to_char(NOW(), 'YYYYMMDD') || '-' || LPAD((
@@ -2899,8 +2920,11 @@ DECLARE
     v_event_id TEXT;
     v_now TIMESTAMPTZ := NOW();
 BEGIN
-    -- Generate event ID
-    v_event_id := COALESCE(p_last_event_id, 'transfer_execute_' || gen_random_uuid()::TEXT);
+    -- Require event ID for strict idempotency
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get transfer
     SELECT * INTO v_transfer
@@ -3158,7 +3182,10 @@ DECLARE
     v_reversal_id UUID;
     v_event_id TEXT;
 BEGIN
-    v_event_id := COALESCE(p_last_event_id, 'reversal_' || gen_random_uuid()::TEXT);
+    IF p_last_event_id IS NULL THEN
+        RAISE EXCEPTION 'p_last_event_id is required';
+    END IF;
+    v_event_id := p_last_event_id;
     
     -- Get original movement
     SELECT * INTO v_movement
