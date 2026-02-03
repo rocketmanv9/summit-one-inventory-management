@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Bug, Activity, RefreshCw, CheckCircle, Clock, XCircle, ArrowRight, BookOpen, Code, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { authenticatedFetch } from '@/lib/api-client';
 
 interface Session {
   userId: string;
@@ -70,20 +71,20 @@ export default function DebugPage() {
 
   async function loadData() {
     try {
-      const response = await fetch('/api/auth/session');
+      const response = await authenticatedFetch('/api/auth/session');
       if (response.ok) {
         const sessionData = await response.json();
         setSession(sessionData);
 
         // Fetch tenant information
-        const tenantResponse = await fetch('/api/tenant');
+        const tenantResponse = await authenticatedFetch('/api/tenant');
         if (tenantResponse.ok) {
           const { tenant } = await tenantResponse.json();
           setTenant(tenant);
         }
 
         // Fetch events data
-        const eventsResponse = await fetch('/api/debug/events');
+        const eventsResponse = await authenticatedFetch('/api/debug/events');
         if (eventsResponse.ok) {
           const { events: eventsData, stats: statsData, definitions: defsData, lastEmitted: lastEmittedData } = await eventsResponse.json();
           setEvents(eventsData);

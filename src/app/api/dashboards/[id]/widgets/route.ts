@@ -5,51 +5,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
-
-async function getSessionData() {
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('inventory_session');
-  
-  if (!sessionCookie) {
-    return null;
-  }
-  
-  try {
-    const session = JSON.parse(sessionCookie.value);
-    if (session.expiresAt && session.expiresAt < Date.now()) {
-      return null;
-    }
-    return session;
-  } catch (error) {
-    return null;
-  }
-}
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     const { id: dashboardId } = await params;
-    const supabase = createUnscopedClient();
     
     // Verify dashboard exists and is not deleted
     const { data: dashboard } = await supabase
       .from('dashboards')
       .select('id')
       .eq('id', dashboardId)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null)
       .single();
     
@@ -64,7 +38,7 @@ export async function GET(
       .from('dashboard_widgets')
       .select('*')
       .eq('dashboard_id', dashboardId)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .order('created_at');
     
     if (error) {
@@ -89,28 +63,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for widget creation
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for widget creation' },
-        { status: 400 }
-      );
-    }
-    
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     const { id: dashboardId } = await params;
     const body = await request.json();
     const { widget_key, title, layout, config, refresh_seconds } = body;
@@ -122,14 +79,12 @@ export async function POST(
       );
     }
     
-    const supabase = createUnscopedClient();
-    
     // Verify dashboard exists and is not deleted
     const { data: dashboard } = await supabase
       .from('dashboards')
       .select('id')
       .eq('id', dashboardId)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null)
       .single();
     
@@ -148,14 +103,15 @@ export async function POST(
         .from('dashboard_widgets')
         .select('layout')
         .eq('dashboard_id', dashboardId)
-        .eq('tenant_id', session.tenantId);
+        .eq('tenant_id', context.tenantId);
       
       // Calculate next position (stack vertically)
-      const maxY = existingWidgets?.reduce((max, w) => {
+      const widgets = (existingWidgets || []) as Array<{ layout?: { y?: number; h?: number } }>;
+      const maxY = widgets.reduce((max, w) => {
         const y = w.layout?.y || 0;
         const h = w.layout?.h || 4;
         return Math.max(max, y + h);
-      }, 0) || 0;
+      }, 0);
       
       widgetLayout = { x: 0, y: maxY, w: 4, h: 4 };
     }
@@ -163,7 +119,7 @@ export async function POST(
     const { data: widget, error } = await supabase
       .from('dashboard_widgets')
       .insert({
-        tenant_id: session.tenantId,
+        tenant_id: context.tenantId,
         dashboard_id: dashboardId,
         widget_key,
         title: title || null,

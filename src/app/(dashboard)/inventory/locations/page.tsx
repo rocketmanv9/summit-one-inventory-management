@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Location {
   id: string;
@@ -40,7 +40,7 @@ export default function LocationsPage() {
 
   const fetchLocationTypes = async () => {
     try {
-      const res = await fetch('/api/inventory/location-types');
+      const res = await authenticatedFetch('/api/inventory/location-types');
       const { data } = await res.json();
       setLocationTypes(data || []);
     } catch (error) {
@@ -54,7 +54,7 @@ export default function LocationsPage() {
       const params = new URLSearchParams();
       if (filters.type) params.set('type', filters.type);
 
-      const res = await fetch(`/api/inventory/locations?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/locations?${params}`);
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -271,7 +271,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
 
   const fetchLocationTypes = async () => {
     try {
-      const res = await fetch('/api/inventory/location-types');
+      const res = await authenticatedFetch('/api/inventory/location-types');
       const { data} = await res.json();
       setLocationTypes(data || []);
       // Set first type as default only when creating a new location (not editing)
@@ -285,7 +285,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
 
   const fetchAvailableParents = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       // Filter out the current location when editing to prevent circular references
       const filtered = isEditing 
@@ -312,7 +312,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         parent_location_id: form.parent_location_id || null,
       };
       
-      const res = await fetch(url, {
+      const res = await authenticatedFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -447,7 +447,7 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
 
   const fetchTypes = async () => {
     try {
-      const res = await fetch('/api/inventory/location-types');
+      const res = await authenticatedFetch('/api/inventory/location-types');
       const { data } = await res.json();
       setExistingTypes(data || []);
     } catch (error) {

@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface OpenPO {
   po_id: string;
@@ -75,8 +75,8 @@ export default function ReceivingPage() {
     setLoading(true);
     try {
       const [openRes, recentRes] = await Promise.all([
-        fetch('/api/inventory/receiving'),
-        fetch('/api/inventory/receiving/recent')
+        authenticatedFetch('/api/inventory/receiving'),
+        authenticatedFetch('/api/inventory/receiving/recent')
       ]);
       
       const openData = await openRes.json();
@@ -354,7 +354,7 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -365,7 +365,7 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
   const fetchPO = async (id: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/supply-chain/purchase-orders/${id}/receiving`);
+      const res = await authenticatedFetch(`/api/supply-chain/purchase-orders/${id}/receiving`);
       const data = await res.json();
       
       if (data) {

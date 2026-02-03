@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 
 export default function AuthGatePage() {
   const router = useRouter();
@@ -46,30 +47,41 @@ export default function AuthGatePage() {
           targetOrg 
         });
 
-        // Call sso-callback endpoint with ticket parameter
-        const callbackUrl = new URL('/api/auth/sso-callback', window.location.origin);
-        callbackUrl.searchParams.set('ticket', ticket);
-        if (targetOrg) {
-          callbackUrl.searchParams.set('target_org', targetOrg);
-        }
-
-        const response = await fetch(callbackUrl.toString(), {
-          method: 'GET',
+        const exchangeResponse = await fetch('/api/auth/exchange', {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({ ticket })
         });
 
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
+        if (!exchangeResponse.ok) {
+          const data = await exchangeResponse.json().catch(() => ({}));
           setError(
-            data.error || `Validation failed (${response.status}). Please try logging in again.`
+            data.error || `Validation failed (${exchangeResponse.status}). Please try logging in again.`
           );
           setIsProcessing(false);
           return;
         }
 
-        const data = await response.json();
+        const { access_token, refresh_token } = await exchangeResponse.json();
+
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token,
+          refresh_token
+        });
+
+        if (sessionError) {
+          setError(`Failed to set session: ${sessionError.message}`);
+          setIsProcessing(false);
+          return;
+        }
+
         console.log('[AuthGate] SSO successful, redirecting to', targetService);
 
         // Redirect to target page

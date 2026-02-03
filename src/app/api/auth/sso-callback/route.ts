@@ -1,29 +1,26 @@
 /**
- * SSO Callback Route
- * Receives ticket from Core and establishes session
+ * SSO Callback Route (Ticket-only)
+ * Receives ticket from Core and redirects to client auth gate.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { handleSSOCallback } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
-  const response = await handleSSOCallback(request);
+  const url = new URL(request.url);
+  const ticket = url.searchParams.get('ticket');
+  const targetService = url.searchParams.get('target_service') || 'dashboard';
+  const targetOrg = url.searchParams.get('target_org');
 
-  // If successful, redirect to dashboard or desired page
-  if (response.status === 200) {
-    const targetService = new URL(request.url).searchParams.get('target_service') || 'dashboard';
-    const redirectUrl = new URL(`/${targetService}`, request.url).toString();
-    
-    const redirectResponse = NextResponse.redirect(redirectUrl);
-    
-    // Copy the session cookie to redirect response
-    const setCookieHeaders = response.headers.getSetCookie();
-    setCookieHeaders.forEach(cookieHeader => {
-      redirectResponse.headers.append('Set-Cookie', cookieHeader);
-    });
-    
-    return redirectResponse;
+  if (!ticket) {
+    return NextResponse.json({ error: 'Missing ticket' }, { status: 400 });
   }
 
-  return response;
+  const redirectUrl = new URL('/auth-gate', request.url);
+  redirectUrl.searchParams.set('ticket', ticket);
+  redirectUrl.searchParams.set('target_service', targetService);
+  if (targetOrg) {
+    redirectUrl.searchParams.set('target_org', targetOrg);
+  }
+
+  return NextResponse.redirect(redirectUrl);
 }

@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface CycleCount {
   id: string;
@@ -49,7 +49,7 @@ export default function CycleCountsPage() {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
 
-      const res = await fetch(`/api/inventory/cycle-counts?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/cycle-counts?${params}`);
       const { data } = await res.json();
       setCycleCounts(data || []);
     } catch (error) {
@@ -1075,7 +1075,7 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {

@@ -52,7 +52,7 @@ async function createSessionFromTicket(ticket: string): Promise<string> {
 }
 
 describe('Debug & Sensitive Endpoint Authentication Requirements (Ticket-Based SSO)', () => {
-  let testSessionId: string;
+  let testSessionId: string = '';
   let testTenantId: string;
 
   beforeAll(async () => {

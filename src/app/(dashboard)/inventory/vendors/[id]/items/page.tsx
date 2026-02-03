@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { Plus, Edit, Trash2, Star, Package, ArrowLeft } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Vendor {
   id: string;
@@ -78,7 +78,7 @@ export default function VendorItemsPage() {
 
   const fetchVendor = async () => {
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendorId}`);
+      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}`);
       if (res.ok) {
         const { data } = await res.json();
         setVendor(data);
@@ -91,7 +91,7 @@ export default function VendorItemsPage() {
   const fetchVendorItems = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/inventory/vendor-items?vendor_id=${vendorId}`);
+      const res = await authenticatedFetch(`/api/inventory/vendor-items?vendor_id=${vendorId}`);
       const data = await res.json();
       setVendorItems(data || []);
     } catch (error) {
@@ -103,7 +103,7 @@ export default function VendorItemsPage() {
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await fetch('/api/inventory/items?limit=1000');
+      const res = await authenticatedFetch('/api/inventory/items?limit=1000');
       const { data } = await res.json();
       setCatalogItems(data || []);
     } catch (error) {

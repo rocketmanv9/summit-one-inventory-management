@@ -4,23 +4,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthUser } from '@/lib/auth';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthUser(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
 
-    if (!user) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+    const { context, client } = auth;
+    const authHeader = request.headers.get('authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    const { data: { user } } = await client.auth.getUser(token || undefined);
 
     return NextResponse.json({
       data: {
-        userId: user.id,
-        tenantId: user.tenant_id,
-        role: user.role,
-        email: user.email,
-        name: user.name
+        userId: context.userId,
+        tenantId: context.tenantId,
+        role: context.role,
+        email: context.email || user?.email,
+        name: user?.user_metadata?.full_name || null
       },
       authenticated: true
     });

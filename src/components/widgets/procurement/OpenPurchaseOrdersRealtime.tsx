@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { BaseTableWidget } from '../BaseTableWidget';
+import { authenticatedFetch } from '@/lib/api-client';
 import { useSupplyChainEvents } from '@/hooks/useEventSubscription';
 
 export function OpenPurchaseOrdersRealtime({ widget }: { widget: DashboardWidget }) {
@@ -20,7 +21,7 @@ export function OpenPurchaseOrdersRealtime({ widget }: { widget: DashboardWidget
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/widgets/data', {
+      const response = await authenticatedFetch('/api/widgets/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ widget_key: widget.widget_key, config: widget.config }),

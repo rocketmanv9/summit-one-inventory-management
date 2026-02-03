@@ -3,18 +3,6 @@ import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function PATCH(request: NextRequest) {
   try {
-    // ENFORCE IDEMPOTENCY (STRICT)
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for PATCH operations' },
-        { status: 400 }
-      );
-    }
-    
     // SECURITY: Use JWT + RLS instead of service role
     // Validates JWT signature and extracts tenant_id from app_metadata
     const auth = await createAuthenticatedClientOrThrow(request);

@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Transfer {
   id: string;
@@ -50,7 +50,7 @@ export default function TransfersPage() {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
 
-      const res = await fetch(`/api/inventory/transfers?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/transfers?${params}`);
       const { data } = await res.json();
       setTransfers(data || []);
     } catch (error) {
@@ -483,7 +483,7 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
   useEffect(() => {
     const fetchTransferData = async () => {
       try {
-        const res = await fetch(`/api/inventory/transfers/${transfer.id}`);
+        const res = await authenticatedFetch(`/api/inventory/transfers/${transfer.id}`);
         if (!res.ok) {
           // Fallback to using provided transfer data if endpoint not available
           console.warn('Could not fetch fresh transfer data, using cached data');
@@ -980,7 +980,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
   useEffect(() => {
     const loadLocations = async () => {
       try {
-        const locsRes = await fetch('/api/inventory/locations');
+        const locsRes = await authenticatedFetch('/api/inventory/locations');
         const locsData = await locsRes.json();
         setLocations(locsData.data || []);
       } catch (err) {
@@ -1002,7 +1002,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
 
       setLoadingItems(true);
       try {
-        const itemsRes = await fetch(`/api/inventory/locations/${form.from_location_id}/items`);
+        const itemsRes = await authenticatedFetch(`/api/inventory/locations/${form.from_location_id}/items`);
         const itemsData = await itemsRes.json();
         setItems(itemsData.data || []);
       } catch (err) {
@@ -1257,7 +1257,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
   useEffect(() => {
     const loadLocations = async () => {
       try {
-        const locsRes = await fetch('/api/inventory/locations');
+        const locsRes = await authenticatedFetch('/api/inventory/locations');
         const locsData = await locsRes.json();
         setLocations(locsData.data || []);
       } catch (err) {
@@ -1279,7 +1279,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
 
       setLoadingItems(true);
       try {
-        const itemsRes = await fetch(`/api/inventory/locations/${form.from_location_id}/items`);
+        const itemsRes = await authenticatedFetch(`/api/inventory/locations/${form.from_location_id}/items`);
         const itemsData = await itemsRes.json();
         setItems(itemsData.data || []);
       } catch (err) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClientVerified } from '@/lib/db-middleware';
+import { createVerifiedServiceClient } from '@/lib/secure-server-client';
 import { createHmac } from 'crypto';
 
 interface TenantProfileData {
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     }
     
     // 3. Create service client with VERIFIED tenant_id
-    const supabase = createServiceClientVerified(tenantId);
+    const { client: supabase } = createVerifiedServiceClient(tenantId);
     
     // 4. REQUIRE delivery_id for idempotency - no fallback generation
     const deliveryId = body.delivery_id || body.event_id;

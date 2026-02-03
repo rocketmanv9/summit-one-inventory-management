@@ -5,14 +5,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
   try {
     // SECURITY: Verify JWT before exposing JWT structure
     // This prevents unauthenticated reconnaissance
-    const authContext = await createUserClient(request);
-    if (!authContext) {
+    const authContext = await createAuthenticatedClientOrThrow(request);
+    if (authContext instanceof NextResponse) {
       return NextResponse.json({
         error: 'Unauthorized - Valid JWT required',
         message: 'This debug endpoint requires authentication'

@@ -4,54 +4,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { requireIdempotencyKey } from '@/lib/db-middleware';
 
 export async function POST(request: NextRequest) {
-  // STRICT IDEMPOTENCY: Require Idempotency-Key header even for disabled endpoint
-  await requireIdempotencyKey(request);
-
   // SECURITY: This endpoint is disabled for security reasons
-  // Note: dev-only endpoint exempted from idempotency (disabled in prod)
   // Use proper Supabase authentication instead
   return NextResponse.json(
     { error: 'This endpoint has been disabled. Use proper authentication.' },
     { status: 404 }
   );
-
-  try {
-    const tenantId = process.env.NEXT_PUBLIC_TENANT_ID || 'ae837809-1a24-4ab5-ba06-34fd98c05f48';
-    
-    // Create a dev session
-    const session = {
-      userId: '00000000-0000-0000-0000-000000000001',
-      email: 'grant@summitone.com',
-      tenantId: tenantId,
-      role: 'admin',
-      fullName: 'Grant',
-      expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
-    };
-
-    const cookieStore = await cookies();
-    cookieStore.set('inventory_session', JSON.stringify(session), {
-      httpOnly: true,
-      secure: (process.env.NODE_ENV as string) === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24, // 24 hours
-      path: '/'
-    });
-
-    return NextResponse.json({ 
-      success: true, 
-      session,
-      message: 'Dev session created. Refresh the page.' 
-    });
-  } catch (error) {
-    console.error('Dev login error:', error);
-    return NextResponse.json(
-      { error: 'Failed to create dev session' },
-      { status: 500 }
-    );
-  }
 }
 

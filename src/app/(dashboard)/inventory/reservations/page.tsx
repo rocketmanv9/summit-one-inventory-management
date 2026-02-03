@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Reservation {
   id: string;
@@ -45,7 +45,7 @@ export default function ReservationsPage() {
       if (filters.status) params.set('status', filters.status);
       if (filters.allocation_type) params.set('allocation_type', filters.allocation_type);
 
-      const res = await fetch(`/api/inventory/reservations?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/reservations?${params}`);
       const { data } = await res.json();
       setReservations(data || []);
     } catch (error) {
@@ -501,7 +501,7 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await fetch('/api/inventory/items');
+      const res = await authenticatedFetch('/api/inventory/items');
       const { data } = await res.json();
       setCatalogItems(data || []);
     } catch (error) {
@@ -511,7 +511,7 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -526,7 +526,7 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
       const params = new URLSearchParams({ catalog_item_id: form.catalog_item_id });
       if (form.location_id) params.set('location_id', form.location_id);
       
-      const res = await fetch(`/api/inventory/assets/available?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/assets/available?${params}`);
       const { data } = await res.json();
       setAvailableAssets(data || []);
     } catch (error) {

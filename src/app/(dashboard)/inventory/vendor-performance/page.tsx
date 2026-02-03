@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
+import { authenticatedFetch } from '@/lib/api-client';
 
 interface VendorPerformance {
   vendor_id: string;
@@ -43,7 +44,7 @@ export default function VendorPerformancePage() {
   const fetchVendorPerformance = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/vendor-performance');
+      const res = await authenticatedFetch('/api/inventory/vendor-performance');
       const { data } = await res.json();
       setVendors(data || []);
     } catch (error) {
@@ -55,7 +56,7 @@ export default function VendorPerformancePage() {
 
   const fetchVendorEvents = async (vendorId: string) => {
     try {
-      const res = await fetch(`/api/inventory/vendor-performance/${vendorId}/events`);
+      const res = await authenticatedFetch(`/api/inventory/vendor-performance/${vendorId}/events`);
       const { data } = await res.json();
       setVendorEvents(data || []);
     } catch (error) {

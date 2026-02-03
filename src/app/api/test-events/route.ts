@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
-  const { supabase } = await createUserClient(request);
+  const auth = await createAuthenticatedClientOrThrow(request);
+  if (auth instanceof NextResponse) return auth;
+
+  const { client: supabase } = auth;
 
   const { data, error, count } = await supabase
     .from('event_definitions')

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Vendor {
   id: string;
@@ -69,7 +69,7 @@ export default function VendorItemsPage() {
 
   const fetchVendorItems = async () => {
     try {
-      const response = await fetch('/api/inventory/vendor-items');
+      const response = await authenticatedFetch('/api/inventory/vendor-items');
       if (!response.ok) throw new Error('Failed to fetch vendor items');
       const data = await response.json();
       setVendorItems(data);
@@ -82,7 +82,7 @@ export default function VendorItemsPage() {
 
   const fetchVendors = async () => {
     try {
-      const response = await fetch('/api/inventory/vendors');
+      const response = await authenticatedFetch('/api/inventory/vendors');
       if (!response.ok) throw new Error('Failed to fetch vendors');
       const data = await response.json();
       setVendors(data);
@@ -93,7 +93,7 @@ export default function VendorItemsPage() {
 
   const fetchCatalogItems = async () => {
     try {
-      const response = await fetch('/api/inventory/items');
+      const response = await authenticatedFetch('/api/inventory/items');
       if (!response.ok) throw new Error('Failed to fetch catalog items');
       const data = await response.json();
       setCatalogItems(data);

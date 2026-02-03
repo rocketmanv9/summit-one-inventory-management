@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface AssignmentType {
   id: string;
@@ -31,7 +31,7 @@ export default function AssignmentTypesSettingsPage() {
     setLoading(true);
     try {
       // Fetch all types (including inactive) for admin
-      const res = await fetch('/api/inventory/assignment-types');
+      const res = await authenticatedFetch('/api/inventory/assignment-types');
       const { data } = await res.json();
       setTypes(data || []);
     } catch (error) {

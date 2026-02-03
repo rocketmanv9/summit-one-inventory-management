@@ -5,48 +5,22 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
-
-async function getSessionData() {
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('inventory_session');
-  
-  if (!sessionCookie) {
-    return null;
-  }
-  
-  try {
-    const session = JSON.parse(sessionCookie.value);
-    if (session.expiresAt && session.expiresAt < Date.now()) {
-      return null;
-    }
-    return session;
-  } catch (error) {
-    return null;
-  }
-}
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    const supabase = createUnscopedClient();
-    
-    console.log('[DASHBOARDS API] Fetching for tenant:', session.tenantId);
-    
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
+
+    console.log('[DASHBOARDS API] Fetching for tenant:', context.tenantId);
+
     const { data: dashboards, error } = await supabase
       .schema('public')
       .from('dashboards')
       .select('*')
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null)
       .order('is_default', { ascending: false })
       .order('name');
@@ -59,7 +33,7 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    console.log('[DASHBOARDS API] Found dashboards:', dashboards?.map(d => ({ id: d.id, name: d.name, tenant: d.tenant_id })));
+    console.log('[DASHBOARDS API] Found dashboards:', dashboards?.map((d: any) => ({ id: d.id, name: d.name, tenant: d.tenant_id })));
     
     return NextResponse.json({ data: dashboards });
   } catch (error) {
@@ -72,28 +46,12 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    // ENFORCE IDEMPOTENCY: Require Idempotency-Key header for dashboard creation
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for dashboard creation' },
-        { status: 400 }
-      );
-    }
-    
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
+
     const body = await request.json();
     const { name, description, is_default } = body;
     
@@ -104,19 +62,17 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const supabase = createUnscopedClient();
-    
     const { data: dashboard, error } = await supabase
       .schema('public')
       .from('dashboards')
       .insert({
-        tenant_id: session.tenantId,
+        tenant_id: context.tenantId,
         name: name.trim(),
         description: description?.trim() || null,
         is_default: is_default || false,
         scope: 'user',
-        owner_user_id: session.userId,
-        created_by: session.userId,
+        owner_user_id: context.userId,
+        created_by: context.userId,
       })
       .select()
       .single();

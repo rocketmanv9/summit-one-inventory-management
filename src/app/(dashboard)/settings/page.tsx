@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface TenantSettings {
   id: string;
@@ -52,7 +52,7 @@ export default function SettingsPage() {
   const checkAdminStatus = async () => {
     try {
       // Check if user has admin role from session
-      const res = await fetch('/api/auth/me');
+      const res = await authenticatedFetch('/api/auth/me');
       const { data } = await res.json();
       setIsAdmin(data?.role === 'admin');
     } catch (error) {
@@ -63,7 +63,7 @@ export default function SettingsPage() {
 
   const fetchVendors = async () => {
     try {
-      const res = await fetch('/api/inventory/vendors');
+      const res = await authenticatedFetch('/api/inventory/vendors');
       const { data } = await res.json();
       setVendors(data || []);
     } catch (error) {
@@ -74,7 +74,7 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/settings/tenant');
+      const res = await authenticatedFetch('/api/settings/tenant');
       const { data } = await res.json();
       
       if (data) {

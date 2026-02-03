@@ -1,47 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { requireIdempotencyKey } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
-export async function GET() {
+function decodeJwtExp(token: string | null): number | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('inventory_session');
-    
-    if (!sessionCookie) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    if (payload?.exp) {
+      return payload.exp * 1000;
     }
-    
-    try {
-      const session = JSON.parse(sessionCookie.value);
-      
-      // Check if session is expired
-      if (session.expiresAt && session.expiresAt < Date.now()) {
-        // Delete expired cookie
-        cookieStore.delete('inventory_session');
-        return NextResponse.json(
-          { error: 'Session expired' },
-          { status: 401 }
-        );
-      }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
-      if (!session.coreToken) {
-        return NextResponse.json(
-          { error: 'Session missing core token' },
-          { status: 401 }
-        );
-      }
-      
-      return NextResponse.json(session);
-    } catch (error) {
-      console.error('Failed to parse session:', error);
-      return NextResponse.json(
-        { error: 'Invalid session' },
-        { status: 401 }
-      );
-    }
+export async function GET(request: NextRequest) {
+  try {
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { context, client } = auth;
+    const authHeader = request.headers.get('authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    const expiresAt = decodeJwtExp(token);
+
+    const { data: { user } } = await client.auth.getUser(token || undefined);
+
+    return NextResponse.json({
+      userId: context.userId,
+      email: context.email || user?.email || null,
+      tenantId: context.tenantId,
+      role: context.role,
+      fullName: user?.user_metadata?.full_name || null,
+      expiresAt
+    });
   } catch (error) {
     console.error('Session check error:', error);
     return NextResponse.json(
@@ -51,23 +45,7 @@ export async function GET() {
   }
 }
 
-export async function DELETE(request: NextRequest) {
-  try {
-    // STRICT IDEMPOTENCY: Require Idempotency-Key header for session delete
-    await requireIdempotencyKey(request);
-
-    // Note: session DELETE is a cleanup operation
-    // Idempotency: cookie.delete() is idempotent - multiple calls safe
-    const cookieStore = await cookies();
-    cookieStore.delete('inventory_session');
-    
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Logout error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+export async function DELETE() {
+  return NextResponse.json({ success: true });
 }
 

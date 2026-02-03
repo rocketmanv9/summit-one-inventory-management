@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface PurchaseOrder {
   id: string;
@@ -48,7 +48,7 @@ export default function PurchasingPage() {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
 
-      const res = await fetch(`/api/inventory/purchasing?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/purchasing?${params}`);
       const { data } = await res.json();
       console.log('Fetched orders:', data);
       setOrders(data || []);
@@ -503,7 +503,7 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
   const fetchReceipts = async () => {
     setLoadingReceipts(true);
     try {
-      const res = await fetch(`/api/inventory/receiving?po_id=${po.id}`);
+      const res = await authenticatedFetch(`/api/inventory/receiving?po_id=${po.id}`);
       const { data } = await res.json();
       setReceipts(data || []);
     } catch (error) {
@@ -786,7 +786,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchVendors = async () => {
     try {
-      const res = await fetch('/api/inventory/vendors');
+      const res = await authenticatedFetch('/api/inventory/vendors');
       const { data } = await res.json();
       setVendors(data || []);
     } catch (error) {
@@ -796,7 +796,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -806,7 +806,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchVendorItems = async (vendorId: string) => {
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendorId}/items`);
+      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}/items`);
       const { data } = await res.json();
       setVendorItems(data || []);
     } catch (error) {
@@ -1071,7 +1071,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchVendors = async () => {
     try {
-      const res = await fetch('/api/inventory/vendors');
+      const res = await authenticatedFetch('/api/inventory/vendors');
       const { data } = await res.json();
       setVendors(data || []);
     } catch (error) {
@@ -1081,7 +1081,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -1091,7 +1091,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchVendorItems = async (vendorId: string) => {
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendorId}/items`);
+      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}/items`);
       const { data } = await res.json();
       setVendorItems(data || []);
     } catch (error) {

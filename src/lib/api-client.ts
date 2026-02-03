@@ -1,23 +1,27 @@
 /**
- * API Client Helper - Adds authorization to fetch requests
- * Automatically includes JWT token from Supabase session
+ * API Client Shim
+ *
+ * Keeps the same apiWrite signature used across the app,
+ * but routes inventory/supply-chain calls directly to Supabase.
  */
 
 import { createClient } from '@/supabase/client';
 
-/**
- * Get authorization header with JWT token
- */
+type ApiWriteOptions = {
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  body?: any;
+  idempotencyKey?: string;
+};
+
 async function getAuthHeader(): Promise<{ Authorization: string } | {}> {
   try {
     const supabase = createClient();
     const { data: { session }, error } = await supabase.auth.getSession();
-    
+
     if (error || !session?.access_token) {
-      console.warn('[API Client] No valid session found');
       return {};
     }
-    
+
     return {
       Authorization: `Bearer ${session.access_token}`
     };
@@ -27,61 +31,285 @@ async function getAuthHeader(): Promise<{ Authorization: string } | {}> {
   }
 }
 
+function isLikelyId(value: string): boolean {
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ||
+    /^\d+$/.test(value)
+  );
+}
+
+function slugToSnake(value: string): string {
+  return value.replace(/-/g, '_');
+}
+
+function singularize(value: string): string {
+  if (value.endsWith('ies')) return `${value.slice(0, -3)}y`;
+  if (value.endsWith('s')) return value.slice(0, -1);
+  return value;
+}
+
+function parseApiUrl(url: string) {
+  const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  const parsed = new URL(url, base);
+  const rawPath = parsed.pathname.startsWith('/api/')
+    ? parsed.pathname.slice(5)
+    : parsed.pathname.replace(/^\/+/, '');
+
+  const segments = rawPath.split('/').filter(Boolean);
+  const [namespace, resource, maybeIdOrAction, ...rest] = segments;
+  let id: string | null = null;
+  let actionSegments: string[] = [];
+
+  if (maybeIdOrAction && isLikelyId(maybeIdOrAction)) {
+    id = maybeIdOrAction;
+    actionSegments = rest;
+  } else if (maybeIdOrAction) {
+    actionSegments = [maybeIdOrAction, ...rest];
+  }
+
+  return {
+    namespace,
+    resource,
+    id,
+    actionSegments,
+    searchParams: parsed.searchParams
+  };
+}
+
+function isShimRoute(url: string): boolean {
+  const { namespace } = parseApiUrl(url);
+  return namespace === 'inventory' || namespace === 'supply-chain';
+}
+
+function getSchema(namespace?: string) {
+  if (namespace === 'inventory') return 'inventory';
+  if (namespace === 'supply-chain') return 'supply_chain';
+  return undefined;
+}
+
+function getTableName(resource?: string) {
+  if (!resource) return undefined;
+
+  const map: Record<string, string> = {
+    items: 'catalog_items',
+    categories: 'item_categories',
+    movements: 'stock_movements',
+    'vendor-items': 'vendor_items',
+    'location-types': 'location_types',
+    'assignment-types': 'assignment_types',
+    'cycle-counts': 'cycle_counts',
+    purchasing: 'purchase_orders',
+  };
+
+  return map[resource] || slugToSnake(resource);
+}
+
+async function runRpc(
+  supabase: any,
+  resource: string,
+  actionSegments: string[],
+  payload: Record<string, any>
+) {
+  const resourceSnake = slugToSnake(resource);
+  const resourceSingular = singularize(resourceSnake);
+  const actionSnake = actionSegments.map(slugToSnake).join('_');
+
+  const rpcCandidates = [
+    `rpc_${resourceSingular}_${actionSnake}`,
+    `${resourceSingular}_${actionSnake}`,
+    `rpc_${resourceSnake}_${actionSnake}`,
+    `${resourceSnake}_${actionSnake}`,
+    `rpc_${actionSnake}`,
+    actionSnake,
+  ];
+
+  for (const rpcName of rpcCandidates) {
+    const { data, error } = await supabase.rpc(rpcName, payload);
+    if (!error) {
+      return { data, error: null };
+    }
+
+    const message = error.message || '';
+    const code = (error as any).code;
+    if (code === 'PGRST202' || message.includes('does not exist')) {
+      continue;
+    }
+
+    return { data: null, error };
+  }
+
+  return {
+    data: null,
+    error: new Error(`RPC not found for ${resource}:${actionSegments.join('/')}`),
+  };
+}
+
+async function shimRequest(
+  url: string,
+  method: string,
+  body?: any
+): Promise<Response> {
+  const { namespace, resource, id, actionSegments, searchParams } = parseApiUrl(url);
+  const supabase = createClient();
+  let schema = getSchema(namespace);
+  const table = getTableName(resource);
+
+  if (namespace === 'inventory' && resource === 'vendors') {
+    schema = undefined;
+  }
+
+  if (!resource || !table) {
+    return new Response(JSON.stringify({ error: 'Invalid resource' }), { status: 400 });
+  }
+
+  const scoped = schema ? supabase.schema(schema) : supabase;
+
+  const basePayload: Record<string, any> = {
+    ...(body || {}),
+  };
+
+  if (id) {
+    basePayload.id = basePayload.id || id;
+    basePayload[`${singularize(slugToSnake(resource))}_id`] =
+      basePayload[`${singularize(slugToSnake(resource))}_id`] || id;
+    basePayload[`p_${singularize(slugToSnake(resource))}_id`] =
+      basePayload[`p_${singularize(slugToSnake(resource))}_id`] || id;
+  }
+
+  if (actionSegments.length > 0) {
+    const result = await runRpc(scoped, resource, actionSegments, basePayload);
+    if (result.error) {
+      return new Response(
+        JSON.stringify({ error: (result.error as Error).message || 'RPC failed' }),
+        { status: 400 }
+      );
+    }
+
+    return new Response(JSON.stringify({ data: result.data }), { status: 200 });
+  }
+
+  switch (method.toUpperCase()) {
+    case 'GET': {
+      let query = scoped.from(table).select('*');
+      if (id) {
+        query = query.eq('id', id);
+      }
+      for (const [key, value] of searchParams.entries()) {
+        if (value !== undefined && value !== null && value !== '') {
+          query = query.eq(key, value);
+        }
+      }
+      const { data, error } = await query;
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+      }
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }
+    case 'POST': {
+      const { data, error } = await scoped.from(table).insert(basePayload).select();
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+      }
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }
+    case 'PUT':
+    case 'PATCH': {
+      const updateId = id || basePayload.id;
+      if (!updateId) {
+        return new Response(JSON.stringify({ error: 'Missing id for update' }), { status: 400 });
+      }
+      const { data, error } = await scoped
+        .from(table)
+        .update(basePayload)
+        .eq('id', updateId)
+        .select();
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+      }
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }
+    case 'DELETE': {
+      const deleteId = id || basePayload.id;
+      if (!deleteId) {
+        return new Response(JSON.stringify({ error: 'Missing id for delete' }), { status: 400 });
+      }
+      const { data, error } = await scoped
+        .from(table)
+        .delete()
+        .eq('id', deleteId)
+        .select();
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+      }
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }
+    default:
+      return new Response(JSON.stringify({ error: `Unsupported method ${method}` }), { status: 405 });
+  }
+}
+
 /**
  * Authenticated fetch wrapper
- * Automatically includes JWT token in Authorization header
+ * Falls back to fetch for non-shim routes.
  */
 export async function authenticatedFetch(
   url: string,
   options?: RequestInit
 ): Promise<Response> {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options?.headers,
-    ...(await getAuthHeader())
-  };
+  if (isShimRoute(url)) {
+    return shimRequest(url, options?.method || 'GET');
+  }
+
+  const authHeader = await getAuthHeader();
 
   return fetch(url, {
     ...options,
-    headers
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+      ...(options?.headers || {}),
+    },
   });
 }
 
 /**
  * Authenticated write with idempotency
- * CRITICAL: Generates stable idempotency key ONCE per call, reused on retries
- * 
- * @param url - API endpoint
- * @param options - Fetch options (method, body, etc.)
- * @param idempotencyKey - Optional override; if not provided, generates one automatically
- * @returns Response
+ * Supports both signatures:
+ * - apiWrite(url, { method, body })
+ * - apiWrite(url, method, body)
  */
 export async function apiWrite(
   url: string,
-  options: {
-    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    body?: any;
-    idempotencyKey?: string;
-  }
+  optionsOrMethod: ApiWriteOptions | ApiWriteOptions['method'],
+  body?: any
 ): Promise<Response> {
-  // Generate idempotency key ONCE if not provided
-  const idempotencyKey = options.idempotencyKey || crypto.randomUUID();
-  
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Idempotency-Key': idempotencyKey,
-    ...(await getAuthHeader()) as Record<string, string>
-  };
+  const options: ApiWriteOptions =
+    typeof optionsOrMethod === 'string'
+      ? { method: optionsOrMethod, body }
+      : optionsOrMethod;
 
-  const bodyData = options.body ? {
-    ...options.body,
-    last_event_id: options.body.last_event_id || idempotencyKey
-  } : undefined;
+  const idempotencyKey = options.idempotencyKey || crypto.randomUUID();
+  const bodyData = options.body
+    ? {
+        ...options.body,
+        last_event_id: options.body.last_event_id || idempotencyKey,
+      }
+    : undefined;
+
+  if (isShimRoute(url)) {
+    return shimRequest(url, options.method, bodyData);
+  }
+
+  const authHeader = await getAuthHeader();
 
   return fetch(url, {
     method: options.method,
-    headers,
-    body: bodyData ? JSON.stringify(bodyData) : undefined
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+      ...authHeader,
+    },
+    body: bodyData ? JSON.stringify(bodyData) : undefined,
   });
 }
 
@@ -92,12 +320,12 @@ export async function apiWrite(
  */
 export function buildQueryString(params: Record<string, any>): string {
   const searchParams = new URLSearchParams();
-  
+
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) {
       searchParams.append(key, String(value));
     }
   }
-  
+
   return searchParams.toString();
 }

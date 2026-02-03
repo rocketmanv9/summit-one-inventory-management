@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Category {
   id: string;
@@ -27,7 +27,7 @@ export default function CategoriesPage() {
   const fetchCategories = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/categories');
+      const res = await authenticatedFetch('/api/inventory/categories');
       if (res.ok) {
         const data = await res.json();
         setCategories(data.data || []);

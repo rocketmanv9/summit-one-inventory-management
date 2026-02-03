@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
   try {
     // SECURITY: Admin-only debug endpoint
-    const { supabase, role } = await createUserClient(request);
-    
-    if (role !== 'admin') {
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
+
+    if (context.role !== 'admin') {
       return NextResponse.json(
         { error: 'Forbidden - admin access required' },
         { status: 403 }

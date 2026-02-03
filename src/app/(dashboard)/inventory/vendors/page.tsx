@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Vendor {
   id: string;
@@ -39,7 +39,7 @@ export default function VendorsPage() {
   const fetchVendors = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/vendors');
+      const res = await authenticatedFetch('/api/inventory/vendors');
       const { data } = await res.json();
       setVendors(data || []);
     } catch (error) {

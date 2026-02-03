@@ -7,7 +7,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface CatalogItem {
   id: string;
@@ -292,7 +292,7 @@ function CreateItemModal({
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch('/api/inventory/categories');
+      const res = await authenticatedFetch('/api/inventory/categories');
       if (res.ok) {
         const data = await res.json();
         setCategories(data.data || []);

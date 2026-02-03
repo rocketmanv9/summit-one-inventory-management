@@ -4,50 +4,24 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUnscopedClient, getIdempotencyKey } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
-
-async function getSessionData() {
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('inventory_session');
-  
-  if (!sessionCookie) {
-    return null;
-  }
-  
-  try {
-    const session = JSON.parse(sessionCookie.value);
-    if (session.expiresAt && session.expiresAt < Date.now()) {
-      return null;
-    }
-    return session;
-  } catch (error) {
-    return null;
-  }
-}
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     const { id } = await params;
-    const supabase = createUnscopedClient();
     
     const { data: dashboard, error } = await supabase
       .from('dashboards')
       .select('*')
       .eq('id', id)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null)
       .single();
     
@@ -73,28 +47,11 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    // ENFORCE IDEMPOTENCY (STRICT)
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for PATCH operations' },
-        { status: 400 }
-      );
-    }
-    
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     const { id } = await params;
     const body = await request.json();
     const { description, is_default } = body;
@@ -111,14 +68,12 @@ export async function PATCH(
       );
     }
     
-    const supabase = createUnscopedClient();
-    
     // If setting as default, unset all other defaults for this tenant first
     if (is_default === true) {
       await supabase
         .from('dashboards')
         .update({ is_default: false })
-        .eq('tenant_id', session.tenantId)
+        .eq('tenant_id', context.tenantId)
         .neq('id', id);
     }
     
@@ -126,7 +81,7 @@ export async function PATCH(
       .from('dashboards')
       .update(updates)
       .eq('id', id)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null)
       .select()
       .single();
@@ -153,37 +108,19 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await getSessionData();
-  
-  if (!session || !session.tenantId) {
-    return NextResponse.json(
-      { error: 'Not authenticated' },
-      { status: 401 }
-    );
-  }
-  
   try {
-    // ENFORCE IDEMPOTENCY (STRICT)
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for DELETE operations' },
-        { status: 400 }
-      );
-    }
-    
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     const { id } = await params;
-    const supabase = createUnscopedClient();
     
     // Soft delete the dashboard by setting deleted_at timestamp
     const { error } = await supabase
       .from('dashboards')
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', id)
-      .eq('tenant_id', session.tenantId)
+      .eq('tenant_id', context.tenantId)
       .is('deleted_at', null);
     
     if (error) {

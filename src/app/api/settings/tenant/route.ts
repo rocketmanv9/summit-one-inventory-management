@@ -5,17 +5,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
-import { cookies } from 'next/headers';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 export async function GET(request: NextRequest) {
   try {
-    const { supabase, tenantId } = await createUserClient(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
 
     // Use the function to get or create default settings
     const { data: settings, error } = await supabase
       .schema('supply_chain')
-      .rpc('get_or_create_tenant_settings', { p_tenant_id: tenantId });
+      .rpc('get_or_create_tenant_settings', { p_tenant_id: context.tenantId });
 
     if (error) {
       console.error('Error fetching tenant settings:', error);
@@ -34,37 +36,12 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const { supabase, tenantId, userId } = await createUserClient(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
 
-    // ENFORCE IDEMPOTENCY (STRICT)
-    let idempotencyKey: string;
-    try {
-      const { requireIdempotencyKey } = await import('@/lib/db-middleware');
-      idempotencyKey = await requireIdempotencyKey(request);
-    } catch (error: any) {
-      return NextResponse.json(
-        { error: error.message || 'Idempotency-Key header required for updating settings' },
-        { status: 400 }
-      );
-    }
+    const { client: supabase, context } = auth;
 
-    // Check if user is admin via cookie session
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('inventory_session');
-
-    if (!sessionCookie) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let userRole = 'user';
-    try {
-      const session = JSON.parse(sessionCookie.value);
-      userRole = session.role || 'user';
-    } catch (error) {
-      console.error('Failed to parse session:', error);
-    }
-
-    if (userRole !== 'admin') {
+    if (context.role !== 'admin') {
       return NextResponse.json(
         { error: 'Forbidden', message: 'Admin access required to update settings' },
         { status: 403 }
@@ -115,12 +92,12 @@ export async function PUT(request: NextRequest) {
     // First ensure settings exist (get or create)
     await supabase
       .schema('supply_chain')
-      .rpc('get_or_create_tenant_settings', { p_tenant_id: tenantId });
+      .rpc('get_or_create_tenant_settings', { p_tenant_id: context.tenantId });
 
     // Build update object
     const updateData: any = {
       updated_at: new Date().toISOString(),
-      updated_by: userId,
+      updated_by: context.userId,
     };
 
     if (po_number_format !== undefined) {
@@ -150,7 +127,7 @@ export async function PUT(request: NextRequest) {
       .schema('supply_chain')
       .from('tenant_settings')
       .update(updateData)
-      .eq('tenant_id', tenantId)
+      .eq('tenant_id', context.tenantId)
       .select();
 
     if (error) {

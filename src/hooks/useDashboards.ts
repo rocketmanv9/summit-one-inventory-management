@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/supabase/client';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 
 export function useDashboards() {
@@ -13,7 +13,7 @@ export function useDashboards() {
   useEffect(() => {
     async function fetchDashboards() {
       try {
-        const response = await fetch('/api/dashboards');
+        const response = await authenticatedFetch('/api/dashboards');
         if (!response.ok) throw new Error('Failed to fetch dashboards');
         
         const { data } = await response.json();
@@ -43,7 +43,7 @@ export function useDashboard(id: string | null) {
     }
 
     try {
-      const response = await fetch(`/api/dashboards/${id}`);
+      const response = await authenticatedFetch(`/api/dashboards/${id}`);
       if (!response.ok) throw new Error('Failed to fetch dashboard');
       
       const { data } = await response.json();
@@ -80,7 +80,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     }
 
     try {
-      const response = await fetch(`/api/dashboards/${dashboardId}/widgets`);
+      const response = await authenticatedFetch(`/api/dashboards/${dashboardId}/widgets`);
       if (!response.ok) throw new Error('Failed to fetch widgets');
       
       const { data } = await response.json();
@@ -150,7 +150,7 @@ export function useWidgetRegistry() {
   useEffect(() => {
     async function fetchRegistry() {
       try {
-        const response = await fetch('/api/widgets');
+        const response = await authenticatedFetch('/api/widgets');
         if (!response.ok) throw new Error('Failed to fetch widget registry');
         
         const { data } = await response.json();

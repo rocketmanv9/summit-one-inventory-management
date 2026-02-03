@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, Search, User, ChevronDown, LogOut, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/supabase/client';
 
 export function TopNav() {
   const router = useRouter();
@@ -16,13 +17,9 @@ export function TopNav() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
-      });
-
-      if (response.ok) {
-        router.push('/dev-login');
-      }
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.push('/');
     } catch (error) {
       console.error('Logout failed:', error);
     }

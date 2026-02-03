@@ -35,31 +35,7 @@ export async function createAuthenticatedClient(
   }
 
   if (!token) {
-    const sessionCookie = request.cookies.get('inventory_session');
-    if (!sessionCookie) {
-      console.error('[Secure Client] No Authorization header or session cookie');
-      return null;
-    }
-
-    try {
-      const session = JSON.parse(sessionCookie.value);
-      if (session?.expiresAt && session.expiresAt < Date.now()) {
-        console.error('[Secure Client] Session expired');
-        return null;
-      }
-      if (!session?.supabaseToken) {
-        console.error('[Secure Client] Missing supabaseToken in session');
-        return null;
-      }
-      token = session.supabaseToken;
-    } catch (error) {
-      console.error('[Secure Client] Invalid session cookie');
-      return null;
-    }
-  }
-
-  if (!token) {
-    console.error('[Secure Client] Missing token after header/cookie parsing');
+    console.error('[Secure Client] Missing Authorization header (Bearer token required)');
     return null;
   }
 

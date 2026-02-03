@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 
 export default function DevLoginPage() {
   const router = useRouter();
@@ -13,21 +14,31 @@ export default function DevLoginPage() {
     setMessage('');
     
     try {
-      const response = await fetch('/api/dev-session', {
+      const response = await fetch('/api/auth/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: '11111111-1111-1111-1111-111111111111',
-          email: 'dev@summit.one',
-          tenantId: 'ba964c21-05a0-4a71-92ea-47ec7cfe0bbd',
-          role: 'admin',
-          fullName: 'Dev User',
-        }),
+        body: JSON.stringify({ ticket: 'ticket_dev_local' }),
       });
       
       const data = await response.json();
       
       if (response.ok) {
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        );
+
+        const { error } = await supabase.auth.setSession({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token
+        });
+
+        if (error) {
+          setMessage(`✗ Error: ${error.message}`);
+          setLoading(false);
+          return;
+        }
+
         setMessage('✓ Session created! Redirecting...');
         setTimeout(() => {
           router.push('/dashboard');

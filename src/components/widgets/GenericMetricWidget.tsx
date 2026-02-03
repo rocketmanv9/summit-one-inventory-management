@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { authenticatedFetch } from '@/lib/api-client';
 import type { DashboardWidget } from '@/types/dashboard';
 import { BaseMetricWidget } from './BaseMetricWidget';
 
@@ -11,7 +12,7 @@ export function GenericMetricWidget({ widget }: { widget: DashboardWidget }) {
   useEffect(() => {
     async function fetchData() {
       try {
-        const response = await fetch('/api/widgets/data', {
+        const response = await authenticatedFetch('/api/widgets/data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

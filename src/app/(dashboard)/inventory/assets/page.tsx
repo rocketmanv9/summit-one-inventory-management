@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Asset {
   id: string;
@@ -54,7 +54,7 @@ export default function AssetsPage() {
       if (filters.status) params.set('status', filters.status);
       if (filters.assigned === 'true') params.set('assigned', 'true');
 
-      const res = await fetch(`/api/inventory/assets?${params}`);
+      const res = await authenticatedFetch(`/api/inventory/assets?${params}`);
       const { data } = await res.json();
       setAssets(data || []);
     } catch (error) {
@@ -66,7 +66,7 @@ export default function AssetsPage() {
 
   const fetchAssignmentTypes = async () => {
     try {
-      const res = await fetch('/api/inventory/assignment-types');
+      const res = await authenticatedFetch('/api/inventory/assignment-types');
       const { data } = await res.json();
       setAssignmentTypes(data || []);
     } catch (error) {
@@ -355,7 +355,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await fetch('/api/inventory/items');
+      const res = await authenticatedFetch('/api/inventory/items');
       const { data } = await res.json();
       setCatalogItems(data || []);
     } catch (error) {
@@ -365,7 +365,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {
@@ -684,7 +684,7 @@ function EditAssetModal({
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await fetch('/api/inventory/items');
+      const res = await authenticatedFetch('/api/inventory/items');
       const { data } = await res.json();
       setCatalogItems(data || []);
     } catch (error) {
@@ -694,7 +694,7 @@ function EditAssetModal({
 
   const fetchLocations = async () => {
     try {
-      const res = await fetch('/api/inventory/locations');
+      const res = await authenticatedFetch('/api/inventory/locations');
       const { data } = await res.json();
       setLocations(data || []);
     } catch (error) {

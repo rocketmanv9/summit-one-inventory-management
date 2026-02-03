@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUserClient } from '@/lib/db-middleware';
+import { createAuthenticatedClientOrThrow } from '@/lib/secure-server-client';
 
 // Force dynamic
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  * Returns event definitions catalog
  * 
  * SECURITY: Admin-only endpoint, production-gated
- * - Requires JWT authentication via createUserClient()
+ * - Requires JWT authentication via createAuthenticatedClientOrThrow()
  * - Requires admin role from verified JWT claims
  * - Disabled in production (returns 404)
  */
@@ -24,10 +24,13 @@ export async function GET(request: NextRequest) {
 
   try {
     // SECURITY: Require JWT authentication
-    const { supabase, role } = await createUserClient(request);
+    const auth = await createAuthenticatedClientOrThrow(request);
+    if (auth instanceof NextResponse) return auth;
+
+    const { client: supabase, context } = auth;
     
     // SECURITY: Require admin role from verified JWT claims
-    if (role !== 'admin') {
+    if (context.role !== 'admin') {
       return NextResponse.json(
         { error: 'Forbidden - admin access required' },
         { status: 403 }

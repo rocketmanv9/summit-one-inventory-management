@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
-import { apiWrite } from '@/lib/api-client';
+import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface ABCItem {
   catalog_item_id: string;
@@ -32,7 +32,7 @@ export default function ABCClassificationPage() {
   const fetchClassification = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/abc-classification');
+      const res = await authenticatedFetch('/api/inventory/abc-classification');
       const { data } = await res.json();
       setItems(data || []);
     } catch (error) {
