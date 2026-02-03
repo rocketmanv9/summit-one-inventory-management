@@ -127,8 +127,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 /**
  * Validate ticket with Core API
  * 
- * For now: Mock validation (any ticket starting with "ticket_" is valid)
- * When Core is ready: Call Core's /api/auth/validate-sso-ticket endpoint
+ * Calls Core's ticket validation RPC to consume and validate the ticket
  */
 async function validateTicketWithCore(ticket: string): Promise<{
   user_id: string;
@@ -136,54 +135,91 @@ async function validateTicketWithCore(ticket: string): Promise<{
   email?: string;
   role?: string;
 } | null> {
-  // MOCK: In development, accept any ticket starting with "ticket_"
-  if (!ticket.startsWith('ticket_')) {
-    console.warn('[Exchange] Invalid ticket format:', ticket);
-    return null;
-  }
-
-  // MOCK: Generate consistent test data
-  // In production, this would query Core's database
-  const mockUserId = '00000000-0000-0000-0000-000000000000';
-  const mockTenantId = '11111111-1111-1111-1111-111111111111';
-  const mockEmail = 'user@summit-one.app';
-  const mockRole = 'authenticated';
-
-  console.log('[Exchange] Using mock ticket validation:', {
-    ticket,
-    userId: mockUserId,
-    tenantId: mockTenantId
-  });
-
-  return {
-    user_id: mockUserId,
-    tenant_id: mockTenantId,
-    email: mockEmail,
-    role: mockRole
-  };
-
-  // PRODUCTION: Uncomment this when Core API is ready
-  /*
-  const validatorUrl = `${process.env.NEXT_PUBLIC_CORE_URL}/api/auth/validate-sso-ticket`;
-  
   try {
-    const response = await fetch(`${validatorUrl}?ticket=${encodeURIComponent(ticket)}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
+    // Hash the ticket with the shared secret
+    const ticketHash = await hashTicket(ticket);
+    
+    // Call Core's ticket validation endpoint
+    const coreUrl = process.env.NEXT_PUBLIC_CORE_URL || 'https://dev.summit-one.app';
+    const validationUrl = `${coreUrl}/api/auth/validate-ticket`;
+    
+    console.log('[Exchange] Validating ticket with Core:', {
+      coreUrl,
+      ticketPrefix: ticket.substring(0, 8) + '...'
+    });
+
+    const response = await fetch(validationUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ticket_code: ticket,
+        ticket_hash: ticketHash,
+        target_service: 'inventory',
+        ip: '127.0.0.1', // Get from request headers in production
+        user_agent: 'inventory-service'
+      })
     });
 
     if (!response.ok) {
-      console.error('[Exchange] Ticket validation failed:', response.statusText);
+      const errorData = await response.json().catch(() => ({}));
+      console.error('[Exchange] Ticket validation failed:', {
+        status: response.status,
+        error: errorData
+      });
       return null;
     }
 
-    const payload = await response.json();
-    return payload;
+    const data = await response.json();
+    
+    if (!data.user_id || !data.tenant_id) {
+      console.error('[Exchange] Invalid response from Core:', data);
+      return null;
+    }
+
+    console.log('[Exchange] Ticket validated successfully:', {
+      userId: data.user_id,
+      tenantId: data.tenant_id
+    });
+
+    return {
+      user_id: data.user_id,
+      tenant_id: data.tenant_id,
+      email: data.email,
+      role: data.role || 'authenticated'
+    };
   } catch (error) {
     console.error('[Exchange] Ticket validation error:', error);
     return null;
   }
-  */
+}
+
+/**
+ * Hash ticket using the shared SSO secret
+ * Must match Core's hashing implementation
+ */
+async function hashTicket(code: string): Promise<string> {
+  const secret = process.env.CORE_SSO_SECRET || 'gL5eMvCMU@9C9YpH';
+  
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(code)
+  );
+  
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /**
