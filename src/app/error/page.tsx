@@ -7,6 +7,15 @@ const errorMessages: Record<string, string> = {
   no_token: 'No authentication token provided',
   invalid_token: 'Invalid or expired authentication token',
   session_expired: 'Your session has expired',
+  no_ticket: 'No authentication ticket provided',
+  invalid_ticket: 'Invalid or expired authentication ticket',
+  not_authenticated: 'You are not authenticated. Please login from Summit One.',
+  'Exchange failed: 401': 'Authentication ticket has expired or is invalid',
+  'Exchange failed: 404 (function not deployed)': 'Authentication service is missing the exchange function. Contact the Core team.',
+  'Exchange failed: 403': 'Access denied. Please check your permissions.',
+  'Exchange failed: 500': 'Authentication service error. Please try again.',
+  'Missing Core configuration': 'Service configuration error. Please contact support.',
+  'Invalid response from Core': 'Authentication service error. Please try again.',
 };
 
 function ErrorContent() {
@@ -14,9 +23,9 @@ function ErrorContent() {
   const [message, setMessage] = useState<string>('');
   
   useEffect(() => {
-    const messageParam = searchParams.get('message') || 'invalid_token';
+    const messageParam = searchParams.get('msg') || searchParams.get('message') || 'invalid_token';
     // If the message is not a known code, use it directly
-    setMessage(errorMessages[messageParam] || messageParam);
+    setMessage(errorMessages[messageParam] || decodeURIComponent(messageParam));
   }, [searchParams]);
   
   const handleReturnToCore = () => {

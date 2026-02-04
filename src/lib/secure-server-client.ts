@@ -34,7 +34,38 @@ export async function createAuthenticatedClient(
     token = authHeader.substring(7);
   }
 
+  // If no Bearer token, check for cookie-based auth (SSO)
   if (!token) {
+    const userId = request.cookies.get('user_id')?.value || request.headers.get('x-user-id');
+    const tenantId = request.cookies.get('tenant_id')?.value || request.headers.get('x-tenant-id');
+    const userEmail = request.cookies.get('user_email')?.value;
+
+    if (userId && tenantId) {
+      // Cookie-based auth - use anon key (RLS will enforce tenant isolation)
+      // We'll pass tenant_id in queries explicitly
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          }
+        }
+      );
+
+      // Return client with context from cookies
+      return {
+        client: supabase,
+        context: {
+          userId,
+          tenantId,
+          role: 'authenticated',
+          email: userEmail
+        }
+      };
+    }
+
     console.error('[Secure Client] Missing Authorization header (Bearer token required)');
     return null;
   }

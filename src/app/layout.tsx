@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
-import { TicketAuthGate } from "@/components/TicketAuthGate";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,9 +29,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Suspense fallback={<div className="min-h-screen" />}>
-          <TicketAuthGate>
-            {children}
-          </TicketAuthGate>
+          {children}
         </Suspense>
       </body>
     </html>
