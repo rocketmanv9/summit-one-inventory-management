@@ -6,24 +6,30 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface Reservation {
   id: string;
   catalog_item_id: string;
   location_id: string;
+  destination_location_id?: string;
   qty: number;
   reservation_type: 'fungible' | 'serialized';
   asset_id?: string;
-  allocation_type: 'job' | 'project' | 'customer_order' | 'internal_order' | 'kit' | 'other' | null;
+  allocation_type: string | null;
   status: string;
   job_ref?: string;
   external_order_ref?: string;
   needed_by?: string;
   expiration_date?: string;
+  reserved_from?: string;
+  reserved_until?: string;
+  notes?: string;
   created_at: string;
+  last_event_id: string;
   catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string };
   locations?: { id: string; name: string };
+  destination_locations?: { id: string; name: string };
   assets?: { id: string; asset_tag: string; serial_number?: string; vin?: string };
 }
 
@@ -33,21 +39,26 @@ export default function ReservationsPage() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
+  const [reservationTypes, setReservationTypes] = useState<
+    Array<{ type_key: string; display_name: string; is_active: boolean }>
+  >([]);
 
   useEffect(() => {
     fetchReservations();
   }, [filters]);
 
+  useEffect(() => {
+    fetchReservationTypes();
+  }, []);
+
   const fetchReservations = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.status) params.set('status', filters.status);
-      if (filters.allocation_type) params.set('allocation_type', filters.allocation_type);
-
-      const res = await authenticatedFetch(`/api/inventory/reservations?${params}`);
-      const { data } = await res.json();
-      setReservations(data || []);
+      const data = await InventoryRPC.getReservations({
+        status: filters.status || undefined,
+        allocation_type: filters.allocation_type || undefined,
+      });
+      setReservations((data || []) as Reservation[]);
     } catch (error) {
       console.error('Error fetching reservations:', error);
     } finally {
@@ -55,10 +66,31 @@ export default function ReservationsPage() {
     }
   };
 
-  const handleFulfill = async (reservationId: string, status: string) => {
+  const fetchReservationTypes = async () => {
+    try {
+      const data = await InventoryRPC.getReservationTypes({ includeInactive: false });
+      setReservationTypes(
+        (data || []).map((type) => ({
+          type_key: type.type_key,
+          display_name: type.display_name,
+          is_active: type.is_active,
+        }))
+      );
+    } catch (error) {
+      console.error('Error fetching reservation types:', error);
+    }
+  };
+
+  const allocationTypeLabel = (typeKey?: string | null) => {
+    if (!typeKey) return '';
+    const match = reservationTypes.find((type) => type.type_key === typeKey);
+    return match?.display_name || typeKey;
+  };
+
+  const handleFulfill = async (reservation: Reservation) => {
     // Validation: Check if action is allowed in current state
-    if (status !== 'active') {
-      alert(`Cannot fulfill reservation in status: ${status}. Only active reservations can be fulfilled.`);
+    if (reservation.status !== 'active') {
+      alert(`Cannot fulfill reservation in status: ${reservation.status}. Only active reservations can be fulfilled.`);
       return;
     }
 
@@ -67,17 +99,11 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/fulfill`, {
-        method: 'POST',
-      });
-      
-      const result = await res.json();
-      
-      if (!res.ok) {
-        // Show specific error message
-        alert(`Error: ${result.error}${result.code ? ` (${result.code})` : ''}`);
-        return;
+      if (!reservation.last_event_id) {
+        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
       }
+
+      await InventoryRPC.fulfillReservation(reservation.id, reservation.last_event_id);
       
       alert('Reservation fulfilled successfully!');
       fetchReservations();
@@ -87,10 +113,10 @@ export default function ReservationsPage() {
     }
   };
 
-  const handleRelease = async (reservationId: string, status: string) => {
+  const handleRelease = async (reservation: Reservation) => {
     // Validation: Check if action is allowed in current state
-    if (status !== 'active') {
-      alert(`Cannot release reservation in status: ${status}. Only active reservations can be released.`);
+    if (reservation.status !== 'active') {
+      alert(`Cannot release reservation in status: ${reservation.status}. Only active reservations can be released.`);
       return;
     }
 
@@ -99,17 +125,11 @@ export default function ReservationsPage() {
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/release`, {
-        method: 'POST',
-      });
-      
-      const result = await res.json();
-      
-      if (!res.ok) {
-        // Show specific error message
-        alert(`Error: ${result.error}${result.code ? ` (${result.code})` : ''}`);
-        return;
+      if (!reservation.last_event_id) {
+        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
       }
+
+      await InventoryRPC.releaseReservation(reservation.id, reservation.last_event_id);
       
       alert('Reservation released successfully!');
       fetchReservations();
@@ -119,22 +139,17 @@ export default function ReservationsPage() {
     }
   };
 
-  const handleUndoFulfill = async (reservationId: string) => {
+  const handleUndoFulfill = async (reservation: Reservation) => {
     if (!confirm('Undo fulfillment? This will restore the reservation to active status and return stock (if fungible).')) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/undo-fulfill`, {
-        method: 'POST',
-      });
-      
-      const result = await res.json();
-      
-      if (!res.ok) {
-        alert(`Error: ${result.error}`);
-        return;
+      if (!reservation.last_event_id) {
+        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
       }
+
+      await InventoryRPC.undoFulfillReservation(reservation.id, reservation.last_event_id);
       
       alert('Fulfillment reversed successfully!');
       fetchReservations();
@@ -144,22 +159,17 @@ export default function ReservationsPage() {
     }
   };
 
-  const handleUndoRelease = async (reservationId: string) => {
+  const handleUndoRelease = async (reservation: Reservation) => {
     if (!confirm('Undo release? This will restore the reservation to active status and re-reserve the stock/asset.')) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/reservations/${reservationId}/undo-release`, {
-        method: 'POST',
-      });
-      
-      const result = await res.json();
-      
-      if (!res.ok) {
-        alert(`Error: ${result.error}`);
-        return;
+      if (!reservation.last_event_id) {
+        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
       }
+
+      await InventoryRPC.undoReleaseReservation(reservation.id, reservation.last_event_id);
       
       alert('Release reversed successfully!');
       fetchReservations();
@@ -210,33 +220,31 @@ export default function ReservationsPage() {
       render: (row: Reservation) => row.locations?.name || '-',
     },
     {
+      key: 'destination',
+      header: 'Needed At',
+      render: (row: Reservation) => row.destination_locations?.name || '-',
+    },
+    {
       key: 'allocation_type',
       header: 'Type',
       render: (row: Reservation) => (
-        <StatusChip status={row.allocation_type} />
+        <span className="inline-flex px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-700">
+          {allocationTypeLabel(row.allocation_type) || '—'}
+        </span>
       ),
     },
     {
       key: 'job_ref',
       header: 'Job/Order',
       render: (row: Reservation) => {
-        let jobRefText = null;
-        if (row.job_ref) {
-          try {
-            const jobData = typeof row.job_ref === 'string' ? JSON.parse(row.job_ref) : row.job_ref;
-            jobRefText = jobData?.job_name || jobData?.job_id || null;
-          } catch {
-            jobRefText = row.job_ref;
-          }
-        }
-        
+        const jobText = row.job_ref ? String(row.job_ref) : '';
         return (
           <div>
-            {jobRefText && <div className="font-mono text-sm">{jobRefText}</div>}
+            {jobText && <div className="font-mono text-sm">{jobText}</div>}
             {row.external_order_ref && (
               <div className="text-xs text-muted-foreground">{row.external_order_ref}</div>
             )}
-            {!jobRefText && !row.external_order_ref && '-'}
+            {!jobText && !row.external_order_ref && '-'}
           </div>
         );
       },
@@ -252,6 +260,21 @@ export default function ReservationsPage() {
           <span className={isOverdue ? 'text-red-600 font-medium' : ''}>
             {date.toLocaleDateString()}
           </span>
+        );
+      },
+    },
+    {
+      key: 'reserved_window',
+      header: 'Reserved',
+      render: (row: Reservation) => {
+        if (!row.reserved_from || !row.reserved_until) return '-';
+        const from = new Date(row.reserved_from);
+        const until = new Date(row.reserved_until);
+        return (
+          <div className="text-sm">
+            <div>{from.toLocaleDateString()}</div>
+            <div className="text-xs text-muted-foreground">to {until.toLocaleDateString()}</div>
+          </div>
         );
       },
     },
@@ -277,7 +300,7 @@ export default function ReservationsPage() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handleFulfill(row.id, row.status);
+                handleFulfill(row);
               }}
               disabled={!isActive}
               className={`px-3 py-1 text-sm rounded ${
@@ -302,7 +325,7 @@ export default function ReservationsPage() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handleRelease(row.id, row.status);
+                handleRelease(row);
               }}
               disabled={!isActive}
               className={`px-3 py-1 text-sm rounded ${
@@ -328,7 +351,7 @@ export default function ReservationsPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleUndoFulfill(row.id);
+                  handleUndoFulfill(row);
                 }}
                 className="px-3 py-1 text-sm rounded bg-orange-600 hover:bg-orange-700 text-white"
                 title="Undo fulfillment - restore to active status"
@@ -342,7 +365,7 @@ export default function ReservationsPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleUndoRelease(row.id);
+                  handleUndoRelease(row);
                 }}
                 className="px-3 py-1 text-sm rounded bg-orange-600 hover:bg-orange-700 text-white"
                 title="Undo release - restore to active status"
@@ -364,6 +387,7 @@ export default function ReservationsPage() {
       options: [
         { value: 'active', label: 'Active' },
         { value: 'fulfilled', label: 'Fulfilled' },
+        { value: 'released', label: 'Released' },
         { value: 'cancelled', label: 'Cancelled' },
         { value: 'expired', label: 'Expired' },
       ],
@@ -372,11 +396,10 @@ export default function ReservationsPage() {
       key: 'allocation_type',
       label: 'Type',
       type: 'select' as const,
-      options: [
-        { value: 'soft', label: 'Soft' },
-        { value: 'hard', label: 'Hard' },
-        { value: 'kit', label: 'Kit' },
-      ],
+      options: reservationTypes.map((type) => ({
+        value: type.type_key,
+        label: type.display_name,
+      })),
     },
   ];
 
@@ -387,12 +410,20 @@ export default function ReservationsPage() {
           title="Reservations"
           description="Manage stock reservations and allocations. Example: Reserve 300 tons of asphalt for the State Route 12 project starting next week, ensuring it's not allocated to other jobs, then release it when the material is issued to the job site."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Create Reservation
-            </button>
+            <div className="flex gap-2">
+              <a
+                href="/settings/reservation-types"
+                className="px-4 py-2 border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                Manage Types
+              </a>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Create Reservation
+              </button>
+            </div>
           }
         />
 
@@ -420,9 +451,9 @@ export default function ReservationsPage() {
           </div>
           <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
             <div className="text-2xl font-bold text-purple-700">
-              {reservations.filter(r => r.allocation_type === 'kit').length}
+              {reservations.filter(r => r.allocation_type === 'internal_order').length}
             </div>
-            <div className="text-sm text-purple-600">Kits</div>
+            <div className="text-sm text-purple-600">Internal</div>
           </div>
         </div>
 
@@ -448,6 +479,7 @@ export default function ReservationsPage() {
               setShowCreateModal(false);
               fetchReservations();
             }}
+            reservationTypes={reservationTypes}
           />
         )}
       </div>
@@ -459,25 +491,50 @@ export default function ReservationsPage() {
 interface CreateReservationModalProps {
   onClose: () => void;
   onCreated: () => void;
+  reservationTypes: Array<{ type_key: string; display_name: string; is_active: boolean }>;
 }
 
-function CreateReservationModal({ onClose, onCreated }: CreateReservationModalProps) {
+function CreateReservationModal({ onClose, onCreated, reservationTypes }: CreateReservationModalProps) {
   const [form, setForm] = useState({
     catalog_item_id: '',
     asset_id: '',
     location_id: '',
+    destination_location_id: '',
     qty: '',
     allocation_type: 'other',
     job_ref: '',
     external_order_ref: '',
     needed_by: '',
+    reserved_from: '',
+    reserved_until: '',
+    notes: '',
   });
   const [catalogItems, setCatalogItems] = useState<{ id: string; name: string; sku: string; tracking_mode?: string }[]>([]);
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
-  const [availableAssets, setAvailableAssets] = useState<{ asset_id: string; asset_tag: string; serial_number?: string; is_available: boolean }[]>([]);
+  const [availableAssets, setAvailableAssets] = useState<{ asset_id: string; asset_tag: string; serial_number?: string | null; location_id?: string | null; location_name?: string | null; is_available: boolean }[]>([]);
   const [selectedItem, setSelectedItem] = useState<{ tracking_mode?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const isSerializedItem = (mode?: string) => {
+    const value = mode || 'stock';
+    return value === 'serialized' || value === 'both' || value === 'hybrid';
+  };
+  const typeOptions = reservationTypes.length > 0
+    ? reservationTypes
+    : [
+        { type_key: 'job', display_name: 'Job', is_active: true },
+        { type_key: 'project', display_name: 'Project', is_active: true },
+        { type_key: 'customer_order', display_name: 'Customer Order', is_active: true },
+        { type_key: 'internal_order', display_name: 'Internal Order', is_active: true },
+        { type_key: 'other', display_name: 'Other', is_active: true },
+      ];
+
+  useEffect(() => {
+    if (!typeOptions.length) return;
+    if (!typeOptions.some((type) => type.type_key === form.allocation_type)) {
+      setForm((prev) => ({ ...prev, allocation_type: typeOptions[0].type_key }));
+    }
+  }, [typeOptions.map((type) => type.type_key).join('|')]);
 
   useEffect(() => {
     fetchCatalogItems();
@@ -489,21 +546,28 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
     if (form.catalog_item_id) {
       const item = catalogItems.find(i => i.id === form.catalog_item_id);
       setSelectedItem(item || null);
-      
-      if (item?.tracking_mode === 'serialized') {
+
+      const mode = item?.tracking_mode || 'stock';
+      const isSerialized = mode === 'serialized' || mode === 'both' || mode === 'hybrid';
+
+      if (isSerialized) {
         fetchAvailableAssets();
       } else {
         setAvailableAssets([]);
         setForm(prev => ({ ...prev, asset_id: '' }));
       }
     }
-  }, [form.catalog_item_id, form.location_id]);
+  }, [form.catalog_item_id, form.location_id, form.reserved_from, form.reserved_until]);
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/items');
-      const { data } = await res.json();
-      setCatalogItems(data || []);
+      const data = await InventoryRPC.getCatalogItems({ active: true });
+      setCatalogItems((data || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        sku: item.sku,
+        tracking_mode: item.tracking_mode,
+      })));
     } catch (error) {
       console.error('Error fetching catalog items:', error);
     }
@@ -511,9 +575,11 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
-      setLocations(data || []);
+      const data = await InventoryRPC.getLocations({ active: true });
+      setLocations((data || []).map((location) => ({
+        id: location.id,
+        name: location.name,
+      })));
     } catch (error) {
       console.error('Error fetching locations:', error);
     }
@@ -521,13 +587,22 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
 
   const fetchAvailableAssets = async () => {
     if (!form.catalog_item_id) return;
-    
+
     try {
-      const params = new URLSearchParams({ catalog_item_id: form.catalog_item_id });
-      if (form.location_id) params.set('location_id', form.location_id);
-      
-      const res = await authenticatedFetch(`/api/inventory/assets/available?${params}`);
-      const { data } = await res.json();
+      const reservedFrom = form.reserved_from ? new Date(form.reserved_from).toISOString() : null;
+      const reservedUntil = form.reserved_until ? new Date(form.reserved_until).toISOString() : null;
+
+      if ((reservedFrom && !reservedUntil) || (!reservedFrom && reservedUntil)) {
+        setAvailableAssets([]);
+        return;
+      }
+
+      const data = await InventoryRPC.findAvailableAssets({
+        catalog_item_id: form.catalog_item_id,
+        location_id: form.location_id || null,
+        reserved_from: reservedFrom,
+        reserved_until: reservedUntil,
+      });
       setAvailableAssets(data || []);
     } catch (error) {
       console.error('Error fetching available assets:', error);
@@ -540,39 +615,64 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
     setError('');
 
     try {
-      const payload: any = {
+      if ((form.reserved_from && !form.reserved_until) || (!form.reserved_from && form.reserved_until)) {
+        throw new Error('Please set both Reserve From and Reserve Until, or leave both blank.');
+      }
+
+      const reservedFrom = form.reserved_from ? new Date(form.reserved_from).toISOString() : null;
+      const reservedUntil = form.reserved_until ? new Date(form.reserved_until).toISOString() : null;
+
+      const basePayload = {
         allocation_type: form.allocation_type,
         job_ref: form.job_ref || null,
         external_order_ref: form.external_order_ref || null,
         needed_by: form.needed_by || null,
+        reserved_from: reservedFrom,
+        reserved_until: reservedUntil,
+        notes: form.notes || null,
+        destination_location_id: form.destination_location_id || null,
       };
 
       // Add fields based on reservation type
-      if (selectedItem?.tracking_mode === 'serialized') {
+      if (isSerializedItem(selectedItem?.tracking_mode)) {
         // Serialized reservation
         if (!form.asset_id) {
           throw new Error('Please select an asset');
         }
-        payload.asset_id = form.asset_id;
+        await InventoryRPC.reserveAsset({
+          asset_id: form.asset_id,
+          allocation_type: basePayload.allocation_type,
+          job_ref: basePayload.job_ref,
+          external_order_ref: basePayload.external_order_ref,
+          needed_by: basePayload.needed_by,
+          reserved_from: basePayload.reserved_from,
+          reserved_until: basePayload.reserved_until,
+          notes: basePayload.notes,
+          destination_location_id: basePayload.destination_location_id,
+          last_event_id: crypto.randomUUID(),
+        });
       } else {
         // Fungible reservation
         if (!form.qty || parseInt(form.qty) <= 0) {
           throw new Error('Please enter a valid quantity');
         }
-        payload.catalog_item_id = form.catalog_item_id;
-        payload.location_id = form.location_id;
-        payload.qty = parseInt(form.qty);
-      }
-
-      const res = await apiWrite('/api/inventory/reservations', {
-        method: 'POST',
-        body: payload,
-      });
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        throw new Error(result.error || 'Failed to create reservation');
+        if (!form.location_id) {
+          throw new Error('Please select a location');
+        }
+        await InventoryRPC.reserveFungible({
+          catalog_item_id: form.catalog_item_id,
+          location_id: form.location_id,
+          qty: parseInt(form.qty),
+          allocation_type: basePayload.allocation_type,
+          job_ref: basePayload.job_ref,
+          external_order_ref: basePayload.external_order_ref,
+          needed_by: basePayload.needed_by,
+          reserved_from: basePayload.reserved_from,
+          reserved_until: basePayload.reserved_until,
+          notes: basePayload.notes,
+          destination_location_id: basePayload.destination_location_id,
+          last_event_id: crypto.randomUUID(),
+        });
       }
 
       onCreated();
@@ -600,20 +700,34 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
               {catalogItems.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.sku} - {item.name}
-                  {item.tracking_mode === 'serialized' && ' (Serialized)'}
+                  {isSerializedItem(item.tracking_mode) && ' (Serialized)'}
                 </option>
               ))}
             </select>
-            {selectedItem?.tracking_mode === 'serialized' && (
+            {isSerializedItem(selectedItem?.tracking_mode) && (
               <p className="text-xs text-blue-600 mt-1">
                 📦 This is a serialized item - you'll select a specific asset below
               </p>
             )}
           </div>
 
-          {selectedItem?.tracking_mode === 'serialized' ? (
+          {isSerializedItem(selectedItem?.tracking_mode) ? (
             /* Serialized asset selection */
             <div>
+              <label className="block text-sm font-medium mb-1">Filter by Location (optional)</label>
+              <select
+                value={form.location_id}
+                onChange={(e) => setForm({ ...form, location_id: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary mb-3"
+              >
+                <option value="">All locations</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+
               <label className="block text-sm font-medium mb-1">Select Asset *</label>
               <select
                 value={form.asset_id}
@@ -630,10 +744,20 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
                   >
                     {asset.asset_tag}
                     {asset.serial_number && ` - ${asset.serial_number}`}
+                    {asset.location_name && ` (${asset.location_name})`}
                     {!asset.is_available && ' (Reserved)'}
                   </option>
                 ))}
               </select>
+              {form.asset_id && (() => {
+                const selectedAsset = availableAssets.find((asset) => asset.asset_id === form.asset_id);
+                if (!selectedAsset?.location_name) return null;
+                return (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Asset currently at {selectedAsset.location_name}.
+                  </p>
+                );
+              })()}
             </div>
           ) : (
             /* Fungible location/qty selection */
@@ -644,7 +768,7 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
                   value={form.location_id}
                   onChange={(e) => setForm({ ...form, location_id: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  required={selectedItem?.tracking_mode !== 'serialized'}
+                  required={!isSerializedItem(selectedItem?.tracking_mode)}
                 >
                   <option value="">Select a location...</option>
                   {locations.map((location) => (
@@ -663,11 +787,37 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
                   onChange={(e) => setForm({ ...form, qty: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                   min="1"
-                  required={selectedItem?.tracking_mode !== 'serialized'}
+                  required={!isSerializedItem(selectedItem?.tracking_mode)}
                 />
               </div>
             </>
           )}
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Destination Needed At</label>
+            <select
+              value={form.destination_location_id}
+              onChange={(e) => setForm({ ...form, destination_location_id: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">Select destination (optional)...</option>
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+            </select>
+            {form.destination_location_id && form.asset_id && (() => {
+              const selectedAsset = availableAssets.find((asset) => asset.asset_id === form.asset_id);
+              if (!selectedAsset?.location_id) return null;
+              if (selectedAsset.location_id === form.destination_location_id) return null;
+              return (
+                <p className="text-xs text-amber-600 mt-1">
+                  Asset is currently at {selectedAsset.location_name}. Consider a transfer before the reserved window.
+                </p>
+              );
+            })()}
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -677,11 +827,11 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
                 onChange={(e) => setForm({ ...form, allocation_type: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="job">Job</option>
-                <option value="project">Project</option>
-                <option value="customer_order">Customer Order</option>
-                <option value="internal_order">Internal Order</option>
-                <option value="other">Other</option>
+                {typeOptions.map((type) => (
+                  <option key={type.type_key} value={type.type_key}>
+                    {type.display_name}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -704,6 +854,37 @@ function CreateReservationModal({ onClose, onCreated }: CreateReservationModalPr
               value={form.needed_by}
               onChange={(e) => setForm({ ...form, needed_by: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Reserve From</label>
+              <input
+                type="datetime-local"
+                value={form.reserved_from}
+                onChange={(e) => setForm({ ...form, reserved_from: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Reserve Until</label>
+              <input
+                type="datetime-local"
+                value={form.reserved_until}
+                onChange={(e) => setForm({ ...form, reserved_until: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              rows={3}
             />
           </div>
 

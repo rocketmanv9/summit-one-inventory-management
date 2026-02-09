@@ -33,6 +33,20 @@ type TransferRow = Database['inventory']['Tables']['transfers']['Row'];
 type TransferLineRow = Database['inventory']['Tables']['transfer_lines']['Row'];
 type StockMovementRow = Database['inventory']['Tables']['stock_movements']['Row'];
 
+type ReservationTypeRow = {
+  id: string;
+  tenant_id: string | null;
+  type_key: string;
+  display_name: string;
+  is_system: boolean;
+  is_active: boolean;
+  sort_order: number;
+  description?: string | null;
+  last_event_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type CatalogItemWithCategory = CatalogItemRow & {
   item_categories?: Pick<ItemCategoryRow, 'name'> | null;
 };
@@ -759,7 +773,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('reservations')
       .select(
-        'id, catalog_item_id, location_id, qty, reservation_type, asset_id, allocation_type, status, job_ref, external_order_ref, needed_by, expiration_date, created_at, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode), locations:location_id(id, name), assets:asset_id(id, asset_tag, serial_number, vin)'
+        'id, catalog_item_id, location_id, destination_location_id, qty, reservation_type, asset_id, allocation_type, status, job_ref, external_order_ref, needed_by, expiration_date, reserved_from, reserved_until, notes, created_at, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode), locations:location_id(id, name), destination_locations:destination_location_id(id, name), assets:asset_id(id, asset_tag, serial_number, vin)'
       )
       .order('created_at', { ascending: false });
 
@@ -790,6 +804,10 @@ export const InventoryRPC = {
     external_order_ref?: string | null;
     needed_by?: string | null;
     expiration_date?: string | null;
+    reserved_from?: string | null;
+    reserved_until?: string | null;
+    notes?: string | null;
+    destination_location_id?: string | null;
     last_event_id: string;
   }) {
     const { tenantId } = getAuthContext();
@@ -804,6 +822,10 @@ export const InventoryRPC = {
       p_external_order_ref: params.external_order_ref ?? null,
       p_needed_by: params.needed_by ?? null,
       p_expiration_date: params.expiration_date ?? null,
+      p_reserved_from: params.reserved_from ?? null,
+      p_reserved_until: params.reserved_until ?? null,
+      p_notes: params.notes ?? null,
+      p_destination_location_id: params.destination_location_id ?? null,
       p_last_event_id: params.last_event_id,
     });
 
@@ -824,6 +846,10 @@ export const InventoryRPC = {
     external_order_ref?: string | null;
     needed_by?: string | null;
     expiration_date?: string | null;
+    reserved_from?: string | null;
+    reserved_until?: string | null;
+    notes?: string | null;
+    destination_location_id?: string | null;
     last_event_id: string;
   }) {
     const { tenantId } = getAuthContext();
@@ -836,6 +862,10 @@ export const InventoryRPC = {
       p_external_order_ref: params.external_order_ref ?? null,
       p_needed_by: params.needed_by ?? null,
       p_expiration_date: params.expiration_date ?? null,
+      p_reserved_from: params.reserved_from ?? null,
+      p_reserved_until: params.reserved_until ?? null,
+      p_notes: params.notes ?? null,
+      p_destination_location_id: params.destination_location_id ?? null,
       p_last_event_id: params.last_event_id,
     });
 
@@ -849,13 +879,20 @@ export const InventoryRPC = {
   /**
    * Find available assets for serialized reservation
    */
-  async findAvailableAssets(params: { catalog_item_id: string; location_id?: string | null }) {
+  async findAvailableAssets(params: {
+    catalog_item_id: string;
+    location_id?: string | null;
+    reserved_from?: string | null;
+    reserved_until?: string | null;
+  }) {
     const { tenantId } = getAuthContext();
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase.rpc('rpc_inv_find_available_assets', {
       p_tenant_id: tenantId,
       p_catalog_item_id: params.catalog_item_id,
       p_location_id: params.location_id ?? null,
+      p_reserved_from: params.reserved_from ?? null,
+      p_reserved_until: params.reserved_until ?? null,
     });
 
     if (error) {
@@ -1560,22 +1597,19 @@ export const InventoryRPC = {
   },
 
   /**
-   * Get transfers
-   * Table: inventory.transfers
+   * Get transfers with lines and locations
    */
   async getTransfers(filters?: {
     status?: string;
     from_location_id?: string;
     to_location_id?: string;
-  }) {
+  }): Promise<TransferWithRelations[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('transfers')
-      .select(`
-        *,
-        from_locations:from_location_id(name),
-        to_locations:to_location_id(name)
-      `)
+      .select(
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku))'
+      )
       .order('created_at', { ascending: false });
 
     if (filters?.status) {
@@ -1594,7 +1628,7 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch transfers: ${error.message}`);
     }
 
-    return data;
+    return (data || []) as TransferWithRelations[];
   },
 
   /**
@@ -1610,11 +1644,30 @@ export const InventoryRPC = {
     let query = supabase
       .from('reservations')
       .select(`
-        *,
-        catalog_items:catalog_item_id(name, sku),
-        locations:location_id(name)
+        id,
+        catalog_item_id,
+        location_id,
+        destination_location_id,
+        qty,
+        reservation_type,
+        asset_id,
+        allocation_type,
+        status,
+        job_ref,
+        external_order_ref,
+        needed_by,
+        expiration_date,
+        reserved_from,
+        reserved_until,
+        notes,
+        created_at,
+        last_event_id,
+        catalog_items:catalog_item_id(id, name, sku, tracking_mode),
+        locations:location_id(id, name),
+        destination_locations:destination_location_id(id, name),
+        assets:asset_id(id, asset_tag, serial_number, vin)
       `)
-      .order('needed_by');
+      .order('created_at', { ascending: false });
 
     if (filters?.status) {
       query = query.eq('status', filters.status);
@@ -1623,7 +1676,7 @@ export const InventoryRPC = {
       query = query.eq('allocation_type', filters.allocation_type);
     }
     if (filters?.job_ref) {
-      query = query.contains('payload', { job_ref: filters.job_ref });
+      query = query.contains('job_ref', filters.job_ref);
     }
 
     const { data, error } = await query;
@@ -1632,6 +1685,118 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch reservations: ${error.message}`);
     }
 
-    return data;
+    return data as ReservationWithRelations[];
+  },
+
+  /**
+   * Get reservation types (global + tenant)
+   */
+  async getReservationTypes(options?: { includeInactive?: boolean }) {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('reservation_types')
+      .select('id, tenant_id, type_key, display_name, is_system, is_active, sort_order, description, last_event_id, created_at, updated_at')
+      .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
+      .order('sort_order')
+      .order('display_name');
+
+    if (!options?.includeInactive) {
+      query = query.eq('is_active', true);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Failed to fetch reservation types: ${error.message}`);
+    }
+
+    return (data || []) as ReservationTypeRow[];
+  },
+
+  /**
+   * Create reservation type
+   */
+  async createReservationType(payload: {
+    type_key: string;
+    display_name: string;
+    description?: string | null;
+    sort_order?: number;
+    is_active?: boolean;
+  }) {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const insertPayload = {
+      tenant_id: tenantId,
+      type_key: payload.type_key,
+      display_name: payload.display_name,
+      description: payload.description ?? null,
+      sort_order: payload.sort_order ?? 0,
+      is_active: payload.is_active ?? true,
+      last_event_id: crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('reservation_types')
+      .insert(insertPayload)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create reservation type: ${error.message}`);
+    }
+
+    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Update reservation type
+   */
+  async updateReservationType(id: string, updates: {
+    display_name?: string;
+    description?: string | null;
+    sort_order?: number;
+    is_active?: boolean;
+  }) {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const updatePayload = {
+      ...updates,
+      last_event_id: crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('reservation_types')
+      .update(updatePayload)
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update reservation type: ${error.message}`);
+    }
+
+    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Delete reservation type
+   */
+  async deleteReservationType(id: string) {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('reservation_types')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete reservation type: ${error.message}`);
+    }
+
+    return data as Pick<ReservationTypeRow, 'id'>;
   },
 };

@@ -33,6 +33,7 @@ export default function StockBalancesPage() {
   const [selectedItem, setSelectedItem] = useState<StockBalance | null>(null);
   const [ledgerData, setLedgerData] = useState<any[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [filterLocations, setFilterLocations] = useState<Array<{ id: string; name: string }>>([]);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustForm, setAdjustForm] = useState({
     catalog_item_id: '',
@@ -51,13 +52,26 @@ export default function StockBalancesPage() {
   }, [filters]);
 
   useEffect(() => {
+    const loadFilterLocations = async () => {
+      try {
+        const locations = await InventoryRPC.getLocations({ active: true });
+        setFilterLocations((locations || []).map((loc) => ({ id: loc.id, name: loc.name })));
+      } catch (error) {
+        console.error('Error loading locations:', error);
+      }
+    };
+
+    loadFilterLocations();
+  }, []);
+
+  useEffect(() => {
     if (!showAdjustModal) return;
     if (adjustItems.length > 0 && adjustLocations.length > 0) return;
 
     const loadAdjustLookups = async () => {
       try {
         const [items, locations] = await Promise.all([
-          InventoryRPC.getCatalogItems({ active: true }),
+          InventoryRPC.getCatalogItems({ active: true, tracking_mode: 'stock' }),
           InventoryRPC.getLocations({ active: true }),
         ]);
         setAdjustItems((items || []).map((item) => ({
@@ -300,6 +314,12 @@ export default function StockBalancesPage() {
   ];
 
   const filterConfig = [
+    {
+      key: 'location_id',
+      label: 'Location',
+      type: 'select' as const,
+      options: filterLocations.map((loc) => ({ value: loc.id, label: loc.name })),
+    },
     {
       key: 'below_reorder',
       label: 'Show',
