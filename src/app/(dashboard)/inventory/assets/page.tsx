@@ -6,31 +6,23 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import type { Database } from 'types/supabase';
 
-interface Asset {
-  id: string;
-  asset_tag: string;
-  serial_number?: string;
-  catalog_item_id?: string;
-  location_id?: string;
-  status: string;
-  purchase_date?: string;
-  purchase_cost?: number;
-  warranty_expires?: string;
-  catalog_item?: { id: string; name: string; sku: string };
-  location?: { id: string; name: string; location_type_id: string; location_type?: { id: string; name: string } };
-  asset_state?: { status: string; current_location_id: string };
-}
+type AssetRow = Database['inventory']['Tables']['assets']['Row'];
+type AssignmentTypeRow = Database['inventory']['Tables']['assignment_types']['Row'];
+type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
+type LocationRow = Database['inventory']['Tables']['locations']['Row'];
+type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
+type AssetStateRow = Database['inventory']['Tables']['asset_state']['Row'];
 
-interface AssignmentType {
-  id: string;
-  type_key: string;
-  display_name: string;
-  description?: string;
-  is_active: boolean;
-  sort_order: number;
-}
+type Asset = AssetRow & {
+  catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
+  location?: (LocationRow & {
+    location_type?: Pick<LocationTypeRow, 'id' | 'name'> | null;
+  }) | null;
+  asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id'> | null;
+};
 
 export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -40,12 +32,14 @@ export default function AssetsPage() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [assignmentTypes, setAssignmentTypes] = useState<AssignmentType[]>([]);
+  const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
 
   useEffect(() => {
     fetchAssets();
     fetchAssignmentTypes();
   }, [filters]);
+
+  const resolveStatus = (asset: Asset) => asset.asset_state?.current_status || asset.status || 'available';
 
   const fetchAssets = async () => {
     setLoading(true);
@@ -54,8 +48,10 @@ export default function AssetsPage() {
       if (filters.status) params.set('status', filters.status);
       if (filters.assigned === 'true') params.set('assigned', 'true');
 
-      const res = await authenticatedFetch(`/api/inventory/assets?${params}`);
-      const { data } = await res.json();
+      const data = await InventoryRPC.getAssets({
+        status: filters.status || undefined,
+        assigned: filters.assigned === 'true' ? true : undefined,
+      });
       setAssets(data || []);
     } catch (error) {
       console.error('Error fetching assets:', error);
@@ -66,8 +62,7 @@ export default function AssetsPage() {
 
   const fetchAssignmentTypes = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/assignment-types');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getAssignmentTypes();
       setAssignmentTypes(data || []);
     } catch (error) {
       console.error('Error fetching assignment types:', error);
@@ -80,15 +75,12 @@ export default function AssetsPage() {
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/assets/${asset.id}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || 'Failed to delete asset');
+      if (!asset.last_event_id) {
+        alert('Missing last_event_id. Please refresh and try again.');
         return;
       }
+
+      await InventoryRPC.deleteAsset(asset.id, asset.last_event_id);
 
       await fetchAssets();
     } catch (error) {
@@ -140,7 +132,7 @@ export default function AssetsPage() {
       key: 'status',
       header: 'Status',
       render: (row: Asset) => (
-        <StatusChip status={row.asset_state?.status || row.status || 'available'} />
+        <StatusChip status={resolveStatus(row)} />
       ),
     },
     {
@@ -246,25 +238,25 @@ export default function AssetsPage() {
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="text-2xl font-bold text-green-700">
-              {assets.filter(a => a.status === 'available').length}
+              {assets.filter(a => resolveStatus(a) === 'available').length}
             </div>
             <div className="text-sm text-green-600">Available</div>
           </div>
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="text-2xl font-bold text-blue-700">
-              {assets.filter(a => a.status === 'assigned').length}
+              {assets.filter(a => resolveStatus(a) === 'assigned').length}
             </div>
             <div className="text-sm text-blue-600">Assigned</div>
           </div>
           <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
             <div className="text-2xl font-bold text-orange-700">
-              {assets.filter(a => a.status === 'maintenance').length}
+              {assets.filter(a => resolveStatus(a) === 'maintenance').length}
             </div>
             <div className="text-sm text-orange-600">In Maintenance</div>
           </div>
           <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
             <div className="text-2xl font-bold text-gray-700">
-              {assets.filter(a => a.status === 'retired').length}
+              {assets.filter(a => resolveStatus(a) === 'retired').length}
             </div>
             <div className="text-sm text-gray-600">Retired</div>
           </div>
@@ -331,8 +323,8 @@ export default function AssetsPage() {
 }
 
 function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
-  const [catalogItems, setCatalogItems] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItemRow[]>([]);
+  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
   const [form, setForm] = useState({
     catalog_item_id: '',
     location_id: '',
@@ -355,8 +347,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/items');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getCatalogItems({ active: true });
       setCatalogItems(data || []);
     } catch (error) {
       console.error('Error fetching items:', error);
@@ -365,8 +356,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations();
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -417,15 +407,16 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
           warranty_expires: form.warranty_expires || null,
         };
 
-        const res = await apiWrite('/api/inventory/assets', {
-          method: 'POST',
-          body: assetData,
+        await InventoryRPC.createAsset({
+          catalog_item_id: assetData.catalog_item_id || null,
+          location_id: assetData.location_id,
+          asset_tag: assetData.asset_tag,
+          serial_number: assetData.serial_number,
+          purchase_date: assetData.purchase_date,
+          purchase_cost: assetData.purchase_cost,
+          warranty_expires: assetData.warranty_expires,
+          status: 'available',
         });
-
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || `Failed to create asset ${tagsToCreate[i]}`);
-        }
       }
 
       onComplete();
@@ -663,8 +654,8 @@ function EditAssetModal({
   onClose: () => void; 
   onComplete: () => void;
 }) {
-  const [catalogItems, setCatalogItems] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItemRow[]>([]);
+  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
   const [form, setForm] = useState({
     catalog_item_id: asset.catalog_item_id || '',
     asset_tag: asset.asset_tag,
@@ -684,8 +675,7 @@ function EditAssetModal({
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/items');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getCatalogItems({ active: true });
       setCatalogItems(data || []);
     } catch (error) {
       console.error('Error fetching items:', error);
@@ -694,8 +684,7 @@ function EditAssetModal({
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations();
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -708,9 +697,13 @@ function EditAssetModal({
     setError('');
 
     try {
-      const res = await apiWrite(`/api/inventory/assets/${asset.id}`, {
-        method: 'PUT',
-        body: {
+      if (!asset.last_event_id) {
+        throw new Error('Missing last_event_id. Please refresh and try again.');
+      }
+
+      await InventoryRPC.updateAsset(
+        asset.id,
+        {
           catalog_item_id: form.catalog_item_id || null,
           asset_tag: form.asset_tag,
           serial_number: form.serial_number || null,
@@ -719,12 +712,8 @@ function EditAssetModal({
           purchase_cost: form.purchase_cost ? parseFloat(form.purchase_cost) : null,
           warranty_expires: form.warranty_expires || null,
         },
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update asset');
-      }
+        asset.last_event_id
+      );
 
       onComplete();
     } catch (err: any) {
@@ -866,7 +855,7 @@ function AssetAssignModal({
   onComplete 
 }: { 
   asset: Asset; 
-  assignmentTypes: AssignmentType[];
+  assignmentTypes: AssignmentTypeRow[];
   onClose: () => void; 
   onComplete: () => void;
 }) {
@@ -877,7 +866,7 @@ function AssetAssignModal({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const isReturn = asset.status === 'assigned';
+  const isReturn = (asset.asset_state?.current_status || asset.status) === 'assigned';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -885,23 +874,20 @@ function AssetAssignModal({
     setError('');
 
     try {
-      const endpoint = isReturn
-        ? `/api/inventory/assets/${asset.id}/return`
-        : `/api/inventory/assets/${asset.id}/assign`;
-
-      const body = isReturn
-        ? { notes: form.notes }
-        : form;
-
-      const res = await apiWrite(endpoint, {
-        method: 'POST',
-        body: isReturn
-          ? { notes: form.notes }
-          : form,
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Operation failed');
+      if (isReturn) {
+        await InventoryRPC.returnAsset({
+          asset_id: asset.id,
+          notes: form.notes,
+          last_event_id: crypto.randomUUID(),
+        });
+      } else {
+        await InventoryRPC.assignAsset({
+          asset_id: asset.id,
+          assigned_to_type: form.assigned_to_type,
+          assigned_to_id: form.assigned_to_id,
+          notes: form.notes,
+          last_event_id: crypto.randomUUID(),
+        });
       }
 
       onComplete();

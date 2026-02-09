@@ -5,7 +5,7 @@ import GridLayout from 'react-grid-layout';
 import type { DashboardWidget } from '@/types/dashboard';
 import { WidgetContainer } from '@/components/widgets/WidgetContainer';
 import { saveLayout } from '@/hooks/useDashboards';
-import { apiWrite } from '@/lib/api-client';
+import { createBrowserAuthedClient } from '@/supabase/client';
 import 'react-grid-layout/css/styles.css';
 
 type LayoutItem = {
@@ -54,6 +54,7 @@ export function EditableDashboardGrid({
   const [selectedWidget, setSelectedWidget] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [hasLayoutChanges, setHasLayoutChanges] = useState(false);
+  const supabase = createBrowserAuthedClient();
 
   // Sync layouts when widgets change
   useEffect(() => {
@@ -134,13 +135,12 @@ export function EditableDashboardGrid({
     }
 
     try {
-      const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
-        method: 'DELETE',
-      });
+      const { error } = await supabase
+        .from('dashboards')
+        .delete()
+        .eq('id', dashboardId);
 
-      if (!response.ok) {
-        throw new Error('Failed to delete dashboard');
-      }
+      if (error) throw error;
 
       // Call the callback to redirect user
       if (onDashboardDelete) {

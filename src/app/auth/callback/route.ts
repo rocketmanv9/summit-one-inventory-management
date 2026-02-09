@@ -1,6 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
+import { SignJWT } from 'jose';
 
+/**
+ * Exchange ticket for JWT and session
+ *
+ * Flow:
+ * 1. Validate ticket with Core API
+ * 2. Get user_id, tenant_id from response
+ * 3. Mint Supabase JWT signed with SUPABASE_JWT_SECRET
+ * 4. Redirect to dashboard with JWT in URL (for client to setSession)
+ * 5. AuthSessionHydrator component captures JWT and hydrates Supabase session
+ */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -16,7 +27,7 @@ export async function GET(request: NextRequest) {
     }
 
     const exchangeUrl = process.env.CORE_EXCHANGE_URL;
-    const coreAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const coreAnonKey = process.env.CORE_SUPABASE_ANON_KEY;
 
     if (!exchangeUrl || !coreAnonKey) {
       console.error('[Auth Callback] Missing Core configuration');
@@ -46,20 +57,67 @@ export async function GET(request: NextRequest) {
     }
 
     const userData = await exchangeResponse.json();
-    
-    if (!userData.user?.id || !userData.target_tenant_id) {
+
+    const {
+      userId,
+      tenantId,
+      email,
+      name,
+      role,
+      user,
+      target_tenant_id,
+    } = userData;
+
+    const resolvedUserId = userId || user?.id;
+    const resolvedTenantId = tenantId || target_tenant_id;
+    const resolvedEmail = email || user?.email || '';
+    const resolvedName = name || user?.full_name || user?.name || '';
+    const resolvedRole = role || 'authenticated';
+
+    if (!resolvedUserId || !resolvedTenantId) {
       console.error('[Auth Callback] Invalid response from Core:', userData);
       throw new Error('Invalid response from Core');
     }
 
-    const { user, target_tenant_id } = userData;
+    console.log('[Auth Callback] Success:', { userId: resolvedUserId, tenantId: resolvedTenantId });
 
-    console.log('[Auth Callback] Success:', { userId: user.id, tenantId: target_tenant_id });
+    // Mint JWT for Supabase RLS
+    const jwtSecret = process.env.SUPABASE_JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('[Auth Callback] SUPABASE_JWT_SECRET not configured');
+      throw new Error('JWT signing not configured');
+    }
 
-    // Create session cookies
+    const secretKey = new TextEncoder().encode(jwtSecret);
+    const accessToken = await new SignJWT({
+      sub: resolvedUserId,
+      email: resolvedEmail || undefined,
+      role: 'authenticated',
+      app_metadata: {
+        tenant_id: resolvedTenantId,
+        role: resolvedRole,
+      },
+      user_metadata: {
+        full_name: resolvedName || undefined,
+        email: resolvedEmail || undefined,
+        role: resolvedRole,
+      },
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('7d')
+      .sign(secretKey);
+
+    console.log('[Auth Callback] JWT minted:', {
+      userId: resolvedUserId,
+      tenantId: resolvedTenantId,
+      tokenLength: accessToken.length,
+    });
+
+    // Create session cookies (backup)
     const cookieStore = await cookies();
     
-    cookieStore.set('user_id', user.id, {
+    cookieStore.set('user_id', resolvedUserId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -67,7 +125,7 @@ export async function GET(request: NextRequest) {
       path: '/',
     });
 
-    cookieStore.set('tenant_id', target_tenant_id, {
+    cookieStore.set('tenant_id', resolvedTenantId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -75,7 +133,7 @@ export async function GET(request: NextRequest) {
       path: '/',
     });
 
-    cookieStore.set('user_email', user.email || '', {
+    cookieStore.set('user_email', resolvedEmail || '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -83,7 +141,15 @@ export async function GET(request: NextRequest) {
       path: '/',
     });
 
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    // Redirect to dashboard with JWT in URL
+    // AuthSessionHydrator component will:
+    // 1. Grab the tokens from URL
+    // 2. Call supabase.auth.setSession()
+    // 3. Clear URL parameters
+    const dashboardUrl = new URL('/dashboard', request.url);
+    dashboardUrl.searchParams.set('access_token', accessToken);
+    
+    return NextResponse.redirect(dashboardUrl);
 
   } catch (error) {
     console.error('[Auth Callback] Error:', error);

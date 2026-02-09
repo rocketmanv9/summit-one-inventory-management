@@ -4,7 +4,20 @@
  * Schema: supply_chain
  */
 
-import { createClient } from '@/supabase/client';
+import { createBrowserAuthedClient } from '@/supabase/client';
+import type { Database } from 'types/supabase';
+
+type VendorRow = Database['supply_chain']['Tables']['vendors']['Row'];
+type VendorInsert = Database['supply_chain']['Tables']['vendors']['Insert'];
+type VendorUpdate = Database['supply_chain']['Tables']['vendors']['Update'];
+type VendorItemRow = Database['supply_chain']['Tables']['vendor_items']['Row'];
+type VendorItemInsert = Database['supply_chain']['Tables']['vendor_items']['Insert'];
+type VendorItemUpdate = Database['supply_chain']['Tables']['vendor_items']['Update'];
+
+type VendorInsertPayload = Omit<VendorInsert, 'tenant_id'> & { tenant_id?: string };
+type VendorUpdatePayload = Omit<VendorUpdate, 'tenant_id'> & { tenant_id?: string };
+type VendorItemInsertPayload = Omit<VendorItemInsert, 'tenant_id'> & { tenant_id?: string };
+type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id?: string };
 
 export interface CreatePurchaseOrderParams {
   vendor_id: string;
@@ -70,7 +83,7 @@ export const SupplyChainRPC = {
   async createPurchaseOrder(
     params: CreatePurchaseOrderParams
   ): Promise<CreatePurchaseOrderResult> {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase.rpc('rpc_create_purchase_order', {
       p_vendor_id: params.vendor_id,
       p_po_number: params.po_number,
@@ -84,7 +97,7 @@ export const SupplyChainRPC = {
       throw new Error(`Failed to create PO: ${error.message}`);
     }
 
-    return data;
+    return (data || []) as VendorRow[];
   },
 
   /**
@@ -94,7 +107,7 @@ export const SupplyChainRPC = {
   async createReceipt(
     params: CreateReceiptParams
   ): Promise<CreateReceiptResult> {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase.rpc('rpc_create_receipt', {
       p_receipt_number: params.receipt_number,
       p_location_id: params.location_id,
@@ -119,7 +132,7 @@ export const SupplyChainRPC = {
   async postReceiptToInventory(
     params: PostReceiptToInventoryParams
   ): Promise<PostReceiptToInventoryResult> {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase.rpc('rpc_post_receipt_to_inventory', {
       p_receipt_id: params.receipt_id,
       p_actor_user_id: params.actor_user_id,
@@ -137,11 +150,10 @@ export const SupplyChainRPC = {
    * View: inventory.vendors (compatibility view → supply_chain.vendors)
    */
   async getVendors() {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('*')
-      .eq('active', true)
+      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, last_event_id')
       .order('name');
 
     if (error) {
@@ -149,6 +161,177 @@ export const SupplyChainRPC = {
     }
 
     return data;
+  },
+
+  /**
+   * Create a vendor
+   * Table: supply_chain.vendors
+   */
+  async createVendor(payload: VendorInsertPayload) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const insertPayload: VendorInsertPayload = {
+      ...payload,
+      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('vendors')
+      .insert(insertPayload)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create vendor: ${error.message}`);
+    }
+
+    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Update a vendor with optimistic concurrency control
+   */
+  async updateVendor(id: string, updates: VendorUpdatePayload, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorUpdatePayload & {
+      id?: string;
+      created_at?: string;
+      tenant_id?: string;
+      last_event_id?: string;
+    };
+
+    const { data, error } = await supabase
+      .from('vendors')
+      .update({ ...safeUpdates })
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update vendor: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Vendor was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Delete a vendor with optimistic concurrency control
+   */
+  async deleteVendor(id: string, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase
+      .from('vendors')
+      .delete()
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete vendor: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Vendor was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<VendorRow, 'id'>;
+  },
+
+  /**
+   * Get vendor item mappings
+   * Table: supply_chain.vendor_items
+   */
+  async getVendorItems(): Promise<VendorItemRow[]> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase
+      .from('vendor_items')
+      .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch vendor items: ${error.message}`);
+    }
+
+    return (data || []) as VendorItemRow[];
+  },
+
+  /**
+   * Create a vendor item mapping
+   */
+  async createVendorItem(payload: VendorItemInsertPayload) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const insertPayload: VendorItemInsertPayload = {
+      ...payload,
+      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('vendor_items')
+      .insert(insertPayload)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create vendor item: ${error.message}`);
+    }
+
+    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Update a vendor item mapping with optimistic concurrency control
+   */
+  async updateVendorItem(id: string, updates: VendorItemUpdatePayload, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorItemUpdatePayload & {
+      id?: string;
+      created_at?: string;
+      tenant_id?: string;
+      last_event_id?: string;
+    };
+
+    const { data, error } = await supabase
+      .from('vendor_items')
+      .update({ ...safeUpdates })
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update vendor item: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Vendor item was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Delete a vendor item mapping with optimistic concurrency control
+   */
+  async deleteVendorItem(id: string, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase
+      .from('vendor_items')
+      .delete()
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete vendor item: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Vendor item was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<VendorItemRow, 'id'>;
   },
 
   /**
@@ -161,9 +344,9 @@ export const SupplyChainRPC = {
     from_date?: string;
     to_date?: string;
   }) {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
-      .from('supply_chain.purchase_orders')
+      .from('purchase_orders')
       .select(`
         *,
         vendors:vendor_id(name),
@@ -203,9 +386,9 @@ export const SupplyChainRPC = {
     from_date?: string;
     to_date?: string;
   }) {
-    const supabase = createClient();
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
-      .from('supply_chain.receipts')
+      .from('receipts')
       .select(`
         *,
         locations:location_id(name),

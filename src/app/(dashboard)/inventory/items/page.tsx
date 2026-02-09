@@ -7,30 +7,22 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import type { Database } from 'types/supabase';
 
-interface CatalogItem {
-  id: string;
-  name: string;
-  sku: string;
-  description?: string;
-  category_id?: string;
-  unit_of_measure: string;
-  tracking_mode: 'stock' | 'serialized' | 'both';
-  reorder_point?: number;
-  min_stock_level?: number;
-  max_stock_level?: number;
-  active: boolean;
-  item_categories?: { name: string };
-  vendors?: { name: string };
-}
+type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
+type ItemCategoryRow = Database['inventory']['Tables']['item_categories']['Row'];
+type InventoryLevelRow = Database['inventory']['Tables']['inventory_levels']['Row'];
+type LocationRow = Database['inventory']['Tables']['locations']['Row'];
+type SkuSettingsRow = Database['inventory']['Tables']['sku_settings']['Row'];
 
-interface Category {
-  id: string;
-  name: string;
-}
-
-type TrackingMode = CatalogItem['tracking_mode'];
+type CatalogItem = CatalogItemRow & {
+  item_categories?: Pick<ItemCategoryRow, 'name'> | null;
+};
+type Category = ItemCategoryRow;
+type Location = LocationRow;
+type InventoryLevel = Pick<InventoryLevelRow, 'id' | 'location_id' | 'current_stock' | 'reorder_point' | 'target_stock'>;
+type TrackingMode = CatalogItemRow['tracking_mode'];
+type SkuSettings = Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
 
 export default function ItemsPage() {
   const [items, setItems] = useState<CatalogItem[]>([]);
@@ -63,20 +55,17 @@ export default function ItemsPage() {
     window.location.href = '/inventory/categories';
   };
 
-  const handleDelete = async (itemId: string, itemName: string) => {
+  const handleDelete = async (itemId: string, itemName: string, lastEventId: string | null) => {
     if (!confirm(`Are you sure you want to delete "${itemName}"?`)) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/items/${itemId}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delete item');
+      if (!lastEventId) {
+        throw new Error('Missing last_event_id for this item. Please refresh and try again.');
       }
+
+      await InventoryRPC.deleteCatalogItem(itemId, lastEventId);
 
       fetchItems(); // Refresh the list
     } catch (error: any) {
@@ -155,7 +144,7 @@ export default function ItemsPage() {
             Edit
           </button>
           <button
-            onClick={() => handleDelete(row.id, row.name)}
+            onClick={() => handleDelete(row.id, row.name, row.last_event_id ?? null)}
             className="text-red-600 hover:text-red-800 px-3 py-1 text-sm font-medium"
           >
             Delete
@@ -268,6 +257,7 @@ function CreateItemModal({
   const [form, setForm] = useState<{
     name: string;
     sku: string;
+    base_sku: string;
     description: string;
     category_id: string;
     unit_of_measure: string;
@@ -276,6 +266,7 @@ function CreateItemModal({
   }>({
     name: item?.name || '',
     sku: item?.sku || '',
+    base_sku: item?.base_sku || '',
     description: item?.description || '',
     category_id: item?.category_id || '',
     unit_of_measure: item?.unit_of_measure || 'EA',
@@ -283,20 +274,139 @@ function CreateItemModal({
     reorder_point: item?.reorder_point?.toString() || '',
   });
   const [categories, setCategories] = useState<Category[]>([]);
+  const [skuSettings, setSkuSettings] = useState<SkuSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [levels, setLevels] = useState<InventoryLevel[]>([]);
+  const [levelsSaving, setLevelsSaving] = useState(false);
+  const handleAddCategory = () => {
+    window.open('/inventory/categories', '_blank');
+  };
 
   useEffect(() => {
     fetchCategories();
   }, []);
 
+  useEffect(() => {
+    if (!form.category_id) {
+      setSkuSettings(null);
+      return;
+    }
+
+    async function loadSkuSettings() {
+      try {
+        const data = await InventoryRPC.getSkuSettings(form.category_id);
+        if (data) {
+          setSkuSettings({
+            separator: data.separator || '-',
+            next_sequence: data.next_sequence ?? 1,
+          });
+          return;
+        }
+
+        setSkuSettings({ separator: '-', next_sequence: 1 });
+      } catch (err) {
+        console.error('Error loading SKU settings:', err);
+      }
+    }
+
+    loadSkuSettings();
+  }, [form.category_id]);
+
+  useEffect(() => {
+    if (!isEditing || !item?.id) return;
+
+    async function loadLocationsAndLevels() {
+      try {
+        const [locsResult, levelsResult] = await Promise.all([
+          InventoryRPC.getLocations(),
+          InventoryRPC.getInventoryLevelsForItem(item.id),
+        ]);
+
+        setLocations((locsResult || []) as Location[]);
+
+        const rows = (levelsResult || []).map((row) => ({
+          id: row.id,
+          location_id: row.location_id,
+          current_stock: Number(row.current_stock ?? 0),
+          reorder_point: row.reorder_point === null ? null : Number(row.reorder_point),
+          target_stock: row.target_stock === null ? null : Number(row.target_stock),
+        }));
+        setLevels(rows);
+      } catch (err) {
+        console.error('Error loading location stock levels:', err);
+      }
+    }
+
+    loadLocationsAndLevels();
+  }, [isEditing, item?.id]);
+
+  useEffect(() => {
+    if (isEditing) return;
+
+    const category = categories.find((cat) => cat.id === form.category_id);
+    if (!category) return;
+
+    const categoryMode = category.sku_mode || 'sequential';
+
+    if (categoryMode === 'manual') {
+      return;
+    }
+
+    const separator = skuSettings?.separator || '-';
+    const prefix = category.sku_prefix ? category.sku_prefix.toUpperCase() : '';
+    const parent = categories.find((cat) => cat.id === category.parent_category_id);
+    const parentPrefix = parent?.sku_prefix ? parent.sku_prefix.toUpperCase() : '';
+
+    if (categoryMode === 'sequential') {
+      const next = skuSettings?.next_sequence ?? 1;
+      const padded = String(next).padStart(3, '0');
+      const sku = prefix ? `${prefix}${separator}${padded}` : padded;
+      setForm((prev) => ({ ...prev, base_sku: padded, sku }));
+      return;
+    }
+
+    if (categoryMode === 'attribute_based') {
+      const next = skuSettings?.next_sequence ?? 1;
+      const padded = form.base_sku ? form.base_sku.toUpperCase() : String(next).padStart(3, '0');
+      const parts = [parentPrefix, prefix, padded].filter(Boolean);
+      const sku = parts.join(separator);
+      setForm((prev) => ({ ...prev, base_sku: padded, sku }));
+    }
+  }, [form.category_id, form.base_sku, skuSettings, categories, isEditing]);
+
+  const buildSkuForCategory = () => {
+    const category = categories.find((cat) => cat.id === form.category_id);
+    if (!category) return form.sku;
+    const categoryMode = category.sku_mode || 'sequential';
+    if (categoryMode === 'manual') return form.sku;
+
+    const separator = skuSettings?.separator || '-';
+    const prefix = category.sku_prefix ? category.sku_prefix.toUpperCase() : '';
+    const parent = categories.find((cat) => cat.id === category.parent_category_id);
+    const parentPrefix = parent?.sku_prefix ? parent.sku_prefix.toUpperCase() : '';
+
+    if (categoryMode === 'sequential') {
+      const next = skuSettings?.next_sequence ?? 1;
+      const padded = String(next).padStart(3, '0');
+      return prefix ? `${prefix}${separator}${padded}` : padded;
+    }
+
+    if (categoryMode === 'attribute_based') {
+      const next = skuSettings?.next_sequence ?? 1;
+      const baseSku = form.base_sku?.toUpperCase() || String(next).padStart(3, '0');
+      const parts = [parentPrefix, prefix, baseSku].filter(Boolean);
+      return parts.join(separator);
+    }
+
+    return form.sku;
+  };
+
   const fetchCategories = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/categories');
-      if (res.ok) {
-        const data = await res.json();
-        setCategories(data.data || []);
-      }
+      const data = await InventoryRPC.getItemCategories();
+      setCategories(data || []);
     } catch (err) {
       console.error('Error fetching categories:', err);
     }
@@ -308,21 +418,47 @@ function CreateItemModal({
     setError('');
 
     try {
-      const url = isEditing ? `/api/inventory/items/${item.id}` : '/api/inventory/items';
-      const method = isEditing ? 'PUT' : 'POST';
-      
-      const res = await apiWrite(url, {
-        method,
-        body: {
-          ...form,
-          category_id: form.category_id || null,
-          reorder_point: form.reorder_point ? parseInt(form.reorder_point) : null,
-        },
-      });
+      const category = categories.find((cat) => cat.id === form.category_id);
+      const categoryMode = category?.sku_mode || 'sequential';
+      const autoGeneratedBaseSku =
+        categoryMode === 'attribute_based' && !form.base_sku
+          ? String(skuSettings?.next_sequence ?? 1).padStart(3, '0')
+          : form.base_sku;
+      const autoSku = buildSkuForCategory();
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || `Failed to ${isEditing ? 'update' : 'create'} item`);
+      const payload = {
+        name: form.name,
+        sku: autoSku,
+        description: form.description || null,
+        category_id: form.category_id || null,
+        unit_of_measure: form.unit_of_measure,
+        tracking_mode: form.tracking_mode,
+        reorder_point: form.reorder_point ? Number(form.reorder_point) : null,
+        base_sku: autoGeneratedBaseSku || null,
+      };
+
+      if (isEditing && item) {
+        if (!item.last_event_id) {
+          throw new Error('Missing last_event_id for this item. Please refresh and try again.');
+        }
+
+        await InventoryRPC.updateCatalogItem(item.id, payload, item.last_event_id);
+      } else {
+        await InventoryRPC.createCatalogItem({
+          ...payload,
+          last_event_id: crypto.randomUUID(),
+        });
+      }
+
+      if (!isEditing) {
+        if (categoryMode === 'sequential' || categoryMode === 'attribute_based') {
+          const nextSequence = (skuSettings?.next_sequence ?? 1) + 1;
+          await InventoryRPC.upsertSkuSettings({
+            category_id: form.category_id,
+            separator: skuSettings?.separator || '-',
+            next_sequence: nextSequence,
+          });
+        }
       }
 
       onCreated();
@@ -330,6 +466,45 @@ function CreateItemModal({
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLevelChange = (locationId: string, field: 'reorder_point' | 'target_stock', value: string) => {
+    setLevels((prev) => {
+      const next = [...prev];
+      const existing = next.find((level) => level.location_id === locationId);
+      const numeric = value === '' ? null : Number(value);
+      if (existing) {
+        existing[field] = numeric;
+      } else {
+        next.push({
+          location_id: locationId,
+          current_stock: 0,
+          reorder_point: field === 'reorder_point' ? numeric : null,
+          target_stock: field === 'target_stock' ? numeric : null,
+        });
+      }
+      return next;
+    });
+  };
+
+  const saveLevels = async () => {
+    if (!item?.id) return;
+    setLevelsSaving(true);
+    try {
+      const payload = levels.map((level) => ({
+        catalog_item_id: item.id,
+        location_id: level.location_id,
+        current_stock: level.current_stock || 0,
+        reorder_point: level.reorder_point,
+        target_stock: level.target_stock,
+      }));
+
+      await InventoryRPC.upsertInventoryLevels(payload);
+    } catch (err) {
+      console.error('Error saving inventory levels:', err);
+    } finally {
+      setLevelsSaving(false);
     }
   };
 
@@ -367,7 +542,28 @@ function CreateItemModal({
               onChange={(e) => setForm({ ...form, sku: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
               required
+              readOnly={!isEditing && categories.find((cat) => cat.id === form.category_id)?.sku_mode !== 'manual'}
             />
+            {!isEditing && categories.find((cat) => cat.id === form.category_id)?.sku_mode !== 'manual' && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                SKU is auto-generated from the category settings.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Base SKU</label>
+            <input
+              type="text"
+              value={form.base_sku}
+              onChange={(e) => setForm({ ...form, base_sku: e.target.value.toUpperCase() })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+              placeholder="e.g., 001 or MAC"
+              readOnly={!isEditing && categories.find((cat) => cat.id === form.category_id)?.sku_mode === 'sequential'}
+            />
+            <p className="mt-2 text-xs text-muted-foreground">
+              Used for attribute-based SKU assembly. Sequential mode auto-fills this value.
+            </p>
           </div>
 
           <div>
@@ -381,7 +577,16 @@ function CreateItemModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Category</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium">Category</label>
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+              >
+                Add category
+              </button>
+            </div>
             <select
               value={form.category_id}
               onChange={(e) => setForm({ ...form, category_id: e.target.value })}
@@ -394,6 +599,9 @@ function CreateItemModal({
                 </option>
               ))}
             </select>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Can't find a match? Add a new category in a new tab.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -440,6 +648,89 @@ function CreateItemModal({
               min="0"
             />
           </div>
+
+          {isEditing && (
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold">Location Stock Management</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Set reorder and target stock per location. Warnings appear when below threshold.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={saveLevels}
+                  disabled={levelsSaving}
+                  className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {levelsSaving ? 'Saving...' : 'Save Levels'}
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {locations.map((loc) => {
+                  const level = levels.find((row) => row.location_id === loc.id);
+                  const currentStock = level?.current_stock ?? 0;
+                  const reorderPoint = level?.reorder_point ?? null;
+                  const isLow = reorderPoint !== null && currentStock <= reorderPoint;
+
+                  return (
+                    <div key={loc.id} className="rounded-md border p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">{loc.name}</div>
+                          {loc.location_type && (
+                            <div className="text-xs text-muted-foreground capitalize">
+                              {loc.location_type.replace('_', ' ')}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-xs font-mono text-muted-foreground">
+                          Stock: {currentStock}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium mb-1">Reorder Point</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={reorderPoint ?? ''}
+                            onChange={(e) => handleLevelChange(loc.id, 'reorder_point', e.target.value)}
+                            className="w-full px-2 py-1.5 border rounded-md text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium mb-1">Target Stock</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={level?.target_stock ?? ''}
+                            onChange={(e) => handleLevelChange(loc.id, 'target_stock', e.target.value)}
+                            className="w-full px-2 py-1.5 border rounded-md text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      {isLow && (
+                        <div className="mt-2 text-xs font-medium text-amber-600">
+                          Warning: below reorder point
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {locations.length === 0 && (
+                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    No locations found. Add a location to manage per-site stock.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-4">
             <button

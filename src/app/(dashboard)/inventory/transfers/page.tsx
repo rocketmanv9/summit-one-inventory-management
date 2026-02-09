@@ -6,26 +6,20 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import type { Database } from 'types/supabase';
 
-interface Transfer {
-  id: string;
-  status: string;
-  notes?: string;
-  created_at: string;
-  shipped_at?: string;
-  received_at?: string;
-  from_location?: { id: string; name: string; location_type: string };
-  to_location?: { id: string; name: string; location_type: string };
-  transfer_lines?: Array<{
-    id: string;
-    catalog_item_id: string;
-    qty: number;
-    qty_shipped?: number;
-    qty_received?: number;
-    catalog_items?: { id: string; name: string; sku: string };
-  }>;
-}
+type TransferRow = Database['inventory']['Tables']['transfers']['Row'];
+type TransferLineRow = Database['inventory']['Tables']['transfer_lines']['Row'];
+type LocationRow = Database['inventory']['Tables']['locations']['Row'];
+type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
+type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
+
+type Transfer = TransferRow & {
+  from_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
+  to_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
+  transfer_lines?: Array<TransferLineRow & { catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null }>;
+};
 
 export default function TransfersPage() {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -50,8 +44,9 @@ export default function TransfersPage() {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
 
-      const res = await authenticatedFetch(`/api/inventory/transfers?${params}`);
-      const { data } = await res.json();
+      const data = await InventoryRPC.getTransfers({
+        status: filters.status || undefined,
+      });
       setTransfers(data || []);
     } catch (error) {
       console.error('Error fetching transfers:', error);
@@ -64,12 +59,14 @@ export default function TransfersPage() {
     if (!confirm('Ship this transfer?')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transferId}/ship`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        fetchTransfers();
+      const transfer = transfers.find(t => t.id === transferId);
+      if (!transfer?.last_event_id) {
+        alert('Missing last_event_id. Please refresh and try again.');
+        return;
       }
+
+      await InventoryRPC.shipTransfer(transferId, transfer.last_event_id);
+      fetchTransfers();
     } catch (error) {
       console.error('Error shipping transfer:', error);
     }
@@ -79,12 +76,8 @@ export default function TransfersPage() {
     if (!confirm('Confirm full receipt of this transfer?')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transferId}/receive`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        fetchTransfers();
-      }
+      await InventoryRPC.receiveTransferFull(transferId);
+      fetchTransfers();
     } catch (error) {
       console.error('Error receiving transfer:', error);
     }
@@ -110,13 +103,9 @@ export default function TransfersPage() {
     if (!confirm('Create a return transfer (physical movement back)? This creates a new transfer in the opposite direction.')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transferId}/reverse`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
-        fetchTransfers();
-      }
+      await InventoryRPC.createTransferReversal(transferId);
+      alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
+      fetchTransfers();
     } catch (error) {
       console.error('Error creating return transfer:', error);
     }
@@ -126,12 +115,14 @@ export default function TransfersPage() {
     if (!confirm('Cancel this transfer?')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transferId}/cancel`, {
-        method: 'POST',
-      });
-      if (res.ok) {
-        fetchTransfers();
+      const transfer = transfers.find(t => t.id === transferId);
+      if (!transfer?.last_event_id) {
+        alert('Missing last_event_id. Please refresh and try again.');
+        return;
       }
+
+      await InventoryRPC.cancelTransfer(transferId, transfer.last_event_id);
+      fetchTransfers();
     } catch (error) {
       console.error('Error cancelling transfer:', error);
     }
@@ -141,17 +132,7 @@ export default function TransfersPage() {
     if (!confirm('Undo cancellation? This will restore the transfer to draft status.')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transferId}/undo-cancel`, {
-        method: 'POST',
-      });
-      
-      const result = await res.json();
-      
-      if (!res.ok) {
-        alert(`Error: ${result.error}`);
-        return;
-      }
-      
+      await InventoryRPC.undoCancelTransfer(transferId);
       alert('Cancellation reversed successfully!');
       fetchTransfers();
     } catch (error) {
@@ -175,7 +156,7 @@ export default function TransfersPage() {
         <div>
           <div className="font-medium">{row.from_location?.name || '-'}</div>
           <div className="text-xs text-muted-foreground capitalize">
-            {row.from_location?.location_type?.replace('_', ' ') || ''}
+            {row.from_location?.location_type?.name?.replace('_', ' ') || ''}
           </div>
         </div>
       ),
@@ -187,7 +168,7 @@ export default function TransfersPage() {
         <div>
           <div className="font-medium">{row.to_location?.name || '-'}</div>
           <div className="text-xs text-muted-foreground capitalize">
-            {row.to_location?.location_type?.replace('_', ' ') || ''}
+            {row.to_location?.location_type?.name?.replace('_', ' ') || ''}
           </div>
         </div>
       ),
@@ -475,7 +456,7 @@ export default function TransfersPage() {
 function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Transfer; onClose: () => void; onReceived: () => void }) {
   const [currentTransfer, setCurrentTransfer] = useState(transfer);
   const [loading, setLoading] = useState(true);
-  const [lineQuantities, setLineQuantities] = useState<Record<string, number>>({});
+  const [lineQuantities, setLineQuantities] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -483,45 +464,35 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
   useEffect(() => {
     const fetchTransferData = async () => {
       try {
-        const res = await authenticatedFetch(`/api/inventory/transfers/${transfer.id}`);
-        if (!res.ok) {
-          // Fallback to using provided transfer data if endpoint not available
-          console.warn('Could not fetch fresh transfer data, using cached data');
-          setCurrentTransfer(transfer);
-          const initialQuantities = (transfer.transfer_lines || []).reduce((acc: Record<string, number>, line: any) => {
-            const shipped = line.qty_shipped || line.qty;
-            const received = line.qty_received || 0;
-            const remaining = shipped - received;
-            acc[line.id] = remaining > 0 ? remaining : 0;
-            return acc;
-          }, {});
-          setLineQuantities(initialQuantities);
-          setLoading(false);
-          return;
-        }
-        
-        const { data } = await res.json();
+        const data = await InventoryRPC.getTransfer(transfer.id);
         if (data) {
           setCurrentTransfer(data);
-          // Initialize line quantities with remaining amounts
-          const initialQuantities = (data.transfer_lines || []).reduce((acc: Record<string, number>, line: any) => {
+          const initialQuantities = (data.transfer_lines || []).reduce((acc: Record<number, number>, line) => {
+            if (line.line_number == null) {
+              return acc;
+            }
             const shipped = line.qty_shipped || line.qty;
             const received = line.qty_received || 0;
             const remaining = shipped - received;
-            acc[line.id] = remaining > 0 ? remaining : 0;
+            acc[line.line_number] = remaining > 0 ? remaining : 0;
             return acc;
           }, {});
           setLineQuantities(initialQuantities);
+        } else {
+          setCurrentTransfer(transfer);
         }
       } catch (err) {
         console.error('Error fetching transfer:', err);
         // Fallback to using provided transfer data
         setCurrentTransfer(transfer);
-        const initialQuantities = (transfer.transfer_lines || []).reduce((acc: Record<string, number>, line: any) => {
+        const initialQuantities = (transfer.transfer_lines || []).reduce((acc: Record<number, number>, line) => {
+          if (line.line_number == null) {
+            return acc;
+          }
           const shipped = line.qty_shipped || line.qty;
           const received = line.qty_received || 0;
           const remaining = shipped - received;
-          acc[line.id] = remaining > 0 ? remaining : 0;
+          acc[line.line_number] = remaining > 0 ? remaining : 0;
           return acc;
         }, {});
         setLineQuantities(initialQuantities);
@@ -541,26 +512,18 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
       // Filter out lines with 0 quantity
       const quantities = Object.entries(lineQuantities)
         .filter(([_, qty]) => qty > 0)
-        .reduce((acc, [lineId, qty]) => {
-          acc[lineId] = qty;
-          return acc;
-        }, {} as Record<string, number>);
+        .map(([lineNumber, qty]) => ({
+          line_number: Number(lineNumber),
+          qty_received: qty,
+        }));
 
-      if (Object.keys(quantities).length === 0) {
+      if (quantities.length === 0) {
         setError('Please enter at least one quantity to receive');
         setSaving(false);
         return;
       }
 
-      const res = await apiWrite(`/api/inventory/transfers/${transfer.id}/receive`, {
-        method: 'POST',
-        body: { line_quantities: quantities },
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to receive transfer');
-      }
+      await InventoryRPC.receiveTransferPartial(transfer.id, quantities);
 
       onReceived();
     } catch (err: any) {
@@ -570,9 +533,9 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
     }
   };
 
-  const updateQuantity = (lineId: string, value: string) => {
+  const updateQuantity = (lineNumber: number, value: string) => {
     const numValue = value === '' ? 0 : parseInt(value);
-    setLineQuantities({ ...lineQuantities, [lineId]: numValue });
+    setLineQuantities({ ...lineQuantities, [lineNumber]: numValue });
   };
 
   return (
@@ -601,6 +564,7 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
                 const shipped = line.qty_shipped || line.qty;
                 const alreadyReceived = line.qty_received || 0;
                 const remaining = shipped - alreadyReceived;
+                const lineNumber = line.line_number ?? 0;
               
               return (
                 <div key={line.id} className="p-3 bg-gray-50 rounded-md">
@@ -623,12 +587,13 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
                     <label className="text-sm text-gray-700">Receive now:</label>
                     <input
                       type="number"
-                      value={lineQuantities[line.id] || ''}
-                      onChange={(e) => updateQuantity(line.id, e.target.value)}
+                      value={lineNumber ? lineQuantities[lineNumber] || '' : ''}
+                      onChange={(e) => lineNumber && updateQuantity(lineNumber, e.target.value)}
                       className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                       min="0"
                       max={remaining}
                       placeholder="0"
+                      disabled={!lineNumber}
                     />
                     <span className="text-xs text-gray-500">/ {remaining} remaining</span>
                   </div>
@@ -695,25 +660,14 @@ function FixMistakeModal({ transfer, onClose, onFixed }: { transfer: Transfer; o
     setError('');
 
     try {
-      let endpoint = '';
       let successMessage = '';
 
       if (mode === 'undo-ship') {
-        endpoint = `/api/inventory/transfers/${transfer.id}/undo-ship`;
+        await InventoryRPC.undoTransferShipment(transfer.id, reason, notes || null);
         successMessage = 'Shipment undone. Transfer reverted to draft.';
       } else if (mode === 'reverse-receipt') {
-        endpoint = `/api/inventory/transfers/${transfer.id}/reverse-receipt`;
+        await InventoryRPC.reverseTransferReceipt(transfer.id, reason, notes || null);
         successMessage = 'Receipt reversed. Stock corrected and transfer reverted to in-transit.';
-      }
-
-      const res = await apiWrite(endpoint, {
-        method: 'POST',
-        body: { reason, notes: notes || null },
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to fix mistake');
       }
 
       alert(successMessage);
@@ -781,12 +735,15 @@ function FixMistakeModal({ transfer, onClose, onFixed }: { transfer: Transfer; o
                     onClose();
                     // Trigger return directly
                     if (confirm('Create a return transfer (physical movement back)? This creates a new transfer in the opposite direction.')) {
-                      apiWrite(`/api/inventory/transfers/${transfer.id}/reverse`, {
-                        method: 'POST',
-                      }).then(() => {
-                        alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
-                        onFixed();
-                      });
+                      InventoryRPC.createTransferReversal(transfer.id)
+                        .then(() => {
+                          alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
+                          onFixed();
+                        })
+                        .catch((err) => {
+                          console.error('Error creating return transfer:', err);
+                          alert('Failed to create return transfer. Please try again.');
+                        });
                     }
                   }}
                   className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 text-left transition-colors"
@@ -943,16 +900,16 @@ function TransferDetailPanel({ transfer, onClose }: { transfer: Transfer; onClos
               <span className="w-2 h-2 bg-gray-400 rounded-full" />
               <span>Created: {new Date(transfer.created_at).toLocaleString()}</span>
             </div>
-            {transfer.shipped_at && (
+            {transfer.initiated_at && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-blue-400 rounded-full" />
-                <span>Shipped: {new Date(transfer.shipped_at).toLocaleString()}</span>
+                <span>Shipped: {new Date(transfer.initiated_at).toLocaleString()}</span>
               </div>
             )}
-            {transfer.received_at && (
+            {transfer.completed_at && (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-green-400 rounded-full" />
-                <span>Received: {new Date(transfer.received_at).toLocaleString()}</span>
+                <span>Received: {new Date(transfer.completed_at).toLocaleString()}</span>
               </div>
             )}
           </div>
@@ -969,8 +926,12 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     notes: '',
     lines: [{ catalog_item_id: '', qty: '' }],
   });
-  const [locations, setLocations] = useState<any[]>([]);
-  const [items, setItems] = useState<any[]>([]);
+  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
+  const [items, setItems] = useState<Array<{
+    catalog_item_id: string;
+    qty_available: number | null;
+    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure'> | null;
+  }>>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -980,9 +941,8 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
   useEffect(() => {
     const loadLocations = async () => {
       try {
-        const locsRes = await authenticatedFetch('/api/inventory/locations');
-        const locsData = await locsRes.json();
-        setLocations(locsData.data || []);
+        const data = await InventoryRPC.getLocations({ active: true });
+        setLocations(data || []);
       } catch (err) {
         console.error('[CreateTransferModal] Error loading locations:', err);
       } finally {
@@ -1002,9 +962,8 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
 
       setLoadingItems(true);
       try {
-        const itemsRes = await authenticatedFetch(`/api/inventory/locations/${form.from_location_id}/items`);
-        const itemsData = await itemsRes.json();
-        setItems(itemsData.data || []);
+        const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
+        setItems(data || []);
       } catch (err) {
         console.error('[CreateTransferModal] Error loading items:', err);
         setItems([]);
@@ -1045,25 +1004,17 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const res = await apiWrite('/api/inventory/transfers', {
-        method: 'POST',
-        body: {
-          from_location_id: form.from_location_id,
-          to_location_id: form.to_location_id,
-          notes: form.notes || null,
-          lines: form.lines
-            .filter(l => l.catalog_item_id && l.qty)
-            .map(l => ({
-              catalog_item_id: l.catalog_item_id,
-              qty: parseInt(l.qty),
-            })),
-        },
+      await InventoryRPC.createTransfer({
+        from_location_id: form.from_location_id,
+        to_location_id: form.to_location_id,
+        notes: form.notes || null,
+        lines: form.lines
+          .filter(l => l.catalog_item_id && l.qty)
+          .map(l => ({
+            catalog_item_id: l.catalog_item_id,
+            qty: parseInt(l.qty),
+          })),
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to create transfer');
-      }
 
       onCreated();
     } catch (err: any) {
@@ -1112,7 +1063,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                     <option value="">Select location...</option>
                     {locations.map((loc) => (
                       <option key={loc.id} value={loc.id}>
-                        {loc.name} ({typeof loc.location_type === 'string' ? loc.location_type : loc.location_type?.name || ''})
+                        {loc.name} ({loc.location_type?.name || ''})
                       </option>
                     ))}
                   </select>
@@ -1128,7 +1079,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                     <option value="">Select location...</option>
                     {locations.filter(loc => loc.id !== form.from_location_id).map((loc) => (
                       <option key={loc.id} value={loc.id}>
-                        {loc.name} ({typeof loc.location_type === 'string' ? loc.location_type : loc.location_type?.name || ''})
+                        {loc.name} ({loc.location_type?.name || ''})
                       </option>
                     ))}
                   </select>
@@ -1167,8 +1118,8 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                             : 'Select item...'}
                         </option>
                         {items.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name} ({item.sku}) - Available: {item.qty_available} {item.unit_of_measure}
+                          <option key={item.catalog_item_id} value={item.catalog_item_id}>
+                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - Available: {item.qty_available} {item.catalog_items?.unit_of_measure}
                           </option>
                         ))}
                       </select>
@@ -1235,19 +1186,24 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
     from_location_id: string;
     to_location_id: string;
     notes: string;
-    lines: Array<{ id?: string; catalog_item_id: string; qty: string }>;
+    lines: Array<{ id?: string; last_event_id?: string | null; catalog_item_id: string; qty: string }>;
   }>({
     from_location_id: transfer.from_location?.id || '',
     to_location_id: transfer.to_location?.id || '',
     notes: transfer.notes || '',
     lines: transfer.transfer_lines?.map(line => ({
       id: line.id,
+      last_event_id: line.last_event_id,
       catalog_item_id: line.catalog_item_id,
       qty: line.qty.toString(),
     })) || [{ catalog_item_id: '', qty: '' }],
   });
-  const [locations, setLocations] = useState<any[]>([]);
-  const [items, setItems] = useState<any[]>([]);
+  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
+  const [items, setItems] = useState<Array<{
+    catalog_item_id: string;
+    qty_available: number | null;
+    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure'> | null;
+  }>>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1257,9 +1213,8 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
   useEffect(() => {
     const loadLocations = async () => {
       try {
-        const locsRes = await authenticatedFetch('/api/inventory/locations');
-        const locsData = await locsRes.json();
-        setLocations(locsData.data || []);
+        const data = await InventoryRPC.getLocations({ active: true });
+        setLocations(data || []);
       } catch (err) {
         console.error('Error loading locations:', err);
       } finally {
@@ -1279,9 +1234,8 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
 
       setLoadingItems(true);
       try {
-        const itemsRes = await authenticatedFetch(`/api/inventory/locations/${form.from_location_id}/items`);
-        const itemsData = await itemsRes.json();
-        setItems(itemsData.data || []);
+        const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
+        setItems(data || []);
       } catch (err) {
         console.error('Error loading items:', err);
         setItems([]);
@@ -1318,26 +1272,23 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
     setError('');
 
     try {
-      const res = await apiWrite(`/api/inventory/transfers/${transfer.id}`, {
-        method: 'PUT',
-        body: {
-          from_location_id: form.from_location_id,
-          to_location_id: form.to_location_id,
-          notes: form.notes || null,
-          lines: form.lines
-            .filter(l => l.catalog_item_id && l.qty)
-            .map(l => ({
-              ...(l.id && { id: l.id }),
-              catalog_item_id: l.catalog_item_id,
-              qty: parseInt(l.qty),
-            })),
-        },
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update transfer');
+      if (!transfer.last_event_id) {
+        throw new Error('Missing last_event_id. Please refresh and try again.');
       }
+
+      await InventoryRPC.updateTransfer(transfer.id, transfer.last_event_id, {
+        from_location_id: form.from_location_id,
+        to_location_id: form.to_location_id,
+        notes: form.notes || null,
+        lines: form.lines
+          .filter(l => l.catalog_item_id && l.qty)
+          .map(l => ({
+            ...(l.id && { id: l.id }),
+            catalog_item_id: l.catalog_item_id,
+            qty: parseInt(l.qty),
+            last_event_id: l.last_event_id || undefined,
+          })),
+      });
 
       onUpdated();
     } catch (err: any) {
@@ -1381,7 +1332,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
                     <option value="">Select location...</option>
                     {locations.map((loc) => (
                       <option key={loc.id} value={loc.id}>
-                        {loc.name} ({typeof loc.location_type === 'string' ? loc.location_type : loc.location_type?.name || ''})
+                        {loc.name} ({loc.location_type?.name || ''})
                       </option>
                     ))}
                   </select>
@@ -1397,7 +1348,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
                     <option value="">Select location...</option>
                     {locations.filter(loc => loc.id !== form.from_location_id).map((loc) => (
                       <option key={loc.id} value={loc.id}>
-                        {loc.name} ({typeof loc.location_type === 'string' ? loc.location_type : loc.location_type?.name || ''})
+                        {loc.name} ({loc.location_type?.name || ''})
                       </option>
                     ))}
                   </select>
@@ -1426,8 +1377,8 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
                       >
                         <option value="">Select item...</option>
                         {items.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name} ({item.sku}) - {item.unit_of_measure}
+                          <option key={item.catalog_item_id} value={item.catalog_item_id}>
+                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - {item.catalog_items?.unit_of_measure}
                           </option>
                         ))}
                       </select>

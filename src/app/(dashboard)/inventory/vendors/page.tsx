@@ -7,22 +7,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import type { Database } from 'types/supabase';
 
-interface Vendor {
-  id: string;
-  name: string;
-  code?: string;
-  contact_name?: string;
-  contact_email?: string;
-  contact_phone?: string;
-  address?: string;
-  payment_terms?: string;
-  lead_time_days?: number;
-  notes?: string;
-  active: boolean;
-  created_at: string;
-}
+type Vendor = Database['supply_chain']['Tables']['vendors']['Row'];
 
 export default function VendorsPage() {
   const router = useRouter();
@@ -39,8 +27,7 @@ export default function VendorsPage() {
   const fetchVendors = async () => {
     setLoading(true);
     try {
-      const res = await authenticatedFetch('/api/inventory/vendors');
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getVendors();
       setVendors(data || []);
     } catch (error) {
       console.error('Error fetching vendors:', error);
@@ -128,14 +115,11 @@ export default function VendorsPage() {
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/vendors/${vendor.id}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delete vendor');
+      if (!vendor.last_event_id) {
+        throw new Error('Missing last_event_id for this vendor. Please refresh and try again.');
       }
+
+      await SupplyChainRPC.deleteVendor(vendor.id, vendor.last_event_id);
 
       fetchVendors();
     } catch (err: any) {
@@ -244,21 +228,22 @@ function VendorModal({
     setError('');
 
     try {
-      const url = isEdit 
-        ? `/api/inventory/vendors/${vendor.id}`
-        : '/api/inventory/vendors';
-      
-      const res = await apiWrite(url, {
-        method: isEdit ? 'PUT' : 'POST',
-        body: {
-          ...form,
-          lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
-        },
-      });
+      const payload = {
+        ...form,
+        lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
+      };
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || `Failed to ${isEdit ? 'update' : 'create'} vendor`);
+      if (isEdit && vendor) {
+        if (!vendor.last_event_id) {
+          throw new Error('Missing last_event_id for this vendor. Please refresh and try again.');
+        }
+
+        await SupplyChainRPC.updateVendor(vendor.id, payload, vendor.last_event_id);
+      } else {
+        await SupplyChainRPC.createVendor({
+          ...payload,
+          last_event_id: crypto.randomUUID(),
+        });
       }
 
       onSaved();

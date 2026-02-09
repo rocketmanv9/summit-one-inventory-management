@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { BaseTableWidget } from '../BaseTableWidget';
-import { authenticatedFetch } from '@/lib/api-client';
+import { fetchWidgetData } from '@/lib/widget-data';
 import { useSupplyChainEvents } from '@/hooks/useEventSubscription';
 
 export function RecentReceiptsRealtime({ widget }: { widget: DashboardWidget }) {
@@ -21,13 +21,11 @@ export function RecentReceiptsRealtime({ widget }: { widget: DashboardWidget }) 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await authenticatedFetch('/api/widgets/data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ widget_key: widget.widget_key, config: widget.config }),
+      const result = await fetchWidgetData({
+        widget_key: widget.widget_key,
+        config: widget.config,
       });
-      const result = await response.json();
-      setData(result.data);
+      setData(result);
       setLastUpdate(new Date());
     } catch (error) {
       console.error('Error fetching widget data:', error);

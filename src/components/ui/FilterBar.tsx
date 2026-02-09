@@ -37,8 +37,8 @@ export function FilterBar({ filters, values, onChange, onClear }: FilterBarProps
               className="h-9 px-3 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="">All</option>
-              {filter.options.map((opt) => (
-                <option key={opt.value} value={opt.value}>
+              {filter.options.map((opt, index) => (
+                <option key={opt.value || opt.label || index} value={opt.value}>
                   {opt.label}
                 </option>
               ))}

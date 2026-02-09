@@ -6,22 +6,30 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import type { Database } from 'types/supabase';
 
-interface Location {
-  id: string;
-  name: string;
-  location_type_id: string;
-  location_type?: { name: string } | null;
-  address?: string;
-  parent_location_id?: string;
-  active: boolean;
-  created_at: string;
-}
+type LocationRow = Database['inventory']['Tables']['locations']['Row'];
+type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
+
+type Location = LocationRow & { location_type?: { name: string } | null };
 
 interface LocationType {
   value: string;
   label: string;
+  description?: string;
+  last_event_id?: string | null;
+}
+
+function normalizeLocationTypes(data: LocationTypeRow[] | null | undefined): LocationType[] {
+  return (data || [])
+    .map((type) => ({
+      value: type.id,
+      label: type.name,
+      description: type.description || undefined,
+      last_event_id: type.last_event_id ?? null,
+    }))
+    .filter((type) => type.value && type.label);
 }
 
 export default function LocationsPage() {
@@ -40,9 +48,8 @@ export default function LocationsPage() {
 
   const fetchLocationTypes = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/location-types');
-      const { data } = await res.json();
-      setLocationTypes(data || []);
+      const data = await InventoryRPC.getLocationTypes();
+      setLocationTypes(normalizeLocationTypes(data));
     } catch (error) {
       console.error('Error fetching location types:', error);
     }
@@ -51,11 +58,9 @@ export default function LocationsPage() {
   const fetchLocations = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.type) params.set('type', filters.type);
-
-      const res = await authenticatedFetch(`/api/inventory/locations?${params}`);
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations({
+        type: filters.type || undefined,
+      });
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -64,20 +69,13 @@ export default function LocationsPage() {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete location "${name}"?\n\nThis cannot be undone.`)) {
+  const handleDelete = async (location: Location) => {
+    if (!confirm(`Are you sure you want to delete location "${location.name}"?\n\nThis cannot be undone.`)) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/locations/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delete location');
-      }
+      await InventoryRPC.deleteLocation(location.id, location.last_event_id);
 
       // Refresh the list
       fetchLocations();
@@ -149,7 +147,7 @@ export default function LocationsPage() {
             Edit
           </button>
           <button
-            onClick={() => handleDelete(row.id, row.name)}
+            onClick={() => handleDelete(row)}
             className="text-red-600 hover:text-red-800 text-sm font-medium"
           >
             Delete
@@ -271,12 +269,12 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
 
   const fetchLocationTypes = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/location-types');
-      const { data} = await res.json();
-      setLocationTypes(data || []);
+      const data = await InventoryRPC.getLocationTypes();
+      const normalized = normalizeLocationTypes(data);
+      setLocationTypes(normalized);
       // Set first type as default only when creating a new location (not editing)
-      if (data && data.length > 0 && !isEditing && !form.location_type_id) {
-        setForm(prev => ({ ...prev, location_type_id: data[0].value }));
+      if (normalized.length > 0 && !isEditing && !form.location_type_id) {
+        setForm(prev => ({ ...prev, location_type_id: normalized[0].value }));
       }
     } catch (error) {
       console.error('Error fetching location types:', error);
@@ -285,8 +283,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
 
   const fetchAvailableParents = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations();
       // Filter out the current location when editing to prevent circular references
       const filtered = isEditing 
         ? (data || []).filter((loc: Location) => loc.id !== location.id)
@@ -303,24 +300,16 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
     setError('');
 
     try {
-      const url = isEditing ? `/api/inventory/locations/${location.id}` : '/api/inventory/locations';
-      const method = isEditing ? 'PUT' : 'POST';
-      
       // Convert empty string to null for parent_location_id
       const payload = {
         ...form,
         parent_location_id: form.parent_location_id || null,
       };
-      
-      const res = await authenticatedFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || `Failed to ${isEditing ? 'update' : 'create'} location`);
+      if (isEditing && location) {
+        await InventoryRPC.updateLocation(location.id, payload, location.last_event_id);
+      } else {
+        await InventoryRPC.createLocation(payload);
       }
 
       onCreated();
@@ -374,8 +363,8 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               required
             >
-              {locationTypes.map((type) => (
-                <option key={type.value} value={type.value}>
+              {locationTypes.map((type, index) => (
+                <option key={type.value || type.label || index} value={type.value}>
                   {type.label}
                 </option>
               ))}
@@ -436,10 +425,18 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
     name: '',
     description: '',
   });
-  const [existingTypes, setExistingTypes] = useState<any[]>([]);
+  const [existingTypes, setExistingTypes] = useState<LocationType[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+
+  const toCode = (value: string) => {
+    return value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  };
 
   useEffect(() => {
     fetchTypes();
@@ -447,28 +444,24 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
 
   const fetchTypes = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/location-types');
-      const { data } = await res.json();
-      setExistingTypes(data || []);
+      const data = await InventoryRPC.getLocationTypes();
+      setExistingTypes(normalizeLocationTypes(data));
     } catch (error) {
       console.error('Error fetching types:', error);
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete location type "${name}"?\n\nYou can only delete types that are not in use.`)) {
+  const handleDelete = async (type: LocationType) => {
+    if (!confirm(`Are you sure you want to delete location type "${type.label}"?\n\nYou can only delete types that are not in use.`)) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/location-types/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delete location type');
+      if (!type.last_event_id) {
+        throw new Error('Missing last_event_id for this location type. Please refresh and try again.');
       }
+
+      await InventoryRPC.deleteLocationType(type.value, type.last_event_id);
 
       fetchTypes();
       onCreated(); // Refresh parent list
@@ -483,15 +476,16 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
     setError('');
 
     try {
-      const res = await apiWrite('/api/inventory/location-types', {
-        method: 'POST',
-        body: form,
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to create location type');
+      const code = toCode(form.name);
+      if (!code) {
+        throw new Error('Name must include at least one letter or number.');
       }
+      await InventoryRPC.createLocationType({
+        name: form.name,
+        description: form.description || null,
+        code,
+        last_event_id: crypto.randomUUID(),
+      });
 
       // Reset form and refresh list
       setForm({ name: '', description: '' });
@@ -530,7 +524,7 @@ function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onC
                       )}
                     </div>
                     <button
-                      onClick={() => handleDelete(type.value, type.label)}
+                      onClick={() => handleDelete(type)}
                       className="text-red-600 hover:text-red-800 text-sm font-medium"
                     >
                       Delete

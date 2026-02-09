@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -54,7 +54,7 @@ interface PODetail {
   }>;
 }
 
-export default function ReceivingPage() {
+function ReceivingContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const preselectedPO = searchParams.get('po');
@@ -598,5 +598,23 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
         )}
       </div>
     </div>
+  );
+}
+
+export default function ReceivingPage() {
+  return (
+    <Suspense fallback={
+      <AppShell>
+        <PageHeader title="Receiving" description="Loading..." />
+        <div className="p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-10 bg-gray-200 rounded" />
+            <div className="h-32 bg-gray-200 rounded" />
+          </div>
+        </div>
+      </AppShell>
+    }>
+      <ReceivingContent />
+    </Suspense>
   );
 }

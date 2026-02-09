@@ -1,15 +1,21 @@
 'use client';
 
-import { useDashboards } from '@/hooks/useDashboards';
+import { useDashboardOverview, useDashboards } from '@/hooks/useDashboards';
 import { AppShell } from '@/components/layout/AppShell';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { createClient } from '@/supabase/client';
+import { createBrowserAuthedClient } from '@/supabase/client';
 import { useRouter } from 'next/navigation';
-import { apiWrite } from '@/lib/api-client';
+import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
+  const {
+    stats,
+    widgets: overviewWidgets,
+    loading: overviewLoading,
+    error: overviewError,
+  } = useDashboardOverview();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const router = useRouter();
@@ -24,7 +30,7 @@ export default function DashboardPage() {
     }
   }, [loading, dashboards, router]);
 
-  if (loading) {
+  if (loading || overviewLoading) {
     return (
       <AppShell>
         <div className="p-8">
@@ -41,13 +47,13 @@ export default function DashboardPage() {
     );
   }
 
-  if (error) {
+  if (error || overviewError) {
     return (
       <AppShell>
         <div className="p-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
             <h2 className="text-lg font-semibold text-red-800">Error Loading Dashboards</h2>
-            <p className="text-sm text-red-600 mt-2">{error.message}</p>
+            <p className="text-sm text-red-600 mt-2">{(error || overviewError)?.message}</p>
           </div>
         </div>
       </AppShell>
@@ -86,6 +92,39 @@ export default function DashboardPage() {
             Select a dashboard to view or create a new one
           </p>
         </div>
+
+        {stats && (
+          <div className="mb-8 grid gap-4 md:grid-cols-3">
+            <div className="p-4 bg-white border border-gray-200 rounded-lg">
+              <div className="text-xs uppercase tracking-wide text-gray-500">Total Inventory</div>
+              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.totalInventory}</div>
+            </div>
+            <div className="p-4 bg-white border border-gray-200 rounded-lg">
+              <div className="text-xs uppercase tracking-wide text-gray-500">Low Stock Items</div>
+              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.lowStockItems}</div>
+            </div>
+            <div className="p-4 bg-white border border-gray-200 rounded-lg">
+              <div className="text-xs uppercase tracking-wide text-gray-500">Pending Orders</div>
+              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.pendingOrders}</div>
+            </div>
+          </div>
+        )}
+
+        {overviewWidgets.length > 0 && (
+          <div className="mb-8">
+            <div className="text-xs uppercase tracking-wide text-gray-500">Widget Catalog</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {overviewWidgets.map(widget => (
+                <span
+                  key={widget.id}
+                  className="px-3 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full"
+                >
+                  {widget.title || widget.widgetType}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Available Dashboards */}
         {otherDashboards.length > 0 && (
@@ -150,7 +189,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
   const [isDefault, setIsDefault] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,21 +202,31 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const response = await apiWrite('/api/dashboards', {
-        method: 'POST',
-        body: {
+      const accessToken = getStoredAccessToken();
+      const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+      const userId = accessToken ? getUserIdFromToken(accessToken) : null;
+
+      if (!tenantId) {
+        throw new Error('Missing tenant token. Please log in again.');
+      }
+
+      const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
+      const { data, error } = await supabase
+        .from('dashboards')
+        .insert({
+          tenant_id: tenantId,
           name: name.trim(),
           description: description.trim() || null,
           is_default: isDefault,
-        },
-      });
+          scope: 'tenant',
+          created_by: userId,
+          last_event_id: lastEventId,
+        })
+        .select('id')
+        .single();
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create dashboard');
-      }
+      if (error) throw error;
 
-      const { data } = await response.json();
       onCreate(data.id);
     } catch (err: any) {
       console.error('Error creating dashboard:', err);

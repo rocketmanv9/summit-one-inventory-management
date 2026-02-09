@@ -6,6 +6,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import { createBrowserAuthedClient } from '@/supabase/client';
 
 interface StockBalance {
   id: string;
@@ -39,13 +41,31 @@ export default function StockBalancesPage() {
   const fetchStock = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.location_id) params.set('location_id', filters.location_id);
-      if (filters.below_reorder === 'true') params.set('below_reorder', 'true');
+      const data = await InventoryRPC.getStockBalances({
+        location_id: filters.location_id,
+      });
 
-      const res = await fetch(`/api/inventory/stock?${params}`);
-      const { data } = await res.json();
-      setStock(data || []);
+      const normalized = (data || []).map((row: any) => {
+        const reorderPoint = row.reorder_point ?? row.catalog_items?.reorder_point ?? null;
+        return {
+          ...row,
+          item_name: row.item_name ?? row.catalog_items?.name,
+          item_sku: row.item_sku ?? row.catalog_items?.sku,
+          location_name: row.location_name ?? row.locations?.name,
+          on_hand_qty: row.on_hand_qty ?? row.qty_on_hand ?? 0,
+          reserved_qty: row.reserved_qty ?? row.qty_reserved ?? 0,
+          available_qty: row.available_qty ?? row.qty_available ?? 0,
+          reorder_point: reorderPoint,
+        } as StockBalance;
+      });
+
+      const filtered = filters.below_reorder === 'true'
+        ? normalized.filter((row) =>
+            row.reorder_point !== null && row.on_hand_qty <= (row.reorder_point ?? 0)
+          )
+        : normalized;
+
+      setStock(filtered);
     } catch (error) {
       console.error('Error fetching stock:', error);
     } finally {
@@ -56,15 +76,26 @@ export default function StockBalancesPage() {
   const fetchLedger = async (itemId: string, locationId: string) => {
     setLedgerLoading(true);
     try {
-      const params = new URLSearchParams({
-        type: 'movements',
-        catalog_item_id: itemId,
-        location_id: locationId,
-        limit: '20'
-      });
-      const res = await fetch(`/api/inventory/audit?${params}`);
-      const { data } = await res.json();
-      setLedgerData(data?.movements || []);
+      const supabase = createBrowserAuthedClient().schema('inventory');
+      const { data, error } = await supabase
+        .from('stock_movements')
+        .select('movement_type, quantity_delta, occurred_at')
+        .eq('catalog_item_id', itemId)
+        .eq('location_id', locationId)
+        .order('occurred_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        throw error;
+      }
+
+      const normalized = (data || []).map((movement: any) => ({
+        movement_type: movement.movement_type,
+        qty: movement.quantity_delta,
+        created_at: movement.occurred_at,
+      }));
+
+      setLedgerData(normalized);
     } catch (error) {
       console.error('Error fetching ledger:', error);
     } finally {

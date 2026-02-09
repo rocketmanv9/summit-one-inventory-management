@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { authenticatedFetch } from '@/lib/api-client';
+import { fetchWidgetData } from '@/lib/widget-data';
 import type { DashboardWidget } from '@/types/dashboard';
 import { BaseTableWidget } from '../BaseTableWidget';
 
@@ -13,13 +13,11 @@ export function RecentIssues({ widget }: { widget: DashboardWidget }) {
     async function fetchData() {
       setIsLoading(true);
       try {
-        const response = await authenticatedFetch('/api/widgets/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ widget_key: widget.widget_key, config: widget.config }),
+        const result = await fetchWidgetData({
+          widget_key: widget.widget_key,
+          config: widget.config,
         });
-        const result = await response.json();
-        setData(result.data);
+        setData(result);
       } catch (error) {
         console.error('Error fetching widget data:', error);
       } finally {

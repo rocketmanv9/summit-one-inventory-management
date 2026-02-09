@@ -7,7 +7,8 @@ import { EditableDashboardGrid } from '@/components/dashboards/EditableDashboard
 import { AddWidgetModal } from '@/components/dashboards/AddWidgetModal';
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { apiWrite } from '@/lib/api-client';
+import { createBrowserAuthedClient } from '@/supabase/client';
+import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
 
 export default function DashboardDetailPage() {
   const params = useParams();
@@ -32,22 +33,21 @@ export default function DashboardDetailPage() {
   const [isSavingLayout, setIsSavingLayout] = useState(false);
   const [isTogglingDefault, setIsTogglingDefault] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const supabase = createBrowserAuthedClient();
 
   const handleToggleDefault = async () => {
     if (!dashboard) return;
     
     setIsTogglingDefault(true);
     try {
-      const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
-        method: 'PATCH',
-        body: { is_default: !dashboard.is_default },
-      });
-      
-      if (response.ok) {
-        refetchDashboard();
-      } else {
-        throw new Error('Failed to update default status');
-      }
+      const { error } = await supabase
+        .from('dashboards')
+        .update({ is_default: !dashboard.is_default })
+        .eq('id', dashboardId);
+
+      if (error) throw error;
+
+      refetchDashboard();
     } catch (error) {
       console.error('Error toggling default:', error);
       alert('Failed to update default status. Please try again.');
@@ -209,11 +209,12 @@ export default function DashboardDetailPage() {
                 />
                 <button
                   onClick={async () => {
-                    const response = await apiWrite(`/api/dashboards/${dashboardId}`, {
-                      method: 'PATCH',
-                      body: { description: editedDescription },
-                    });
-                    if (response.ok) {
+                    const { error } = await supabase
+                      .from('dashboards')
+                      .update({ description: editedDescription })
+                      .eq('id', dashboardId);
+
+                    if (!error) {
                       setIsEditingDescription(false);
                       refetchDashboard();
                     }
@@ -342,6 +343,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
   const [isDefault, setIsDefault] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const supabase = createBrowserAuthedClient();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,21 +356,31 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
     setError('');
 
     try {
-      const response = await apiWrite('/api/dashboards', {
-        method: 'POST',
-        body: {
+      const accessToken = getStoredAccessToken();
+      const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+      const userId = accessToken ? getUserIdFromToken(accessToken) : null;
+
+      if (!tenantId) {
+        throw new Error('Missing tenant token. Please log in again.');
+      }
+
+      const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
+      const { data, error } = await supabase
+        .from('dashboards')
+        .insert({
+          tenant_id: tenantId,
           name: name.trim(),
           description: description.trim() || null,
           is_default: isDefault,
-        },
-      });
+          scope: 'tenant',
+          created_by: userId,
+          last_event_id: lastEventId,
+        })
+        .select('id')
+        .single();
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create dashboard');
-      }
+      if (error) throw error;
 
-      const { data } = await response.json();
       onCreate(data.id);
     } catch (err: any) {
       console.error('Error creating dashboard:', err);

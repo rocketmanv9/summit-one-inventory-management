@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { authenticatedFetch } from '@/lib/api-client';
+import { fetchWidgetData } from '@/lib/widget-data';
 import type { DashboardWidget } from '@/types/dashboard';
 import { BaseTableWidget } from '../BaseTableWidget';
 
@@ -16,16 +16,11 @@ export function ReservationsUpcoming({ widget }: ReservationsUpcomingProps) {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await authenticatedFetch('/api/widgets/data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            widget_key: widget.widget_key,
-            config: widget.config,
-          }),
+        const result = await fetchWidgetData({
+          widget_key: widget.widget_key,
+          config: widget.config,
         });
-        const json = await res.json();
-        setData(json.data);
+        setData(result);
       } catch (error) {
         console.error('Error fetching reservations upcoming:', error);
       } finally {

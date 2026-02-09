@@ -5,7 +5,7 @@
  * but routes inventory/supply-chain calls directly to Supabase.
  */
 
-import { createClient } from '@/supabase/client';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 type ApiWriteOptions = {
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -13,22 +13,27 @@ type ApiWriteOptions = {
   idempotencyKey?: string;
 };
 
-async function getAuthHeader(): Promise<{ Authorization: string } | {}> {
+function getAuthHeaders(): Record<string, string> {
   try {
-    const supabase = createClient();
-    const { data: { session }, error } = await supabase.auth.getSession();
-
-    if (error || !session?.access_token) {
-      return {};
-    }
-
-    return {
-      Authorization: `Bearer ${session.access_token}`
-    };
+    if (typeof window === 'undefined') return {};
+    const token = localStorage.getItem('custom_access_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
   } catch (error) {
     console.warn('[API Client] Error getting auth header:', error);
     return {};
   }
+}
+
+function createAuthedClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      global: {
+        headers: getAuthHeaders(),
+      },
+    }
+  );
 }
 
 function isLikelyId(value: string): boolean {
@@ -150,7 +155,7 @@ async function shimRequest(
   body?: any
 ): Promise<Response> {
   const { namespace, resource, id, actionSegments, searchParams } = parseApiUrl(url);
-  const supabase = createClient();
+  const supabase = createAuthedClient();
   let schema = getSchema(namespace);
   const table = getTableName(resource);
 
@@ -170,13 +175,14 @@ async function shimRequest(
 
   if (id) {
     basePayload.id = basePayload.id || id;
-    basePayload[`${singularize(slugToSnake(resource))}_id`] =
-      basePayload[`${singularize(slugToSnake(resource))}_id`] || id;
-    basePayload[`p_${singularize(slugToSnake(resource))}_id`] =
-      basePayload[`p_${singularize(slugToSnake(resource))}_id`] || id;
   }
 
   if (actionSegments.length > 0) {
+    if (id) {
+      const singular = singularize(slugToSnake(resource));
+      basePayload[`${singular}_id`] = basePayload[`${singular}_id`] || id;
+      basePayload[`p_${singular}_id`] = basePayload[`p_${singular}_id`] || id;
+    }
     const result = await runRpc(scoped, resource, actionSegments, basePayload);
     if (result.error) {
       return new Response(
@@ -257,10 +263,18 @@ export async function authenticatedFetch(
   options?: RequestInit
 ): Promise<Response> {
   if (isShimRoute(url)) {
-    return shimRequest(url, options?.method || 'GET');
+    let body: any = options?.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        // Leave body as-is when it is not JSON.
+      }
+    }
+    return shimRequest(url, options?.method || 'GET', body);
   }
 
-  const authHeader = await getAuthHeader();
+  const authHeader = getAuthHeaders();
 
   return fetch(url, {
     ...options,
@@ -289,18 +303,13 @@ export async function apiWrite(
       : optionsOrMethod;
 
   const idempotencyKey = options.idempotencyKey || crypto.randomUUID();
-  const bodyData = options.body
-    ? {
-        ...options.body,
-        last_event_id: options.body.last_event_id || idempotencyKey,
-      }
-    : undefined;
+  const bodyData = options.body ? { ...options.body } : undefined;
 
   if (isShimRoute(url)) {
     return shimRequest(url, options.method, bodyData);
   }
 
-  const authHeader = await getAuthHeader();
+  const authHeader = getAuthHeaders();
 
   return fetch(url, {
     method: options.method,

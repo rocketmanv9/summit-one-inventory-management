@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AuthSessionHydrator } from "@/components/AuthSessionHydrator";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,6 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Suspense fallback={<div className="min-h-screen" />}>
+          <AuthSessionHydrator />
           {children}
         </Suspense>
       </body>

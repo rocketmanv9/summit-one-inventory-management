@@ -1,18 +1,12 @@
 'use client';
 
-'use client';
-
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import type { Database } from 'types/supabase';
 
-interface Category {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
+type Category = Database['inventory']['Tables']['item_categories']['Row'];
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -27,11 +21,8 @@ export default function CategoriesPage() {
   const fetchCategories = async () => {
     setLoading(true);
     try {
-      const res = await authenticatedFetch('/api/inventory/categories');
-      if (res.ok) {
-        const data = await res.json();
-        setCategories(data.data || []);
-      }
+      const data = await InventoryRPC.getItemCategories();
+      setCategories(data || []);
     } catch (err) {
       console.error('Error fetching categories:', err);
     } finally {
@@ -39,25 +30,21 @@ export default function CategoriesPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (category: Category) => {
     if (!confirm('Are you sure you want to delete this category? This will fail if any items use this category.')) {
       return;
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/categories/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (res.ok) {
-        fetchCategories();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to delete category');
+      if (!category.last_event_id) {
+        throw new Error('Missing last_event_id for this category. Please refresh and try again.');
       }
+
+      await InventoryRPC.deleteItemCategory(category.id, category.last_event_id);
+      fetchCategories();
     } catch (err) {
       console.error('Error deleting category:', err);
-      alert('Failed to delete category');
+      alert(err instanceof Error ? err.message : 'Failed to delete category');
     }
   };
 
@@ -125,7 +112,7 @@ export default function CategoriesPage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => handleDelete(cat.id)}
+                        onClick={() => handleDelete(cat)}
                         className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
                       >
                         Delete
@@ -167,10 +154,62 @@ function CreateCategoryModal({
   category?: Category;
 }) {
   const [name, setName] = useState(category?.name || '');
+  const [skuPrefix, setSkuPrefix] = useState(category?.sku_prefix || '');
+  const [skuMode, setSkuMode] = useState<Category['sku_mode']>(category?.sku_mode || 'sequential');
+  const [parentCategoryId, setParentCategoryId] = useState(category?.parent_category_id || '');
+  const [separator, setSeparator] = useState('-');
+  const [nextSequence, setNextSequence] = useState('1');
+  const [categories, setCategories] = useState<Category[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const isEditing = !!category;
+
+  const buildSkuPreview = () => {
+    const prefix = skuPrefix ? skuPrefix.toUpperCase() : '';
+    const parent = categories.find((cat) => cat.id === parentCategoryId);
+    const parentPrefix = parent?.sku_prefix ? parent.sku_prefix.toUpperCase() : '';
+    const sep = separator || '-';
+    const seq = String(Math.max(1, Number(nextSequence) || 1)).padStart(3, '0');
+
+    if (skuMode === 'manual') {
+      return 'MANUAL-SKU-001';
+    }
+
+    if (skuMode === 'attribute_based') {
+      const parts = [parentPrefix, prefix, seq].filter(Boolean);
+      return parts.join(sep) || `SKU${sep}${seq}`;
+    }
+
+    return prefix ? `${prefix}${sep}${seq}` : `SKU${sep}${seq}`;
+  };
+
+  useEffect(() => {
+    async function loadCategories() {
+      try {
+        const data = await InventoryRPC.getItemCategories();
+        setCategories(data || []);
+      } catch (err) {
+        console.error('Error loading categories:', err);
+      }
+    }
+
+    async function loadSkuSettings() {
+      if (!category?.id) return;
+      try {
+        const data = await InventoryRPC.getSkuSettings(category.id);
+        if (data) {
+          setSeparator(data.separator || '-');
+          setNextSequence(String(data.next_sequence ?? 1));
+        }
+      } catch (err) {
+        console.error('Error loading SKU settings:', err);
+      }
+    }
+
+    loadCategories();
+    loadSkuSettings();
+  }, [category?.id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,18 +217,35 @@ function CreateCategoryModal({
     setError('');
 
     try {
-      const url = isEditing 
-        ? `/api/inventory/categories/${category.id}`
-        : '/api/inventory/categories';
-      
-      const res = await apiWrite(url, {
-        method: isEditing ? 'PUT' : 'POST',
-        body: { name },
-      });
+      const payload = {
+        name,
+        sku_prefix: skuPrefix || null,
+        sku_mode: skuMode || null,
+        parent_category_id: parentCategoryId || null,
+      };
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to save category');
+      let categoryId = category?.id;
+
+      if (isEditing && category) {
+        if (!category.last_event_id) {
+          throw new Error('Missing last_event_id for this category. Please refresh and try again.');
+        }
+
+        await InventoryRPC.updateItemCategory(category.id, payload, category.last_event_id);
+      } else {
+        const created = await InventoryRPC.createItemCategory({
+          ...payload,
+          last_event_id: crypto.randomUUID(),
+        });
+        categoryId = created.id;
+      }
+
+      if (categoryId) {
+        await InventoryRPC.upsertSkuSettings({
+          category_id: categoryId,
+          separator: separator || '-',
+          next_sequence: Math.max(1, Number(nextSequence) || 1),
+        });
       }
 
       onCreated();
@@ -221,6 +277,84 @@ function CreateCategoryModal({
               required
               autoFocus
             />
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-1">Parent Category (Optional)</label>
+            <select
+              value={parentCategoryId}
+              onChange={(e) => setParentCategoryId(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+            >
+              <option value="">-- None --</option>
+              {categories
+                .filter((cat) => cat.id !== category?.id)
+                .map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">SKU Prefix</label>
+              <input
+                type="text"
+                value={skuPrefix}
+                onChange={(e) => setSkuPrefix(e.target.value.toUpperCase())}
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+                placeholder="e.g., FUR"
+                maxLength={5}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">SKU Mode</label>
+              <select
+                value={skuMode || 'sequential'}
+                onChange={(e) => setSkuMode(e.target.value as Category['sku_mode'])}
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+              >
+                <option value="sequential">Sequential</option>
+                <option value="attribute_based">Attribute Based</option>
+                <option value="manual">Manual</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">SKU Separator</label>
+              <input
+                type="text"
+                value={separator}
+                onChange={(e) => setSeparator(e.target.value || '-')}
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+                placeholder="-"
+                maxLength={2}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Next Sequence</label>
+              <input
+                type="number"
+                min="1"
+                value={nextSequence}
+                onChange={(e) => setNextSequence(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+              />
+            </div>
+          </div>
+
+          <div className="mb-4 rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">SKU Preview</div>
+            <div className="mt-1 font-mono text-base text-blue-900">
+              {buildSkuPreview()}
+            </div>
+            <p className="mt-1 text-xs text-blue-700">
+              Example of how new items will be labeled for this category.
+            </p>
           </div>
 
           {error && (

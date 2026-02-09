@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { useWidgetRegistry } from '@/hooks/useDashboards';
 import type { WidgetRegistryEntry } from '@/types/dashboard';
-import { createClient } from '@/supabase/client';
-import { apiWrite } from '@/lib/api-client';
+import { createBrowserAuthedClient } from '@/supabase/client';
+import { getStoredAccessToken, getTenantIdFromToken } from '@/lib/auth-token';
 
 interface AddWidgetModalProps {
   dashboardId: string;
@@ -16,7 +16,7 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
   const { widgets: registryWidgets, loading } = useWidgetRegistry();
   const [selectedDomain, setSelectedDomain] = useState<string>('all');
   const [adding, setAdding] = useState(false);
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient();
 
   console.log('[AddWidgetModal] Registry widgets count:', registryWidgets.length);
   console.log('[AddWidgetModal] Loading:', loading);
@@ -30,6 +30,13 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
   const handleAddWidget = async (widget: WidgetRegistryEntry) => {
     setAdding(true);
     try {
+      const accessToken = getStoredAccessToken();
+      const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+
+      if (!tenantId) {
+        throw new Error('Missing tenant token. Please log in again.');
+      }
+
       // Find highest y position to add new widget at bottom
       const { data: existingWidgets } = await supabase
         .from('dashboard_widgets')
@@ -43,10 +50,12 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
         maxY = Math.max(maxY, y + h);
       });
 
-      // Insert new widget via API
-      const response = await apiWrite(`/api/dashboards/${dashboardId}/widgets`, {
-        method: 'POST',
-        body: {
+      const lastEventId = `ui_widget_${crypto.randomUUID()}`;
+      const { error } = await supabase
+        .from('dashboard_widgets')
+        .insert({
+          tenant_id: tenantId,
+          dashboard_id: dashboardId,
           widget_key: widget.widget_key,
           title: widget.name,
           layout: {
@@ -57,13 +66,10 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
           },
           config: widget.default_config || {},
           refresh_seconds: 300,
-        }
-      });
+          last_event_id: lastEventId,
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to add widget');
-      }
+      if (error) throw error;
 
       onAdded();
       onClose();

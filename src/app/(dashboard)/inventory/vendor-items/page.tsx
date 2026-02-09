@@ -2,39 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import type { Database } from 'types/supabase';
 
-interface Vendor {
-  id: string;
-  name: string;
-  code: string;
-}
-
-interface CatalogItem {
-  id: string;
-  sku: string;
-  name: string;
-  description?: string;
-}
-
-interface VendorItem {
-  id: string;
-  vendor_id: string;
-  catalog_item_id: string;
-  vendor_sku: string;
-  vendor_uom?: string;
-  pack_size?: number;
-  is_preferred: boolean;
-  unit_cost?: number;
-  currency: string;
-  lead_time_days?: number;
-  min_order_qty?: number;
-  notes?: string;
-  vendor?: Vendor;
-  catalog_item?: CatalogItem;
-  created_at: string;
-  updated_at: string;
-}
+type Vendor = Database['supply_chain']['Tables']['vendors']['Row'];
+type CatalogItem = Database['inventory']['Tables']['catalog_items']['Row'];
+type VendorItem = Database['supply_chain']['Tables']['vendor_items']['Row'];
+type EnrichedVendorItem = VendorItem & {
+  vendor?: Vendor | null;
+  catalog_item?: CatalogItem | null;
+};
 
 export default function VendorItemsPage() {
   const [vendorItems, setVendorItems] = useState<VendorItem[]>([]);
@@ -69,10 +47,8 @@ export default function VendorItemsPage() {
 
   const fetchVendorItems = async () => {
     try {
-      const response = await authenticatedFetch('/api/inventory/vendor-items');
-      if (!response.ok) throw new Error('Failed to fetch vendor items');
-      const data = await response.json();
-      setVendorItems(data);
+      const data = await SupplyChainRPC.getVendorItems();
+      setVendorItems(data || []);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
     } finally {
@@ -82,10 +58,8 @@ export default function VendorItemsPage() {
 
   const fetchVendors = async () => {
     try {
-      const response = await authenticatedFetch('/api/inventory/vendors');
-      if (!response.ok) throw new Error('Failed to fetch vendors');
-      const data = await response.json();
-      setVendors(data);
+      const data = await SupplyChainRPC.getVendors();
+      setVendors(data || []);
     } catch (error) {
       console.error('Error fetching vendors:', error);
     }
@@ -93,10 +67,8 @@ export default function VendorItemsPage() {
 
   const fetchCatalogItems = async () => {
     try {
-      const response = await authenticatedFetch('/api/inventory/items');
-      if (!response.ok) throw new Error('Failed to fetch catalog items');
-      const data = await response.json();
-      setCatalogItems(data);
+      const data = await InventoryRPC.getCatalogItems();
+      setCatalogItems(data || []);
     } catch (error) {
       console.error('Error fetching catalog items:', error);
     }
@@ -106,26 +78,31 @@ export default function VendorItemsPage() {
     e.preventDefault();
 
     const payload = {
-      ...formData,
+      vendor_id: formData.vendor_id,
+      catalog_item_id: formData.catalog_item_id,
+      vendor_sku: formData.vendor_sku,
+      vendor_uom: formData.vendor_uom || null,
       pack_size: parseFloat(formData.pack_size.toString()) || 1,
+      is_preferred: formData.is_preferred,
       unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : null,
+      currency: formData.currency,
       lead_time_days: formData.lead_time_days ? parseInt(formData.lead_time_days) : null,
       min_order_qty: formData.min_order_qty ? parseFloat(formData.min_order_qty) : null,
+      notes: formData.notes || null,
     };
 
     try {
-      const url = editingItem
-        ? `/api/inventory/vendor-items/${editingItem.id}`
-        : '/api/inventory/vendor-items';
-      
-      const response = await apiWrite(url, {
-        method: editingItem ? 'PUT' : 'POST',
-        body: payload,
-      });
+      if (editingItem) {
+        if (!editingItem.last_event_id) {
+          throw new Error('Missing last_event_id for this vendor item. Please refresh and try again.');
+        }
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to save vendor item');
+        await SupplyChainRPC.updateVendorItem(editingItem.id, payload, editingItem.last_event_id);
+      } else {
+        await SupplyChainRPC.createVendorItem({
+          ...payload,
+          last_event_id: crypto.randomUUID(),
+        });
       }
 
       await fetchVendorItems();
@@ -154,15 +131,15 @@ export default function VendorItemsPage() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (item: VendorItem) => {
     if (!confirm('Are you sure you want to delete this vendor item mapping?')) return;
 
     try {
-      const response = await apiWrite(`/api/inventory/vendor-items/${id}`, {
-        method: 'DELETE',
-      });
+      if (!item.last_event_id) {
+        throw new Error('Missing last_event_id for this vendor item. Please refresh and try again.');
+      }
 
-      if (!response.ok) throw new Error('Failed to delete vendor item');
+      await SupplyChainRPC.deleteVendorItem(item.id, item.last_event_id);
 
       await fetchVendorItems();
     } catch (error) {
@@ -189,12 +166,21 @@ export default function VendorItemsPage() {
     });
   };
 
-  const filteredVendorItems = vendorItems.filter((item) => {
+  const vendorMap = new Map(vendors.map((vendor) => [vendor.id, vendor]));
+  const catalogMap = new Map(catalogItems.map((item) => [item.id, item]));
+
+  const enrichedVendorItems: EnrichedVendorItem[] = vendorItems.map((item) => ({
+    ...item,
+    vendor: vendorMap.get(item.vendor_id) || null,
+    catalog_item: catalogMap.get(item.catalog_item_id) || null,
+  }));
+
+  const filteredVendorItems = enrichedVendorItems.filter((item) => {
     const matchesSearch =
       !searchTerm ||
-      item.catalog_item?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.catalog_item?.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.vendor?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.catalog_item?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.catalog_item?.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.vendor?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.vendor_sku.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesVendor = !filterVendor || item.vendor_id === filterVendor;
@@ -350,7 +336,7 @@ export default function VendorItemsPage() {
                       <Edit className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(item.id)}
+                      onClick={() => handleDelete(item)}
                       className="text-red-600 hover:text-red-900"
                     >
                       <Trash2 className="w-4 h-4" />

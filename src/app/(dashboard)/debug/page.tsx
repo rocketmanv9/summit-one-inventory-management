@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { Bug, Activity, RefreshCw, CheckCircle, Clock, XCircle, ArrowRight, BookOpen, Code, FileText } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { authenticatedFetch } from '@/lib/api-client';
+import { createBrowserAuthedClient } from '@/supabase/client';
+import { parseJwtPayload } from '@/lib/auth-token';
 
 interface Session {
   userId: string;
@@ -71,26 +73,79 @@ export default function DebugPage() {
 
   async function loadData() {
     try {
+      const supabase = createBrowserAuthedClient();
       const response = await authenticatedFetch('/api/auth/session');
       if (response.ok) {
         const sessionData = await response.json();
-        setSession(sessionData);
+        const token = typeof window !== 'undefined' ? localStorage.getItem('custom_access_token') : null;
+        const payload = token ? parseJwtPayload(token) : null;
+        const userMeta = (payload?.user_metadata as Record<string, any> | undefined) || {};
+        const tokenEmail = (payload as any)?.email || userMeta.email || '';
+        const tokenName = userMeta.full_name || userMeta.name || '';
+        const tokenRole = userMeta.role || (payload as any)?.role || '';
+        const tokenExp = payload?.exp ? payload.exp * 1000 : 0;
+        const mappedSession: Session = {
+          userId: sessionData.user_id || sessionData.userId || '',
+          email: sessionData.email || tokenEmail || '',
+          tenantId: sessionData.tenant_id || sessionData.tenantId || '',
+          role: sessionData.role || tokenRole || 'authenticated',
+          fullName: sessionData.fullName || sessionData.full_name || tokenName || '',
+          expiresAt: Number(sessionData.expiresAt || sessionData.expires_at || tokenExp || 0),
+        };
+        setSession(mappedSession);
 
         // Fetch tenant information
-        const tenantResponse = await authenticatedFetch('/api/tenant');
-        if (tenantResponse.ok) {
-          const { tenant } = await tenantResponse.json();
-          setTenant(tenant);
+        const tenantId = mappedSession.tenantId;
+        if (tenantId) {
+          const { data: tenantData, error: tenantError } = await supabase
+            .from('tenants')
+            .select('*')
+            .eq('id', tenantId)
+            .maybeSingle();
+
+          if (!tenantError && tenantData) {
+            setTenant(tenantData as Tenant);
+          }
         }
 
         // Fetch events data
-        const eventsResponse = await authenticatedFetch('/api/debug/events');
-        if (eventsResponse.ok) {
-          const { events: eventsData, stats: statsData, definitions: defsData, lastEmitted: lastEmittedData } = await eventsResponse.json();
-          setEvents(eventsData);
+        const { data: eventsData, error: eventsError } = await supabase
+          .schema('inventory')
+          .from('events_outbox')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (!eventsError) {
+          const normalizedEvents = (eventsData || []) as OutboxEvent[];
+          setEvents(normalizedEvents);
+
+          const statsData: EventStats = {
+            total_events: normalizedEvents.length,
+            pending_count: normalizedEvents.filter(event => event.status === 'pending').length,
+            published_count: normalizedEvents.filter(event => event.status === 'published').length,
+            failed_count: normalizedEvents.filter(event => event.status === 'failed').length,
+          };
           setStats(statsData);
-          setDefinitions(defsData);
-          setLastEmitted(lastEmittedData);
+
+          const emittedMap: Record<string, string> = {};
+          normalizedEvents.forEach(event => {
+            const eventName = event.event_name || event.event_type;
+            if (!eventName) return;
+            if (!emittedMap[eventName]) {
+              emittedMap[eventName] = event.created_at;
+            }
+          });
+          setLastEmitted(emittedMap);
+        }
+
+        const { data: defsData, error: defsError } = await supabase
+          .from('event_definitions')
+          .select('*')
+          .order('event_name');
+
+        if (!defsError) {
+          setDefinitions((defsData || []) as EventDefinition[]);
         }
       }
     } catch (error) {
