@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 
 interface TenantSettings {
   id: string;
@@ -15,13 +16,25 @@ interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  vendor_code_strategy: 'manual' | 'sequential' | 'hybrid' | 'import';
+  vendor_code_required: boolean;
+  vendor_code_case: 'upper' | 'lower' | 'preserve';
+  vendor_code_min_length: number | null;
+  vendor_code_max_length: number | null;
+  vendor_code_prefix: string | null;
+  vendor_code_suffix: string | null;
+  vendor_code_allowed_chars: string | null;
+  vendor_code_regex: string | null;
+  vendor_code_user_editable: boolean;
+  vendor_code_immutable_after_use: boolean;
+  vendor_code_sequence_padding: number;
   updated_at: string;
 }
 
 interface Vendor {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
 }
 
 export default function SettingsPage() {
@@ -41,6 +54,18 @@ export default function SettingsPage() {
     cycle_count_number_prefix: 'CC',
     auto_approve_enabled: false,
     auto_approve_limit: '',
+    vendor_code_strategy: 'manual',
+    vendor_code_required: false,
+    vendor_code_case: 'preserve',
+    vendor_code_min_length: '',
+    vendor_code_max_length: '',
+    vendor_code_prefix: '',
+    vendor_code_suffix: '',
+    vendor_code_allowed_chars: '',
+    vendor_code_regex: '',
+    vendor_code_user_editable: true,
+    vendor_code_immutable_after_use: true,
+    vendor_code_sequence_padding: '4',
   });
 
   useEffect(() => {
@@ -50,22 +75,15 @@ export default function SettingsPage() {
   }, []);
 
   const checkAdminStatus = async () => {
-    try {
-      // Check if user has admin role from session
-      const res = await authenticatedFetch('/api/auth/me');
-      const { data } = await res.json();
-      setIsAdmin(data?.role === 'admin');
-    } catch (error) {
-      console.error('Error checking admin status:', error);
-      setIsAdmin(false);
-    }
+    const token = getStoredAccessToken();
+    const payload = token ? parseJwtPayload(token) : null;
+    setIsAdmin(payload?.app_metadata?.role === 'admin');
   };
 
   const fetchVendors = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/vendors');
-      const { data } = await res.json();
-      setVendors(data || []);
+      const data = await SupplyChainRPC.getVendors();
+      setVendors((data || []) as Vendor[]);
     } catch (error) {
       console.error('Error fetching vendors:', error);
     }
@@ -74,8 +92,7 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await authenticatedFetch('/api/settings/tenant');
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getTenantSettings();
       
       if (data) {
         setSettings(data);
@@ -86,6 +103,18 @@ export default function SettingsPage() {
           cycle_count_number_prefix: data.cycle_count_number_prefix || 'CC',
           auto_approve_enabled: data.auto_approve_enabled || false,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
+          vendor_code_strategy: data.vendor_code_strategy || 'manual',
+          vendor_code_required: data.vendor_code_required || false,
+          vendor_code_case: data.vendor_code_case || 'preserve',
+          vendor_code_min_length: data.vendor_code_min_length ? data.vendor_code_min_length.toString() : '',
+          vendor_code_max_length: data.vendor_code_max_length ? data.vendor_code_max_length.toString() : '',
+          vendor_code_prefix: data.vendor_code_prefix || '',
+          vendor_code_suffix: data.vendor_code_suffix || '',
+          vendor_code_allowed_chars: data.vendor_code_allowed_chars || '',
+          vendor_code_regex: data.vendor_code_regex || '',
+          vendor_code_user_editable: data.vendor_code_user_editable ?? true,
+          vendor_code_immutable_after_use: data.vendor_code_immutable_after_use ?? true,
+          vendor_code_sequence_padding: data.vendor_code_sequence_padding?.toString() || '4',
         });
         
         // Load vendor-specific limits
@@ -126,28 +155,30 @@ export default function SettingsPage() {
         }
       });
 
-      const res = await apiWrite('/api/settings/tenant', {
-        method: 'PUT',
-        body: {
-          po_number_format: form.po_number_format,
-          po_number_prefix: form.po_number_prefix || null,
-          cycle_count_number_format: form.cycle_count_number_format,
-          cycle_count_number_prefix: form.cycle_count_number_prefix || null,
-          auto_approve_enabled: form.auto_approve_enabled,
-          auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
-          vendor_auto_approve_limits: vendorLimitsObj,
-        }
+      const updated = await SupplyChainRPC.updateTenantSettings({
+        po_number_format: form.po_number_format,
+        po_number_prefix: form.po_number_prefix || null,
+        cycle_count_number_format: form.cycle_count_number_format,
+        cycle_count_number_prefix: form.cycle_count_number_prefix || null,
+        auto_approve_enabled: form.auto_approve_enabled,
+        auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
+        vendor_auto_approve_limits: vendorLimitsObj,
+        vendor_code_strategy: form.vendor_code_strategy,
+        vendor_code_required: form.vendor_code_required,
+        vendor_code_case: form.vendor_code_case,
+        vendor_code_min_length: form.vendor_code_min_length ? parseInt(form.vendor_code_min_length) : null,
+        vendor_code_max_length: form.vendor_code_max_length ? parseInt(form.vendor_code_max_length) : null,
+        vendor_code_prefix: form.vendor_code_prefix || null,
+        vendor_code_suffix: form.vendor_code_suffix || null,
+        vendor_code_allowed_chars: form.vendor_code_allowed_chars || null,
+        vendor_code_regex: form.vendor_code_regex || null,
+        vendor_code_user_editable: form.vendor_code_user_editable,
+        vendor_code_immutable_after_use: form.vendor_code_immutable_after_use,
+        vendor_code_sequence_padding: form.vendor_code_sequence_padding ? parseInt(form.vendor_code_sequence_padding) : 4,
       });
 
-      const result = await res.json();
-
-      if (!res.ok) {
-        setError(result.error || result.message || 'Failed to update settings');
-        return;
-      }
-
       setSuccess('Settings updated successfully!');
-      setSettings(result.data);
+      setSettings(updated as TenantSettings);
       
       // Clear success message after 3 seconds
       setTimeout(() => setSuccess(''), 3000);
@@ -163,6 +194,13 @@ export default function SettingsPage() {
     'sequential-year': '26-0001, 26-0002, 26-0003 (resets each year)',
     'sequential': '0001, 0002, 0003 (continuous)',
     'timestamp': 'PO-MKY42T62 (timestamp-based)',
+  };
+
+  const vendorCodeExamples = {
+    manual: 'User-entered (validated by rules below)',
+    sequential: '0001, 0002, 0003 (auto-generated)',
+    hybrid: 'Auto-generated by default, user override allowed',
+    import: 'Imported from CSV/accounting system',
   };
 
   const cycleCountFormatExamples = {
@@ -197,15 +235,16 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div className="max-w-3xl">
-        <form onSubmit={handleSubmit} className="bg-white rounded-lg border p-6 space-y-6">
-          {/* PO Numbering Section */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 pb-2 border-b">Purchase Order Numbering</h3>
-            
+      <div className="max-w-5xl">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Purchase Order Settings Panel */}
+          <div className="bg-white rounded-lg border p-6 space-y-6">
+            <h3 className="text-lg font-semibold pb-2 border-b">Purchase Order Settings</h3>
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Number Format</label>
+                <label className="block text-sm font-medium mb-1">PO Number Format</label>
                 <select
                   value={form.po_number_format}
                   onChange={(e) => setForm({ ...form, po_number_format: e.target.value })}
@@ -223,7 +262,7 @@ export default function SettingsPage() {
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Number Prefix (Optional)
+                  PO Number Prefix (Optional)
                 </label>
                 <input
                   type="text"
@@ -239,12 +278,260 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
+
+            <div className="space-y-4 border-t pt-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="auto_approve"
+                  checked={form.auto_approve_enabled}
+                  onChange={(e) => setForm({ ...form, auto_approve_enabled: e.target.checked })}
+                  className="w-4 h-4 text-primary focus:ring-2 focus:ring-primary rounded"
+                  disabled={!isAdmin}
+                />
+                <label htmlFor="auto_approve" className="ml-2 text-sm font-medium">
+                  Enable automatic approval for POs under a certain amount
+                </label>
+              </div>
+
+              {form.auto_approve_enabled && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Global Auto-Approve Limit ($)
+                    </label>
+                    <input
+                      type="number"
+                      value={form.auto_approve_limit}
+                      onChange={(e) => setForm({ ...form, auto_approve_limit: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                      placeholder="e.g., 1000.00 (optional if using vendor-specific)"
+                      step="0.01"
+                      min="0"
+                      disabled={!isAdmin}
+                    />
+                    <p className="text-sm text-gray-500 mt-1">
+                      Default limit for all vendors. Leave blank if only using vendor-specific limits.
+                    </p>
+                  </div>
+
+                  <div className="border-t pt-4">
+                    <label className="block text-sm font-medium mb-2">
+                      Vendor-Specific Auto-Approve Limits (Optional)
+                    </label>
+                    <p className="text-sm text-gray-600 mb-3">
+                      Set different approval limits for specific vendors. These override the global limit.
+                    </p>
+
+                    {vendors.length === 0 ? (
+                      <p className="text-sm text-gray-500 italic">No vendors configured yet.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {vendors.map((vendor) => (
+                          <div key={vendor.id} className="flex items-center gap-3 p-2 bg-gray-50 rounded">
+                            <span className="flex-1 text-sm font-medium">
+                              {vendor.name} ({vendor.code || 'NO-CODE'})
+                            </span>
+                            <input
+                              type="number"
+                              value={vendorLimits[vendor.id] || ''}
+                              onChange={(e) => setVendorLimits({ ...vendorLimits, [vendor.id]: e.target.value })}
+                              className="w-32 px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                              placeholder="$ limit"
+                              step="0.01"
+                              min="0"
+                              disabled={!isAdmin}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
-          {/* Cycle Count Numbering Section */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 pb-2 border-b">Cycle Count Numbering</h3>
-            
+          {/* Vendor Code Settings Panel */}
+          <div className="bg-white rounded-lg border p-6 space-y-4">
+            <h3 className="text-lg font-semibold pb-2 border-b">Vendor Code Settings</h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Strategy</label>
+                <select
+                  value={form.vendor_code_strategy}
+                  onChange={(e) => setForm({ ...form, vendor_code_strategy: e.target.value as 'manual' | 'sequential' | 'hybrid' | 'import' })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={!isAdmin}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="sequential">Sequential (auto)</option>
+                  <option value="hybrid">Hybrid (auto + override)</option>
+                  <option value="import">Import-driven</option>
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  {vendorCodeExamples[form.vendor_code_strategy as keyof typeof vendorCodeExamples]}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="vendor_code_required"
+                    checked={form.vendor_code_required}
+                    onChange={(e) => setForm({ ...form, vendor_code_required: e.target.checked })}
+                    className="w-4 h-4 text-primary focus:ring-2 focus:ring-primary rounded"
+                    disabled={!isAdmin}
+                  />
+                  <label htmlFor="vendor_code_required" className="ml-2 text-sm font-medium">
+                    Require vendor code
+                  </label>
+                </div>
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="vendor_code_editable"
+                    checked={form.vendor_code_user_editable}
+                    onChange={(e) => setForm({ ...form, vendor_code_user_editable: e.target.checked })}
+                    className="w-4 h-4 text-primary focus:ring-2 focus:ring-primary rounded"
+                    disabled={!isAdmin}
+                  />
+                  <label htmlFor="vendor_code_editable" className="ml-2 text-sm font-medium">
+                    Allow edits
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="vendor_code_immutable"
+                  checked={form.vendor_code_immutable_after_use}
+                  onChange={(e) => setForm({ ...form, vendor_code_immutable_after_use: e.target.checked })}
+                  className="w-4 h-4 text-primary focus:ring-2 focus:ring-primary rounded"
+                  disabled={!isAdmin}
+                />
+                <label htmlFor="vendor_code_immutable" className="ml-2 text-sm font-medium">
+                  Lock vendor code after purchase activity
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Case Normalization</label>
+                  <select
+                    value={form.vendor_code_case}
+                    onChange={(e) => setForm({ ...form, vendor_code_case: e.target.value as 'upper' | 'lower' | 'preserve' })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={!isAdmin}
+                  >
+                    <option value="preserve">Preserve</option>
+                    <option value="upper">Uppercase</option>
+                    <option value="lower">Lowercase</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Sequence Padding</label>
+                  <input
+                    type="number"
+                    value={form.vendor_code_sequence_padding}
+                    onChange={(e) => setForm({ ...form, vendor_code_sequence_padding: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    min="1"
+                    max="12"
+                    disabled={!isAdmin}
+                  />
+                  <p className="text-sm text-gray-500 mt-1">
+                    Applies to sequential or hybrid strategies.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Prefix</label>
+                  <input
+                    type="text"
+                    value={form.vendor_code_prefix}
+                    onChange={(e) => setForm({ ...form, vendor_code_prefix: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="e.g., VND-"
+                    disabled={!isAdmin}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Suffix</label>
+                  <input
+                    type="text"
+                    value={form.vendor_code_suffix}
+                    onChange={(e) => setForm({ ...form, vendor_code_suffix: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="e.g., -US"
+                    disabled={!isAdmin}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Min Length</label>
+                  <input
+                    type="number"
+                    value={form.vendor_code_min_length}
+                    onChange={(e) => setForm({ ...form, vendor_code_min_length: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    min="1"
+                    disabled={!isAdmin}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Max Length</label>
+                  <input
+                    type="number"
+                    value={form.vendor_code_max_length}
+                    onChange={(e) => setForm({ ...form, vendor_code_max_length: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    min="1"
+                    disabled={!isAdmin}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Allowed Characters</label>
+                <input
+                  type="text"
+                  value={form.vendor_code_allowed_chars}
+                  onChange={(e) => setForm({ ...form, vendor_code_allowed_chars: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+                  placeholder="A-Z0-9_-"
+                  disabled={!isAdmin}
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  Regex character class, e.g. A-Z0-9_-.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Regex Validation (Optional)</label>
+                <input
+                  type="text"
+                  value={form.vendor_code_regex}
+                  onChange={(e) => setForm({ ...form, vendor_code_regex: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+                  placeholder="^VND-[A-Z0-9]{4}$"
+                  disabled={!isAdmin}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Cycle Count Settings Panel */}
+          <div className="bg-white rounded-lg border p-6 space-y-4">
+            <h3 className="text-lg font-semibold pb-2 border-b">Cycle Count Settings</h3>
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">Number Format</label>
@@ -283,82 +570,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Auto-Approval Section */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 pb-2 border-b">Auto-Approval Rules</h3>
-            
-            <div className="space-y-4">
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="auto_approve"
-                  checked={form.auto_approve_enabled}
-                  onChange={(e) => setForm({ ...form, auto_approve_enabled: e.target.checked })}
-                  className="w-4 h-4 text-primary focus:ring-2 focus:ring-primary rounded"
-                  disabled={!isAdmin}
-                />
-                <label htmlFor="auto_approve" className="ml-2 text-sm font-medium">
-                  Enable automatic approval for POs under a certain amount
-                </label>
-              </div>
-
-              {form.auto_approve_enabled && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">
-                      Global Auto-Approve Limit ($)
-                    </label>
-                    <input
-                      type="number"
-                      value={form.auto_approve_limit}
-                      onChange={(e) => setForm({ ...form, auto_approve_limit: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                      placeholder="e.g., 1000.00 (optional if using vendor-specific)"
-                      step="0.01"
-                      min="0"
-                      disabled={!isAdmin}
-                    />
-                    <p className="text-sm text-gray-500 mt-1">
-                      Default limit for all vendors. Leave blank if only using vendor-specific limits.
-                    </p>
-                  </div>
-
-                  {/* Vendor-Specific Limits */}
-                  <div className="border-t pt-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Vendor-Specific Auto-Approve Limits (Optional)
-                    </label>
-                    <p className="text-sm text-gray-600 mb-3">
-                      Set different approval limits for specific vendors. These override the global limit.
-                    </p>
-                    
-                    {vendors.length === 0 ? (
-                      <p className="text-sm text-gray-500 italic">No vendors configured yet.</p>
-                    ) : (
-                      <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {vendors.map((vendor) => (
-                          <div key={vendor.id} className="flex items-center gap-3 p-2 bg-gray-50 rounded">
-                            <span className="flex-1 text-sm font-medium">
-                              {vendor.name} ({vendor.code})
-                            </span>
-                            <input
-                              type="number"
-                              value={vendorLimits[vendor.id] || ''}
-                              onChange={(e) => setVendorLimits({ ...vendorLimits, [vendor.id]: e.target.value })}
-                              className="w-32 px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                              placeholder="$ limit"
-                              step="0.01"
-                              min="0"
-                              disabled={!isAdmin}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
           </div>
 
           {/* Error/Success Messages */}

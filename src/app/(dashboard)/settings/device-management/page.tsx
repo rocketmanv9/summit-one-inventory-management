@@ -113,7 +113,13 @@ export default function DeviceManagementPage() {
       await fetchDevices();
     } catch (err) {
       console.error('Error claiming device:', err);
-      setClaimMessage('Claim failed. Verify the code and try again.');
+      const message =
+        typeof err === 'object' && err
+          ? ((err as { message?: string; details?: string }).message ||
+              (err as { details?: string }).details ||
+              'Unknown error')
+          : 'Unknown error';
+      setClaimMessage(`Claim failed: ${message}`);
     } finally {
       setClaiming(false);
     }

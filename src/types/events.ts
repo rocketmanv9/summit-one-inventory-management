@@ -171,6 +171,7 @@ export interface PurchaseOrderCreatedPayload {
   po_number: string;
   vendor_id: string;
   vendor_name: string;
+  vendor_code?: string;
   delivery_location_id: string;
   expected_delivery_date?: string;
   line_count: number;
@@ -183,6 +184,8 @@ export interface PurchaseOrderStatusPayload {
   old_status: string;
   new_status: string;
   vendor_name: string;
+  vendor_code?: string;
+  vendor_id?: string;
 }
 
 export interface ReceiptCreatedPayload {
@@ -192,6 +195,9 @@ export interface ReceiptCreatedPayload {
   location_name: string;
   po_id?: string;
   po_number?: string;
+  vendor_id?: string;
+  vendor_name?: string;
+  vendor_code?: string;
   received_at: string;
 }
 

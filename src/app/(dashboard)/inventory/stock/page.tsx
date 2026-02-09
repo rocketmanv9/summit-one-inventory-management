@@ -33,10 +33,49 @@ export default function StockBalancesPage() {
   const [selectedItem, setSelectedItem] = useState<StockBalance | null>(null);
   const [ledgerData, setLedgerData] = useState<any[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustForm, setAdjustForm] = useState({
+    catalog_item_id: '',
+    location_id: '',
+    new_qty: '',
+    reason: 'count_variance',
+    notes: '',
+  });
+  const [adjustError, setAdjustError] = useState('');
+  const [adjustSaving, setAdjustSaving] = useState(false);
+  const [adjustItems, setAdjustItems] = useState<Array<{ id: string; name: string; sku: string }>>([]);
+  const [adjustLocations, setAdjustLocations] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
     fetchStock();
   }, [filters]);
+
+  useEffect(() => {
+    if (!showAdjustModal) return;
+    if (adjustItems.length > 0 && adjustLocations.length > 0) return;
+
+    const loadAdjustLookups = async () => {
+      try {
+        const [items, locations] = await Promise.all([
+          InventoryRPC.getCatalogItems({ active: true }),
+          InventoryRPC.getLocations({ active: true }),
+        ]);
+        setAdjustItems((items || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+        })));
+        setAdjustLocations((locations || []).map((loc) => ({
+          id: loc.id,
+          name: loc.name,
+        })));
+      } catch (error) {
+        console.error('Error loading adjust lookups:', error);
+      }
+    };
+
+    loadAdjustLookups();
+  }, [showAdjustModal, adjustItems.length, adjustLocations.length]);
 
   const fetchStock = async () => {
     setLoading(true);
@@ -109,6 +148,61 @@ export default function StockBalancesPage() {
     const locationId = item.location_id || item.locations?.id;
     if (itemId && locationId) {
       fetchLedger(itemId, locationId);
+    }
+  };
+
+  const openAdjustModal = (prefill?: StockBalance | null) => {
+    setAdjustError('');
+    if (prefill) {
+      const itemId = prefill.catalog_item_id || prefill.catalog_items?.id || '';
+      const locationId = prefill.location_id || prefill.locations?.id || '';
+      setAdjustForm({
+        catalog_item_id: itemId,
+        location_id: locationId,
+        new_qty: prefill.on_hand_qty?.toString() ?? '',
+        reason: 'count_variance',
+        notes: '',
+      });
+    } else {
+      setAdjustForm({
+        catalog_item_id: '',
+        location_id: '',
+        new_qty: '',
+        reason: 'count_variance',
+        notes: '',
+      });
+    }
+    setShowAdjustModal(true);
+  };
+
+  const submitAdjustment = async () => {
+    setAdjustError('');
+    if (!adjustForm.catalog_item_id || !adjustForm.location_id) {
+      setAdjustError('Select an item and location.');
+      return;
+    }
+    const qty = Number(adjustForm.new_qty);
+    if (!Number.isFinite(qty)) {
+      setAdjustError('Enter a valid quantity.');
+      return;
+    }
+
+    setAdjustSaving(true);
+    try {
+      await InventoryRPC.adjustInventory({
+        catalog_item_id: adjustForm.catalog_item_id,
+        location_id: adjustForm.location_id,
+        new_qty: qty,
+        reason: adjustForm.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
+        notes: adjustForm.notes,
+      });
+      setShowAdjustModal(false);
+      await fetchStock();
+      setSelectedItem(null);
+    } catch (error: any) {
+      setAdjustError(error?.message || 'Failed to adjust inventory.');
+    } finally {
+      setAdjustSaving(false);
     }
   };
 
@@ -223,12 +317,20 @@ export default function StockBalancesPage() {
           title="Stock Balances"
           description="View current inventory levels by item and location. Example: See how many tons of asphalt mix you have at the main yard vs. Job Site #234, or track rebar quantities across all truck inventories."
           actions={
-            <button
-              onClick={fetchStock}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              Refresh
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => openAdjustModal(null)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Add Starting Stock
+              </button>
+              <button
+                onClick={fetchStock}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
           }
         />
 
@@ -302,7 +404,10 @@ export default function StockBalancesPage() {
                       <button className="px-3 py-2 text-sm bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors">
                         Transfer
                       </button>
-                      <button className="px-3 py-2 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors">
+                      <button
+                        onClick={() => openAdjustModal(selectedItem)}
+                        className="px-3 py-2 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
+                      >
                         Adjust
                       </button>
                       <button className="px-3 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200 transition-colors">
@@ -345,6 +450,145 @@ export default function StockBalancesPage() {
           )}
         </div>
       </div>
+      {showAdjustModal && (
+        <AdjustStockModal
+          form={adjustForm}
+          items={adjustItems}
+          locations={adjustLocations}
+          saving={adjustSaving}
+          error={adjustError}
+          onClose={() => setShowAdjustModal(false)}
+          onChange={(next) => setAdjustForm((prev) => ({ ...prev, ...next }))}
+          onSubmit={submitAdjustment}
+        />
+      )}
     </AppShell>
+  );
+}
+
+function AdjustStockModal({
+  form,
+  items,
+  locations,
+  saving,
+  error,
+  onClose,
+  onChange,
+  onSubmit,
+}: {
+  form: {
+    catalog_item_id: string;
+    location_id: string;
+    new_qty: string;
+    reason: string;
+    notes: string;
+  };
+  items: Array<{ id: string; name: string; sku: string }>;
+  locations: Array<{ id: string; name: string }>;
+  saving: boolean;
+  error: string;
+  onClose: () => void;
+  onChange: (next: Partial<typeof form>) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Add Starting Stock</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+        </div>
+
+        {error && (
+          <div className="mb-3 text-sm text-red-600">{error}</div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Item</label>
+            <select
+              value={form.catalog_item_id}
+              onChange={(e) => onChange({ catalog_item_id: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md"
+            >
+              <option value="">Select item...</option>
+              {items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} ({item.sku})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Location</label>
+            <select
+              value={form.location_id}
+              onChange={(e) => onChange({ location_id: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md"
+            >
+              <option value="">Select location...</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">On Hand Quantity</label>
+            <input
+              type="number"
+              min="0"
+              value={form.new_qty}
+              onChange={(e) => onChange({ new_qty: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Reason</label>
+            <select
+              value={form.reason}
+              onChange={(e) => onChange({ reason: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md"
+            >
+              <option value="count_variance">Initial count</option>
+              <option value="damage">Damage</option>
+              <option value="theft">Theft</option>
+              <option value="expiration">Expiration</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => onChange({ notes: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md"
+              rows={3}
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 border rounded-md text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={saving}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

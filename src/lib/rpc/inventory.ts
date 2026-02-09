@@ -567,6 +567,8 @@ export const InventoryRPC = {
 
     if (filters?.status) {
       query = query.eq('status', filters.status);
+    } else {
+      query = query.neq('status', 'retired');
     }
     if (filters?.assigned) {
       query = query.eq('status', 'assigned');
@@ -589,6 +591,49 @@ export const InventoryRPC = {
       ...payload,
       last_event_id: payload.last_event_id ?? crypto.randomUUID(),
     };
+
+    const { data: existingAsset, error: existingError } = await supabase
+      .from('assets')
+      .select('id, last_event_id, status')
+      .eq('asset_tag', insertPayload.asset_tag)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(`Failed to check existing asset: ${existingError.message}`);
+    }
+
+    if (existingAsset && existingAsset.status !== 'retired') {
+      throw new Error('An asset with this tag already exists. Edit the existing asset or choose a different tag.');
+    }
+
+    if (existingAsset && existingAsset.status === 'retired') {
+      const nextEventId = crypto.randomUUID();
+      const updatePayload: AssetUpdatePayload = {
+        ...insertPayload,
+        status: insertPayload.status ?? 'available',
+        last_event_id: nextEventId,
+      };
+      delete (updatePayload as AssetUpdatePayload & { tenant_id?: string }).tenant_id;
+
+      let updateQuery = supabase
+        .from('assets')
+        .update(updatePayload)
+        .eq('id', existingAsset.id);
+
+      if (existingAsset.last_event_id) {
+        updateQuery = updateQuery.eq('last_event_id', existingAsset.last_event_id);
+      }
+
+      const { data: restored, error: restoreError } = await updateQuery
+        .select('id, last_event_id')
+        .single();
+
+      if (restoreError) {
+        throw new Error(`Failed to restore asset: ${restoreError.message}`);
+      }
+
+      return restored as Pick<AssetRow, 'id' | 'last_event_id'>;
+    }
 
     const { data, error } = await supabase
       .from('assets')
@@ -638,12 +683,13 @@ export const InventoryRPC = {
    */
   async deleteAsset(id: string, lastEventId: string) {
     const supabase = createBrowserAuthedClient().schema('inventory');
+    const nextEventId = crypto.randomUUID();
     const { data, error } = await supabase
       .from('assets')
-      .delete()
+      .update({ status: 'retired', last_event_id: nextEventId })
       .eq('id', id)
       .eq('last_event_id', lastEventId)
-      .select('id')
+      .select('id, last_event_id')
       .single();
 
     if (error) {
@@ -653,7 +699,7 @@ export const InventoryRPC = {
       throw new Error('Asset was updated by someone else. Please refresh and try again.');
     }
 
-    return data as Pick<AssetRow, 'id'>;
+    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
   },
 
   /**

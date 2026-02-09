@@ -18,6 +18,10 @@ type DeviceAnnounceResponse = {
   claim_code?: string
   expires_at?: string
   tenant_id?: string | null
+  latest_config?: {
+    version: number
+    config: Record<string, unknown>
+  } | null
 }
 
 const CLAIM_TTL_SECONDS = 120
@@ -166,6 +170,17 @@ Deno.serve(async (req) => {
     deviceRow = data
   }
 
+  if (deviceRow.status === 'suspended' || deviceRow.status === 'disabled') {
+    return jsonResponse(
+      {
+        device_id: deviceRow.id,
+        status: deviceRow.status,
+        tenant_id: deviceRow.tenant_id ?? null
+      },
+      403
+    )
+  }
+
   const response: DeviceAnnounceResponse = {
     device_id: deviceRow.id,
     status: deviceRow.status,
@@ -203,6 +218,24 @@ Deno.serve(async (req) => {
 
     response.claim_code = claim.code
     response.expires_at = claim.expires_at
+  }
+
+  if (deviceRow.status === 'active') {
+    const { data: latestConfig, error: configError } = await inventory
+      .from('rfid_device_configs')
+      .select('version, config')
+      .eq('device_id', deviceRow.id)
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (configError) {
+      return jsonError('Failed to load device config', configError, 500)
+    }
+
+    response.latest_config = latestConfig
+      ? { version: latestConfig.version, config: latestConfig.config as Record<string, unknown> }
+      : null
   }
 
   return jsonResponse(response)

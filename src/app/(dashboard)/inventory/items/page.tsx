@@ -19,7 +19,9 @@ type CatalogItem = CatalogItemRow & {
   item_categories?: Pick<ItemCategoryRow, 'name'> | null;
 };
 type Category = ItemCategoryRow;
-type Location = LocationRow;
+type Location = LocationRow & {
+  location_type?: { name?: string } | string | null;
+};
 type InventoryLevel = Pick<InventoryLevelRow, 'id' | 'location_id' | 'current_stock' | 'reorder_point' | 'target_stock'>;
 type TrackingMode = CatalogItemRow['tracking_mode'];
 type SkuSettings = Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
@@ -280,6 +282,12 @@ function CreateItemModal({
   const [locations, setLocations] = useState<Location[]>([]);
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
   const [levelsSaving, setLevelsSaving] = useState(false);
+  const formatLocationType = (value: Location['location_type']) => {
+    if (!value) return '';
+    const raw = typeof value === 'string' ? value : value.name;
+    if (!raw) return '';
+    return raw.replace(/_/g, ' ');
+  };
   const handleAddCategory = () => {
     window.open('/inventory/categories', '_blank');
   };
@@ -680,9 +688,9 @@ function CreateItemModal({
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="text-sm font-medium">{loc.name}</div>
-                          {loc.location_type && (
+                          {formatLocationType(loc.location_type) && (
                             <div className="text-xs text-muted-foreground capitalize">
-                              {loc.location_type.replace('_', ' ')}
+                              {formatLocationType(loc.location_type)}
                             </div>
                           )}
                         </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -11,6 +11,22 @@ import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import type { Database } from 'types/supabase';
 
 type Vendor = Database['supply_chain']['Tables']['vendors']['Row'];
+
+type VendorCodeSettings = {
+  vendor_code_strategy: 'manual' | 'sequential' | 'hybrid' | 'import';
+  vendor_code_required: boolean;
+  vendor_code_case: 'upper' | 'lower' | 'preserve';
+  vendor_code_min_length: number | null;
+  vendor_code_max_length: number | null;
+  vendor_code_prefix: string | null;
+  vendor_code_suffix: string | null;
+  vendor_code_allowed_chars: string | null;
+  vendor_code_regex: string | null;
+  vendor_code_user_editable: boolean;
+  vendor_code_immutable_after_use: boolean;
+  vendor_code_sequence_padding: number | null;
+  vendor_code_next_seq: number | null;
+};
 
 export default function VendorsPage() {
   const router = useRouter();
@@ -137,8 +153,11 @@ export default function VendorsPage() {
   ];
 
   const filteredVendors = vendors.filter((vendor) => {
-    if (filters.search && !vendor.name.toLowerCase().includes(filters.search.toLowerCase())) {
-      return false;
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      const nameMatch = vendor.name.toLowerCase().includes(term);
+      const codeMatch = (vendor.code || '').toLowerCase().includes(term);
+      return nameMatch || codeMatch;
     }
     return true;
   });
@@ -209,6 +228,7 @@ function VendorModal({
   onSaved: () => void;
 }) {
   const isEdit = !!vendor;
+  const [codeSettings, setCodeSettings] = useState<VendorCodeSettings | null>(null);
   const [form, setForm] = useState({
     name: vendor?.name || '',
     code: vendor?.code || '',
@@ -222,10 +242,172 @@ function VendorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settings = await SupplyChainRPC.getTenantSettings();
+        setCodeSettings({
+          vendor_code_strategy: settings.vendor_code_strategy,
+          vendor_code_required: settings.vendor_code_required,
+          vendor_code_case: settings.vendor_code_case,
+          vendor_code_min_length: settings.vendor_code_min_length,
+          vendor_code_max_length: settings.vendor_code_max_length,
+          vendor_code_prefix: settings.vendor_code_prefix,
+          vendor_code_suffix: settings.vendor_code_suffix,
+          vendor_code_allowed_chars: settings.vendor_code_allowed_chars,
+          vendor_code_regex: settings.vendor_code_regex,
+          vendor_code_user_editable: settings.vendor_code_user_editable,
+          vendor_code_immutable_after_use: settings.vendor_code_immutable_after_use,
+          vendor_code_sequence_padding: settings.vendor_code_sequence_padding,
+          vendor_code_next_seq: settings.vendor_code_next_seq,
+        });
+      } catch (err) {
+        console.error('Error fetching vendor code settings:', err);
+      }
+    };
+
+    fetchSettings();
+  }, []);
+
+  const vendorCodeHelp = useMemo(() => {
+    if (!codeSettings) return null;
+    if (codeSettings.vendor_code_strategy === 'sequential') {
+      return 'Leave blank to auto-generate a sequential vendor code.';
+    }
+    if (codeSettings.vendor_code_strategy === 'hybrid') {
+      return 'Leave blank to auto-generate or enter a custom code.';
+    }
+    if (codeSettings.vendor_code_strategy === 'import') {
+      return 'Codes are expected from imports; use this only when needed.';
+    }
+    return 'Enter a vendor code that matches your tenant rules.';
+  }, [codeSettings]);
+
+  const vendorCodeRules = useMemo(() => {
+    if (!codeSettings) return [] as string[];
+
+    const rules: string[] = [];
+    if (codeSettings.vendor_code_prefix) {
+      rules.push(`Prefix: ${codeSettings.vendor_code_prefix}`);
+    }
+    if (codeSettings.vendor_code_suffix) {
+      rules.push(`Suffix: ${codeSettings.vendor_code_suffix}`);
+    }
+    if (codeSettings.vendor_code_min_length || codeSettings.vendor_code_max_length) {
+      rules.push(
+        `Length: ${codeSettings.vendor_code_min_length ?? '1'}-${codeSettings.vendor_code_max_length ?? '∞'}`
+      );
+    }
+    if (codeSettings.vendor_code_allowed_chars) {
+      rules.push(`Allowed: ${codeSettings.vendor_code_allowed_chars}`);
+    }
+    if (codeSettings.vendor_code_regex) {
+      rules.push(`Regex: ${codeSettings.vendor_code_regex}`);
+    }
+    if (codeSettings.vendor_code_case !== 'preserve') {
+      rules.push(`Case: ${codeSettings.vendor_code_case}`);
+    }
+
+    return rules;
+  }, [codeSettings]);
+
+  const normalizeVendorCode = (value: string) => {
+    if (!codeSettings) return value;
+    if (codeSettings.vendor_code_case === 'upper') {
+      return value.toUpperCase();
+    }
+    if (codeSettings.vendor_code_case === 'lower') {
+      return value.toLowerCase();
+    }
+    return value;
+  };
+
+  const nextSequentialCode = useMemo(() => {
+    if (!codeSettings) return null;
+    if (codeSettings.vendor_code_next_seq === null || codeSettings.vendor_code_next_seq === undefined) {
+      return null;
+    }
+
+    const padding = Math.max(1, codeSettings.vendor_code_sequence_padding ?? 4);
+    const nextSeq = codeSettings.vendor_code_next_seq + 1;
+    const core = nextSeq.toString().padStart(padding, '0');
+    const prefix = codeSettings.vendor_code_prefix || '';
+    const suffix = codeSettings.vendor_code_suffix || '';
+    return normalizeVendorCode(`${prefix}${core}${suffix}`);
+  }, [codeSettings, normalizeVendorCode]);
+
+  const validateVendorCode = (value: string) => {
+    if (!codeSettings) return [] as string[];
+
+    const code = value.trim();
+    const errors: string[] = [];
+
+    if (!code) {
+      if (codeSettings.vendor_code_required && codeSettings.vendor_code_strategy === 'manual') {
+        errors.push('Vendor code is required.');
+      }
+      return errors;
+    }
+
+    if (codeSettings.vendor_code_min_length && code.length < codeSettings.vendor_code_min_length) {
+      errors.push(`Vendor code must be at least ${codeSettings.vendor_code_min_length} characters.`);
+    }
+
+    if (codeSettings.vendor_code_max_length && code.length > codeSettings.vendor_code_max_length) {
+      errors.push(`Vendor code must be at most ${codeSettings.vendor_code_max_length} characters.`);
+    }
+
+    if (codeSettings.vendor_code_prefix && !code.startsWith(codeSettings.vendor_code_prefix)) {
+      errors.push(`Vendor code must start with ${codeSettings.vendor_code_prefix}.`);
+    }
+
+    if (codeSettings.vendor_code_suffix && !code.endsWith(codeSettings.vendor_code_suffix)) {
+      errors.push(`Vendor code must end with ${codeSettings.vendor_code_suffix}.`);
+    }
+
+    if (codeSettings.vendor_code_allowed_chars) {
+      try {
+        const pattern = new RegExp(`^[${codeSettings.vendor_code_allowed_chars}]+$`);
+        if (!pattern.test(code)) {
+          errors.push('Vendor code contains invalid characters.');
+        }
+      } catch {
+        errors.push('Vendor code rules are misconfigured.');
+      }
+    }
+
+    if (codeSettings.vendor_code_regex) {
+      try {
+        const regex = new RegExp(codeSettings.vendor_code_regex);
+        if (!regex.test(code)) {
+          errors.push('Vendor code does not match required format.');
+        }
+      } catch {
+        errors.push('Vendor code regex is invalid.');
+      }
+    }
+
+    return errors;
+  };
+
+  const sequentialPreviewErrors = useMemo(() => {
+    if (!nextSequentialCode || codeSettings?.vendor_code_strategy !== 'sequential') {
+      return [] as string[];
+    }
+    return validateVendorCode(nextSequentialCode);
+  }, [nextSequentialCode, codeSettings]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError('');
+
+    const codeErrors = validateVendorCode(form.code || '');
+    if (codeErrors.length > 0) {
+      setSaving(false);
+      setError(codeErrors.join(' '));
+      return;
+    }
 
     try {
       const payload = {
@@ -285,9 +467,52 @@ function VendorModal({
             <input
               type="text"
               value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              onChange={(e) => setForm({ ...form, code: normalizeVendorCode(e.target.value) })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+              placeholder={
+                codeSettings?.vendor_code_strategy === 'sequential'
+                  ? 'Auto-generated'
+                  : 'Enter vendor code'
+              }
+              disabled={
+                codeSettings?.vendor_code_strategy === 'sequential' ||
+                (isEdit && codeSettings?.vendor_code_user_editable === false)
+              }
+              required={codeSettings?.vendor_code_required && codeSettings?.vendor_code_strategy === 'manual'}
             />
+            {vendorCodeHelp && (
+              <p className="text-sm text-gray-500 mt-1">{vendorCodeHelp}</p>
+            )}
+            {nextSequentialCode && codeSettings?.vendor_code_strategy === 'sequential' && (
+              <div className="mt-1 space-y-1 text-sm text-gray-600">
+                <p>
+                  Next code preview: <span className="font-mono">{nextSequentialCode}</span>
+                </p>
+                <p className="text-xs text-gray-500">
+                  Sequential codes are numeric; choose Hybrid or Manual if you want letters.
+                </p>
+              </div>
+            )}
+            {sequentialPreviewErrors.length > 0 && (
+              <p className="text-xs text-amber-600 mt-1">
+                Current rules would reject the preview: {sequentialPreviewErrors.join(' ')}
+              </p>
+            )}
+            {vendorCodeRules.length > 0 && (
+              <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <div className="font-medium text-gray-700">Code rules</div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {vendorCodeRules.map((rule) => (
+                    <span key={rule} className="rounded-full border border-gray-200 bg-white px-2 py-0.5">
+                      {rule}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {isEdit && codeSettings?.vendor_code_user_editable === false && (
+              <p className="text-sm text-amber-600 mt-1">Vendor code editing is disabled by tenant settings.</p>
+            )}
           </div>
 
           <div className="border-t pt-4">

@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import type { FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Plus, Edit, Trash2, Star, Package, ArrowLeft } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface Vendor {
   id: string;
@@ -27,7 +29,7 @@ interface VendorItem {
   id: string;
   vendor_id: string;
   catalog_item_id: string;
-  vendor_sku: string;
+  vendor_sku: string | null;
   vendor_uom?: string;
   pack_size?: number;
   is_preferred: boolean;
@@ -39,6 +41,7 @@ interface VendorItem {
   catalog_item?: CatalogItem;
   created_at: string;
   updated_at: string;
+  last_event_id: string | null;
 }
 
 export default function VendorItemsPage() {
@@ -76,13 +79,14 @@ export default function VendorItemsPage() {
     }
   }, [vendorId]);
 
+  const catalogItemMap = useMemo(() => {
+    return new Map(catalogItems.map((item) => [item.id, item]));
+  }, [catalogItems]);
+
   const fetchVendor = async () => {
     try {
-      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}`);
-      if (res.ok) {
-        const { data } = await res.json();
-        setVendor(data);
-      }
+      const data = await SupplyChainRPC.getVendorById(vendorId);
+      setVendor(data as Vendor | null);
     } catch (error) {
       console.error('Error fetching vendor:', error);
     }
@@ -91,9 +95,8 @@ export default function VendorItemsPage() {
   const fetchVendorItems = async () => {
     setLoading(true);
     try {
-      const res = await authenticatedFetch(`/api/inventory/vendor-items?vendor_id=${vendorId}`);
-      const data = await res.json();
-      setVendorItems(data || []);
+      const data = await SupplyChainRPC.getVendorItems(vendorId);
+      setVendorItems(data as VendorItem[]);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
     } finally {
@@ -103,22 +106,27 @@ export default function VendorItemsPage() {
 
   const fetchCatalogItems = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/items?limit=1000');
-      const { data } = await res.json();
-      setCatalogItems(data || []);
+      const data = await InventoryRPC.getCatalogItems({ active: true });
+      const normalized = data.map((item) => ({
+        id: item.id,
+        sku: item.sku,
+        name: item.name,
+        description: item.description ?? undefined,
+      }));
+      setCatalogItems(normalized);
     } catch (error) {
       console.error('Error fetching catalog items:', error);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     try {
       const payload = {
         vendor_id: vendorId,
         catalog_item_id: formData.catalog_item_id,
-        vendor_sku: formData.vendor_sku,
+        vendor_sku: formData.vendor_sku || null,
         vendor_uom: formData.vendor_uom || null,
         pack_size: formData.pack_size ? parseFloat(formData.pack_size) : 1,
         unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : null,
@@ -129,20 +137,13 @@ export default function VendorItemsPage() {
         notes: formData.notes || null,
       };
 
-      const url = editingItem
-        ? `/api/inventory/vendor-items/${editingItem.id}`
-        : '/api/inventory/vendor-items';
-      
-      const method = editingItem ? 'PUT' : 'POST';
-
-      const res = await apiWrite(url, {
-        method,
-        body: payload,
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Failed to save vendor item');
+      if (editingItem) {
+        if (!editingItem.last_event_id) {
+          throw new Error('Missing last_event_id for update');
+        }
+        await SupplyChainRPC.updateVendorItem(editingItem.id, payload, editingItem.last_event_id);
+      } else {
+        await SupplyChainRPC.createVendorItem(payload);
       }
 
       setShowModal(false);
@@ -174,13 +175,11 @@ export default function VendorItemsPage() {
     if (!confirm('Delete this vendor item mapping?')) return;
 
     try {
-      const res = await apiWrite(`/api/inventory/vendor-items/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to delete vendor item');
+      const item = vendorItems.find((vendorItem) => vendorItem.id === id);
+      if (!item?.last_event_id) {
+        throw new Error('Missing last_event_id for delete');
       }
+      await SupplyChainRPC.deleteVendorItem(id, item.last_event_id);
 
       fetchVendorItems();
     } catch (error: any) {
@@ -205,11 +204,12 @@ export default function VendorItemsPage() {
   };
 
   const filteredItems = vendorItems.filter((item) => {
-    const matchesSearch = !searchTerm || 
+    const catalogItem = catalogItemMap.get(item.catalog_item_id);
+    const matchesSearch = !searchTerm ||
       item.vendor_sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.catalog_item?.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.catalog_item?.name?.toLowerCase().includes(searchTerm.toLowerCase());
-    
+      catalogItem?.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      catalogItem?.name?.toLowerCase().includes(searchTerm.toLowerCase());
+
     const matchesPreferred = filterPreferred === null || item.is_preferred === filterPreferred;
 
     return matchesSearch && matchesPreferred;
@@ -306,14 +306,16 @@ export default function VendorItemsPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredItems.map((item) => (
+              {filteredItems.map((item) => {
+                const catalogItem = catalogItemMap.get(item.catalog_item_id);
+                return (
                 <tr key={item.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="text-sm font-medium text-gray-900">
-                      {item.catalog_item?.name}
+                      {catalogItem?.name || 'Unknown item'}
                     </div>
                     <div className="text-xs text-gray-500">
-                      SKU: {item.catalog_item?.sku}
+                      SKU: {catalogItem?.sku || '-'}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -375,7 +377,8 @@ export default function VendorItemsPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

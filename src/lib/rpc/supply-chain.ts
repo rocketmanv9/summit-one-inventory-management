@@ -62,6 +62,35 @@ export interface CreateReceiptResult {
   post_result?: any;
 }
 
+export type VendorCodeStrategy = 'manual' | 'sequential' | 'hybrid' | 'import';
+export type VendorCodeCase = 'upper' | 'lower' | 'preserve';
+
+export interface TenantSettings {
+  id: string;
+  tenant_id: string;
+  po_number_format: string;
+  po_number_prefix: string | null;
+  cycle_count_number_format: string;
+  cycle_count_number_prefix: string | null;
+  auto_approve_enabled: boolean;
+  auto_approve_limit: number | null;
+  vendor_auto_approve_limits: Record<string, number> | null;
+  vendor_code_strategy: VendorCodeStrategy;
+  vendor_code_required: boolean;
+  vendor_code_case: VendorCodeCase;
+  vendor_code_min_length: number | null;
+  vendor_code_max_length: number | null;
+  vendor_code_prefix: string | null;
+  vendor_code_suffix: string | null;
+  vendor_code_allowed_chars: string | null;
+  vendor_code_regex: string | null;
+  vendor_code_user_editable: boolean;
+  vendor_code_immutable_after_use: boolean;
+  vendor_code_sequence_padding: number;
+  vendor_code_next_seq: number;
+  updated_at: string;
+}
+
 export interface PostReceiptToInventoryParams {
   receipt_id: string;
   actor_user_id?: string;
@@ -76,6 +105,55 @@ export interface PostReceiptToInventoryResult {
 }
 
 export const SupplyChainRPC = {
+  /**
+   * Tenant settings (PO numbering, approvals, vendor code rules)
+   * RPC: supply_chain.rpc_get_tenant_settings
+   */
+  async getTenantSettings(): Promise<TenantSettings> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase.rpc('rpc_get_tenant_settings');
+
+    if (error) {
+      throw new Error(`Failed to fetch tenant settings: ${error.message}`);
+    }
+
+    return data as TenantSettings;
+  },
+
+  /**
+   * Update tenant settings
+   * RPC: supply_chain.rpc_update_tenant_settings
+   */
+  async updateTenantSettings(updates: Partial<TenantSettings>): Promise<TenantSettings> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase.rpc('rpc_update_tenant_settings', {
+      p_updates: updates,
+    });
+
+    if (error) {
+      throw new Error(`Failed to update tenant settings: ${error.message}`);
+    }
+
+    return data as TenantSettings;
+  },
+  /**
+   * Get a single vendor by id
+   * Table: supply_chain.vendors
+   */
+  async getVendorById(vendorId: string): Promise<VendorRow | null> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await supabase
+      .from('vendors')
+      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, notes, active, created_at, updated_at, last_event_id')
+      .eq('id', vendorId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch vendor: ${error.message}`);
+    }
+
+    return data as VendorRow | null;
+  },
   /**
    * Create a new purchase order
    * RPC: supply_chain.rpc_create_purchase_order
@@ -154,6 +232,7 @@ export const SupplyChainRPC = {
     const { data, error } = await supabase
       .from('vendors')
       .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, last_event_id')
+      .eq('active', true)
       .order('name');
 
     if (error) {
@@ -173,6 +252,49 @@ export const SupplyChainRPC = {
       ...payload,
       last_event_id: payload.last_event_id ?? crypto.randomUUID(),
     };
+
+    const { data: existingByName, error: existingError } = await supabase
+      .from('vendors')
+      .select('id, last_event_id, active')
+      .eq('name', insertPayload.name)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(`Failed to check existing vendor: ${existingError.message}`);
+    }
+
+    if (existingByName?.active) {
+      throw new Error('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
+    }
+
+    if (existingByName && !existingByName.active) {
+      const nextEventId = crypto.randomUUID();
+      const updatePayload: VendorUpdatePayload = {
+        ...insertPayload,
+        active: true,
+        last_event_id: nextEventId,
+      };
+      delete (updatePayload as VendorUpdatePayload & { tenant_id?: string }).tenant_id;
+
+      let updateQuery = supabase
+        .from('vendors')
+        .update(updatePayload)
+        .eq('id', existingByName.id);
+
+      if (existingByName.last_event_id) {
+        updateQuery = updateQuery.eq('last_event_id', existingByName.last_event_id);
+      }
+
+      const { data: restored, error: restoreError } = await updateQuery
+        .select('id, last_event_id')
+        .single();
+
+      if (restoreError) {
+        throw new Error(`Failed to restore vendor: ${restoreError.message}`);
+      }
+
+      return restored as Pick<VendorRow, 'id' | 'last_event_id'>;
+    }
 
     const { data, error } = await supabase
       .from('vendors')
@@ -222,12 +344,13 @@ export const SupplyChainRPC = {
    */
   async deleteVendor(id: string, lastEventId: string) {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const nextEventId = crypto.randomUUID();
     const { data, error } = await supabase
       .from('vendors')
-      .delete()
+      .update({ active: false, last_event_id: nextEventId })
       .eq('id', id)
       .eq('last_event_id', lastEventId)
-      .select('id')
+      .select('id, last_event_id')
       .single();
 
     if (error) {
@@ -237,19 +360,25 @@ export const SupplyChainRPC = {
       throw new Error('Vendor was updated by someone else. Please refresh and try again.');
     }
 
-    return data as Pick<VendorRow, 'id'>;
+    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
   },
 
   /**
    * Get vendor item mappings
    * Table: supply_chain.vendor_items
    */
-  async getVendorItems(): Promise<VendorItemRow[]> {
+  async getVendorItems(vendorId?: string): Promise<VendorItemRow[]> {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const { data, error } = await supabase
+    let query = supabase
       .from('vendor_items')
       .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
       .order('updated_at', { ascending: false });
+
+    if (vendorId) {
+      query = query.eq('vendor_id', vendorId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Failed to fetch vendor items: ${error.message}`);

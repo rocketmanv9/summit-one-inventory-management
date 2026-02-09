@@ -767,7 +767,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
 
@@ -909,7 +909,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
                 <option value="">Select a vendor...</option>
                 {vendors.map(vendor => (
                   <option key={vendor.id} value={vendor.id}>
-                    {vendor.code} - {vendor.name}
+                    {vendor.code ? `${vendor.code} - ${vendor.name}` : vendor.name}
                   </option>
                 ))}
               </select>
@@ -1051,7 +1051,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
 
@@ -1190,7 +1190,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
                 <option value="">Select a vendor...</option>
                 {vendors.map(vendor => (
                   <option key={vendor.id} value={vendor.id}>
-                    {vendor.code} - {vendor.name}
+                    {vendor.code ? `${vendor.code} - ${vendor.name}` : vendor.name}
                   </option>
                 ))}
               </select>
