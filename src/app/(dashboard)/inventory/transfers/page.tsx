@@ -18,7 +18,7 @@ type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
 type Transfer = TransferRow & {
   from_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
   to_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
-  transfer_lines?: Array<TransferLineRow & { catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null }>;
+  transfer_lines?: Array<TransferLineRow & { catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'tracking_mode'> | null }>;
 };
 
 export default function TransfersPage() {
@@ -67,8 +67,9 @@ export default function TransfersPage() {
 
       await InventoryRPC.shipTransfer(transferId, transfer.last_event_id);
       fetchTransfers();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error shipping transfer:', error);
+      alert(`Failed to ship transfer: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -78,8 +79,9 @@ export default function TransfersPage() {
     try {
       await InventoryRPC.receiveTransferFull(transferId);
       fetchTransfers();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error receiving transfer:', error);
+      alert(`Failed to receive transfer: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -106,8 +108,9 @@ export default function TransfersPage() {
       await InventoryRPC.createTransferReversal(transferId);
       alert('Return transfer created in draft status. Ship and receive it to complete the physical return.');
       fetchTransfers();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating return transfer:', error);
+      alert(`Failed to create return transfer: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -123,8 +126,9 @@ export default function TransfersPage() {
 
       await InventoryRPC.cancelTransfer(transferId, transfer.last_event_id);
       fetchTransfers();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error cancelling transfer:', error);
+      alert(`Failed to cancel transfer: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -140,6 +144,12 @@ export default function TransfersPage() {
       alert('Failed to undo cancellation. Please try again.');
     }
   };
+
+  const isSerializedTransfer = (transfer: Transfer) =>
+    (transfer.transfer_lines || []).some((line) => {
+      const mode = line.catalog_items?.tracking_mode || '';
+      return mode === 'serialized' || mode === 'both' || mode === 'hybrid';
+    });
 
   const columns = [
     {
@@ -249,9 +259,17 @@ export default function TransfersPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handlePartialReceive(row.id);
+                  if (!isSerializedTransfer(row)) {
+                    handlePartialReceive(row.id);
+                  }
                 }}
-                className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+                className={`px-2 py-1 text-xs rounded ${
+                  isSerializedTransfer(row)
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                }`}
+                title={isSerializedTransfer(row) ? 'Partial receive disabled for serialized asset transfers' : 'Partial receive'}
+                disabled={isSerializedTransfer(row)}
               >
                 Partial
               </button>
@@ -261,9 +279,17 @@ export default function TransfersPage() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handlePartialReceive(row.id);
+                if (!isSerializedTransfer(row)) {
+                  handlePartialReceive(row.id);
+                }
               }}
-              className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
+              className={`px-2 py-1 text-xs rounded ${
+                isSerializedTransfer(row)
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+              }`}
+              title={isSerializedTransfer(row) ? 'Partial receive disabled for serialized asset transfers' : 'Receive more'}
+              disabled={isSerializedTransfer(row)}
             >
               Receive More
             </button>
@@ -459,6 +485,10 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
   const [lineQuantities, setLineQuantities] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const hasSerializedLines = (currentTransfer.transfer_lines || []).some((line) => {
+    const mode = line.catalog_items?.tracking_mode || '';
+    return mode === 'serialized' || mode === 'both' || mode === 'hybrid';
+  });
 
   // Fetch fresh transfer data to get current qty_received values
   useEffect(() => {
@@ -509,6 +539,12 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
     setError('');
 
     try {
+      if (hasSerializedLines) {
+        setError('Partial receive is disabled for serialized asset transfers. Use Full Receive instead.');
+        setSaving(false);
+        return;
+      }
+
       // Filter out lines with 0 quantity
       const quantities = Object.entries(lineQuantities)
         .filter(([_, qty]) => qty > 0)
@@ -559,6 +595,11 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
             <div className="text-center py-8 text-gray-500">Loading transfer data...</div>
           ) : (
             <div className="space-y-3">
+              {hasSerializedLines && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-700">
+                  This transfer includes serialized assets. Use Full Receive to complete the move.
+                </div>
+              )}
               <h4 className="font-medium text-sm text-gray-700">Line Items</h4>
               {(currentTransfer.transfer_lines || []).map((line) => {
                 const shipped = line.qty_shipped || line.qty;
@@ -924,14 +965,16 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     from_location_id: '',
     to_location_id: '',
     notes: '',
-    lines: [{ catalog_item_id: '', qty: '' }],
+    lines: [{ catalog_item_id: '', qty: '', asset_ids: [] as string[] }],
   });
   const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
   const [items, setItems] = useState<Array<{
     catalog_item_id: string;
     qty_available: number | null;
-    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure'> | null;
+    asset_count?: number | null;
+    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
   }>>([]);
+  const [assetsByLine, setAssetsByLine] = useState<Record<number, Array<{ id: string; asset_tag: string; serial_number: string | null }>>>({});
   const [loadingData, setLoadingData] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -957,6 +1000,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     const loadItemsAtLocation = async () => {
       if (!form.from_location_id) {
         setItems([]);
+        setAssetsByLine({});
         return;
       }
 
@@ -974,10 +1018,38 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     loadItemsAtLocation();
   }, [form.from_location_id]);
 
+  const isSerializedMode = (mode?: string | null) => {
+    const value = mode || 'stock';
+    return value === 'serialized' || value === 'both' || value === 'hybrid';
+  };
+
+  const getItemMeta = (catalogItemId: string) => items.find((item) => item.catalog_item_id === catalogItemId);
+
+  const loadAssetsForLine = async (index: number, catalogItemId: string) => {
+    if (!form.from_location_id || !catalogItemId) return;
+    try {
+      const assets = await InventoryRPC.getAssetsForTransfer({
+        location_id: form.from_location_id,
+        catalog_item_id: catalogItemId,
+      });
+      setAssetsByLine((prev) => ({
+        ...prev,
+        [index]: assets.map((asset) => ({
+          id: asset.id,
+          asset_tag: asset.asset_tag,
+          serial_number: asset.serial_number,
+        })),
+      }));
+    } catch (err) {
+      console.error('[CreateTransferModal] Error loading assets:', err);
+      setAssetsByLine((prev) => ({ ...prev, [index]: [] }));
+    }
+  };
+
   const addLine = () => {
     setForm({
       ...form,
-      lines: [...form.lines, { catalog_item_id: '', qty: '' }],
+      lines: [...form.lines, { catalog_item_id: '', qty: '', asset_ids: [] }],
     });
   };
 
@@ -986,12 +1058,46 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
       ...form,
       lines: form.lines.filter((_, i) => i !== index),
     });
+    setAssetsByLine((prev) => {
+      const entries = Object.entries(prev)
+        .filter(([key]) => Number(key) !== index)
+        .map(([key, value]) => ({ key: Number(key), value }))
+        .sort((a, b) => a.key - b.key);
+
+      const next: Record<number, Array<{ id: string; asset_tag: string; serial_number: string | null }>> = {};
+      entries.forEach((entry, idx) => {
+        next[idx] = entry.value;
+      });
+      return next;
+    });
   };
 
   const updateLine = (index: number, field: string, value: string) => {
     const newLines = [...form.lines];
     newLines[index] = { ...newLines[index], [field]: value };
     setForm({ ...form, lines: newLines });
+  };
+
+  const handleCatalogItemChange = (index: number, catalogItemId: string) => {
+    const newLines = [...form.lines];
+    newLines[index] = {
+      ...newLines[index],
+      catalog_item_id: catalogItemId,
+      qty: '',
+      asset_ids: [],
+    };
+    setForm({ ...form, lines: newLines });
+
+    const trackingMode = getItemMeta(catalogItemId)?.catalog_items?.tracking_mode || 'stock';
+    if (isSerializedMode(trackingMode)) {
+      loadAssetsForLine(index, catalogItemId);
+    } else {
+      setAssetsByLine((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1004,16 +1110,36 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     setError('');
 
     try {
+      const normalizedLines = form.lines
+        .filter((line) => line.catalog_item_id)
+        .map((line) => {
+          const trackingMode = getItemMeta(line.catalog_item_id)?.catalog_items?.tracking_mode || 'stock';
+          if (isSerializedMode(trackingMode)) {
+            if (line.asset_ids.length === 0) {
+              throw new Error('Select at least one asset for serialized items.');
+            }
+            return {
+              catalog_item_id: line.catalog_item_id,
+              qty: line.asset_ids.length,
+              asset_ids: line.asset_ids,
+            };
+          }
+
+          if (!line.qty) {
+            throw new Error('Enter a quantity for each stock line.');
+          }
+
+          return {
+            catalog_item_id: line.catalog_item_id,
+            qty: parseInt(line.qty, 10),
+          };
+        });
+
       await InventoryRPC.createTransfer({
         from_location_id: form.from_location_id,
         to_location_id: form.to_location_id,
         notes: form.notes || null,
-        lines: form.lines
-          .filter(l => l.catalog_item_id && l.qty)
-          .map(l => ({
-            catalog_item_id: l.catalog_item_id,
-            qty: parseInt(l.qty),
-          })),
+        lines: normalizedLines,
       });
 
       onCreated();
@@ -1054,8 +1180,9 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                       setForm({ 
                         ...form, 
                         from_location_id: e.target.value,
-                        lines: [{ catalog_item_id: '', qty: '' }] // Reset lines when location changes
+                        lines: [{ catalog_item_id: '', qty: '', asset_ids: [] }] // Reset lines when location changes
                       });
+                      setAssetsByLine({});
                     }}
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     required
@@ -1098,51 +1225,101 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                     + Add Line
                   </button>
                 </div>
-                <div className="space-y-2">
-                  {form.lines.map((line, index) => (
-                    <div key={index} className="flex gap-2 items-center">
-                      <select
-                        value={line.catalog_item_id}
-                        onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
-                        className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                        required
-                        disabled={!form.from_location_id || loadingItems}
-                      >
-                        <option value="">
-                          {!form.from_location_id 
-                            ? 'Select from location first...' 
-                            : loadingItems 
-                            ? 'Loading items...' 
-                            : items.length === 0 
-                            ? 'No items with stock at this location' 
-                            : 'Select item...'}
-                        </option>
-                        {items.map((item) => (
-                          <option key={item.catalog_item_id} value={item.catalog_item_id}>
-                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - Available: {item.qty_available} {item.catalog_items?.unit_of_measure}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        value={line.qty}
-                        onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                        className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                        placeholder="Qty"
-                        min="1"
-                        required
-                      />
-                      {form.lines.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeLine(index)}
-                          className="text-red-500 hover:text-red-700 px-2"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                <div className="space-y-3">
+                  {form.lines.map((line, index) => {
+                    const lineItem = getItemMeta(line.catalog_item_id);
+                    const lineTrackingMode = lineItem?.catalog_items?.tracking_mode || 'stock';
+                    const lineIsSerialized = isSerializedMode(lineTrackingMode);
+                    const assets = assetsByLine[index] || [];
+
+                    return (
+                      <div key={index} className="space-y-2">
+                        <div className="flex gap-2 items-center">
+                          <select
+                            value={line.catalog_item_id}
+                            onChange={(e) => handleCatalogItemChange(index, e.target.value)}
+                            className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                            required
+                            disabled={!form.from_location_id || loadingItems}
+                          >
+                            <option value="">
+                              {!form.from_location_id 
+                                ? 'Select from location first...' 
+                                : loadingItems 
+                                ? 'Loading items...' 
+                                : items.length === 0 
+                                ? 'No items at this location' 
+                                : 'Select item...'}
+                            </option>
+                            {items.map((item) => {
+                              const trackingMode = item.catalog_items?.tracking_mode || 'stock';
+                              const serialized = isSerializedMode(trackingMode);
+                              const availableCount = serialized
+                                ? (item.asset_count ?? item.qty_available ?? 0)
+                                : (item.qty_available ?? 0);
+                              return (
+                                <option key={item.catalog_item_id} value={item.catalog_item_id}>
+                                  {item.catalog_items?.name} ({item.catalog_items?.sku}) - {serialized ? 'Assets' : 'Available'}: {availableCount} {serialized ? '' : item.catalog_items?.unit_of_measure || ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <input
+                            type="number"
+                            value={lineIsSerialized ? String(line.asset_ids.length) : line.qty}
+                            onChange={(e) => updateLine(index, 'qty', e.target.value)}
+                            className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                            placeholder="Qty"
+                            min="1"
+                            required
+                            readOnly={lineIsSerialized}
+                          />
+                          {form.lines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeLine(index)}
+                              className="text-red-500 hover:text-red-700 px-2"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {lineIsSerialized && line.catalog_item_id && (
+                          <div className="rounded-md border p-2 max-h-40 overflow-y-auto">
+                            {assets.length === 0 && (
+                              <div className="text-xs text-muted-foreground">
+                                No available assets found at this location.
+                              </div>
+                            )}
+                            {assets.map((asset) => {
+                              const checked = line.asset_ids.includes(asset.id);
+                              return (
+                                <label key={asset.id} className="flex items-center gap-2 text-sm py-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const next = e.target.checked
+                                        ? [...line.asset_ids, asset.id]
+                                        : line.asset_ids.filter((id) => id !== asset.id);
+                                      const newLines = [...form.lines];
+                                      newLines[index] = { ...line, asset_ids: next, qty: String(next.length) };
+                                      setForm({ ...form, lines: newLines });
+                                    }}
+                                  />
+                                  <span>
+                                    {asset.asset_tag}
+                                    {asset.serial_number && ` - ${asset.serial_number}`}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

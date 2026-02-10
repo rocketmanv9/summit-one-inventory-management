@@ -1,6 +1,6 @@
 'use client';
 
-import { useDashboardOverview, useDashboards } from '@/hooks/useDashboards';
+import { useDashboards } from '@/hooks/useDashboards';
 import { AppShell } from '@/components/layout/AppShell';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
@@ -10,14 +10,7 @@ import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
-  const {
-    stats,
-    widgets: overviewWidgets,
-    loading: overviewLoading,
-    error: overviewError,
-  } = useDashboardOverview();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [creating, setCreating] = useState(false);
   const router = useRouter();
 
   // Auto-redirect to default dashboard
@@ -30,14 +23,14 @@ export default function DashboardPage() {
     }
   }, [loading, dashboards, router]);
 
-  if (loading || overviewLoading) {
+  if (loading) {
     return (
       <AppShell>
         <div className="p-8">
           <div className="animate-pulse space-y-4">
             <div className="h-8 bg-gray-200 rounded w-64"></div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {[...Array(3)].map((_, i) => (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {[...Array(4)].map((_, i) => (
                 <div key={i} className="h-32 bg-gray-200 rounded"></div>
               ))}
             </div>
@@ -47,13 +40,13 @@ export default function DashboardPage() {
     );
   }
 
-  if (error || overviewError) {
+  if (error) {
     return (
       <AppShell>
         <div className="p-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
             <h2 className="text-lg font-semibold text-red-800">Error Loading Dashboards</h2>
-            <p className="text-sm text-red-600 mt-2">{(error || overviewError)?.message}</p>
+            <p className="text-sm text-red-600 mt-2">{error?.message}</p>
           </div>
         </div>
       </AppShell>
@@ -70,8 +63,8 @@ export default function DashboardPage() {
         <div className="p-8">
           <div className="animate-pulse space-y-4">
             <div className="h-8 bg-gray-200 rounded w-64"></div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {[...Array(3)].map((_, i) => (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {[...Array(4)].map((_, i) => (
                 <div key={i} className="h-32 bg-gray-200 rounded"></div>
               ))}
             </div>
@@ -82,49 +75,68 @@ export default function DashboardPage() {
   }
 
   // Only show this page if there's no default dashboard (user needs to select/create one)
+  const quickActions = [
+    {
+      title: 'Quick Receive',
+      description: 'Scan packing slip and receive items',
+      icon: '📦',
+      href: '/inventory/receiving',
+      color: 'bg-blue-50 border-blue-200 hover:bg-blue-100'
+    },
+    {
+      title: 'Quick PO',
+      description: 'Create purchase order from vendor',
+      icon: '🛒',
+      href: '/inventory/purchasing',
+      color: 'bg-green-50 border-green-200 hover:bg-green-100'
+    },
+    {
+      title: 'Add Vendor + Item',
+      description: 'Quick wizard for new vendor and items',
+      icon: '⚡',
+      onClick: () => alert('Vendor+Item wizard coming soon!'),
+      color: 'bg-purple-50 border-purple-200 hover:bg-purple-100'
+    },
+    {
+      title: 'Inventory Lookup',
+      description: 'Search and view stock levels',
+      icon: '🔍',
+      href: '/inventory/stock',
+      color: 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+    }
+  ];
 
   return (
-    <AppShell>
+    <AppShell userName="System User" tenantName={tenant} currentView="dashboard">
       <div className="p-8">
+        {/* Quick Actions */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Dashboards</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Select a dashboard to view or create a new one
-          </p>
-        </div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {quickActions.map((action) => {
+              const CardComponent = action.href ? Link : 'button';
+              const cardProps = action.href
+                ? { href: action.href }
+                : { onClick: action.onClick, type: 'button' as const };
 
-        {stats && (
-          <div className="mb-8 grid gap-4 md:grid-cols-3">
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
-              <div className="text-xs uppercase tracking-wide text-gray-500">Total Inventory</div>
-              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.totalInventory}</div>
-            </div>
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
-              <div className="text-xs uppercase tracking-wide text-gray-500">Low Stock Items</div>
-              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.lowStockItems}</div>
-            </div>
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
-              <div className="text-xs uppercase tracking-wide text-gray-500">Pending Orders</div>
-              <div className="mt-2 text-2xl font-semibold text-gray-900">{stats.pendingOrders}</div>
-            </div>
-          </div>
-        )}
-
-        {overviewWidgets.length > 0 && (
-          <div className="mb-8">
-            <div className="text-xs uppercase tracking-wide text-gray-500">Widget Catalog</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {overviewWidgets.map(widget => (
-                <span
-                  key={widget.id}
-                  className="px-3 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full"
+              return (
+                <CardComponent
+                  key={action.title}
+                  {...cardProps}
+                  className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
                 >
-                  {widget.title || widget.widgetType}
-                </span>
-              ))}
-            </div>
+                  <div className="text-4xl mb-3">{action.icon}</div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                    {action.title}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    {action.description}
+                  </p>
+                </CardComponent>
+              );
+            })}
           </div>
-        )}
+        </div>
 
         {/* Available Dashboards */}
         {otherDashboards.length > 0 && (

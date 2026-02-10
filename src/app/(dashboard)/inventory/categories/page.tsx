@@ -13,6 +13,17 @@ export default function CategoriesPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | undefined>();
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Category | undefined>();
+  const [reassignCount, setReassignCount] = useState(0);
+  const [reassignError, setReassignError] = useState('');
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '-';
+    return parsed.toLocaleDateString();
+  };
 
   useEffect(() => {
     fetchCategories();
@@ -31,11 +42,20 @@ export default function CategoriesPage() {
   };
 
   const handleDelete = async (category: Category) => {
-    if (!confirm('Are you sure you want to delete this category? This will fail if any items use this category.')) {
-      return;
-    }
-
     try {
+      const itemCount = await InventoryRPC.countCatalogItemsByCategory(category.id);
+      if (itemCount > 0) {
+        setDeleteTarget(category);
+        setReassignCount(itemCount);
+        setReassignError('');
+        setShowReassignModal(true);
+        return;
+      }
+
+      if (!confirm('Are you sure you want to delete this category?')) {
+        return;
+      }
+
       if (!category.last_event_id) {
         throw new Error('Missing last_event_id for this category. Please refresh and try again.');
       }
@@ -96,10 +116,10 @@ export default function CategoriesPage() {
                       {cat.name}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(cat.created_at).toLocaleDateString()}
+                      {formatDate(cat.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(cat.updated_at).toLocaleDateString()}
+                      {formatDate(cat.updated_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
@@ -139,8 +159,131 @@ export default function CategoriesPage() {
             }}
           />
         )}
+        {showReassignModal && deleteTarget && (
+          <ReassignCategoryModal
+            categories={categories}
+            deleteCategory={deleteTarget}
+            itemCount={reassignCount}
+            error={reassignError}
+            onClose={() => {
+              setShowReassignModal(false);
+              setDeleteTarget(undefined);
+              setReassignCount(0);
+              setReassignError('');
+            }}
+            onComplete={() => {
+              setShowReassignModal(false);
+              setDeleteTarget(undefined);
+              setReassignCount(0);
+              setReassignError('');
+              fetchCategories();
+            }}
+            onError={(message) => setReassignError(message)}
+          />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+function ReassignCategoryModal({
+  categories,
+  deleteCategory,
+  itemCount,
+  error,
+  onClose,
+  onComplete,
+  onError,
+}: {
+  categories: Category[];
+  deleteCategory: Category;
+  itemCount: number;
+  error: string;
+  onClose: () => void;
+  onComplete: () => void;
+  onError: (message: string) => void;
+}) {
+  const [targetCategoryId, setTargetCategoryId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const eligibleCategories = categories.filter((cat) => cat.id !== deleteCategory.id);
+
+  const handleConfirm = async () => {
+    if (!targetCategoryId) {
+      onError('Choose a new category to move items into before deleting.');
+      return;
+    }
+
+    if (!deleteCategory.last_event_id) {
+      onError('Missing last_event_id for this category. Please refresh and try again.');
+      return;
+    }
+
+    setSaving(true);
+    onError('');
+
+    try {
+      await InventoryRPC.reassignCatalogItemsCategory(deleteCategory.id, targetCategoryId);
+      await InventoryRPC.deleteItemCategory(deleteCategory.id, deleteCategory.last_event_id);
+      onComplete();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reassign items and delete category.';
+      onError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+        <h3 className="text-lg font-semibold mb-2">Reassign items before deleting</h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          This category has {itemCount.toLocaleString()} item{itemCount === 1 ? '' : 's'}. Choose a new category to move them into before deleting.
+        </p>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-1">New Category</label>
+          <select
+            value={targetCategoryId}
+            onChange={(e) => setTargetCategoryId(e.target.value)}
+            className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+          >
+            <option value="">-- Select Category --</option>
+            {eligibleCategories.map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="flex gap-3 justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+            disabled={saving || eligibleCategories.length === 0}
+          >
+            {saving ? 'Reassigning...' : 'Reassign & Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

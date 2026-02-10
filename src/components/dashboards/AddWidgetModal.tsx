@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useWidgetRegistry } from '@/hooks/useDashboards';
 import type { WidgetRegistryEntry } from '@/types/dashboard';
 import { createBrowserAuthedClient } from '@/supabase/client';
@@ -17,6 +18,7 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
   const [selectedDomain, setSelectedDomain] = useState<string>('all');
   const [adding, setAdding] = useState(false);
   const supabase = createBrowserAuthedClient();
+  const router = useRouter();
 
   console.log('[AddWidgetModal] Registry widgets count:', registryWidgets.length);
   console.log('[AddWidgetModal] Loading:', loading);
@@ -34,7 +36,10 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
       const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
 
       if (!tenantId) {
-        throw new Error('Missing tenant token. Please log in again.');
+        onClose();
+        router.replace('/dashboard');
+        alert('Session expired. Please log in again.');
+        return;
       }
 
       // Find highest y position to add new widget at bottom

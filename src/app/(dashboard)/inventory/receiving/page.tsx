@@ -6,7 +6,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface OpenPO {
   po_id: string;
@@ -62,9 +63,9 @@ function ReceivingContent() {
   const [openPOs, setOpenPOs] = useState<OpenPO[]>([]);
   const [recentReceipts, setRecentReceipts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showReceiveModal, setShowReceiveModal] = useState(!!preselectedPO);
   const [selectedPO, setSelectedPO] = useState<string | null>(preselectedPO);
-  const [receivingPO, setReceivingPO] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'open' | 'recent'>('open');
 
   useEffect(() => {
@@ -73,47 +74,28 @@ function ReceivingContent() {
 
   const fetchData = async () => {
     setLoading(true);
+    setError('');
     try {
-      const [openRes, recentRes] = await Promise.all([
-        authenticatedFetch('/api/inventory/receiving'),
-        authenticatedFetch('/api/inventory/receiving/recent')
+      const [openData, recentData] = await Promise.all([
+        SupplyChainRPC.getOpenPOsForReceiving(),
+        SupplyChainRPC.getRecentReceipts(30)
       ]);
       
-      const openData = await openRes.json();
-      const recentData = await recentRes.json();
-      
-      setOpenPOs(openData.data || []);
-      setRecentReceipts(recentData.data || []);
-    } catch (error) {
+      setOpenPOs(openData || []);
+      setRecentReceipts(recentData || []);
+    } catch (error: any) {
       console.error('Error fetching data:', error);
+      setError(error.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
   };
 
   const handleReceiveClick = async (po_id: string) => {
-    setReceivingPO(po_id);
-    try {
-      // Create draft receipt for this PO
-      const res = await apiWrite('/api/inventory/receiving/draft', {
-        method: 'POST',
-        body: { po_id },
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to create receipt draft');
-      }
-
-      // Navigate to receipt detail page
-      router.push(`/inventory/receiving/${data.receipt_id}`);
-    } catch (error: any) {
-      console.error('Error creating receipt draft:', error);
-      alert(error.message || 'Failed to create receipt draft');
-    } finally {
-      setReceivingPO(null);
-    }
+    // Navigate directly to receive page for this PO
+    router.push(`?po=${po_id}`);
+    setShowReceiveModal(true);
+    setSelectedPO(po_id);
   };
 
   const columns = [
@@ -173,10 +155,9 @@ function ReceivingContent() {
       render: (row: OpenPO) => (
         <button
           onClick={() => handleReceiveClick(row.po_id)}
-          disabled={receivingPO === row.po_id}
-          className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90"
         >
-          {receivingPO === row.po_id ? 'Opening...' : 'Receive'}
+          Receive
         </button>
       ),
     },
@@ -197,6 +178,12 @@ function ReceivingContent() {
             </button>
           }
         />
+
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -354,8 +341,7 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations();
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -364,9 +350,9 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
 
   const fetchPO = async (id: string) => {
     setLoading(true);
+    setError('');
     try {
-      const res = await authenticatedFetch(`/api/supply-chain/purchase-orders/${id}/receiving`);
-      const data = await res.json();
+      const data = await SupplyChainRPC.getPOReceivingDetail(id);
       
       if (data) {
         setPODetail(data);
@@ -381,17 +367,42 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
             qty_ordered: line.qty_ordered,
             qty_received_so_far: line.qty_received,
             qty_remaining: line.qty_remaining,
-            qty_received: '',
+            qty_received: line.qty_remaining > 0 ? line.qty_remaining.toString() : '', // Auto-populate with remaining qty
             condition_status: 'accepted',
             notes: '',
           })) || [],
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching PO:', error);
+      setError(error.message || 'Failed to load PO details');
+      // Close modal after 2 seconds if PO not found
+      setTimeout(() => {
+        onClose();
+      }, 2000);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFillAllRemaining = () => {
+    setForm({
+      ...form,
+      lines: form.lines.map(line => ({
+        ...line,
+        qty_received: line.qty_remaining > 0 ? line.qty_remaining.toString() : line.qty_received,
+      })),
+    });
+  };
+
+  const handleClearAll = () => {
+    setForm({
+      ...form,
+      lines: form.lines.map(line => ({
+        ...line,
+        qty_received: '',
+      })),
+    });
   };
 
   const updateLine = (index: number, field: string, value: string) => {
@@ -423,26 +434,17 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
         return;
       }
 
-      const res = await apiWrite('/api/supply-chain/receipts', {
-        method: 'POST',
-        body: {
-          po_id: form.po_id || null,
-          location_id: form.location_id,
-          packing_slip_no: form.packing_slip_no || null,
-          notes: form.notes || null,
-          status: 'confirmed',
-          source_type: 'delivery',
-          auto_post: true,
-          lines: linesToReceive,
-        },
+      const result = await SupplyChainRPC.createReceipt({
+        po_id: form.po_id || null,
+        location_id: form.location_id,
+        packing_slip_no: form.packing_slip_no || null,
+        notes: form.notes || null,
+        status: 'confirmed',
+        source_type: 'delivery',
+        auto_post: true,
+        lines: linesToReceive,
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to create receipt');
-      }
-
-      const result = await res.json();
       console.log('Receipt created:', result);
       onComplete();
     } catch (err: any) {
@@ -454,12 +456,36 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
-          <h3 className="text-lg font-semibold">
-            {poDetail ? `Receive: ${poDetail.po_number}` : 'Receive Items'}
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+      <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b sticky top-0 bg-white z-10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold">
+              {poDetail ? `Receive PO: ${poDetail.po_number}` : 'Receive Items'}
+            </h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">
+              ✕
+            </button>
+          </div>
+          {poDetail && (
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span>
+                <strong>Vendor:</strong> {poDetail.vendor_name}
+                {poDetail.vendor_code && ` (${poDetail.vendor_code})`}
+              </span>
+              <span>•</span>
+              <span>
+                <strong>Status:</strong> {poDetail.status}
+              </span>
+              {poDetail.expected_delivery_date && (
+                <>
+                  <span>•</span>
+                  <span>
+                    <strong>Expected:</strong> {new Date(poDetail.expected_delivery_date).toLocaleDateString()}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -499,99 +525,148 @@ function ReceiveModal({ poId, onClose, onComplete }: { poId: string | null; onCl
                   value={form.packing_slip_no}
                   onChange={(e) => setForm({ ...form, packing_slip_no: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Optional"
+                  placeholder="e.g., PS-12345"
+                  autoFocus
                 />
               </div>
             </div>
 
-            {form.lines.length > 0 && (
-              <div className="border-t pt-4">
-                <h4 className="font-medium mb-3">Line Items</h4>
-                <div className="space-y-3">
-                  {form.lines.map((line, index) => (
-                    <div key={index} className="p-3 bg-muted/30 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-medium">{line.item_name}</div>
-                        <div className="text-sm text-muted-foreground">
-                          Ordered: {line.qty_ordered} | Received: {line.qty_received_so_far} | Remaining: {line.qty_remaining}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Qty Received *</label>
-                          <input
-                            type="number"
-                            value={line.qty_received}
-                            onChange={(e) => updateLine(index, 'qty_received', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm"
-                            min="0"
-                            step="0.01"
-                            placeholder="0"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Condition</label>
-                          <select
-                            value={line.condition_status}
-                            onChange={(e) => updateLine(index, 'condition_status', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm"
-                          >
-                            <option value="accepted">✓ Accepted</option>
-                            <option value="damaged">⚠ Damaged</option>
-                            <option value="quarantine">🔒 Quarantine</option>
-                            <option value="rejected">✗ Rejected</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-muted-foreground mb-1">Destination</label>
-                          <select
-                            value={line.destination_location_id || ''}
-                            onChange={(e) => updateLine(index, 'destination_location_id', e.target.value)}
-                            className="w-full px-2 py-1.5 border rounded text-sm"
-                          >
-                            <option value="">Default</option>
-                            {locations.map(loc => (
-                              <option key={loc.id} value={loc.id}>{loc.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      <div className="mt-2">
-                        <input
-                          type="text"
-                          value={line.notes || ''}
-                          onChange={(e) => updateLine(index, 'notes', e.target.value)}
-                          className="w-full px-2 py-1.5 border rounded text-xs"
-                          placeholder="Line notes (optional)"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div>
-              <label className="block text-sm font-medium mb-1">Receipt Notes</label>
+              <label className="block text-sm font-medium mb-1">Notes</label>
               <textarea
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 rows={2}
-                placeholder="Overall receipt notes (optional)"
+                placeholder="Additional notes (optional)"
               />
             </div>
 
-            <div className="flex gap-3 pt-4">
-              <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">
+            {form.lines.length > 0 && (
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium">Line Items ({form.lines.length})</h4>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleFillAllRemaining}
+                      className="text-sm px-3 py-1 border border-primary text-primary rounded hover:bg-primary/5"
+                    >
+                      Fill All Remaining
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearAll}
+                      className="text-sm px-3 py-1 border border-gray-300 text-gray-600 rounded hover:bg-gray-50"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {form.lines.map((line, index) => {
+                    const hasQty = line.qty_received && parseFloat(line.qty_received) > 0;
+                    return (
+                      <div 
+                        key={index} 
+                        className={`p-3 rounded-lg border-2 transition-colors ${
+                          hasQty 
+                            ? 'border-green-300 bg-green-50/50' 
+                            : 'border-gray-200 bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="font-medium flex items-center gap-2">
+                            {hasQty && <span className="text-green-600">✓</span>}
+                            {line.item_name}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            Ordered: <strong>{line.qty_ordered}</strong> | 
+                            Received: <strong>{line.qty_received_so_far}</strong> | 
+                            Remaining: <strong className="text-orange-600">{line.qty_remaining}</strong>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Qty Received *</label>
+                            <input
+                              type="number"
+                              value={line.qty_received}
+                              onChange={(e) => updateLine(index, 'qty_received', e.target.value)}
+                              className="w-full px-2 py-1.5 border rounded text-sm focus:ring-2 focus:ring-green-500"
+                              min="0"
+                              step="0.01"
+                              max={line.qty_remaining}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Condition</label>
+                            <select
+                              value={line.condition_status}
+                              onChange={(e) => updateLine(index, 'condition_status', e.target.value)}
+                              className="w-full px-2 py-1.5 border rounded text-sm"
+                            >
+                              <option value="accepted">✓ Accepted</option>
+                              <option value="damaged">⚠ Damaged</option>
+                              <option value="quarantine">🔒 Quarantine</option>
+                              <option value="rejected">✗ Rejected</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-muted-foreground mb-1">Destination</label>
+                            <select
+                              value={line.destination_location_id || ''}
+                              onChange={(e) => updateLine(index, 'destination_location_id', e.target.value)}
+                              className="w-full px-2 py-1.5 border rounded text-sm"
+                            >
+                              <option value="">Default</option>
+                              {locations.map(loc => (
+                                <option key={loc.id} value={loc.id}>{loc.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <input
+                            type="text"
+                            value={line.notes || ''}
+                            onChange={(e) => updateLine(index, 'notes', e.target.value)}
+                            className="w-full px-2 py-1.5 border rounded text-xs"
+                            placeholder="Line notes (optional)"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-4 border-t sticky bottom-0 bg-white pb-2">
+              <button 
+                type="button" 
+                onClick={onClose} 
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium transition-colors"
+              >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors flex items-center justify-center gap-2"
               >
-                {saving ? 'Processing...' : 'Complete Receipt'}
+                {saving ? (
+                  <>
+                    <span className="animate-spin">⟳</span>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <span>✓</span>
+                    Complete Receipt
+                  </>
+                )}
               </button>
             </div>
           </form>

@@ -5,17 +5,17 @@
 \set user_id 'ee14467b-409d-4648-af5e-3d16a9dd5541'
 
 -- Location types (using existing schema)
-INSERT INTO inventory.location_types (tenant_id, code, name, created_by_user_id, updated_by_user_id)
+INSERT INTO inventory.location_types (tenant_id, code, name, created_by_user_id, updated_by_user_id, last_event_id)
 VALUES 
-    (:'tenant_id', 'warehouse', 'Warehouse', :'user_id', :'user_id'),
-    (:'tenant_id', 'store', 'Retail Store', :'user_id', :'user_id'),
-    (:'tenant_id', 'truck', 'Service Vehicle', :'user_id', :'user_id')
+    (:'tenant_id', 'warehouse', 'Warehouse', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'store', 'Retail Store', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'truck', 'Service Vehicle', :'user_id', :'user_id', gen_random_uuid())
 ON CONFLICT (tenant_id, code) DO NOTHING;
 
 -- Locations
 WITH lt AS (SELECT id, code FROM inventory.location_types WHERE tenant_id = :'tenant_id')
-INSERT INTO inventory.locations (tenant_id, name, location_type_id, address, created_by, updated_by)
-SELECT :'tenant_id', v.name, lt.id, v.address, :'user_id', :'user_id'
+INSERT INTO inventory.locations (tenant_id, name, location_type_id, address, created_by, updated_by, last_event_id)
+SELECT :'tenant_id', v.name, lt.id, v.address, :'user_id', :'user_id', gen_random_uuid()
 FROM (VALUES
     ('Main Warehouse', 'warehouse', '123 Industrial Pkwy'),
     ('Downtown Store', 'store', '456 Main St'),
@@ -25,19 +25,19 @@ JOIN lt ON lt.code = v.code
 ON CONFLICT DO NOTHING;
 
 -- Categories
-INSERT INTO inventory.item_categories (tenant_id, name, created_by, updated_by)
+INSERT INTO inventory.item_categories (tenant_id, name, created_by, updated_by, last_event_id)
 VALUES 
-    (:'tenant_id', 'Asphalt', :'user_id', :'user_id'),
-    (:'tenant_id', 'Concrete', :'user_id', :'user_id'),
-    (:'tenant_id', 'Aggregates', :'user_id', :'user_id'),
-    (:'tenant_id', 'Tools', :'user_id', :'user_id'),
-    (:'tenant_id', 'Safety', :'user_id', :'user_id')
+    (:'tenant_id', 'Asphalt', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'Concrete', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'Aggregates', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'Tools', :'user_id', :'user_id', gen_random_uuid()),
+    (:'tenant_id', 'Safety', :'user_id', :'user_id', gen_random_uuid())
 ON CONFLICT (tenant_id, name) DO NOTHING;
 
 -- Catalog items (minimal - just SKU and name)
 WITH cat AS (SELECT id, name FROM inventory.item_categories WHERE tenant_id = :'tenant_id')
-INSERT INTO inventory.catalog_items (tenant_id, sku, name, category_id, unit_of_measure, tracking_mode, created_by, updated_by)
-SELECT :'tenant_id', v.sku, v.name, cat.id, v.uom, 'stock', :'user_id', :'user_id'
+INSERT INTO inventory.catalog_items (tenant_id, sku, name, category_id, unit_of_measure, tracking_mode, created_by, updated_by, last_event_id)
+SELECT :'tenant_id', v.sku, v.name, cat.id, v.uom, 'stock', :'user_id', :'user_id', gen_random_uuid()
 FROM (VALUES
     ('ASPH-001', 'Hot Mix Asphalt', 'Asphalt', 'TON'),
     ('CONC-001', 'Ready Mix 3000PSI', 'Concrete', 'YD3'),
@@ -66,16 +66,24 @@ ON CONFLICT (tenant_id, catalog_item_id, location_id) DO UPDATE
 SET qty_on_hand = EXCLUDED.qty_on_hand;
 
 -- Assignment types
-INSERT INTO inventory.assignment_types (tenant_id, type_key, display_name, requires_id, sort_order)
+INSERT INTO inventory.assignment_types (tenant_id, type_key, display_name, requires_id, sort_order, last_event_id)
 VALUES 
-    (:'tenant_id', 'job_site', 'Job Site', true, 10),
-    (:'tenant_id', 'employee', 'Employee', true, 20),
-    (:'tenant_id', 'consumed', 'Consumed', false, 30)
+    (:'tenant_id', 'job_site', 'Job Site', true, 10, gen_random_uuid()),
+    (:'tenant_id', 'employee', 'Employee', true, 20, gen_random_uuid()),
+    (:'tenant_id', 'consumed', 'Consumed', false, 30, gen_random_uuid())
 ON CONFLICT (tenant_id, type_key) DO NOTHING;
 
+-- Vendors (supply_chain schema)
+INSERT INTO supply_chain.vendors (tenant_id, name, code, contact_name, contact_email, active, last_event_id)
+VALUES 
+    (:'tenant_id', 'ABC Asphalt Supply', 'ABC', 'John Smith', 'john@abcasphalt.com', true, gen_random_uuid()),
+    (:'tenant_id', 'Concrete Pro', 'CONPRO', 'Jane Doe', 'jane@concretepro.com', true, gen_random_uuid()),
+    (:'tenant_id', 'Aggregate Materials Inc', 'AGG', 'Bob Johnson', 'bob@aggmat.com', true, gen_random_uuid())
+ON CONFLICT DO NOTHING;
+
 -- Dashboard (tenant scope - visible to all in tenant)
-INSERT INTO public.dashboards (tenant_id, name, description, is_default, created_by, scope)
-VALUES (:'tenant_id', 'Inventory Overview', 'Main dashboard', true, :'user_id', 'tenant')
+INSERT INTO public.dashboards (tenant_id, name, description, is_default, created_by, scope, last_event_id)
+VALUES (:'tenant_id', 'Inventory Overview', 'Main dashboard', true, :'user_id', 'tenant', gen_random_uuid())
 ON CONFLICT DO NOTHING;
 
 SELECT '✅ Data seeded for tenant: ae837809' as result;

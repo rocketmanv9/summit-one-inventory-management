@@ -27,6 +27,8 @@ import { AlertCircle, ChevronDown, ChevronUp, Globe, Info, Loader2, Phone, Plus,
 import { useCreatePurchaseOrder, useNextPONumber, useVendorDefaults } from '@/lib/api/purchase-orders';
 import { validatePOForm, calculatePOTotal, getOrderingModeLabel, getOrderingModeDescription } from '@/types/purchase-orders';
 import type { CreatePOFormState, CreatePOLineInput, DeliveryMethod, CostContext } from '@/types/purchase-orders';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface CreatePOModalProps {
   open: boolean;
@@ -90,6 +92,44 @@ export function CreatePOModal({
     } | null;
   }>>([]);
   const [loadingVendorItems, setLoadingVendorItems] = useState(false);
+  const [loadingInitialData, setLoadingInitialData] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  
+  // Load vendors, locations, and jobs when modal opens
+  useEffect(() => {
+    const loadInitialData = async () => {
+      if (!open) return;
+      
+      setLoadingInitialData(true);
+      setLoadError(null);
+      try {
+        const [vendorsData, locationsData] = await Promise.all([
+          SupplyChainRPC.getVendors(),
+          InventoryRPC.getLocations({ active: true }),
+        ]);
+        
+        console.log('Loaded vendors:', vendorsData.length, 'locations:', locationsData.length);
+        
+        setVendors(vendorsData.map((v: any) => ({ id: v.id, name: v.name })));
+        setLocations(locationsData.map((l: any) => ({ 
+          id: l.id, 
+          name: l.name, 
+          type: l.location_type?.name || 'unknown' 
+        })));
+        
+        // TODO: Load jobs - for now using empty array
+        setJobs([]);
+      } catch (error) {
+        console.error('Error loading initial data:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error loading data';
+        setLoadError(errorMsg);
+      } finally {
+        setLoadingInitialData(false);
+      }
+    };
+    
+    loadInitialData();
+  }, [open]);
   
   // Initialize form
   useEffect(() => {
@@ -141,14 +181,8 @@ export function CreatePOModal({
       
       setLoadingVendorItems(true);
       try {
-        const response = await fetch(`/api/inventory/vendor-items?vendor_id=${form.vendor_id}`);
-        if (response.ok) {
-          const data = await response.json();
-          setVendorItems(data);
-        } else {
-          console.error('Failed to fetch vendor items');
-          setVendorItems([]);
-        }
+        const data = await SupplyChainRPC.getVendorItemsWithCatalog(form.vendor_id);
+        setVendorItems(data || []);
       } catch (error) {
         console.error('Error fetching vendor items:', error);
         setVendorItems([]);
@@ -237,8 +271,28 @@ export function CreatePOModal({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="space-y-6 py-4">
-          {/* CORE REQUIRED FIELDS */}
+        {loadingInitialData && (
+          <div className="py-8 flex items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Loading vendors and locations...</span>
+          </div>
+        )}
+        
+        {loadError && !loadingInitialData && (
+          <div className="py-4">
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-semibold mb-1">Failed to load data</div>
+                <div className="text-sm">{loadError}</div>
+                <div className="text-sm mt-2">Please check your authentication and try again.</div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+        
+        {!loadingInitialData && !loadError && (
+        <div className="space-y-6 py-4">{/* CORE REQUIRED FIELDS */}
           <div className="space-y-4 border-b pb-6">
             <h3 className="font-semibold text-lg">Core Information</h3>
             
@@ -612,6 +666,7 @@ export function CreatePOModal({
             </Button>
           </div>
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

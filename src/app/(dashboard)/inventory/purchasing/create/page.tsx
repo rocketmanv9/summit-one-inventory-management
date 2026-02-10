@@ -16,7 +16,7 @@ interface Vendor {
 interface Location {
   id: string;
   name: string;
-  location_type: string;
+  location_type?: { name: string } | null;
 }
 
 interface CatalogItem {
@@ -243,7 +243,7 @@ export default function CreatePurchaseOrderPage() {
                   <option value="">Select location...</option>
                   {locations.map((loc) => (
                     <option key={loc.id} value={loc.id}>
-                      {loc.name} ({loc.location_type})
+                      {loc.name} ({loc.location_type?.name || 'Location'})
                     </option>
                   ))}
                 </select>
@@ -251,7 +251,7 @@ export default function CreatePurchaseOrderPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Expected Delivery Date
+                  Expected Delivery Date <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
                 <input
                   type="date"

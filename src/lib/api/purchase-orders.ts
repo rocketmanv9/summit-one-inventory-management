@@ -5,7 +5,7 @@
  * function and React hooks for PO management.
  */
 
-import { createClient } from '@/lib/supabase/client';
+import { createBrowserAuthedClient } from '@/supabase/client';
 import type {
   CreatePORequest,
   CreatePOResponse,
@@ -28,7 +28,7 @@ import type {
 export async function createPurchaseOrder(
   request: CreatePORequest
 ): Promise<{ data: CreatePOResponse | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     const { data, error } = await supabase.rpc('rpc_create_purchase_order', {
@@ -68,7 +68,7 @@ export async function createPurchaseOrder(
 export async function getVendorOrderingGuidance(
   vendorId: string
 ): Promise<{ data: VendorOrderingGuidance | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     const { data, error } = await supabase
@@ -101,7 +101,7 @@ export async function markPOAsOrdered(
   placementMethod?: OrderPlacementMethod,
   placementNotes?: string
 ): Promise<{ data: any | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     const { data, error } = await supabase.rpc('rpc_mark_po_ordered', {
@@ -133,7 +133,7 @@ export async function sendPOEmail(
   poId: string,
   recipientEmail?: string
 ): Promise<{ data: any | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     const { data, error } = await supabase.rpc('rpc_send_po_email', {
@@ -162,7 +162,7 @@ export async function sendPOEmail(
 export async function getVendorDefaults(
   vendorId: string
 ): Promise<{ data: VendorDefaults | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     const { data, error } = await supabase
@@ -206,7 +206,7 @@ export async function getVendorDefaults(
 export async function getPurchaseOrderWithDetails(
   poId: string
 ): Promise<{ data: PurchaseOrderWithDetails | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     // Fetch PO header
@@ -286,7 +286,7 @@ export async function getPurchaseOrderWithDetails(
  * Get next available PO number
  */
 export async function getNextPONumber(): Promise<{ data: string | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     // Get the latest PO number for this tenant
@@ -350,7 +350,7 @@ export async function listPurchaseOrders(filters?: {
   to_date?: string;
   limit?: number;
 }): Promise<{ data: PurchaseOrder[] | null; error: Error | null }> {
-  const supabase = createClient();
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
   
   try {
     let query = supabase
@@ -502,4 +502,118 @@ export function useNextPONumber() {
     isLoading,
     generate
   };
+}
+
+/**
+ * Update purchase order status
+ */
+export async function updatePurchaseOrderStatus(
+  poId: string,
+  status: string
+): Promise<{ data: any | null; error: Error | null }> {
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
+  
+  try {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .update({ status })
+      .eq('id', poId)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error updating PO status:', error);
+      return { data: null, error: new Error(error.message) };
+    }
+    
+    return { data, error: null };
+  } catch (err) {
+    console.error('Exception updating PO status:', err);
+    return { 
+      data: null, 
+      error: err instanceof Error ? err : new Error('Unknown error') 
+    };
+  }
+}
+
+/**
+ * Delete purchase order
+ */
+export async function deletePurchaseOrder(
+  poId: string
+): Promise<{ data: any | null; error: Error | null }> {
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
+  
+  try {
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .delete()
+      .eq('id', poId);
+    
+    if (error) {
+      console.error('Error deleting PO:', error);
+      return { data: null, error: new Error(error.message) };
+    }
+    
+    return { data, error: null };
+  } catch (err) {
+    console.error('Exception deleting PO:', err);
+    return { 
+      data: null, 
+      error: err instanceof Error ? err : new Error('Unknown error') 
+    };
+  }
+}
+
+/**
+ * Update purchase order (header and lines)
+ * Note: This is a simplified update. For production, consider creating an RPC function
+ * that handles the full transactional update of PO + lines.
+ */
+export async function updatePurchaseOrder(
+  poId: string,
+  updates: {
+    vendor_id?: string;
+    delivery_location_id?: string;
+    needed_by_date?: string | null;
+    notes?: string | null;
+    lines?: Array<{
+      id?: string;
+      catalog_item_id: string;
+      qty_ordered: number;
+      unit_cost: number;
+    }>;
+  }
+): Promise<{ data: any | null; error: Error | null }> {
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
+  
+  try {
+    // Update PO header
+    const headerUpdates: any = {};
+    if (updates.vendor_id) headerUpdates.vendor_id = updates.vendor_id;
+    if (updates.delivery_location_id) headerUpdates.delivery_location_id = updates.delivery_location_id;
+    if (updates.needed_by_date !== undefined) headerUpdates.needed_by_date = updates.needed_by_date;
+    if (updates.notes !== undefined) headerUpdates.notes = updates.notes;
+    
+    const { error: headerError } = await supabase
+      .from('purchase_orders')
+      .update(headerUpdates)
+      .eq('id', poId);
+    
+    if (headerError) {
+      console.error('Error updating PO header:', headerError);
+      return { data: null, error: new Error(headerError.message) };
+    }
+    
+    // TODO: Handle line updates (requires deleting old lines and inserting new ones)
+    // For now, this is a simplified implementation
+    
+    return { data: { success: true }, error: null };
+  } catch (err) {
+    console.error('Exception updating PO:', err);
+    return { 
+      data: null, 
+      error: err instanceof Error ? err : new Error('Unknown error') 
+    };
+  }
 }

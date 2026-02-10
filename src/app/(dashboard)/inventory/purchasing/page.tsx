@@ -6,19 +6,21 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
-import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 
 interface PurchaseOrder {
   id: string;
   po_number: string;
   vendor_id?: string;
-  ship_to_location_id?: string;
+  vendor_name_snapshot?: string;
+  vendor_code_snapshot?: string;
+  delivery_location_id?: string;
   status: string;
   expected_delivery_date?: string;
   notes?: string;
   created_at: string;
-  vendors?: { id: string; name: string; code?: string };
-  locations?: { id: string; name: string };
   purchase_order_lines?: Array<{
     id: string;
     catalog_item_id: string;
@@ -26,7 +28,6 @@ interface PurchaseOrder {
     qty_received: number;
     unit_cost: number;
     status: string;
-    catalog_items?: { id: string; name: string; sku: string; unit_of_measure: string };
   }>;
 }
 
@@ -37,19 +38,39 @@ export default function PurchasingPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
+  const [locations, setLocations] = useState<Map<string, string>>(new Map());
+  const [catalogItems, setCatalogItems] = useState<Map<string, any>>(new Map());
+
+  useEffect(() => {
+    loadReferenceData();
+  }, []);
 
   useEffect(() => {
     fetchOrders();
   }, [filters]);
 
+  const loadReferenceData = async () => {
+    try {
+      // Load locations
+      const locationData = await InventoryRPC.getLocations();
+      const locationMap = new Map(locationData.map(loc => [loc.id, loc.name]));
+      setLocations(locationMap);
+
+      // Load catalog items
+      const itemData = await InventoryRPC.getCatalogItems();
+      const itemMap = new Map(itemData.map(item => [item.id, item]));
+      setCatalogItems(itemMap);
+    } catch (error) {
+      console.error('Error loading reference data:', error);
+    }
+  };
+
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.status) params.set('status', filters.status);
-
-      const res = await authenticatedFetch(`/api/inventory/purchasing?${params}`);
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getPurchaseOrders({
+        status: filters.status
+      });
       console.log('Fetched orders:', data);
       setOrders(data || []);
     } catch (error) {
@@ -78,14 +99,10 @@ export default function PurchasingPage() {
     if (!confirm('Submit this PO for approval?')) return;
     
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
-        method: 'PATCH',
-        body: { status: 'awaiting_approval' }
-      });
+      const { error } = await updatePurchaseOrderStatus(poId, 'awaiting_approval');
       
-      if (!res.ok) {
-        const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to submit PO'}`);
+      if (error) {
+        alert(`Error: ${error.message}`);
         return;
       }
       
@@ -106,14 +123,10 @@ export default function PurchasingPage() {
     if (!confirm('Approve this PO?')) return;
     
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
-        method: 'PATCH',
-        body: { status: 'approved' }
-      });
+      const { error } = await updatePurchaseOrderStatus(poId, 'approved');
       
-      if (!res.ok) {
-        const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to approve PO'}`);
+      if (error) {
+        alert(`Error: ${error.message}`);
         return;
       }
       
@@ -134,14 +147,10 @@ export default function PurchasingPage() {
     if (!confirm('Place this PO with vendor?')) return;
     
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
-        method: 'PATCH',
-        body: { status: 'placed' }
-      });
+      const { error } = await updatePurchaseOrderStatus(poId, 'placed');
       
-      if (!res.ok) {
-        const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to place PO'}`);
+      if (error) {
+        alert(`Error: ${error.message}`);
         return;
       }
       
@@ -164,14 +173,10 @@ export default function PurchasingPage() {
     }
 
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${poId}`, {
-        method: 'DELETE',
-      });
+      const { error } = await deletePurchaseOrder(poId);
 
-      const result = await res.json();
-
-      if (!res.ok) {
-        alert(`Error: ${result.error}`);
+      if (error) {
+        alert(`Error: ${error.message}`);
         return;
       }
 
@@ -198,9 +203,9 @@ export default function PurchasingPage() {
       sortable: true,
       render: (row: PurchaseOrder) => (
         <div>
-          <div className="font-medium">{row.vendors?.name || '-'}</div>
-          {row.vendors?.code && (
-            <div className="text-xs text-muted-foreground font-mono">{row.vendors.code}</div>
+          <div className="font-medium">{row.vendor_name_snapshot || '-'}</div>
+          {row.vendor_code_snapshot && (
+            <div className="text-xs text-muted-foreground font-mono">{row.vendor_code_snapshot}</div>
           )}
         </div>
       ),
@@ -448,6 +453,8 @@ export default function PurchasingPage() {
           <PODetailPanel
             po={selectedOrder}
             onClose={() => setSelectedOrder(null)}
+            locations={locations}
+            catalogItems={catalogItems}
           />
         )}
 
@@ -480,7 +487,17 @@ export default function PurchasingPage() {
   );
 }
 
-function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+function PODetailPanel({ 
+  po, 
+  onClose, 
+  locations, 
+  catalogItems 
+}: { 
+  po: PurchaseOrder; 
+  onClose: () => void;
+  locations: Map<string, string>;
+  catalogItems: Map<string, any>;
+}) {
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -503,8 +520,7 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
   const fetchReceipts = async () => {
     setLoadingReceipts(true);
     try {
-      const res = await authenticatedFetch(`/api/inventory/receiving?po_id=${po.id}`);
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getReceipts({ po_id: po.id });
       setReceipts(data || []);
     } catch (error) {
       console.error('Error fetching receipts:', error);
@@ -516,14 +532,10 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
   const updateStatus = async (newStatus: string) => {
     setUpdatingStatus(true);
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
-        method: 'PATCH',
-        body: { status: newStatus },
-      });
+      const { error } = await updatePurchaseOrderStatus(po.id, newStatus);
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update status');
+      if (error) {
+        throw new Error(error.message);
       }
 
       // Refresh the page to show updated PO
@@ -543,13 +555,10 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
 
     setUpdatingStatus(true);
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
-        method: 'DELETE'
-      });
+      const { error } = await deletePurchaseOrder(po.id);
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to delete purchase order');
+      if (error) {
+        throw new Error(error.message);
       }
 
       // Close panel and refresh to remove deleted PO from list
@@ -579,11 +588,14 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-muted/30 rounded-lg">
             <div className="text-xs text-muted-foreground">Vendor</div>
-            <div className="font-medium">{po.vendors?.name || '-'}</div>
+            <div className="font-medium">{po.vendor_name_snapshot || '-'}</div>
+            {po.vendor_code_snapshot && (
+              <div className="text-xs text-muted-foreground font-mono">{po.vendor_code_snapshot}</div>
+            )}
           </div>
           <div className="p-3 bg-muted/30 rounded-lg">
             <div className="text-xs text-muted-foreground">Ship To</div>
-            <div className="font-medium">{po.locations?.name || '-'}</div>
+            <div className="font-medium">{locations.get(po.delivery_location_id || '') || po.delivery_location_id || 'N/A'}</div>
           </div>
         </div>
 
@@ -597,31 +609,34 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
         <div className="border-t pt-4">
           <h4 className="font-medium mb-2">Line Items</h4>
           <div className="space-y-2">
-            {po.purchase_order_lines?.map((line) => (
-              <div key={line.id} className="p-3 bg-muted/30 rounded-lg">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="font-medium">{line.catalog_items?.name || 'Unknown Item'}</div>
-                  <StatusChip status={line.status} size="sm" />
-                </div>
-                <div className="text-xs text-muted-foreground mb-2">
-                  {line.catalog_items?.sku} | {line.catalog_items?.unit_of_measure}
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div>
-                    <div className="text-xs text-muted-foreground">Ordered</div>
-                    <div className="font-mono">{line.qty_ordered}</div>
+            {po.purchase_order_lines?.map((line) => {
+              const item = catalogItems.get(line.catalog_item_id);
+              return (
+                <div key={line.id} className="p-3 bg-muted/30 rounded-lg">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="font-medium">{item?.name || 'Unknown Item'}</div>
+                    <StatusChip status={line.status} size="sm" />
                   </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Received</div>
-                    <div className="font-mono">{line.qty_received}</div>
+                  <div className="text-xs text-muted-foreground mb-2">
+                    {item?.sku} | {item?.unit_of_measure}
                   </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Unit Cost</div>
-                    <div className="font-mono">${line.unit_cost.toFixed(2)}</div>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div>
+                      <div className="text-xs text-muted-foreground">Ordered</div>
+                      <div className="font-mono">{line.qty_ordered}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">Received</div>
+                      <div className="font-mono">{line.qty_received}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">Unit Cost</div>
+                      <div className="font-mono">${line.unit_cost.toFixed(2)}</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )) || <p className="text-muted-foreground text-sm">No items</p>}
+              );
+            }) || <p className="text-muted-foreground text-sm">No items</p>}
           </div>
         </div>
 
@@ -650,15 +665,7 @@ function PODetailPanel({ po, onClose }: { po: PurchaseOrder; onClose: () => void
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground mb-2">
-                    Location: {receipt.locations?.name || 'Unknown'}
-                  </div>
-                  <div className="space-y-1">
-                    {receipt.receipt_lines?.map((line, idx) => (
-                      <div key={idx} className="text-sm flex justify-between">
-                        <span className="text-muted-foreground">{line.catalog_items?.name}</span>
-                        <span className="font-mono font-medium">{line.qty_received}</span>
-                      </div>
-                    ))}
+                    Location: {locations.get(receipt.location_id) || receipt.location_id}
                   </div>
                 </div>
               ))}
@@ -786,8 +793,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchVendors = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/vendors');
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getVendors();
       setVendors(data || []);
     } catch (error) {
       console.error('Error fetching vendors:', error);
@@ -796,8 +802,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations({ active: true });
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -806,8 +811,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const fetchVendorItems = async (vendorId: string) => {
     try {
-      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}/items`);
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getVendorItemsWithCatalog(vendorId);
       setVendorItems(data || []);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
@@ -841,32 +845,25 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     setError('');
 
     try {
-      const linesToSend = form.lines
+      const validLines = form.lines
         .filter(l => l.catalog_item_id && l.qty)
         .map(l => ({
           catalog_item_id: l.catalog_item_id,
-          qty: parseInt(l.qty),
+          qty_ordered: parseInt(l.qty),
           unit_cost: parseFloat(l.unit_cost) || 0,
         }));
 
-      const res = await apiWrite('/api/inventory/purchasing', {
-        method: 'POST',
-        body: {
-          vendor_id: form.vendor_id,
-          ship_to_location_id: form.ship_to_location_id,
-          expected_delivery_date: form.expected_delivery_date || null,
-          notes: form.notes || null,
-          lines: linesToSend,
-        },
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to create purchase order');
+      if (validLines.length === 0) {
+        throw new Error('Please add at least one line item');
       }
 
-      const result = await res.json();
-      console.log('PO created:', result);
+      await SupplyChainRPC.createPurchaseOrder({
+        vendor_id: form.vendor_id,
+        delivery_location_id: form.ship_to_location_id,
+        expected_delivery_date: form.expected_delivery_date || undefined,
+        notes: form.notes || undefined,
+        lines: validLines,
+      });
 
       onCreated();
     } catch (err: any) {
@@ -933,7 +930,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Expected Delivery</label>
+            <label className="block text-sm font-medium mb-1">Expected Delivery <span className="text-gray-400 font-normal">(optional)</span></label>
             <input
               type="date"
               value={form.expected_delivery_date}
@@ -961,7 +958,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
                     value={line.catalog_item_id}
                     onChange={(e) => {
                       const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
-                      
+
                       // Update both catalog_item_id and unit_cost in a single state update
                       const newLines = [...form.lines];
                       newLines[index] = {
@@ -1071,8 +1068,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchVendors = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/vendors');
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getVendors();
       setVendors(data || []);
     } catch (error) {
       console.error('Error fetching vendors:', error);
@@ -1081,8 +1077,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchLocations = async () => {
     try {
-      const res = await authenticatedFetch('/api/inventory/locations');
-      const { data } = await res.json();
+      const data = await InventoryRPC.getLocations({ active: true });
       setLocations(data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -1091,8 +1086,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
   const fetchVendorItems = async (vendorId: string) => {
     try {
-      const res = await authenticatedFetch(`/api/inventory/vendors/${vendorId}/items`);
-      const { data } = await res.json();
+      const data = await SupplyChainRPC.getVendorItemsWithCatalog(vendorId);
       setVendorItems(data || []);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
@@ -1126,27 +1120,23 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
     setError('');
 
     try {
-      const res = await apiWrite(`/api/inventory/purchasing/${po.id}`, {
-        method: 'PUT',
-        body: {
-          vendor_id: form.vendor_id,
-          ship_to_location_id: form.ship_to_location_id,
-          expected_delivery_date: form.expected_delivery_date || null,
-          notes: form.notes || null,
-          lines: form.lines
-            .filter(l => l.catalog_item_id && l.qty)
-            .map(l => ({
-              id: l.id || undefined,
-              catalog_item_id: l.catalog_item_id,
-              qty: parseInt(l.qty),
-              unit_cost: parseFloat(l.unit_cost) || 0,
-            })),
-        },
+      const { error } = await updatePurchaseOrder(po.id, {
+        vendor_id: form.vendor_id,
+        delivery_location_id: form.ship_to_location_id,
+        needed_by_date: form.expected_delivery_date || null,
+        notes: form.notes || null,
+        lines: form.lines
+          .filter(l => l.catalog_item_id && l.qty)
+          .map(l => ({
+            id: l.id || undefined,
+            catalog_item_id: l.catalog_item_id,
+            qty_ordered: parseInt(l.qty),
+            unit_cost: parseFloat(l.unit_cost) || 0,
+          })),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to update purchase order');
+      if (error) {
+        throw new Error(error.message);
       }
 
       onUpdated();
@@ -1214,7 +1204,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Expected Delivery</label>
+            <label className="block text-sm font-medium mb-1">Expected Delivery <span className="text-gray-400 font-normal">(optional)</span></label>
             <input
               type="date"
               value={form.expected_delivery_date}

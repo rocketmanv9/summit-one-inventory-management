@@ -497,7 +497,7 @@ interface CreateReservationModalProps {
 function CreateReservationModal({ onClose, onCreated, reservationTypes }: CreateReservationModalProps) {
   const [form, setForm] = useState({
     catalog_item_id: '',
-    asset_id: '',
+    asset_ids: [] as string[],
     location_id: '',
     destination_location_id: '',
     qty: '',
@@ -554,7 +554,7 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
         fetchAvailableAssets();
       } else {
         setAvailableAssets([]);
-        setForm(prev => ({ ...prev, asset_id: '' }));
+        setForm(prev => ({ ...prev, asset_ids: [] }));
       }
     }
   }, [form.catalog_item_id, form.location_id, form.reserved_from, form.reserved_until]);
@@ -636,21 +636,23 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
       // Add fields based on reservation type
       if (isSerializedItem(selectedItem?.tracking_mode)) {
         // Serialized reservation
-        if (!form.asset_id) {
-          throw new Error('Please select an asset');
+        if (form.asset_ids.length === 0) {
+          throw new Error('Please select at least one asset');
         }
-        await InventoryRPC.reserveAsset({
-          asset_id: form.asset_id,
-          allocation_type: basePayload.allocation_type,
-          job_ref: basePayload.job_ref,
-          external_order_ref: basePayload.external_order_ref,
-          needed_by: basePayload.needed_by,
-          reserved_from: basePayload.reserved_from,
-          reserved_until: basePayload.reserved_until,
-          notes: basePayload.notes,
-          destination_location_id: basePayload.destination_location_id,
-          last_event_id: crypto.randomUUID(),
-        });
+        for (const assetId of form.asset_ids) {
+          await InventoryRPC.reserveAsset({
+            asset_id: assetId,
+            allocation_type: basePayload.allocation_type,
+            job_ref: basePayload.job_ref,
+            external_order_ref: basePayload.external_order_ref,
+            needed_by: basePayload.needed_by,
+            reserved_from: basePayload.reserved_from,
+            reserved_until: basePayload.reserved_until,
+            notes: basePayload.notes,
+            destination_location_id: basePayload.destination_location_id,
+            last_event_id: crypto.randomUUID(),
+          });
+        }
       } else {
         // Fungible reservation
         if (!form.qty || parseInt(form.qty) <= 0) {
@@ -729,35 +731,40 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
               </select>
 
               <label className="block text-sm font-medium mb-1">Select Asset *</label>
-              <select
-                value={form.asset_id}
-                onChange={(e) => setForm({ ...form, asset_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                required
-              >
-                <option value="">Select an asset...</option>
-                {availableAssets.map((asset) => (
-                  <option 
-                    key={asset.asset_id} 
-                    value={asset.asset_id}
-                    disabled={!asset.is_available}
-                  >
-                    {asset.asset_tag}
-                    {asset.serial_number && ` - ${asset.serial_number}`}
-                    {asset.location_name && ` (${asset.location_name})`}
-                    {!asset.is_available && ' (Reserved)'}
-                  </option>
-                ))}
-              </select>
-              {form.asset_id && (() => {
-                const selectedAsset = availableAssets.find((asset) => asset.asset_id === form.asset_id);
-                if (!selectedAsset?.location_name) return null;
-                return (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Asset currently at {selectedAsset.location_name}.
-                  </p>
-                );
-              })()}
+              <div className="space-y-2 max-h-40 overflow-y-auto rounded-md border p-2">
+                {availableAssets.length === 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    No matching assets found.
+                  </div>
+                )}
+                {availableAssets.map((asset) => {
+                  const checked = form.asset_ids.includes(asset.asset_id);
+                  return (
+                    <label key={asset.asset_id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!asset.is_available}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...form.asset_ids, asset.asset_id]
+                            : form.asset_ids.filter((id) => id !== asset.asset_id);
+                          setForm({ ...form, asset_ids: next });
+                        }}
+                      />
+                      <span className={asset.is_available ? '' : 'text-muted-foreground'}>
+                        {asset.asset_tag}
+                        {asset.serial_number && ` - ${asset.serial_number}`}
+                        {asset.location_name && ` (${asset.location_name})`}
+                        {!asset.is_available && ' (Reserved)'}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Selected: {form.asset_ids.length}
+              </p>
             </div>
           ) : (
             /* Fungible location/qty selection */
@@ -807,13 +814,13 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
                 </option>
               ))}
             </select>
-            {form.destination_location_id && form.asset_id && (() => {
-              const selectedAsset = availableAssets.find((asset) => asset.asset_id === form.asset_id);
-              if (!selectedAsset?.location_id) return null;
-              if (selectedAsset.location_id === form.destination_location_id) return null;
+            {form.destination_location_id && form.asset_ids.length > 0 && (() => {
+              const selectedAssets = availableAssets.filter((asset) => form.asset_ids.includes(asset.asset_id));
+              const mismatched = selectedAssets.filter((asset) => asset.location_id && asset.location_id !== form.destination_location_id);
+              if (mismatched.length === 0) return null;
               return (
                 <p className="text-xs text-amber-600 mt-1">
-                  Asset is currently at {selectedAsset.location_name}. Consider a transfer before the reserved window.
+                  {mismatched.length} selected asset{mismatched.length === 1 ? '' : 's'} are at a different location. Consider a transfer before the reserved window.
                 </p>
               );
             })()}

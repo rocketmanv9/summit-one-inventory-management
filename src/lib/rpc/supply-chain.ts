@@ -22,14 +22,27 @@ type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id
 export interface CreatePurchaseOrderParams {
   vendor_id: string;
   po_number?: string;
-  delivery_location_id: string;
-  lines: Array<{
-    catalog_item_id: string;
-    qty_ordered: number;
-    unit_cost: number;
-  }>;
-  expected_delivery_date?: string;
+  delivery_method?: 'ship' | 'pickup';
+  needed_by_date?: string;
+  cost_context?: 'yard' | 'job' | 'overhead';
+  job_id?: string;
+  delivery_location_id?: string;
+  pickup_location_id?: string;
+  max_authorized_spend?: number;
+  vendor_quote_ref?: string;
   notes?: string;
+  attachments?: any[];
+  lines: Array<{
+    catalog_item_id?: string;
+    item_description?: string;
+    unit_of_measure?: string;
+    qty_ordered: number;
+    unit_cost?: number;
+    estimated_unit_cost?: number;
+    price_basis?: 'fixed' | 'estimate' | 'unknown';
+    is_approximate_qty?: boolean;
+    line_notes?: string;
+  }>;
 }
 
 export interface CreatePurchaseOrderResult {
@@ -164,18 +177,25 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase.rpc('rpc_create_purchase_order', {
       p_vendor_id: params.vendor_id,
-      p_po_number: params.po_number,
-      p_delivery_location_id: params.delivery_location_id,
+      p_po_number: params.po_number ?? null,
+      p_delivery_method: params.delivery_method ?? 'ship',
+      p_needed_by_date: params.needed_by_date ?? null,
+      p_cost_context: params.cost_context ?? 'yard',
+      p_job_id: params.job_id ?? null,
+      p_delivery_location_id: params.delivery_location_id ?? null,
+      p_pickup_location_id: params.pickup_location_id ?? null,
+      p_max_authorized_spend: params.max_authorized_spend ?? null,
+      p_vendor_quote_ref: params.vendor_quote_ref ?? null,
+      p_notes: params.notes ?? null,
+      p_attachments: params.attachments ?? [],
       p_lines: params.lines,
-      p_expected_delivery_date: params.expected_delivery_date,
-      p_notes: params.notes,
     });
 
     if (error) {
       throw new Error(`Failed to create PO: ${error.message}`);
     }
 
-    return (data || []) as VendorRow[];
+    return data as CreatePurchaseOrderResult;
   },
 
   /**
@@ -388,6 +408,51 @@ export const SupplyChainRPC = {
   },
 
   /**
+   * Get vendor items with catalog item details (cross-schema, client-side join)
+   */
+  async getVendorItemsWithCatalog(vendorId: string) {
+    const scSupabase = createBrowserAuthedClient().schema('supply_chain');
+    const invSupabase = createBrowserAuthedClient().schema('inventory');
+
+    const { data: vendorItems, error: viError } = await scSupabase
+      .from('vendor_items')
+      .select('id, vendor_sku, unit_cost, catalog_item_id')
+      .eq('vendor_id', vendorId)
+      .order('vendor_sku');
+
+    if (viError) {
+      throw new Error(`Failed to fetch vendor items: ${viError.message}`);
+    }
+
+    if (!vendorItems || vendorItems.length === 0) {
+      return [];
+    }
+
+    const catalogItemIds = [...new Set(vendorItems.map(vi => vi.catalog_item_id))];
+    const { data: catalogItems, error: ciError } = await invSupabase
+      .from('catalog_items')
+      .select('id, name, sku')
+      .in('id', catalogItemIds);
+
+    if (ciError) {
+      throw new Error(`Failed to fetch catalog items: ${ciError.message}`);
+    }
+
+    const catalogMap = new Map((catalogItems || []).map(ci => [ci.id, ci]));
+
+    return vendorItems.map(vi => ({
+      ...vi,
+      catalog_items: catalogMap.get(vi.catalog_item_id) || null,
+    })) as Array<{
+      id: string;
+      vendor_sku: string;
+      unit_cost: number;
+      catalog_item_id: string;
+      catalog_items?: { id: string; name: string; sku: string } | null;
+    }>;
+  },
+
+  /**
    * Create a vendor item mapping
    */
   async createVendorItem(payload: VendorItemInsertPayload) {
@@ -478,8 +543,14 @@ export const SupplyChainRPC = {
       .from('purchase_orders')
       .select(`
         *,
-        vendors:vendor_id(name),
-        locations:delivery_location_id(name)
+        purchase_order_lines(
+          id,
+          catalog_item_id,
+          qty_ordered,
+          qty_received,
+          unit_cost,
+          status
+        )
       `)
       .order('created_at', { ascending: false });
 
@@ -518,11 +589,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
       .from('receipts')
-      .select(`
-        *,
-        locations:location_id(name),
-        purchase_orders:po_id(po_number)
-      `)
+      .select('*')
       .order('received_at', { ascending: false });
 
     if (filters?.location_id) {
@@ -542,6 +609,108 @@ export const SupplyChainRPC = {
 
     if (error) {
       throw new Error(`Failed to fetch receipts: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Get open POs for receiving
+   * RPC: supply_chain.rpc_get_open_pos_for_receiving
+   */
+  async getOpenPOsForReceiving(filters?: {
+    vendor_id?: string;
+    search?: string;
+    limit?: number;
+  }) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    
+    const { data, error } = await supabase.rpc('rpc_get_open_pos_for_receiving', {
+      p_vendor_id: filters?.vendor_id || null,
+      p_search: filters?.search || null,
+      p_limit: filters?.limit || 50
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch open POs for receiving: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Get recent receipts
+   * RPC: supply_chain.rpc_get_recent_receipts
+   */
+  async getRecentReceipts(days: number = 30) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    
+    const { data, error } = await supabase.rpc('rpc_get_recent_receipts', {
+      p_days: days
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch recent receipts: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Get PO receiving detail
+   * RPC: supply_chain.rpc_get_po_receiving_detail
+   */
+  async getPOReceivingDetail(poId: string) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    
+    const { data, error } = await supabase.rpc('rpc_get_po_receiving_detail', {
+      p_po_id: poId
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch PO receiving detail: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Create receipt
+   * RPC: supply_chain.rpc_create_receipt_v2
+   */
+  async createReceipt(params: {
+    receipt_number?: string;
+    location_id: string;
+    po_id?: string | null;
+    vendor_id?: string | null;
+    received_at?: string;
+    notes?: string | null;
+    packing_slip_no?: string | null;
+    vendor_invoice_no?: string | null;
+    source_type?: string;
+    status?: string;
+    auto_post?: boolean;
+    lines: any[];
+  }) {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    
+    const { data, error } = await supabase.rpc('rpc_create_receipt_v2', {
+      p_receipt_number: params.receipt_number || null,
+      p_location_id: params.location_id,
+      p_lines: params.lines,
+      p_po_id: params.po_id || null,
+      p_vendor_id: params.vendor_id || null,
+      p_received_at: params.received_at || undefined, // Let SQL default apply
+      p_notes: params.notes || null,
+      p_packing_slip_no: params.packing_slip_no || null,
+      p_vendor_invoice_no: params.vendor_invoice_no || null,
+      p_source_type: params.source_type || 'delivery',
+      p_status: params.status || 'confirmed',
+      p_auto_post: params.auto_post ?? true
+    });
+
+    if (error) {
+      throw new Error(`Failed to create receipt: ${error.message}`);
     }
 
     return data;

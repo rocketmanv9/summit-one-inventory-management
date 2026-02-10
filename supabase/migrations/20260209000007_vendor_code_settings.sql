@@ -107,7 +107,11 @@ DECLARE
   v_tenant_id UUID;
   v_settings supply_chain.tenant_settings;
 BEGIN
-  v_tenant_id := (auth.jwt() ->> 'tenant_id')::UUID;
+  -- Support both JWT tenant_id paths (app_metadata or root)
+  v_tenant_id := COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID,
+    (auth.jwt() ->> 'tenant_id')::UUID
+  );
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required - no tenant_id in JWT';
   END IF;
@@ -137,8 +141,16 @@ DECLARE
   v_user_id UUID;
   v_settings supply_chain.tenant_settings;
 BEGIN
-  v_tenant_id := (auth.jwt() ->> 'tenant_id')::UUID;
-  v_user_id := (auth.jwt() ->> 'user_id')::UUID;
+  -- Support both JWT tenant_id paths (app_metadata or root)
+  v_tenant_id := COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID,
+    (auth.jwt() ->> 'tenant_id')::UUID
+  );
+  v_user_id := COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'user_id')::UUID,
+    (auth.jwt() ->> 'user_id')::UUID,
+    (auth.jwt() ->> 'sub')::UUID
+  );
 
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required - no tenant_id in JWT';
@@ -701,7 +713,11 @@ AS $$
 DECLARE
   v_tenant_id UUID;
 BEGIN
-  v_tenant_id := (auth.jwt() ->> 'tenant_id')::UUID;
+  -- Support both JWT tenant_id paths (app_metadata or root)
+  v_tenant_id := COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID,
+    (auth.jwt() ->> 'tenant_id')::UUID
+  );
 
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required';
@@ -764,7 +780,11 @@ DECLARE
   v_result JSONB;
   v_lines JSONB;
 BEGIN
-  v_tenant_id := (auth.jwt() ->> 'tenant_id')::UUID;
+  -- Support both JWT tenant_id paths (app_metadata or root)
+  v_tenant_id := COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID,
+    (auth.jwt() ->> 'tenant_id')::UUID
+  );
 
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required';
@@ -880,8 +900,16 @@ DECLARE
     v_vendor_code TEXT;
     v_result JSONB;
 BEGIN
-    v_tenant_id := (auth.jwt() ->> 'tenant_id')::UUID;
-    v_user_id := (auth.jwt() ->> 'user_id')::UUID;
+    -- Support both JWT tenant_id paths (app_metadata or root)
+    v_tenant_id := COALESCE(
+        (auth.jwt() -> 'app_metadata' ->> 'tenant_id')::UUID,
+        (auth.jwt() ->> 'tenant_id')::UUID
+    );
+    v_user_id := COALESCE(
+        (auth.jwt() -> 'app_metadata' ->> 'user_id')::UUID,
+        (auth.jwt() ->> 'user_id')::UUID,
+        (auth.jwt() ->> 'sub')::UUID
+    );
 
     IF v_tenant_id IS NULL THEN
         RAISE EXCEPTION 'Authentication required - no tenant_id in JWT';

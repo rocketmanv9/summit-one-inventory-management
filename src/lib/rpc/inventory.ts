@@ -245,6 +245,40 @@ export const InventoryRPC = {
   },
 
   /**
+   * Count catalog items by category
+   * Table: inventory.catalog_items
+   */
+  async countCatalogItemsByCategory(categoryId: string): Promise<number> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { count, error } = await supabase
+      .from('catalog_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('category_id', categoryId);
+
+    if (error) {
+      throw new Error(`Failed to count category items: ${error.message}`);
+    }
+
+    return count ?? 0;
+  },
+
+  /**
+   * Reassign catalog items to a different category
+   * Table: inventory.catalog_items
+   */
+  async reassignCatalogItemsCategory(oldCategoryId: string, newCategoryId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { error } = await supabase
+      .from('catalog_items')
+      .update({ category_id: newCategoryId })
+      .eq('category_id', oldCategoryId);
+
+    if (error) {
+      throw new Error(`Failed to reassign category items: ${error.message}`);
+    }
+  },
+
+  /**
    * Get item categories
    * Table: inventory.item_categories
    */
@@ -252,7 +286,7 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('item_categories')
-      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id')
+      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id, created_at, updated_at')
       .order('name');
 
     if (error) {
@@ -321,6 +355,16 @@ export const InventoryRPC = {
    */
   async deleteItemCategory(id: string, lastEventId: string) {
     const supabase = createBrowserAuthedClient().schema('inventory');
+
+    const { error: skuError } = await supabase
+      .from('sku_settings')
+      .delete()
+      .eq('category_id', id);
+
+    if (skuError) {
+      throw new Error(`Failed to delete category SKU settings: ${skuError.message}`);
+    }
+
     const { data, error } = await supabase
       .from('item_categories')
       .delete()
@@ -997,7 +1041,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .order('created_at', { ascending: false });
 
@@ -1021,7 +1065,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .eq('id', transferId)
       .maybeSingle();
@@ -1036,7 +1080,7 @@ export const InventoryRPC = {
   /**
    * Create transfer via RPC
    */
-  async createTransfer(params: { from_location_id: string; to_location_id: string; notes?: string | null; lines: Array<{ catalog_item_id: string; qty: number }> }) {
+  async createTransfer(params: { from_location_id: string; to_location_id: string; notes?: string | null; lines: Array<{ catalog_item_id: string; qty: number; asset_ids?: string[] }> }) {
     const { tenantId, userId } = getAuthContext();
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase.rpc('rpc_inv_transfer_create', {
@@ -1162,7 +1206,11 @@ export const InventoryRPC = {
       throw new Error(`Failed to load transfer lines: ${lineError.message}`);
     }
 
-    for (const line of lines || []) {
+    if (!lines || lines.length === 0) {
+      throw new Error('No transfer lines found. Please refresh and try again.');
+    }
+
+    for (const line of lines) {
       const { error: updateError } = await supabase
         .from('transfer_lines')
         .update({ qty_shipped: line.qty })
@@ -1342,21 +1390,106 @@ export const InventoryRPC = {
    */
   async getItemsAtLocation(locationId: string) {
     const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
+    const { data: stockData, error: stockError } = await supabase
       .from('stock_balances')
-      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, unit_of_measure)')
+      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
       .eq('location_id', locationId)
       .gt('qty_available', 0)
       .order('name', { foreignTable: 'catalog_items' });
 
+    if (stockError) {
+      throw new Error(`Failed to load location stock: ${stockError.message}`);
+    }
+
+    const { data: assetData, error: assetError } = await supabase
+      .from('assets')
+      .select('catalog_item_id, catalog_item:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
+      .eq('location_id', locationId)
+      .in('status', ['available', 'assigned']);
+
+    if (assetError) {
+      throw new Error(`Failed to load location assets: ${assetError.message}`);
+    }
+
+    const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null }>();
+    (assetData || []).forEach((row) => {
+      const catalogItemId = row.catalog_item_id as string | null;
+      if (!catalogItemId) return;
+      const existing = assetCounts.get(catalogItemId);
+      assetCounts.set(catalogItemId, {
+        count: (existing?.count || 0) + 1,
+        catalog_item: (row.catalog_item || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+      });
+    });
+
+    const serializedRows = Array.from(assetCounts.entries()).map(([catalogItemId, data]) => ({
+      catalog_item_id: catalogItemId,
+      qty_available: data.count,
+      asset_count: data.count,
+      catalog_items: data.catalog_item,
+    }));
+
+    const merged = new Map<string, {
+      catalog_item_id: string;
+      qty_available: number | null;
+      asset_count?: number | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+    }>();
+
+    (stockData || []).forEach((row) => {
+      merged.set(row.catalog_item_id, {
+        catalog_item_id: row.catalog_item_id,
+        qty_available: row.qty_available,
+        asset_count: null,
+        catalog_items: row.catalog_items as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+      });
+    });
+
+    serializedRows.forEach((row) => {
+      if (merged.has(row.catalog_item_id)) {
+        const existing = merged.get(row.catalog_item_id);
+        merged.set(row.catalog_item_id, {
+          ...existing,
+          asset_count: row.asset_count ?? existing?.asset_count ?? null,
+        });
+      } else {
+        merged.set(row.catalog_item_id, row);
+      }
+    });
+
+    return Array.from(merged.values()).sort((a, b) =>
+      (a.catalog_items?.name || '').localeCompare(b.catalog_items?.name || '')
+    ) as Array<{
+      catalog_item_id: string;
+      qty_available: number | null;
+      asset_count?: number | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+    }>;
+  },
+
+  /**
+   * Get assets at a location for transfer selection
+   */
+  async getAssetsForTransfer(params: { location_id: string; catalog_item_id: string }) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('assets')
+      .select('id, asset_tag, serial_number, status, location_id')
+      .eq('location_id', params.location_id)
+      .eq('catalog_item_id', params.catalog_item_id)
+      .in('status', ['available', 'assigned'])
+      .order('asset_tag');
+
     if (error) {
-      throw new Error(`Failed to load location stock: ${error.message}`);
+      throw new Error(`Failed to load assets for transfer: ${error.message}`);
     }
 
     return (data || []) as Array<{
-      catalog_item_id: string;
-      qty_available: number | null;
-      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure'> | null;
+      id: string;
+      asset_tag: string;
+      serial_number: string | null;
+      status: string | null;
+      location_id: string | null;
     }>;
   },
 
