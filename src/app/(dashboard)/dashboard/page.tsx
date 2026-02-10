@@ -114,17 +114,8 @@ export default function DashboardPage() {
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {quickActions.map((action) => {
-              const CardComponent = action.href ? Link : 'button';
-              const cardProps = action.href
-                ? { href: action.href }
-                : { onClick: action.onClick, type: 'button' as const };
-
-              return (
-                <CardComponent
-                  key={action.title}
-                  {...cardProps}
-                  className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
-                >
+              const content = (
+                <>
                   <div className="text-4xl mb-3">{action.icon}</div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-1">
                     {action.title}
@@ -132,7 +123,30 @@ export default function DashboardPage() {
                   <p className="text-sm text-gray-600">
                     {action.description}
                   </p>
-                </CardComponent>
+                </>
+              );
+
+              if (action.href) {
+                return (
+                  <Link
+                    key={action.title}
+                    href={action.href}
+                    className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
+                  >
+                    {content}
+                  </Link>
+                );
+              }
+
+              return (
+                <button
+                  key={action.title}
+                  type="button"
+                  onClick={action.onClick}
+                  className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
+                >
+                  {content}
+                </button>
               );
             })}
           </div>
