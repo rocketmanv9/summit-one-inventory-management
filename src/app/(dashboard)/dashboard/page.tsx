@@ -107,7 +107,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <AppShell userName="System User" tenantName={tenant} currentView="dashboard">
+    <AppShell>
       <div className="p-8">
         {/* Quick Actions */}
         <div className="mb-8">
