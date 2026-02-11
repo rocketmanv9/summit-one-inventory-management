@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { SignJWT } from 'jose';
 
+// Prevent caching/prefetching of this route
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 /**
  * Exchange ticket for JWT and session
  *
@@ -17,8 +21,9 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const ticket = searchParams.get('ticket');
     const targetOrg = searchParams.get('target_org');
+    const targetService = searchParams.get('target_service');
 
-    console.log('[Auth Callback] Request:', { ticketLength: ticket?.length, targetOrg });
+    console.log('[Auth Callback] Request:', { ticketLength: ticket?.length, targetOrg, targetService });
 
     // Validate ticket
     if (!ticket || ticket.length !== 32) {
@@ -35,15 +40,27 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange ticket with Core API endpoint
-    console.log('[Auth Callback] Exchanging ticket:', { exchangeUrl });
+    const requestBody = { 
+      ticket, 
+      target_org: targetOrg,
+      target_service: targetService 
+    };
+    console.log('[Auth Callback] Exchanging ticket:', { 
+      exchangeUrl, 
+      ticketPrefix: ticket.substring(0, 8),
+      targetOrg,
+      targetService,
+      anonKeyPrefix: coreAnonKey.substring(0, 20)
+    });
 
     const exchangeResponse = await fetch(exchangeUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'apikey': coreAnonKey,
         Authorization: `Bearer ${coreAnonKey}`,
       },
-      body: JSON.stringify({ ticket, target_org: targetOrg }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(5000),
     });
 
