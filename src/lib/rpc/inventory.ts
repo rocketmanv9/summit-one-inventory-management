@@ -1606,13 +1606,17 @@ export const InventoryRPC = {
    */
   async updateLocation(id: string, updates: LocationUpdatePayload, lastEventId: string) {
     const supabase = createBrowserAuthedClient().schema('inventory');
-    const { id: _id, created_at, tenant_id, location_type, last_event_id, ...safeUpdates } = updates as LocationUpdatePayload & {
+    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...restUpdates } = updates as LocationUpdatePayload & {
       id?: string;
       created_at?: string;
       tenant_id?: string;
-      location_type?: { name: string } | null;
       last_event_id?: string;
+      location_type?: unknown;
     };
+    const safeUpdates =
+      typeof location_type === 'string'
+        ? { ...restUpdates, location_type }
+        : { ...restUpdates };
 
     const { data, error } = await supabase
       .from('locations')

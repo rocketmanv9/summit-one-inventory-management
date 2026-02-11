@@ -29,6 +29,7 @@ interface OutboxEvent {
   id: string;
   tenant_id: string;
   scope: string;
+  event_name?: string;
   event_type: string;
   aggregate_type: string;
   aggregate_id: string;
@@ -130,7 +131,7 @@ export default function DebugPage() {
 
           const emittedMap: Record<string, string> = {};
           normalizedEvents.forEach(event => {
-            const eventName = event.event_name || event.event_type;
+            const eventName = event.event_type || event.event_name;
             if (!eventName) return;
             if (!emittedMap[eventName]) {
               emittedMap[eventName] = event.created_at;

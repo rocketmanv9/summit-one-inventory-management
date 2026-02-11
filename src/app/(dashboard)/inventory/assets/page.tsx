@@ -10,16 +10,25 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
-type AssignmentTypeRow = Database['inventory']['Tables']['assignment_types']['Row'];
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
 type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
 type AssetStateRow = Database['inventory']['Tables']['asset_state']['Row'];
 
+type AssignmentTypeRow = {
+  id: string;
+  type_key: string;
+  display_name: string;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number | null;
+  last_event_id: string | null;
+};
+
 type Asset = AssetRow & {
   catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   location?: (LocationRow & {
-    location_type?: Pick<LocationTypeRow, 'id' | 'name'> | null;
+    location_type?: { id?: string; name?: string } | null;
   }) | null;
   asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id'> | null;
 };

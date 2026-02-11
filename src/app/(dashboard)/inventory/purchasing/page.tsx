@@ -502,6 +502,7 @@ function PODetailPanel({
     id: string;
     receipt_number: string;
     received_at: string;
+    location_id?: string;
     locations?: { name: string };
     users?: { email: string };
     receipt_lines?: Array<{
@@ -656,19 +657,27 @@ function PODetailPanel({
             </div>
           ) : receipts.length > 0 ? (
             <div className="space-y-2">
-              {receipts.map((receipt) => (
-                <div key={receipt.id} className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-sm font-medium">{receipt.receipt_number}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(receipt.received_at).toLocaleDateString()}
-                    </span>
+              {receipts.map((receipt) => {
+                const locationLabel =
+                  receipt.locations?.name ||
+                  (receipt.location_id
+                    ? locations.get(receipt.location_id) || receipt.location_id
+                    : 'Unknown');
+
+                return (
+                  <div key={receipt.id} className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-sm font-medium">{receipt.receipt_number}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(receipt.received_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-2">
+                      Location: {locationLabel}
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground mb-2">
-                    Location: {locations.get(receipt.location_id) || receipt.location_id}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">No receipts yet</p>
@@ -776,7 +785,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [error, setError] = useState('');
   const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
-  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
+  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } | null }>>([]);
 
   useEffect(() => {
     fetchVendors();
@@ -860,7 +869,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
       await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         delivery_location_id: form.ship_to_location_id,
-        expected_delivery_date: form.expected_delivery_date || undefined,
+        needed_by_date: form.expected_delivery_date || undefined,
         notes: form.notes || undefined,
         lines: validLines,
       });
@@ -1036,7 +1045,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: () => void; onUpdated: () => void }) {
   const [form, setForm] = useState({
     vendor_id: po.vendor_id || '',
-    ship_to_location_id: po.ship_to_location_id || '',
+    ship_to_location_id: po.delivery_location_id || '',
     expected_delivery_date: po.expected_delivery_date || '',
     notes: po.notes || '',
     lines: po.purchase_order_lines?.map(line => ({
@@ -1050,7 +1059,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
   const [error, setError] = useState('');
   const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
-  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } }>>([]);
+  const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } | null }>>([]);
 
   useEffect(() => {
     fetchVendors();

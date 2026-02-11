@@ -34,6 +34,7 @@ interface PODetail {
   po_number: string;
   vendor_id: string;
   vendor_name: string;
+  vendor_code?: string;
   status: string;
   order_date: string;
   expected_delivery_date: string;

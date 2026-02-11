@@ -4,11 +4,47 @@ import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
-import type { Database } from 'types/supabase';
 
-type Vendor = Database['supply_chain']['Tables']['vendors']['Row'];
-type CatalogItem = Database['inventory']['Tables']['catalog_items']['Row'];
-type VendorItem = Database['supply_chain']['Tables']['vendor_items']['Row'];
+type Vendor = {
+  id: string;
+  name: string;
+  code: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  payment_terms?: string | null;
+  lead_time_days?: number | null;
+  notes?: string | null;
+  active?: boolean | null;
+  created_at?: string;
+  last_event_id?: string | null;
+};
+
+type CatalogItem = {
+  id: string;
+  name: string;
+  sku: string;
+  unit_of_measure?: string | null;
+  tracking_mode?: string | null;
+};
+
+type VendorItem = {
+  id: string;
+  vendor_id: string;
+  catalog_item_id: string;
+  vendor_sku: string;
+  vendor_uom: string | null;
+  pack_size: number | null;
+  is_preferred: boolean | null;
+  unit_cost: number | null;
+  currency: string | null;
+  lead_time_days: number | null;
+  min_order_qty: number | null;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+  last_event_id: string | null;
+};
 type EnrichedVendorItem = VendorItem & {
   vendor?: Vendor | null;
   catalog_item?: CatalogItem | null;
@@ -121,7 +157,7 @@ export default function VendorItemsPage() {
       vendor_sku: item.vendor_sku,
       vendor_uom: item.vendor_uom || '',
       pack_size: item.pack_size || 1,
-      is_preferred: item.is_preferred,
+      is_preferred: !!item.is_preferred,
       unit_cost: item.unit_cost?.toString() || '',
       currency: item.currency || 'USD',
       lead_time_days: item.lead_time_days?.toString() || '',

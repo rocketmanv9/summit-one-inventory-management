@@ -75,6 +75,10 @@ export default function LocationsPage() {
     }
 
     try {
+      if (!location.last_event_id) {
+        throw new Error('Missing last_event_id for this location. Please refresh and try again.');
+      }
+
       await InventoryRPC.deleteLocation(location.id, location.last_event_id);
 
       // Refresh the list
@@ -300,13 +304,24 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
     setError('');
 
     try {
+      const selectedType = locationTypes.find((type) => type.value === form.location_type_id);
+      const locationTypeName = selectedType?.label || location?.location_type?.name || '';
+
+      if (!locationTypeName) {
+        throw new Error('Please select a location type.');
+      }
+
       // Convert empty string to null for parent_location_id
       const payload = {
         ...form,
+        location_type: locationTypeName,
         parent_location_id: form.parent_location_id || null,
       };
 
       if (isEditing && location) {
+        if (!location.last_event_id) {
+          throw new Error('Missing last_event_id for this location. Please refresh and try again.');
+        }
         await InventoryRPC.updateLocation(location.id, payload, location.last_event_id);
       } else {
         await InventoryRPC.createLocation(payload);

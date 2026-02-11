@@ -19,10 +19,12 @@ type CatalogItem = CatalogItemRow & {
   item_categories?: Pick<ItemCategoryRow, 'name'> | null;
 };
 type Category = ItemCategoryRow;
-type Location = LocationRow & {
+type Location = Omit<LocationRow, 'location_type'> & {
   location_type?: { name?: string } | string | null;
 };
-type InventoryLevel = Pick<InventoryLevelRow, 'id' | 'location_id' | 'current_stock' | 'reorder_point' | 'target_stock'>;
+type InventoryLevel = Omit<Pick<InventoryLevelRow, 'id' | 'location_id' | 'current_stock' | 'reorder_point' | 'target_stock'>, 'id'> & {
+  id?: string;
+};
 type TrackingMode = CatalogItemRow['tracking_mode'];
 type SkuSettings = Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
 
@@ -337,10 +339,11 @@ function CreateItemModal({
 
   useEffect(() => {
     if (!isEditing || !item?.id) return;
+    const itemId = item.id;
 
     async function loadLevels() {
       try {
-        const levelsResult = await InventoryRPC.getInventoryLevelsForItem(item.id);
+        const levelsResult = await InventoryRPC.getInventoryLevelsForItem(itemId);
         const rows = (levelsResult || []).map((row) => ({
           id: row.id,
           location_id: row.location_id,

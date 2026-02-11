@@ -12,25 +12,25 @@ interface Reservation {
   id: string;
   catalog_item_id: string;
   location_id: string;
-  destination_location_id?: string;
+  destination_location_id?: string | null;
   qty: number;
-  reservation_type: 'fungible' | 'serialized';
-  asset_id?: string;
+  reservation_type?: 'fungible' | 'serialized' | null;
+  asset_id?: string | null;
   allocation_type: string | null;
   status: string;
-  job_ref?: string;
-  external_order_ref?: string;
-  needed_by?: string;
-  expiration_date?: string;
-  reserved_from?: string;
-  reserved_until?: string;
-  notes?: string;
+  job_ref?: unknown;
+  external_order_ref?: string | null;
+  needed_by?: string | null;
+  expiration_date?: string | null;
+  reserved_from?: string | null;
+  reserved_until?: string | null;
+  notes?: string | null;
   created_at: string;
   last_event_id: string;
-  catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string };
-  locations?: { id: string; name: string };
-  destination_locations?: { id: string; name: string };
-  assets?: { id: string; asset_tag: string; serial_number?: string; vin?: string };
+  catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string } | null;
+  locations?: { id: string; name: string } | null;
+  destination_locations?: { id: string; name: string } | null;
+  assets?: { id: string; asset_tag: string; serial_number?: string | null; vin?: string | null } | null;
 }
 
 export default function ReservationsPage() {
@@ -58,7 +58,7 @@ export default function ReservationsPage() {
         status: filters.status || undefined,
         allocation_type: filters.allocation_type || undefined,
       });
-      setReservations((data || []) as Reservation[]);
+      setReservations(data || []);
     } catch (error) {
       console.error('Error fetching reservations:', error);
     } finally {

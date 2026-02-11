@@ -126,7 +126,7 @@ export default function VendorItemsPage() {
       const payload = {
         vendor_id: vendorId,
         catalog_item_id: formData.catalog_item_id,
-        vendor_sku: formData.vendor_sku || null,
+        vendor_sku: formData.vendor_sku || '',
         vendor_uom: formData.vendor_uom || null,
         pack_size: formData.pack_size ? parseFloat(formData.pack_size) : 1,
         unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : null,
@@ -158,7 +158,7 @@ export default function VendorItemsPage() {
     setEditingItem(item);
     setFormData({
       catalog_item_id: item.catalog_item_id,
-      vendor_sku: item.vendor_sku,
+      vendor_sku: item.vendor_sku || '',
       vendor_uom: item.vendor_uom || '',
       pack_size: item.pack_size?.toString() || '1',
       unit_cost: item.unit_cost?.toString() || '',

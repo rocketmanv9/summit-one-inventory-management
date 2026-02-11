@@ -7,18 +7,44 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import type { Database } from 'types/supabase';
 
-type TransferRow = Database['inventory']['Tables']['transfers']['Row'];
-type TransferLineRow = Database['inventory']['Tables']['transfer_lines']['Row'];
-type LocationRow = Database['inventory']['Tables']['locations']['Row'];
-type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
-type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
+type TransferLine = {
+  id: string;
+  catalog_item_id: string;
+  qty: number;
+  qty_shipped: number | null;
+  qty_received: number | null;
+  line_number: number;
+  last_event_id: string;
+  catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string | null } | null;
+};
 
-type Transfer = TransferRow & {
-  from_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
-  to_location?: (LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null }) | null;
-  transfer_lines?: Array<TransferLineRow & { catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'tracking_mode'> | null }>;
+type Transfer = {
+  id: string;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  initiated_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  last_event_id: string | null;
+  from_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
+  to_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
+  transfer_lines?: TransferLine[];
+};
+
+type LocationOption = {
+  id: string;
+  name: string;
+  location_type?: { name?: string } | null;
+};
+
+type CatalogItemOption = {
+  id: string;
+  name: string;
+  sku: string;
+  unit_of_measure?: string | null;
+  tracking_mode?: string | null;
 };
 
 export default function TransfersPage() {
@@ -967,12 +993,12 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
     notes: '',
     lines: [{ catalog_item_id: '', qty: '', asset_ids: [] as string[] }],
   });
-  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
   const [items, setItems] = useState<Array<{
     catalog_item_id: string;
     qty_available: number | null;
     asset_count?: number | null;
-    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+    catalog_items?: CatalogItemOption | null;
   }>>([]);
   const [assetsByLine, setAssetsByLine] = useState<Record<number, Array<{ id: string; asset_tag: string; serial_number: string | null }>>>({});
   const [loadingData, setLoadingData] = useState(true);
@@ -1375,11 +1401,11 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
       qty: line.qty.toString(),
     })) || [{ catalog_item_id: '', qty: '' }],
   });
-  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
   const [items, setItems] = useState<Array<{
     catalog_item_id: string;
     qty_available: number | null;
-    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure'> | null;
+    catalog_items?: CatalogItemOption | null;
   }>>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);

@@ -23,7 +23,7 @@ interface CatalogItem {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure: string;
+  unit_of_measure: string | null;
 }
 
 interface POLine {
@@ -124,7 +124,7 @@ export default function CreatePurchaseOrderPage() {
         po_number: form.po_number || undefined,
         delivery_location_id: form.delivery_location_id,
         lines: validLines,
-        expected_delivery_date: form.expected_delivery_date || undefined,
+        needed_by_date: form.expected_delivery_date || undefined,
         notes: form.notes || undefined,
       });
 
@@ -312,7 +312,7 @@ export default function CreatePurchaseOrderPage() {
                           <option value="">Select item...</option>
                           {items.map((item) => (
                             <option key={item.id} value={item.id}>
-                              {item.name} ({item.sku}) - {item.unit_of_measure}
+                              {item.name} ({item.sku}) - {item.unit_of_measure || 'N/A'}
                             </option>
                           ))}
                         </select>
@@ -371,7 +371,7 @@ export default function CreatePurchaseOrderPage() {
 
                     {selectedItem && (
                       <div className="ml-0 text-sm text-gray-600">
-                        Unit: {selectedItem.unit_of_measure}
+                        Unit: {selectedItem.unit_of_measure || 'N/A'}
                       </div>
                     )}
                   </div>
