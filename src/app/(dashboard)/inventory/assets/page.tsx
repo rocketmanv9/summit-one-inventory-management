@@ -14,6 +14,7 @@ type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
 type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
 type AssetStateRow = Database['inventory']['Tables']['asset_state']['Row'];
+type CatalogItemOption = Pick<CatalogItemRow, 'id' | 'name' | 'sku'>;
 
 type AssignmentTypeRow = {
   id: string;
@@ -25,7 +26,17 @@ type AssignmentTypeRow = {
   last_event_id: string | null;
 };
 
-type Asset = AssetRow & {
+type Asset = {
+  id: string;
+  asset_tag: string;
+  serial_number: string | null;
+  catalog_item_id: string | null;
+  location_id: string | null;
+  status: string | null;
+  purchase_date: string | null;
+  purchase_cost: number | null;
+  warranty_expires: string | null;
+  last_event_id: string | null;
   catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   location?: (LocationRow & {
     location_type?: { id?: string; name?: string } | null;
@@ -332,7 +343,7 @@ export default function AssetsPage() {
 }
 
 function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
-  const [catalogItems, setCatalogItems] = useState<CatalogItemRow[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItemOption[]>([]);
   const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
   const [form, setForm] = useState({
     catalog_item_id: '',
@@ -663,7 +674,7 @@ function EditAssetModal({
   onClose: () => void; 
   onComplete: () => void;
 }) {
-  const [catalogItems, setCatalogItems] = useState<CatalogItemRow[]>([]);
+  const [catalogItems, setCatalogItems] = useState<CatalogItemOption[]>([]);
   const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
   const [form, setForm] = useState({
     catalog_item_id: asset.catalog_item_id || '',

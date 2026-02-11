@@ -17,7 +17,7 @@ interface CatalogItem {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure: string;
+  unit_of_measure: string | null;
 }
 
 interface ReceiptLine {

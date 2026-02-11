@@ -11,17 +11,17 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 type TransferLine = {
   id: string;
   catalog_item_id: string;
-  qty: number;
+  qty: number | null;
   qty_shipped: number | null;
   qty_received: number | null;
-  line_number: number;
-  last_event_id: string;
+  line_number: number | null;
+  last_event_id: string | null;
   catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string | null } | null;
 };
 
 type Transfer = {
   id: string;
-  status: string;
+  status: string | null;
   notes: string | null;
   created_at: string;
   initiated_at: string | null;
@@ -216,7 +216,7 @@ export default function TransfersPage() {
         <div>
           <div>{row.transfer_lines?.length || 0} line(s)</div>
           <div className="text-xs text-muted-foreground">
-            {row.transfer_lines?.reduce((sum, line) => sum + line.qty, 0) || 0} units
+            {row.transfer_lines?.reduce((sum, line) => sum + (line.qty ?? 0), 0) || 0} units
           </div>
         </div>
       ),
@@ -527,8 +527,8 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
             if (line.line_number == null) {
               return acc;
             }
-            const shipped = line.qty_shipped || line.qty;
-            const received = line.qty_received || 0;
+            const shipped = line.qty_shipped ?? line.qty ?? 0;
+            const received = line.qty_received ?? 0;
             const remaining = shipped - received;
             acc[line.line_number] = remaining > 0 ? remaining : 0;
             return acc;
@@ -545,8 +545,8 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
           if (line.line_number == null) {
             return acc;
           }
-          const shipped = line.qty_shipped || line.qty;
-          const received = line.qty_received || 0;
+          const shipped = line.qty_shipped ?? line.qty ?? 0;
+          const received = line.qty_received ?? 0;
           const remaining = shipped - received;
           acc[line.line_number] = remaining > 0 ? remaining : 0;
           return acc;
@@ -628,8 +628,8 @@ function PartialReceiveModal({ transfer, onClose, onReceived }: { transfer: Tran
               )}
               <h4 className="font-medium text-sm text-gray-700">Line Items</h4>
               {(currentTransfer.transfer_lines || []).map((line) => {
-                const shipped = line.qty_shipped || line.qty;
-                const alreadyReceived = line.qty_received || 0;
+                const shipped = line.qty_shipped ?? line.qty ?? 0;
+                const alreadyReceived = line.qty_received ?? 0;
                 const remaining = shipped - alreadyReceived;
                 const lineNumber = line.line_number ?? 0;
               
@@ -1398,7 +1398,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
       id: line.id,
       last_event_id: line.last_event_id,
       catalog_item_id: line.catalog_item_id,
-      qty: line.qty.toString(),
+      qty: line.qty?.toString() ?? '',
     })) || [{ catalog_item_id: '', qty: '' }],
   });
   const [locations, setLocations] = useState<LocationOption[]>([]);

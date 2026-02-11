@@ -199,31 +199,6 @@ export const SupplyChainRPC = {
   },
 
   /**
-   * Create a receipt (with optional auto-post to inventory)
-   * RPC: supply_chain.rpc_create_receipt
-   */
-  async createReceipt(
-    params: CreateReceiptParams
-  ): Promise<CreateReceiptResult> {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const { data, error } = await supabase.rpc('rpc_create_receipt', {
-      p_receipt_number: params.receipt_number,
-      p_location_id: params.location_id,
-      p_lines: params.lines,
-      p_po_id: params.po_id,
-      p_received_at: params.received_at,
-      p_notes: params.notes,
-      p_auto_post: params.auto_post ?? true,
-    });
-
-    if (error) {
-      throw new Error(`Failed to create receipt: ${error.message}`);
-    }
-
-    return data;
-  },
-
-  /**
    * Post receipt to inventory (atomic bridge)
    * RPC: supply_chain.rpc_post_receipt_to_inventory
    */
@@ -247,11 +222,11 @@ export const SupplyChainRPC = {
    * Get vendors list
    * View: inventory.vendors (compatibility view → supply_chain.vendors)
    */
-  async getVendors() {
+  async getVendors(): Promise<VendorRow[]> {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, last_event_id')
+      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id')
       .eq('active', true)
       .order('name');
 
@@ -259,7 +234,7 @@ export const SupplyChainRPC = {
       throw new Error(`Failed to fetch vendors: ${error.message}`);
     }
 
-    return data;
+    return (data ?? []) as VendorRow[];
   },
 
   /**

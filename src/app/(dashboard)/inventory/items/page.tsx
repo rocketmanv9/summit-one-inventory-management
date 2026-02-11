@@ -15,7 +15,20 @@ type InventoryLevelRow = Database['inventory']['Tables']['inventory_levels']['Ro
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
 type SkuSettingsRow = Database['inventory']['Tables']['sku_settings']['Row'];
 
-type CatalogItem = CatalogItemRow & {
+type CatalogItem = {
+  id: string;
+  name: string;
+  sku: string;
+  description: string | null;
+  category_id: string | null;
+  unit_of_measure: string | null;
+  tracking_mode: TrackingMode;
+  reorder_point: number | null;
+  min_stock_level: number | null;
+  max_stock_level: number | null;
+  active: boolean | null;
+  base_sku: string | null;
+  last_event_id: string | null;
   item_categories?: Pick<ItemCategoryRow, 'name'> | null;
 };
 type Category = ItemCategoryRow;

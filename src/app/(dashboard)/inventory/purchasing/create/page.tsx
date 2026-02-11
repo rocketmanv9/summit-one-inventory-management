@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 interface Vendor {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
 }
 
 interface Location {
@@ -209,7 +209,7 @@ export default function CreatePurchaseOrderPage() {
                   <option value="">Select vendor...</option>
                   {vendors.map((vendor) => (
                     <option key={vendor.id} value={vendor.id}>
-                      {vendor.name} ({vendor.code})
+                      {vendor.name} ({vendor.code ?? 'No code'})
                     </option>
                   ))}
                 </select>

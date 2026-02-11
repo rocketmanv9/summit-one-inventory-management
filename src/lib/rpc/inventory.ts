@@ -23,7 +23,15 @@ type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
 type LocationTypeInsert = Database['inventory']['Tables']['location_types']['Insert'];
 type SkuSettingsRow = Database['inventory']['Tables']['sku_settings']['Row'];
 type SkuSettingsInsert = Database['inventory']['Tables']['sku_settings']['Insert'];
-type AssignmentTypeRow = Database['inventory']['Tables']['assignment_types']['Row'];
+type AssignmentTypeRow = {
+  id: string;
+  type_key: string;
+  display_name: string;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number;
+  last_event_id: string;
+};
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
 type AssetInsert = Database['inventory']['Tables']['assets']['Insert'];
 type AssetUpdate = Database['inventory']['Tables']['assets']['Update'];
@@ -47,7 +55,20 @@ type ReservationTypeRow = {
   updated_at: string;
 };
 
-type CatalogItemWithCategory = CatalogItemRow & {
+type CatalogItemWithCategory = {
+  id: string;
+  name: string;
+  sku: string;
+  description: string | null;
+  category_id: string | null;
+  unit_of_measure: string | null;
+  tracking_mode: string;
+  reorder_point: number | null;
+  min_stock_level: number | null;
+  max_stock_level: number | null;
+  active: boolean | null;
+  base_sku: string | null;
+  last_event_id: string | null;
   item_categories?: Pick<ItemCategoryRow, 'name'> | null;
 };
 type CatalogItemInsertPayload = Omit<CatalogItemInsert, 'tenant_id'> & { tenant_id?: string };
@@ -74,25 +95,84 @@ type TransferUpdatePayload = {
   }>;
 };
 
-type AssetWithRelations = AssetRow & {
+type AssetWithRelations = {
+  id: string;
+  asset_tag: string;
+  serial_number: string | null;
+  catalog_item_id: string | null;
+  location_id: string | null;
+  status: string | null;
+  purchase_date: string | null;
+  purchase_cost: number | null;
+  warranty_expires: string | null;
+  last_event_id: string | null;
   catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   location?: (LocationWithType & { location_type?: { id?: string; name?: string } | null }) | null;
   asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id'> | null;
 };
 
-type ReservationWithRelations = ReservationRow & {
+type ReservationWithRelations = {
+  id: string;
+  catalog_item_id: string;
+  location_id: string | null;
+  destination_location_id: string | null;
+  qty: number;
+  reservation_type: string | null;
+  asset_id: string | null;
+  allocation_type: string | null;
+  status: string | null;
+  job_ref: Record<string, unknown> | string | null;
+  external_order_ref: string | null;
+  needed_by: string | null;
+  expiration_date: string | null;
+  reserved_from: string | null;
+  reserved_until: string | null;
+  notes: string | null;
+  created_at: string;
+  last_event_id: string | null;
   catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'tracking_mode'> | null;
   locations?: Pick<LocationRow, 'id' | 'name'> | null;
+  destination_locations?: Pick<LocationRow, 'id' | 'name'> | null;
   assets?: Pick<AssetRow, 'id' | 'asset_tag' | 'serial_number' | 'vin'> | null;
 };
 
-type TransferWithRelations = TransferRow & {
-  from_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null };
-  to_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null };
-  transfer_lines?: Array<TransferLineRow & { catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null }>;
+type TransferWithRelations = {
+  id: string;
+  status: string | null;
+  notes: string | null;
+  created_at: string;
+  initiated_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  last_event_id: string | null;
+  from_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
+  to_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
+  transfer_lines?: Array<{
+    id: string;
+    catalog_item_id: string;
+    qty: number | null;
+    qty_shipped: number | null;
+    qty_received: number | null;
+    line_number: number | null;
+    last_event_id: string | null;
+    catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'tracking_mode'> | null;
+  }>;
 };
 
-type StockMovementWithRelations = StockMovementRow & {
+type StockMovementWithRelations = {
+  id: string;
+  catalog_item_id: string;
+  location_id: string | null;
+  quantity_delta: number;
+  movement_type: string;
+  posting_status: string | null;
+  reason: string | null;
+  source_ref_type: string | null;
+  source_ref_id: string | null;
+  reversal_ref_id: string | null;
+  occurred_at: string | null;
+  created_at: string;
+  last_event_id: string | null;
   catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   locations?: Pick<LocationRow, 'id' | 'name'> | null;
 };
@@ -241,7 +321,14 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch catalog items: ${error.message}`);
     }
 
-    return (data || []) as CatalogItemWithCategory[];
+    const normalized = (data || []).map((item: any) => ({
+      ...item,
+      item_categories: Array.isArray(item.item_categories)
+        ? item.item_categories[0] ?? null
+        : item.item_categories ?? null,
+    }));
+
+    return normalized as CatalogItemWithCategory[];
   },
 
   /**
@@ -637,7 +724,20 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch assets: ${error.message}`);
     }
 
-    return (data || []) as AssetWithRelations[];
+    const normalized = (data || []).map((item: any) => ({
+      ...item,
+      catalog_item: Array.isArray(item.catalog_item)
+        ? item.catalog_item[0] ?? null
+        : item.catalog_item ?? null,
+      location: Array.isArray(item.location)
+        ? item.location[0] ?? null
+        : item.location ?? null,
+      asset_state: Array.isArray(item.asset_state)
+        ? item.asset_state[0] ?? null
+        : item.asset_state ?? null,
+    }));
+
+    return normalized as AssetWithRelations[];
   },
 
   /**
@@ -833,7 +933,23 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch reservations: ${error.message}`);
     }
 
-    return (data || []) as ReservationWithRelations[];
+    const normalized = (data || []).map((item: any) => ({
+      ...item,
+      catalog_items: Array.isArray(item.catalog_items)
+        ? item.catalog_items[0] ?? null
+        : item.catalog_items ?? null,
+      locations: Array.isArray(item.locations)
+        ? item.locations[0] ?? null
+        : item.locations ?? null,
+      destination_locations: Array.isArray(item.destination_locations)
+        ? item.destination_locations[0] ?? null
+        : item.destination_locations ?? null,
+      assets: Array.isArray(item.assets)
+        ? item.assets[0] ?? null
+        : item.assets ?? null,
+    }));
+
+    return normalized as ReservationWithRelations[];
   },
 
   /**
@@ -1054,7 +1170,25 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch transfers: ${error.message}`);
     }
 
-    return (data || []) as TransferWithRelations[];
+    const normalized = (data || []).map((item: any) => ({
+      ...item,
+      from_location: Array.isArray(item.from_location)
+        ? item.from_location[0] ?? null
+        : item.from_location ?? null,
+      to_location: Array.isArray(item.to_location)
+        ? item.to_location[0] ?? null
+        : item.to_location ?? null,
+      transfer_lines: Array.isArray(item.transfer_lines)
+        ? item.transfer_lines.map((line: any) => ({
+            ...line,
+            catalog_items: Array.isArray(line.catalog_items)
+              ? line.catalog_items[0] ?? null
+              : line.catalog_items ?? null,
+          }))
+        : [],
+    }));
+
+    return normalized as TransferWithRelations[];
   },
 
   /**
@@ -1074,7 +1208,29 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch transfer: ${error.message}`);
     }
 
-    return (data || null) as TransferWithRelations | null;
+    if (!data) {
+      return null;
+    }
+
+    const normalized = {
+      ...data,
+      from_location: Array.isArray((data as any).from_location)
+        ? (data as any).from_location[0] ?? null
+        : (data as any).from_location ?? null,
+      to_location: Array.isArray((data as any).to_location)
+        ? (data as any).to_location[0] ?? null
+        : (data as any).to_location ?? null,
+      transfer_lines: Array.isArray((data as any).transfer_lines)
+        ? (data as any).transfer_lines.map((line: any) => ({
+            ...line,
+            catalog_items: Array.isArray(line.catalog_items)
+              ? line.catalog_items[0] ?? null
+              : line.catalog_items ?? null,
+          }))
+        : [],
+    };
+
+    return normalized as TransferWithRelations;
   },
 
   /**
@@ -1415,10 +1571,13 @@ export const InventoryRPC = {
     (assetData || []).forEach((row) => {
       const catalogItemId = row.catalog_item_id as string | null;
       if (!catalogItemId) return;
+      const catalogItem = Array.isArray((row as any).catalog_item)
+        ? (row as any).catalog_item[0] ?? null
+        : (row as any).catalog_item ?? null;
       const existing = assetCounts.get(catalogItemId);
       assetCounts.set(catalogItemId, {
         count: (existing?.count || 0) + 1,
-        catalog_item: (row.catalog_item || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_item: (catalogItem || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
       });
     });
 
@@ -1437,23 +1596,45 @@ export const InventoryRPC = {
     }>();
 
     (stockData || []).forEach((row) => {
+      const catalogItems = Array.isArray((row as any).catalog_items)
+        ? (row as any).catalog_items[0] ?? null
+        : (row as any).catalog_items ?? null;
       merged.set(row.catalog_item_id, {
         catalog_item_id: row.catalog_item_id,
         qty_available: row.qty_available,
         asset_count: null,
-        catalog_items: row.catalog_items as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_items: catalogItems as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
       });
     });
 
     serializedRows.forEach((row) => {
-      if (merged.has(row.catalog_item_id)) {
-        const existing = merged.get(row.catalog_item_id);
-        merged.set(row.catalog_item_id, {
+      if (!row.catalog_item_id) {
+        return;
+      }
+      const key = row.catalog_item_id;
+      if (merged.has(key)) {
+        const existing = merged.get(key);
+        if (!existing) {
+          merged.set(key, row as {
+            catalog_item_id: string;
+            qty_available: number | null;
+            asset_count?: number | null;
+            catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+          });
+          return;
+        }
+        merged.set(key, {
           ...existing,
+          catalog_item_id: key,
           asset_count: row.asset_count ?? existing?.asset_count ?? null,
         });
       } else {
-        merged.set(row.catalog_item_id, row);
+        merged.set(key, row as {
+          catalog_item_id: string;
+          qty_available: number | null;
+          asset_count?: number | null;
+          catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+        });
       }
     });
 
@@ -1521,7 +1702,17 @@ export const InventoryRPC = {
       throw new Error(`Failed to fetch stock movements: ${error.message}`);
     }
 
-    return (data || []) as StockMovementWithRelations[];
+    const normalized = (data || []).map((item: any) => ({
+      ...item,
+      catalog_items: Array.isArray(item.catalog_items)
+        ? item.catalog_items[0] ?? null
+        : item.catalog_items ?? null,
+      locations: Array.isArray(item.locations)
+        ? item.locations[0] ?? null
+        : item.locations ?? null,
+    }));
+
+    return normalized as StockMovementWithRelations[];
   },
 
   /**
@@ -1731,98 +1922,6 @@ export const InventoryRPC = {
     }
 
     return data;
-  },
-
-  /**
-   * Get transfers with lines and locations
-   */
-  async getTransfers(filters?: {
-    status?: string;
-    from_location_id?: string;
-    to_location_id?: string;
-  }): Promise<TransferWithRelations[]> {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    let query = supabase
-      .from('transfers')
-      .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku))'
-      )
-      .order('created_at', { ascending: false });
-
-    if (filters?.status) {
-      query = query.eq('status', filters.status);
-    }
-    if (filters?.from_location_id) {
-      query = query.eq('from_location_id', filters.from_location_id);
-    }
-    if (filters?.to_location_id) {
-      query = query.eq('to_location_id', filters.to_location_id);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch transfers: ${error.message}`);
-    }
-
-    return (data || []) as TransferWithRelations[];
-  },
-
-  /**
-   * Get reservations
-   * Table: inventory.reservations
-   */
-  async getReservations(filters?: {
-    status?: string;
-    allocation_type?: string;
-    job_ref?: string;
-  }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    let query = supabase
-      .from('reservations')
-      .select(`
-        id,
-        catalog_item_id,
-        location_id,
-        destination_location_id,
-        qty,
-        reservation_type,
-        asset_id,
-        allocation_type,
-        status,
-        job_ref,
-        external_order_ref,
-        needed_by,
-        expiration_date,
-        reserved_from,
-        reserved_until,
-        notes,
-        created_at,
-        last_event_id,
-        catalog_items:catalog_item_id(id, name, sku, tracking_mode),
-        locations:location_id(id, name),
-        destination_locations:destination_location_id(id, name),
-        assets:asset_id(id, asset_tag, serial_number, vin)
-      `)
-      .order('created_at', { ascending: false });
-
-    if (filters?.status) {
-      query = query.eq('status', filters.status);
-    }
-    if (filters?.allocation_type) {
-      query = query.eq('allocation_type', filters.allocation_type);
-    }
-    if (filters?.job_ref) {
-      query = query.contains('job_ref', filters.job_ref);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch reservations: ${error.message}`);
-    }
-
-    return data as ReservationWithRelations[];
   },
 
   /**

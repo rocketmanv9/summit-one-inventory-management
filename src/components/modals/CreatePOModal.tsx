@@ -80,15 +80,13 @@ export function CreatePOModal({
   const [jobs, setJobs] = useState<Array<{ id: string; name: string; code: string }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{
     id: string;
-    vendor_id: string;
     catalog_item_id: string;
     vendor_sku: string;
     unit_cost: number | null;
-    catalog_item: {
+    catalog_items?: {
       id: string;
       sku: string;
       name: string;
-      description: string | null;
     } | null;
   }>>([]);
   const [loadingVendorItems, setLoadingVendorItems] = useState(false);
@@ -292,6 +290,7 @@ export function CreatePOModal({
         )}
         
         {!loadingInitialData && !loadError && (
+        <>
         <div className="space-y-6 py-4">{/* CORE REQUIRED FIELDS */}
           <div className="space-y-4 border-b pb-6">
             <h3 className="font-semibold text-lg">Core Information</h3>
@@ -666,6 +665,7 @@ export function CreatePOModal({
             </Button>
           </div>
         </div>
+        </>
         )}
       </DialogContent>
     </Dialog>
@@ -683,15 +683,13 @@ interface LineItemInputProps {
   onRemove: () => void;
   vendorItems: Array<{
     id: string;
-    vendor_id: string;
     catalog_item_id: string;
     vendor_sku: string;
     unit_cost: number | null;
-    catalog_item: {
+    catalog_items?: {
       id: string;
       sku: string;
       name: string;
-      description: string | null;
     } | null;
   }>;
   loadingVendorItems: boolean;
@@ -788,7 +786,7 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
                     <SelectItem key={vi.id} value={vi.catalog_item_id}>
                       <div className="flex flex-col">
                         <span className="font-medium">
-                          {vi.catalog_item?.sku} - {vi.catalog_item?.name}
+                          {vi.catalog_items?.sku} - {vi.catalog_items?.name}
                         </span>
                         <span className="text-xs text-muted-foreground">
                           Vendor SKU: {vi.vendor_sku}

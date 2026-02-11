@@ -37,6 +37,30 @@ interface Vendor {
   code: string | null;
 }
 
+type VendorCodeStrategy = TenantSettings['vendor_code_strategy'];
+type VendorCodeCase = TenantSettings['vendor_code_case'];
+
+type SettingsForm = {
+  po_number_format: string;
+  po_number_prefix: string;
+  cycle_count_number_format: string;
+  cycle_count_number_prefix: string;
+  auto_approve_enabled: boolean;
+  auto_approve_limit: string;
+  vendor_code_strategy: VendorCodeStrategy;
+  vendor_code_required: boolean;
+  vendor_code_case: VendorCodeCase;
+  vendor_code_min_length: string;
+  vendor_code_max_length: string;
+  vendor_code_prefix: string;
+  vendor_code_suffix: string;
+  vendor_code_allowed_chars: string;
+  vendor_code_regex: string;
+  vendor_code_user_editable: boolean;
+  vendor_code_immutable_after_use: boolean;
+  vendor_code_sequence_padding: string;
+};
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +71,7 @@ export default function SettingsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorLimits, setVendorLimits] = useState<Record<string, string>>({});
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<SettingsForm>({
     po_number_format: 'sequential-year',
     po_number_prefix: '',
     cycle_count_number_format: 'date-sequential',
