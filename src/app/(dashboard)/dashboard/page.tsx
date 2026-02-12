@@ -246,14 +246,32 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
           is_default: isDefault,
           scope: 'tenant',
           created_by: userId,
+          owner_user_id: userId,
           last_event_id: lastEventId,
+        }, {
+          onConflict: 'tenant_id,last_event_id',
+          ignoreDuplicates: true,
         })
         .select('id')
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
 
-      onCreate(data.id);
+      if (data?.id) {
+        onCreate(data.id);
+        return;
+      }
+
+      const { data: existing, error: existingError } = await supabase
+        .from('dashboards')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('last_event_id', lastEventId)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+      if (!existing?.id) throw new Error('Failed to resolve dashboard id.');
+      onCreate(existing.id);
     } catch (err: any) {
       console.error('Error creating dashboard:', err);
       setError(err.message || 'Failed to create dashboard');

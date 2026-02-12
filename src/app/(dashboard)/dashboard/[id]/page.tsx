@@ -40,10 +40,20 @@ export default function DashboardDetailPage() {
     
     setIsTogglingDefault(true);
     try {
+      const accessToken = getStoredAccessToken();
+      const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+      if (!tenantId) {
+        throw new Error('Missing tenant context. Please log in again.');
+      }
+
+      const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
       const { error } = await supabase
         .from('dashboards')
-        .update({ is_default: !dashboard.is_default })
-        .eq('id', dashboardId);
+        .update({ is_default: !dashboard.is_default, last_event_id: lastEventId })
+        .eq('id', dashboardId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .neq('last_event_id', lastEventId);
 
       if (error) throw error;
 
@@ -209,10 +219,21 @@ export default function DashboardDetailPage() {
                 />
                 <button
                   onClick={async () => {
+                    const accessToken = getStoredAccessToken();
+                    const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+                    if (!tenantId) {
+                      alert('Session expired. Please log in again.');
+                      return;
+                    }
+
+                    const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
                     const { error } = await supabase
                       .from('dashboards')
-                      .update({ description: editedDescription })
-                      .eq('id', dashboardId);
+                      .update({ description: editedDescription, last_event_id: lastEventId })
+                      .eq('id', dashboardId)
+                      .eq('tenant_id', tenantId)
+                      .is('deleted_at', null)
+                      .neq('last_event_id', lastEventId);
 
                     if (!error) {
                       setIsEditingDescription(false);
@@ -374,14 +395,32 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
           is_default: isDefault,
           scope: 'tenant',
           created_by: userId,
+          owner_user_id: userId,
           last_event_id: lastEventId,
+        }, {
+          onConflict: 'tenant_id,last_event_id',
+          ignoreDuplicates: true,
         })
         .select('id')
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
 
-      onCreate(data.id);
+      if (data?.id) {
+        onCreate(data.id);
+        return;
+      }
+
+      const { data: existing, error: existingError } = await supabase
+        .from('dashboards')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('last_event_id', lastEventId)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+      if (!existing?.id) throw new Error('Failed to resolve dashboard id.');
+      onCreate(existing.id);
     } catch (err: any) {
       console.error('Error creating dashboard:', err);
       setError(err.message || 'Failed to create dashboard');

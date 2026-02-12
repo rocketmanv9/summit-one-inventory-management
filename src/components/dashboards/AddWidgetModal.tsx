@@ -46,7 +46,9 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
       const { data: existingWidgets } = await supabase
         .from('dashboard_widgets')
         .select('layout')
-        .eq('dashboard_id', dashboardId);
+        .eq('dashboard_id', dashboardId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
 
       let maxY = 0;
       existingWidgets?.forEach((w: any) => {
@@ -72,6 +74,9 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
           config: widget.default_config || {},
           refresh_seconds: 300,
           last_event_id: lastEventId,
+        }, {
+          onConflict: 'tenant_id,last_event_id',
+          ignoreDuplicates: true,
         });
 
       if (error) throw error;

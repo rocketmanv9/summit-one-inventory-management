@@ -1,5 +1,5 @@
 import { createBrowserAuthedClient } from '@/supabase/client';
-import { handleSupabaseAuthError } from '@/lib/auth-token';
+import { getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
 
 type WidgetDataRequest = {
   widget_key?: string;
@@ -62,12 +62,18 @@ function buildDefaultTable(stats: DashboardStatsRow | null): WidgetDataResponse 
 }
 
 async function fetchDashboardStats(): Promise<DashboardStatsRow | null> {
+  const accessToken = getStoredAccessToken();
+  const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+  if (!tenantId) {
+    console.warn('[WidgetData] Missing tenant context; skipping dashboard_stats lookup.');
+    return null;
+  }
+
   const supabase = createBrowserAuthedClient();
   const { data, error } = await supabase
     .from('dashboard_stats')
     .select('total_inventory, low_stock_items, pending_orders')
-    .order('id', { ascending: true })
-    .limit(1)
+    .eq('tenant_id', tenantId)
     .single();
 
   if (error) {

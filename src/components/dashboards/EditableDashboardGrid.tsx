@@ -6,6 +6,7 @@ import type { DashboardWidget } from '@/types/dashboard';
 import { WidgetContainer } from '@/components/widgets/WidgetContainer';
 import { saveLayout } from '@/hooks/useDashboards';
 import { createBrowserAuthedClient } from '@/supabase/client';
+import { getStoredAccessToken, getTenantIdFromToken } from '@/lib/auth-token';
 import 'react-grid-layout/css/styles.css';
 
 type LayoutItem = {
@@ -135,10 +136,20 @@ export function EditableDashboardGrid({
     }
 
     try {
+      const accessToken = getStoredAccessToken();
+      const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+      if (!tenantId) {
+        throw new Error('Missing tenant context. Please log in again.');
+      }
+
+      const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
       const { error } = await supabase
         .from('dashboards')
-        .delete()
-        .eq('id', dashboardId);
+        .update({ deleted_at: new Date().toISOString(), last_event_id: lastEventId })
+        .eq('id', dashboardId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .neq('last_event_id', lastEventId);
 
       if (error) throw error;
 

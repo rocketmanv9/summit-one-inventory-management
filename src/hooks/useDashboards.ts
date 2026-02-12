@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createBrowserAuthedClient, createClient } from '@/supabase/client';
-import { handleSupabaseAuthError } from '@/lib/auth-token';
+import { createBrowserAuthedClient } from '@/supabase/client';
+import { getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 
 type DashboardStats = {
@@ -18,6 +18,11 @@ type DashboardWidgetSummary = {
   position: number;
 };
 
+function resolveTenantId() {
+  const accessToken = getStoredAccessToken();
+  return accessToken ? getTenantIdFromToken(accessToken) : null;
+}
+
 export function useDashboards() {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,9 +32,16 @@ export function useDashboards() {
   useEffect(() => {
     async function fetchDashboards() {
       try {
+        const tenantId = resolveTenantId();
+        if (!tenantId) {
+          throw new Error('Missing tenant context. Please log in again.');
+        }
+
         const { data, error } = await supabase
           .from('dashboards')
-          .select('*');
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .is('deleted_at', null);
 
         if (error) {
           handleSupabaseAuthError(error);
@@ -61,10 +73,23 @@ export function useDashboardOverview() {
 
     async function fetchOverview() {
       try {
+        const tenantId = resolveTenantId();
+        if (!tenantId) {
+          throw new Error('Missing tenant context. Please log in again.');
+        }
+
         const supabase = createBrowserAuthedClient();
 
-        const statsQuery = await supabase.from('dashboard_stats').select('*').single();
-        const widgetsQuery = await supabase.from('widgets').select('*').order('position');
+        const statsQuery = await supabase
+          .from('dashboard_stats')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .single();
+        const widgetsQuery = await supabase
+          .from('widgets')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .order('position');
 
         if (statsQuery.error) {
           handleSupabaseAuthError(statsQuery.error);
@@ -137,11 +162,18 @@ export function useDashboard(id: string | null) {
     }
 
     try {
+      const tenantId = resolveTenantId();
+      if (!tenantId) {
+        throw new Error('Missing tenant context. Please log in again.');
+      }
+
       const supabase = createBrowserAuthedClient();
       const { data, error } = await supabase
         .from('dashboards')
         .select('*')
         .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
         .single();
 
       if (error) {
@@ -182,10 +214,17 @@ export function useDashboardWidgets(dashboardId: string | null) {
     }
 
     try {
+      const tenantId = resolveTenantId();
+      if (!tenantId) {
+        throw new Error('Missing tenant context. Please log in again.');
+      }
+
       const { data, error } = await supabase
         .from('dashboard_widgets')
         .select('*')
         .eq('dashboard_id', dashboardId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
         .order('updated_at', { ascending: false });
 
       if (error) {
@@ -206,10 +245,19 @@ export function useDashboardWidgets(dashboardId: string | null) {
   }, [dashboardId]);
 
   const updateWidget = async (widgetId: string, updates: Partial<DashboardWidget>) => {
+    const tenantId = resolveTenantId();
+    if (!tenantId) {
+      return { error: new Error('Missing tenant context. Please log in again.') };
+    }
+
+    const lastEventId = `ui_widget_${crypto.randomUUID()}`;
     const { error } = await supabase
       .from('dashboard_widgets')
-      .update(updates)
-      .eq('id', widgetId);
+      .update({ ...updates, last_event_id: lastEventId })
+      .eq('id', widgetId)
+      .eq('tenant_id', tenantId)
+      .is('deleted_at', null)
+      .neq('last_event_id', lastEventId);
 
     if (error) {
       handleSupabaseAuthError(error);
@@ -224,10 +272,19 @@ export function useDashboardWidgets(dashboardId: string | null) {
     console.log('Deleting widget:', widgetId);
     
     try {
+      const tenantId = resolveTenantId();
+      if (!tenantId) {
+        throw new Error('Missing tenant context. Please log in again.');
+      }
+
+      const lastEventId = `ui_widget_${crypto.randomUUID()}`;
       const { error } = await supabase
         .from('dashboard_widgets')
-        .delete()
-        .eq('id', widgetId);
+        .update({ deleted_at: new Date().toISOString(), last_event_id: lastEventId })
+        .eq('id', widgetId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .neq('last_event_id', lastEventId);
 
       if (error) {
         handleSupabaseAuthError(error);
@@ -291,12 +348,19 @@ export function useWidgetRegistry() {
 
 export async function saveLayout(dashboardId: string, widgets: DashboardWidget[]) {
   try {
+    const tenantId = resolveTenantId();
+    if (!tenantId) {
+      throw new Error('Missing tenant context. Please log in again.');
+    }
+
     const supabase = createBrowserAuthedClient();
     const updates = widgets.map(widget =>
       supabase
         .from('dashboard_widgets')
-        .update({ layout: widget.layout })
+        .update({ layout: widget.layout, last_event_id: `ui_widget_layout_${crypto.randomUUID()}` })
         .eq('id', widget.id)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
     );
 
     const results = await Promise.all(updates);
@@ -319,15 +383,24 @@ export async function saveWidgetConfig(
   title?: string,
   refresh_seconds?: number
 ) {
+  const tenantId = resolveTenantId();
+  if (!tenantId) {
+    return { error: new Error('Missing tenant context. Please log in again.') };
+  }
+
   const supabase = createBrowserAuthedClient();
   const updates: any = { config };
   if (title !== undefined) updates.title = title;
   if (refresh_seconds !== undefined) updates.refresh_seconds = refresh_seconds;
+  updates.last_event_id = `ui_widget_config_${crypto.randomUUID()}`;
 
   const { error } = await supabase
     .from('dashboard_widgets')
     .update(updates)
-    .eq('id', widgetId);
+    .eq('id', widgetId)
+    .eq('tenant_id', tenantId)
+    .is('deleted_at', null)
+    .neq('last_event_id', updates.last_event_id);
 
   if (error) {
     handleSupabaseAuthError(error);
