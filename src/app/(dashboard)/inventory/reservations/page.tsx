@@ -30,7 +30,7 @@ interface Reservation {
   catalog_items?: { id: string; name: string; sku: string; tracking_mode?: string } | null;
   locations?: { id: string; name: string } | null;
   destination_locations?: { id: string; name: string } | null;
-  assets?: { id: string; asset_tag: string; serial_number?: string | null; vin?: string | null } | null;
+  assets?: { id: string; asset_tag: string; serial_number?: string | null; vin?: string | null; status?: string | null } | null;
 }
 
 export default function ReservationsPage() {
@@ -87,10 +87,25 @@ export default function ReservationsPage() {
     return match?.display_name || typeKey;
   };
 
+  const getSerializedAssetStatus = (reservation: Reservation) =>
+    reservation.reservation_type === 'serialized' ? reservation.assets?.status ?? null : null;
+
+  const canFulfill = (reservation: Reservation) => {
+    if (reservation.status !== 'active') return false;
+    const assetStatus = getSerializedAssetStatus(reservation);
+    return assetStatus === null || assetStatus === 'assigned';
+  };
+
   const handleFulfill = async (reservation: Reservation) => {
     // Validation: Check if action is allowed in current state
     if (reservation.status !== 'active') {
       alert(`Cannot fulfill reservation in status: ${reservation.status}. Only active reservations can be fulfilled.`);
+      return;
+    }
+
+    const assetStatus = getSerializedAssetStatus(reservation);
+    if (assetStatus && assetStatus !== 'assigned') {
+      alert(`Cannot fulfill serialized reservation. Asset status is ${assetStatus}.`);
       return;
     }
 
@@ -109,7 +124,8 @@ export default function ReservationsPage() {
       fetchReservations();
     } catch (error) {
       console.error('Error fulfilling reservation:', error);
-      alert('Failed to fulfill reservation. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to fulfill reservation. ${message}`);
     }
   };
 
@@ -135,7 +151,8 @@ export default function ReservationsPage() {
       fetchReservations();
     } catch (error) {
       console.error('Error releasing reservation:', error);
-      alert('Failed to release reservation. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to release reservation. ${message}`);
     }
   };
 
@@ -155,7 +172,8 @@ export default function ReservationsPage() {
       fetchReservations();
     } catch (error) {
       console.error('Error undoing fulfillment:', error);
-      alert('Failed to undo fulfillment. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to undo fulfillment. ${message}`);
     }
   };
 
@@ -175,7 +193,8 @@ export default function ReservationsPage() {
       fetchReservations();
     } catch (error) {
       console.error('Error undoing release:', error);
-      alert('Failed to undo release. Please try again.');
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to undo release. ${message}`);
     }
   };
 
@@ -290,6 +309,7 @@ export default function ReservationsPage() {
       header: 'Actions',
       render: (row: Reservation) => {
         const isActive = row.status === 'active';
+        const canRowFulfill = canFulfill(row);
         const isFulfilled = row.status === 'fulfilled';
         const isExpired = row.status === 'expired';
         const isReleased = row.status === 'released';
@@ -302,15 +322,17 @@ export default function ReservationsPage() {
                 e.stopPropagation();
                 handleFulfill(row);
               }}
-              disabled={!isActive}
+              disabled={!canRowFulfill}
               className={`px-3 py-1 text-sm rounded ${
-                isActive
+                canRowFulfill
                   ? 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
               title={
-                isActive
+                canRowFulfill
                   ? 'Issue stock and fulfill reservation'
+                  : row.reservation_type === 'serialized' && getSerializedAssetStatus(row) && isActive
+                  ? `Asset status is ${getSerializedAssetStatus(row)}`
                   : isFulfilled
                   ? 'Already fulfilled'
                   : isExpired

@@ -541,18 +541,16 @@ export const InventoryRPC = {
    */
   async getSkuSettings(categoryId: string): Promise<Pick<SkuSettingsRow, 'separator' | 'next_sequence'> | null> {
     const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('sku_settings')
-      .select('separator, next_sequence')
-      .eq('category_id', categoryId)
-      .maybeSingle();
+    const { data, error } = await supabase.rpc('rpc_get_sku_settings', {
+      p_category_id: categoryId,
+    });
 
     if (error) {
       throw new Error(`Failed to fetch SKU settings: ${error.message}`);
     }
 
-    if (!data) return null;
-    return data as Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
+    if (!data || data.length === 0) return null;
+    return data[0] as Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
   },
 
   /**
@@ -576,22 +574,26 @@ export const InventoryRPC = {
    */
   async createCatalogItem(payload: CatalogItemInsertPayload) {
     const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: CatalogItemInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('catalog_items')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
+    const { data, error } = await supabase.rpc('rpc_create_catalog_item', {
+      p_name: payload.name,
+      p_description: payload.description ?? null,
+      p_category_id: payload.category_id ?? null,
+      p_unit_of_measure: payload.unit_of_measure ?? null,
+      p_tracking_mode: payload.tracking_mode ?? null,
+      p_reorder_point: payload.reorder_point ?? null,
+      p_base_sku: payload.base_sku ?? null,
+      p_sku: payload.sku ?? null,
+      p_last_event_id: payload.last_event_id ?? crypto.randomUUID(),
+    });
 
     if (error) {
       throw new Error(`Failed to create catalog item: ${error.message}`);
     }
+    if (!data || data.length === 0) {
+      throw new Error('Failed to create catalog item: no data returned');
+    }
 
-    return data as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
+    return data[0] as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
   },
 
   /**
@@ -917,7 +919,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('reservations')
       .select(
-        'id, catalog_item_id, location_id, destination_location_id, qty, reservation_type, asset_id, allocation_type, status, job_ref, external_order_ref, needed_by, expiration_date, reserved_from, reserved_until, notes, created_at, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode), locations:location_id(id, name), destination_locations:destination_location_id(id, name), assets:asset_id(id, asset_tag, serial_number, vin)'
+        'id, catalog_item_id, location_id, destination_location_id, qty, reservation_type, asset_id, allocation_type, status, job_ref, external_order_ref, needed_by, expiration_date, reserved_from, reserved_until, notes, created_at, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode), locations:location_id(id, name), destination_locations:destination_location_id(id, name), assets:asset_id(id, asset_tag, serial_number, vin, status)'
       )
       .order('created_at', { ascending: false });
 

@@ -7,7 +7,8 @@
       "Bash(ls:*)",
       "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\grant\\\\summit-one-inventory-management\\\\src\\\\app\\\\dashboards\")",
       "Bash(npx next build:*)",
-      "Bash(npx supabase db push:*)"
+      "Bash(npx supabase db push:*)",
+      "Bash(xargs:*)"
     ]
   }
 }

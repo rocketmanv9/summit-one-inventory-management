@@ -18,9 +18,10 @@ This migration **replaces** your existing event infrastructure to match the Summ
 
 **For the screenshot you showed:**
 
-- **HOST:PORT**: `db.projecttef.supabase.co:5432`
+- **HOST:PORT**: `db.cwmsvmywairkwdmvkdmw.supabase.co:5432`
 - **DB NAME**: `postgres`
-- **GENERATED PASSWORD (SUMMIT_BOT)**: `d49b0bb1212f127c78788c5f`
+- **USER**: `summit_bot`
+- **PASSWORD**: `03d70dd00ecbabe9443ffae9`
 
 ## Updated Function Signatures
 

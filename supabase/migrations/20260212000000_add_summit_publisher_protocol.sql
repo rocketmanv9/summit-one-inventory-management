@@ -95,6 +95,9 @@ FOR EACH ROW EXECUTE FUNCTION public.fn_update_timestamp();
 -- STEP 5: OUTBOX (The Queue)
 -- =================================================================
 
+-- Drop existing public.events_outbox view (it's currently a view over inventory.events_outbox)
+DROP VIEW IF EXISTS public.events_outbox CASCADE;
+
 CREATE TABLE public.events_outbox (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   
@@ -277,9 +280,9 @@ $$ LANGUAGE plpgsql;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'summit_bot') THEN
-    CREATE USER summit_bot WITH PASSWORD 'd49b0bb1212f127c78788c5f';
+    CREATE USER summit_bot WITH PASSWORD '03d70dd00ecbabe9443ffae9';
   ELSE
-    ALTER USER summit_bot WITH PASSWORD 'd49b0bb1212f127c78788c5f';
+    ALTER USER summit_bot WITH PASSWORD '03d70dd00ecbabe9443ffae9';
   END IF;
 END
 $$;
@@ -383,10 +386,10 @@ BEGIN
   RAISE NOTICE '- summit_config is now key-value store';
   RAISE NOTICE '';
   RAISE NOTICE 'Connection for Summit Core:';
-  RAISE NOTICE 'Host: db.projecttef.supabase.co:5432';
+  RAISE NOTICE 'Host: db.cwmsvmywairkwdmvkdmw.supabase.co:5432';
   RAISE NOTICE 'Database: postgres';
   RAISE NOTICE 'User: summit_bot';
-  RAISE NOTICE 'Password: d49b0bb1212f127c78788c5f';
+  RAISE NOTICE 'Password: 03d70dd00ecbabe9443ffae9';
   RAISE NOTICE '========================================';
 END
 $$;
