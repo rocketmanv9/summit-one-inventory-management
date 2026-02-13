@@ -239,7 +239,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
       const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
       const { data, error } = await supabase
         .from('dashboards')
-        .insert({
+        .upsert({
           tenant_id: tenantId,
           name: name.trim(),
           description: description.trim() || null,

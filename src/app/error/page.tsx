@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 const errorMessages: Record<string, string> = {
@@ -20,12 +20,9 @@ const errorMessages: Record<string, string> = {
 
 function ErrorContent() {
   const searchParams = useSearchParams();
-  const [message, setMessage] = useState<string>('');
-  
-  useEffect(() => {
+  const message = useMemo(() => {
     const messageParam = searchParams.get('msg') || searchParams.get('message') || 'invalid_token';
-    // If the message is not a known code, use it directly
-    setMessage(errorMessages[messageParam] || decodeURIComponent(messageParam));
+    return errorMessages[messageParam] || decodeURIComponent(messageParam);
   }, [searchParams]);
   
   const handleReturnToCore = () => {

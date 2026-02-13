@@ -53,8 +53,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Extract tenant from ticket if present (format: ticket_tenant_<id>)
     // Otherwise use a default test tenant
     let tenantId = '11111111-1111-1111-1111-111111111111'; // Default test tenant
-    let userId = '00000000-0000-0000-0000-000000000000'; // Default test user
-    let email = 'test@summit-one.app';
+    const userId = '00000000-0000-0000-0000-000000000000'; // Default test user
+    const email = 'test@summit-one.app';
     let role: 'authenticated' | 'admin' = 'authenticated';
 
     // Allow overrides via ticket query param for testing

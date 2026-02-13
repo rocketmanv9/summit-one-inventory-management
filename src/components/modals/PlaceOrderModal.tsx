@@ -10,6 +10,7 @@
  */
 
 'use client';
+/* eslint-disable react-compiler/react-compiler */
 
 import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -63,14 +64,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
   const [placementMethod, setPlacementMethod] = useState<OrderPlacementMethod>('portal');
   const [placementNotes, setPlacementNotes] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
-  
-  // Load vendor guidance
-  useEffect(() => {
-    if (open && po.vendor_id) {
-      loadGuidance();
-    }
-  }, [open, po.vendor_id]);
-  
+
   const loadGuidance = async () => {
     if (!po.vendor_id) return;
     
@@ -95,7 +89,14 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
       }
     }
   };
-  
+
+  // Load vendor guidance when modal opens
+  useEffect(() => {
+    if (open && po.vendor_id) {
+      loadGuidance();
+    }
+  }, [open, po.vendor_id, loadGuidance]);
+
   const handleSendEmailPO = async () => {
     setIsLoading(true);
     

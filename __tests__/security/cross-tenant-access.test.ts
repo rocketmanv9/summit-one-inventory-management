@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Cross-Tenant Security Tests
  * Verifies JWT + RLS prevents unauthorized access to other tenants' data
@@ -6,6 +5,14 @@
 
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
+
+interface Vendor {
+  id: string;
+  tenant_id: string;
+  name: string;
+  code: string;
+  active: boolean;
+}
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -122,7 +129,7 @@ describe('Cross-Tenant Security', () => {
       expect(data.data[0].tenant_id).toBe(tenant1Id);
       
       // Should NOT see vendor from other tenant
-      const vendor2Included = data.data.some((v: any) => v.id === vendor2Id);
+      const vendor2Included = data.data.some((v: Vendor) => v.id === vendor2Id);
       expect(vendor2Included).toBe(false);
     });
     
@@ -226,8 +233,8 @@ describe('Cross-Tenant Security', () => {
       });
       
       const data = await response.json();
-      const allTenant1 = data.data.every((v: any) => v.tenant_id === tenant1Id);
-      
+      const allTenant1 = data.data.every((v: Vendor) => v.tenant_id === tenant1Id);
+
       expect(allTenant1).toBe(true);
     });
     
@@ -239,8 +246,8 @@ describe('Cross-Tenant Security', () => {
       });
       
       const data = await response.json();
-      const allTenant2 = data.data.every((v: any) => v.tenant_id === tenant2Id);
-      
+      const allTenant2 = data.data.every((v: Vendor) => v.tenant_id === tenant2Id);
+
       expect(allTenant2).toBe(true);
     });
     

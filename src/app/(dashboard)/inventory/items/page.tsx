@@ -487,13 +487,13 @@ function CreateItemModal({
           throw new Error('Missing last_event_id for this item. Please refresh and try again.');
         }
 
-        await InventoryRPC.updateCatalogItem(item.id, payload, item.last_event_id);
+        await InventoryRPC.updateCatalogItem(item.id, payload as Parameters<typeof InventoryRPC.updateCatalogItem>[1], item.last_event_id);
         catalogItemId = item.id;
       } else {
         const created = await InventoryRPC.createCatalogItem({
           ...payload,
           last_event_id: crypto.randomUUID(),
-        });
+        } as Parameters<typeof InventoryRPC.createCatalogItem>[0]);
         catalogItemId = created.id;
       }
 

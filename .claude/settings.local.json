@@ -8,7 +8,16 @@
       "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\grant\\\\summit-one-inventory-management\\\\src\\\\app\\\\dashboards\")",
       "Bash(npx next build:*)",
       "Bash(npx supabase db push:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx next lint:*)",
+      "Bash(xxd:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npm run build:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(echo:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)"
     ]
   }
 }

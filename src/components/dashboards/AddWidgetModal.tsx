@@ -60,7 +60,7 @@ export function AddWidgetModal({ dashboardId, onClose, onAdded }: AddWidgetModal
       const lastEventId = `ui_widget_${crypto.randomUUID()}`;
       const { error } = await supabase
         .from('dashboard_widgets')
-        .insert({
+        .upsert({
           tenant_id: tenantId,
           dashboard_id: dashboardId,
           widget_key: widget.widget_key,
