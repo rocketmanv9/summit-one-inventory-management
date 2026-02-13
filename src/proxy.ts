@@ -6,6 +6,7 @@ const PUBLIC_ROUTES = [
   '/error',
   '/health',
   '/api/health',
+  '/api/auth',
   '/dev-login',
   '/test',
 ];
@@ -23,18 +24,13 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const userId = request.cookies.get('user_id')?.value;
-  const tenantId = request.cookies.get('tenant_id')?.value;
+  const accessToken = request.cookies.get('access_token')?.value;
 
-  if (!userId || !tenantId) {
+  if (!accessToken) {
     return NextResponse.redirect(new URL('/error?msg=not_authenticated', request.url));
   }
 
-  const headers = new Headers(request.headers);
-  headers.set('x-user-id', userId);
-  headers.set('x-tenant-id', tenantId);
-
-  return NextResponse.next({ request: { headers } });
+  return NextResponse.next();
 }
 
 export const config = {

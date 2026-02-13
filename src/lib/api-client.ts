@@ -6,6 +6,12 @@
  */
 
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import {
+  clearStoredAccessToken,
+  getStoredAccessToken,
+  redirectToCoreLogin,
+  refreshAccessToken,
+} from '@/lib/auth-token';
 
 type ApiWriteOptions = {
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -16,7 +22,7 @@ type ApiWriteOptions = {
 function getAuthHeaders(): Record<string, string> {
   try {
     if (typeof window === 'undefined') return {};
-    const token = localStorage.getItem('custom_access_token');
+    const token = getStoredAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   } catch (error) {
     console.warn('[API Client] Error getting auth header:', error);
@@ -149,10 +155,29 @@ async function runRpc(
   };
 }
 
+function isAuthError(error: any): boolean {
+  if (!error) return false;
+
+  const status = typeof error.status === 'number' ? error.status : null;
+  const code = typeof error.code === 'string' ? error.code : '';
+  const message = String(error.message || '').toLowerCase();
+
+  return (
+    status === 401 ||
+    status === 403 ||
+    code === 'PGRST301' ||
+    message.includes('jwt') ||
+    message.includes('unauthorized') ||
+    message.includes('invalid token') ||
+    message.includes('not authenticated')
+  );
+}
+
 async function shimRequest(
   url: string,
   method: string,
-  body?: any
+  body?: any,
+  allowAuthRetry: boolean = true
 ): Promise<Response> {
   const { namespace, resource, id, actionSegments, searchParams } = parseApiUrl(url);
   const supabase = createAuthedClient();
@@ -185,6 +210,17 @@ async function shimRequest(
     }
     const result = await runRpc(scoped, resource, actionSegments, basePayload);
     if (result.error) {
+      if (allowAuthRetry && isAuthError(result.error)) {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+          return shimRequest(url, method, body, false);
+        }
+
+        clearStoredAccessToken();
+        redirectToCoreLogin();
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+      }
+
       return new Response(
         JSON.stringify({ error: (result.error as Error).message || 'RPC failed' }),
         { status: 400 }
@@ -207,6 +243,17 @@ async function shimRequest(
       }
       const { data, error } = await query;
       if (error) {
+        if (allowAuthRetry && isAuthError(error)) {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken) {
+            return shimRequest(url, method, body, false);
+          }
+
+          clearStoredAccessToken();
+          redirectToCoreLogin();
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+        }
+
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       }
       return new Response(JSON.stringify({ data }), { status: 200 });
@@ -214,6 +261,17 @@ async function shimRequest(
     case 'POST': {
       const { data, error } = await scoped.from(table).insert(basePayload).select();
       if (error) {
+        if (allowAuthRetry && isAuthError(error)) {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken) {
+            return shimRequest(url, method, body, false);
+          }
+
+          clearStoredAccessToken();
+          redirectToCoreLogin();
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+        }
+
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       }
       return new Response(JSON.stringify({ data }), { status: 200 });
@@ -230,6 +288,17 @@ async function shimRequest(
         .eq('id', updateId)
         .select();
       if (error) {
+        if (allowAuthRetry && isAuthError(error)) {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken) {
+            return shimRequest(url, method, body, false);
+          }
+
+          clearStoredAccessToken();
+          redirectToCoreLogin();
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+        }
+
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       }
       return new Response(JSON.stringify({ data }), { status: 200 });
@@ -245,6 +314,17 @@ async function shimRequest(
         .eq('id', deleteId)
         .select();
       if (error) {
+        if (allowAuthRetry && isAuthError(error)) {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken) {
+            return shimRequest(url, method, body, false);
+          }
+
+          clearStoredAccessToken();
+          redirectToCoreLogin();
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+        }
+
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
       }
       return new Response(JSON.stringify({ data }), { status: 200 });

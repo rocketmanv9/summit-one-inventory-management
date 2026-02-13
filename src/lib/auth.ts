@@ -1,4 +1,4 @@
-import { cookies, headers } from 'next/headers';
+import { cookies } from 'next/headers';
 
 export interface AuthContext {
   userId: string;
@@ -6,17 +6,50 @@ export interface AuthContext {
   userEmail?: string;
 }
 
+type JwtPayload = {
+  sub?: string;
+  app_metadata?: {
+    tenant_id?: string;
+    [key: string]: unknown;
+  };
+  user_metadata?: {
+    email?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+function parseJwtPayload(token: string): JwtPayload | null {
+  try {
+    const payloadSegment = token.split('.')[1];
+    if (!payloadSegment) return null;
+
+    const normalized = payloadSegment.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = Buffer.from(padded, 'base64').toString('utf8');
+
+    return JSON.parse(decoded) as JwtPayload;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Get the authentication context from cookies or headers
- * Returns null if not authenticated
+ * Get the authentication context from access_token cookie claims.
+ * Returns null if not authenticated.
  */
 export async function getAuthContext(): Promise<AuthContext | null> {
-  const headersList = await headers();
   const cookieStore = await cookies();
+  const accessToken = cookieStore.get('access_token')?.value;
 
-  const userId = headersList.get('x-user-id') || cookieStore.get('user_id')?.value;
-  const tenantId = headersList.get('x-tenant-id') || cookieStore.get('tenant_id')?.value;
-  const userEmail = cookieStore.get('user_email')?.value;
+  if (!accessToken) {
+    return null;
+  }
+
+  const payload = parseJwtPayload(accessToken);
+  const userId = payload?.sub;
+  const tenantId = payload?.app_metadata?.tenant_id;
+  const userEmail = payload?.user_metadata?.email;
 
   if (!userId || !tenantId) {
     return null;
@@ -60,8 +93,6 @@ export async function getCurrentUserId(): Promise<string> {
  */
 export async function clearAuth(): Promise<void> {
   const cookieStore = await cookies();
-  
-  cookieStore.delete('user_id');
-  cookieStore.delete('tenant_id');
-  cookieStore.delete('user_email');
+  cookieStore.delete('access_token');
+  cookieStore.delete('refresh_token');
 }

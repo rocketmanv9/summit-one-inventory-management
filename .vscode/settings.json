@@ -11,5 +11,8 @@
   "deno.config": "./supabase/functions/deno.json",
   "deno.importMap": "./supabase/functions/import_map.json",
   "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "python.terminal.executeInFileDir": false,
+  "python.terminal.autoActivateEnvironments": false,
+  "python.terminal.activateEnvInCurrentTerminal": false
 }

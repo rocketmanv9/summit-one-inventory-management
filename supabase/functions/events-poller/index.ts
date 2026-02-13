@@ -167,7 +167,6 @@ async function publishEvent(event: OutboxEvent): Promise<boolean> {
       headers: {
         'Content-Type': 'application/json',
         'X-Event-Type': event.event_type,
-        'X-Tenant-ID': event.tenant_id,
         'X-Event-ID': event.id, // For idempotency on receiver side
         'X-Aggregate-Type': event.aggregate_type,
         'X-Aggregate-ID': event.aggregate_id,

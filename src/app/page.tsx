@@ -8,6 +8,9 @@ function HomeContent() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
+    let cancelled = false;
+
+    const checkAuthAndRedirect = async () => {
     const ticket = searchParams.get('ticket');
     const targetOrg = searchParams.get('target_org');
 
@@ -22,13 +25,16 @@ function HomeContent() {
       return;
     }
 
-    // No ticket, check if user is authenticated
-    const userId = document.cookie
-      .split('; ')
-      .find(row => row.startsWith('user_id='))
-      ?.split('=')[1];
+    // No ticket, check if user is authenticated via access token endpoint
+    const response = await fetch('/api/auth/token', {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+    }).catch(() => null);
 
-    if (!userId) {
+    if (cancelled) return;
+
+    if (!response?.ok) {
       // Not authenticated and no ticket, redirect to Core login
       const coreUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || 'https://dev.summit-one.app';
       window.location.href = `${coreUrl}/login`;
@@ -37,6 +43,12 @@ function HomeContent() {
 
     // Already authenticated, go to dashboard
     router.push('/dashboard');
+    };
+
+    void checkAuthAndRedirect();
+    return () => {
+      cancelled = true;
+    };
   }, [searchParams, router]);
 
   return (

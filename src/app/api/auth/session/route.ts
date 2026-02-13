@@ -1,11 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
+import { clearAuth, getAuthContext } from '@/lib/auth';
 
 /**
  * GET /api/auth/session
  *
- * Returns current session information (user_id, tenant_id, email)
- * Uses cookies set by /auth/callback
+ * Returns current session information from JWT claims in access_token cookie
  *
  * Response:
  * {
@@ -14,15 +13,10 @@ import { cookies } from 'next/headers';
  *   email: string
  * }
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const cookieStore = await cookies();
-    
-    const userId = cookieStore.get('user_id')?.value;
-    const tenantId = cookieStore.get('tenant_id')?.value;
-    const userEmail = cookieStore.get('user_email')?.value;
-
-    if (!userId || !tenantId) {
+    const auth = await getAuthContext();
+    if (!auth) {
       return NextResponse.json(
         { error: 'Not authenticated' },
         { status: 401 }
@@ -30,9 +24,9 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      user_id: userId,
-      tenant_id: tenantId,
-      email: userEmail || '',
+      user_id: auth.userId,
+      tenant_id: auth.tenantId,
+      email: auth.userEmail || '',
     });
 
   } catch (error) {
@@ -49,14 +43,9 @@ export async function GET(request: NextRequest) {
  *
  * Logout - clears session cookies
  */
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   try {
-    const cookieStore = await cookies();
-    
-    // Clear all auth cookies
-    cookieStore.delete('user_id');
-    cookieStore.delete('tenant_id');
-    cookieStore.delete('user_email');
+    await clearAuth();
 
     return NextResponse.json(
       { message: 'Logged out' },

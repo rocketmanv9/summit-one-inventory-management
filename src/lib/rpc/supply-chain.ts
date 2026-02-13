@@ -5,6 +5,7 @@
  */
 
 import { createBrowserAuthedClient } from '@/supabase/client';
+import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import type { Database } from 'types/supabase';
 
 type VendorRow = Database['supply_chain']['Tables']['vendors']['Row'];
@@ -18,6 +19,18 @@ type VendorInsertPayload = Omit<VendorInsert, 'tenant_id'> & { tenant_id?: strin
 type VendorUpdatePayload = Omit<VendorUpdate, 'tenant_id'> & { tenant_id?: string };
 type VendorItemInsertPayload = Omit<VendorItemInsert, 'tenant_id'> & { tenant_id?: string };
 type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id?: string };
+
+function requireAdminRole(): void {
+  const token = getStoredAccessToken();
+  if (!token) {
+    throw new Error('Authentication required');
+  }
+
+  const role = parseJwtPayload(token)?.app_metadata?.role;
+  if (role !== 'admin') {
+    throw new Error('Admin role required');
+  }
+}
 
 export interface CreatePurchaseOrderParams {
   vendor_id: string;
@@ -138,6 +151,7 @@ export const SupplyChainRPC = {
    * RPC: supply_chain.rpc_update_tenant_settings
    */
   async updateTenantSettings(updates: Partial<TenantSettings>): Promise<TenantSettings> {
+    requireAdminRole();
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase.rpc('rpc_update_tenant_settings', {
       p_updates: updates,

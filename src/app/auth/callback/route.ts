@@ -11,10 +11,10 @@ export const revalidate = 0;
  *
  * Flow:
  * 1. Validate ticket with Core API
- * 2. Get user_id, tenant_id from response
+ * 2. Get identity and tenant context from response
  * 3. Mint Supabase JWT signed with SUPABASE_JWT_SECRET
- * 4. Redirect to dashboard with JWT in URL (for client to setSession)
- * 5. AuthSessionHydrator component captures JWT and hydrates Supabase session
+ * 4. Store JWT in HttpOnly cookie for browser Supabase header injection
+ * 5. Redirect to dashboard
  */
 export async function GET(request: NextRequest) {
   try {
@@ -122,6 +122,26 @@ export async function GET(request: NextRequest) {
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(secretKey);
+
+    const refreshToken = await new SignJWT({
+      sub: resolvedUserId,
+      email: resolvedEmail || undefined,
+      role: 'authenticated',
+      token_use: 'refresh',
+      app_metadata: {
+        tenant_id: resolvedTenantId,
+        role: resolvedRole,
+      },
+      user_metadata: {
+        full_name: resolvedName || undefined,
+        email: resolvedEmail || undefined,
+        role: resolvedRole,
+      },
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
       .setExpirationTime('7d')
       .sign(secretKey);
 
@@ -131,26 +151,18 @@ export async function GET(request: NextRequest) {
       tokenLength: accessToken.length,
     });
 
-    // Create session cookies (backup)
+    // Create access token cookie (single source of truth)
     const cookieStore = await cookies();
-    
-    cookieStore.set('user_id', resolvedUserId, {
+
+    cookieStore.set('access_token', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 604800, // 7 days
+      maxAge: 3600,
       path: '/',
     });
 
-    cookieStore.set('tenant_id', resolvedTenantId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 604800,
-      path: '/',
-    });
-
-    cookieStore.set('user_email', resolvedEmail || '', {
+    cookieStore.set('refresh_token', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -158,15 +170,8 @@ export async function GET(request: NextRequest) {
       path: '/',
     });
 
-    // Redirect to dashboard with JWT in URL
-    // AuthSessionHydrator component will:
-    // 1. Grab the tokens from URL
-    // 2. Call supabase.auth.setSession()
-    // 3. Clear URL parameters
-    const dashboardUrl = new URL('/dashboard', request.url);
-    dashboardUrl.searchParams.set('access_token', accessToken);
-    
-    return NextResponse.redirect(dashboardUrl);
+    // Redirect to dashboard without leaking JWT in URL
+    return NextResponse.redirect(new URL('/dashboard', request.url));
 
   } catch (error) {
     console.error('[Auth Callback] Error:', error);

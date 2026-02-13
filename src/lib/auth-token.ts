@@ -7,17 +7,119 @@ export type JwtPayload = {
     role?: string;
     [key: string]: any;
   };
+  user_metadata?: {
+    email?: string;
+    [key: string]: any;
+  };
   [key: string]: any;
 };
 
+let cachedAccessToken: string | null = null;
+let accessTokenPromise: Promise<string | null> | null = null;
+let refreshPromise: Promise<string | null> | null = null;
+let refreshTimeoutId: number | null = null;
+
+function clearRefreshTimer(): void {
+  if (typeof window === 'undefined') return;
+  if (refreshTimeoutId !== null) {
+    window.clearTimeout(refreshTimeoutId);
+    refreshTimeoutId = null;
+  }
+}
+
+function scheduleRefreshFromToken(token: string): void {
+  if (typeof window === 'undefined') return;
+
+  clearRefreshTimer();
+
+  const expiresAt = getJwtExpiration(token);
+  if (!expiresAt) return;
+
+  const refreshAt = expiresAt - 5 * 60 * 1000;
+  const delay = Math.max(0, refreshAt - Date.now());
+
+  refreshTimeoutId = window.setTimeout(() => {
+    void refreshAccessToken().then((nextToken) => {
+      if (nextToken) {
+        scheduleRefreshFromToken(nextToken);
+        return;
+      }
+
+      clearStoredAccessToken();
+      redirectToCoreLogin();
+    });
+  }, delay);
+}
+
+async function fetchAccessTokenFromServer(): Promise<string | null> {
+  const response = await fetch('/api/auth/token', {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+  }).catch(() => null);
+
+  if (!response?.ok) return null;
+  const data = (await response.json()) as { access_token?: string };
+  return typeof data.access_token === 'string' ? data.access_token : null;
+}
+
 export function getStoredAccessToken(): string | null {
+  return cachedAccessToken;
+}
+
+export async function loadAccessToken(force = false): Promise<string | null> {
+  if (!force && cachedAccessToken) return cachedAccessToken;
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('custom_access_token');
+
+  if (!force && accessTokenPromise) {
+    return accessTokenPromise;
+  }
+
+  accessTokenPromise = fetchAccessTokenFromServer();
+
+  const token = await accessTokenPromise;
+  accessTokenPromise = null;
+
+  if (!token) {
+    cachedAccessToken = null;
+    clearRefreshTimer();
+    return null;
+  }
+
+  cachedAccessToken = token;
+  scheduleRefreshFromToken(token);
+  return token;
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = fetch('/api/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+  })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      return loadAccessToken(true);
+    })
+    .catch(() => null)
+    .finally(() => {
+      refreshPromise = null;
+    });
+
+  return refreshPromise;
 }
 
 export function clearStoredAccessToken(): void {
+  cachedAccessToken = null;
+  accessTokenPromise = null;
+  refreshPromise = null;
+  clearRefreshTimer();
+
   if (typeof window === 'undefined') return;
-  localStorage.removeItem('custom_access_token');
+  fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
 }
 
 export function parseJwtPayload(token: string): JwtPayload | null {
@@ -64,8 +166,11 @@ export function handleSupabaseAuthError(error: { message?: string; status?: numb
     error.status === 403;
 
   if (isAuthError) {
-    clearStoredAccessToken();
-    redirectToCoreLogin();
+    void refreshAccessToken().then((token) => {
+      if (token) return;
+      clearStoredAccessToken();
+      redirectToCoreLogin();
+    });
   }
 }
 

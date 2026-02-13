@@ -5,7 +5,7 @@ import { Bug, Activity, RefreshCw, CheckCircle, Clock, XCircle, ArrowRight, Book
 import { AppShell } from '@/components/layout/AppShell';
 import { authenticatedFetch } from '@/lib/api-client';
 import { createBrowserAuthedClient } from '@/supabase/client';
-import { parseJwtPayload } from '@/lib/auth-token';
+import { loadAccessToken, parseJwtPayload } from '@/lib/auth-token';
 
 interface Session {
   userId: string;
@@ -78,7 +78,7 @@ export default function DebugPage() {
       const response = await authenticatedFetch('/api/auth/session');
       if (response.ok) {
         const sessionData = await response.json();
-        const token = typeof window !== 'undefined' ? localStorage.getItem('custom_access_token') : null;
+        const token = await loadAccessToken();
         const payload = token ? parseJwtPayload(token) : null;
         const userMeta = (payload?.user_metadata as Record<string, any> | undefined) || {};
         const tokenEmail = (payload as any)?.email || userMeta.email || '';

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 
 interface AssignmentType {
   id: string;
@@ -22,10 +23,18 @@ export default function AssignmentTypesSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingType, setEditingType] = useState<AssignmentType | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetchTypes();
+    checkAdminStatus();
   }, []);
+
+  const checkAdminStatus = async () => {
+    const token = getStoredAccessToken();
+    const payload = token ? parseJwtPayload(token) : null;
+    setIsAdmin(payload?.app_metadata?.role === 'admin');
+  };
 
   const fetchTypes = async () => {
     setLoading(true);
@@ -42,6 +51,11 @@ export default function AssignmentTypesSettingsPage() {
   };
 
   const handleDelete = async (type: AssignmentType) => {
+    if (!isAdmin) {
+      alert('Admin role required');
+      return;
+    }
+
     if (type.is_system) {
       alert('Cannot delete system assignment types. You can deactivate them instead.');
       return;
@@ -70,6 +84,11 @@ export default function AssignmentTypesSettingsPage() {
   };
 
   const handleToggleActive = async (type: AssignmentType) => {
+    if (!isAdmin) {
+      alert('Admin role required');
+      return;
+    }
+
     try {
       const res = await apiWrite(`/api/inventory/assignment-types/${type.id}`, {
         method: 'PUT',
@@ -98,12 +117,22 @@ export default function AssignmentTypesSettingsPage() {
           actions={
             <button
               onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              disabled={!isAdmin}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               + Add Assignment Type
             </button>
           }
         />
+
+        {!isAdmin && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-yellow-800 font-medium">Admin Access Required</p>
+            <p className="text-yellow-700 text-sm mt-1">
+              You are viewing assignment types in read-only mode. Only administrators can modify these settings.
+            </p>
+          </div>
+        )}
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">
@@ -163,20 +192,23 @@ export default function AssignmentTypesSettingsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
                       <button
                         onClick={() => setEditingType(type)}
-                        className="text-blue-600 hover:text-blue-800"
+                        disabled={!isAdmin}
+                        className="text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => handleToggleActive(type)}
-                        className="text-orange-600 hover:text-orange-800"
+                        disabled={!isAdmin}
+                        className="text-orange-600 hover:text-orange-800 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {type.is_active ? 'Deactivate' : 'Activate'}
                       </button>
                       {!type.is_system && (
                         <button
                           onClick={() => handleDelete(type)}
-                          className="text-red-600 hover:text-red-800"
+                          disabled={!isAdmin}
+                          className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Delete
                         </button>
@@ -191,6 +223,7 @@ export default function AssignmentTypesSettingsPage() {
 
         {showCreateModal && (
           <AssignmentTypeModal
+            isAdmin={isAdmin}
             onClose={() => setShowCreateModal(false)}
             onComplete={() => {
               setShowCreateModal(false);
@@ -201,6 +234,7 @@ export default function AssignmentTypesSettingsPage() {
 
         {editingType && (
           <AssignmentTypeModal
+            isAdmin={isAdmin}
             type={editingType}
             onClose={() => setEditingType(null)}
             onComplete={() => {
@@ -215,10 +249,12 @@ export default function AssignmentTypesSettingsPage() {
 }
 
 function AssignmentTypeModal({ 
+  isAdmin,
   type, 
   onClose, 
   onComplete 
 }: { 
+  isAdmin: boolean;
   type?: AssignmentType;
   onClose: () => void; 
   onComplete: () => void;
@@ -236,6 +272,10 @@ function AssignmentTypeModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) {
+      setError('Admin role required');
+      return;
+    }
     setSaving(true);
     setError('');
 
@@ -243,13 +283,9 @@ function AssignmentTypeModal({
       const url = type 
         ? `/api/inventory/assignment-types/${type.id}`
         : '/api/inventory/assignment-types';
-      
-      const method = type ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      const res = await apiWrite(url, {
+        method: type ? 'PUT' : 'POST',
+        body: form,
       });
 
       if (!res.ok) {
@@ -373,7 +409,7 @@ function AssignmentTypeModal({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || !isAdmin}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
             >
               {saving ? 'Saving...' : type ? 'Update' : 'Create'}

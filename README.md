@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Summit One Inventory Management
 
-## Getting Started
+## What this is
+Summit One Inventory Management is a Next.js microservice in the Summit One ecosystem. It handles multi-tenant inventory, procurement, assets, and related workflows backed by Supabase (Postgres + RLS).
 
-First, run the development server:
+## Tech stack
+- Next.js 16 (App Router)
+- TypeScript
+- Supabase (Postgres + RLS)
+- Tailwind CSS + shadcn/ui
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Getting started
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Prereqs
+- Node.js 20+
+- Supabase CLI (for local Postgres)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment variables
+Copy [.env.example](.env.example) to [.env.local](.env.local) and fill in values. Required keys used by the app:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- SUPABASE_JWT_SECRET
+- CORE_EXCHANGE_URL
+- CORE_SUPABASE_ANON_KEY
+- NEXT_PUBLIC_CORE_APP_URL
 
-## Learn More
+Commonly used for local dev and tooling:
 
-To learn more about Next.js, take a look at the following resources:
+- SUPABASE_SERVICE_ROLE_KEY
+- DATABASE_URL
+- DIRECT_URL
+- WEBHOOK_SECRET
+- NEXT_PUBLIC_APP_URL
+- NEXT_PUBLIC_SERVICE_BASE_URL
+- NEXT_PUBLIC_SERVICE_NAME
+- NEXT_PUBLIC_SERVICE_SLUG
+- NEXT_PUBLIC_TENANT_ID
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Run locally
+1. Install dependencies: `npm install`
+2. Start Supabase (local): `npm run sb:start`
+3. Run the app: `npm run dev`
+4. Open `http://localhost:3000`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Project structure
+- [src/app](src/app) - App Router routes, layouts, API routes
+- [src/components](src/components) - UI components
+- [src/lib](src/lib) - auth utilities, API client shim, RPC wrappers
+- [src/hooks](src/hooks) - client hooks
+- [supabase/migrations](supabase/migrations) - database migrations
+- [supabase/functions](supabase/functions) - edge functions
+- [supabase/snippets](supabase/snippets) - utility SQL scripts
 
-## Deploy on Vercel
+## Auth
+This service uses Summit One Core ticket-based SSO and mints Supabase-compatible JWTs. See [docs/AUTH.md](docs/AUTH.md) for the full flow and implementation details.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
+This service is designed to deploy on Vercel. No Vercel config file is currently present in the repo.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Scripts
+From the [scripts](scripts) directory:
+- [scripts/audit-idempotency.mjs](scripts/audit-idempotency.mjs)
+- [scripts/check-frontend-idempotency.mjs](scripts/check-frontend-idempotency.mjs)
+- [scripts/check-idempotency.mjs](scripts/check-idempotency.mjs)
+- [scripts/dev-auth.js](scripts/dev-auth.js)
+- [scripts/dev-auth.ps1](scripts/dev-auth.ps1)
+- [scripts/dev-auth.py](scripts/dev-auth.py)
+- [scripts/dev-auth.sh](scripts/dev-auth.sh)
+- [scripts/scan-debug-violations.mjs](scripts/scan-debug-violations.mjs)
