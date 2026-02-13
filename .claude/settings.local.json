@@ -17,7 +17,8 @@
       "mcp__ide__getDiagnostics",
       "Bash(echo:*)",
       "Bash(npm install:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(git add:*)"
     ]
   }
 }
