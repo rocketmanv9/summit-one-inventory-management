@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { SignJWT } from 'jose';
-import { createHash } from 'crypto';
 
 // Prevent caching/prefetching of this route
 export const dynamic = 'force-dynamic';
@@ -19,6 +18,8 @@ export const revalidate = 0;
  */
 export async function GET(request: NextRequest) {
   try {
+    console.log('[Auth Debug] Local Time:', new Date().toISOString());
+    const noStoreHeaders = { 'Cache-Control': 'no-store, max-age=0' };
     const { searchParams } = new URL(request.url);
     const ticket = searchParams.get('ticket');
     const targetOrg = searchParams.get('target_org');
@@ -26,12 +27,9 @@ export async function GET(request: NextRequest) {
     const targetService = searchParams.get('target_service');
     const resolvedTargetService = targetService || undefined;
 
-    const ticketHash = ticket ? createHash('sha256').update(ticket).digest('hex') : undefined;
-
     console.log('[Auth Callback] Request:', {
       ticketLength: ticket?.length,
       ticket,
-      ticketHash,
       targetOrg,
       targetTenantId,
       targetService: resolvedTargetService,
@@ -39,17 +37,26 @@ export async function GET(request: NextRequest) {
 
     if (!resolvedTargetService) {
       console.error('[Auth Callback] Missing target_service');
-      return NextResponse.redirect(new URL('/error?msg=missing_target_service', request.url));
+      return NextResponse.redirect(new URL('/error?msg=missing_target_service', request.url), {
+        headers: noStoreHeaders,
+      });
     }
 
     // Validate ticket
     if (!ticket || ticket.length !== 32) {
       console.error('[Auth Callback] Invalid ticket');
-      return NextResponse.redirect(new URL('/error?msg=no_ticket', request.url));
+      return NextResponse.redirect(new URL('/error?msg=no_ticket', request.url), {
+        headers: noStoreHeaders,
+      });
     }
 
     const exchangeUrl = process.env.CORE_EXCHANGE_URL;
-    const coreAnonKey = process.env.CORE_SUPABASE_ANON_KEY;
+    const coreAnonKey = process.env.CORE_ANON_KEY;
+
+    console.log('[Auth Debug] Env Check:', {
+      hasUrl: !!process.env.CORE_EXCHANGE_URL,
+      hasKey: !!process.env.CORE_ANON_KEY,
+    });
 
     if (!exchangeUrl || !coreAnonKey) {
       console.error('[Auth Callback] Missing Core configuration');
@@ -59,9 +66,9 @@ export async function GET(request: NextRequest) {
     // Exchange ticket with Core API endpoint
     const requestBody = {
       ticket,
-      target_org: targetOrg || targetTenantId,
-      target_tenant_id: targetTenantId,
       target_service: resolvedTargetService,
+      target_org: targetOrg,
+      target_tenant_id: targetOrg,
     };
     console.log('[Auth Callback] Exchanging ticket:', { 
       exchangeUrl, 
@@ -82,8 +89,8 @@ export async function GET(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': process.env.CORE_SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${process.env.CORE_SUPABASE_ANON_KEY}`,
+        'apikey': coreAnonKey,
+        Authorization: `Bearer ${coreAnonKey}`,
       },
       body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(exchangeTimeoutMs),
@@ -91,9 +98,11 @@ export async function GET(request: NextRequest) {
 
     if (!exchangeResponse.ok) {
       const errorText = await exchangeResponse.text();
+      const responseHeaders = Object.fromEntries(exchangeResponse.headers.entries());
       console.error('[Auth Callback] Exchange failed:', {
         status: exchangeResponse.status,
         error: errorText,
+        headers: responseHeaders,
       });
       throw new Error(`Exchange failed: ${exchangeResponse.status}`);
     }
@@ -196,12 +205,15 @@ export async function GET(request: NextRequest) {
     });
 
     // Redirect to dashboard without leaking JWT in URL
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL('/dashboard', request.url), {
+      headers: noStoreHeaders,
+    });
 
   } catch (error) {
     console.error('[Auth Callback] Error:', error);
     return NextResponse.redirect(
-      new URL(`/error?msg=${encodeURIComponent(error instanceof Error ? error.message : 'Unknown error')}`, request.url)
+      new URL(`/error?msg=${encodeURIComponent(error instanceof Error ? error.message : 'Unknown error')}`, request.url),
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
   }
 }
