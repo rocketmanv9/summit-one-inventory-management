@@ -10,6 +10,7 @@ const errorMessages: Record<string, string> = {
   no_ticket: 'No authentication ticket provided',
   invalid_ticket: 'Invalid or expired authentication ticket',
   not_authenticated: 'You are not authenticated. Please login from Summit One.',
+  missing_target_service: 'Missing target service in login callback. Please retry login from Summit One.',
   'Exchange failed: 401': 'Authentication ticket has expired or is invalid',
   'Exchange failed: 404 (function not deployed)': 'Authentication service is missing the exchange function. Contact the Core team.',
   'Exchange failed: 403': 'Access denied. Please check your permissions.',

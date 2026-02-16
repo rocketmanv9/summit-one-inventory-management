@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { SignJWT } from 'jose';
+import { createHash } from 'crypto';
 
 // Prevent caching/prefetching of this route
 export const dynamic = 'force-dynamic';
@@ -21,9 +22,25 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const ticket = searchParams.get('ticket');
     const targetOrg = searchParams.get('target_org');
+    const targetTenantId = searchParams.get('target_tenant_id') || targetOrg;
     const targetService = searchParams.get('target_service');
+    const resolvedTargetService = targetService || undefined;
 
-    console.log('[Auth Callback] Request:', { ticketLength: ticket?.length, targetOrg, targetService });
+    const ticketHash = ticket ? createHash('sha256').update(ticket).digest('hex') : undefined;
+
+    console.log('[Auth Callback] Request:', {
+      ticketLength: ticket?.length,
+      ticket,
+      ticketHash,
+      targetOrg,
+      targetTenantId,
+      targetService: resolvedTargetService,
+    });
+
+    if (!resolvedTargetService) {
+      console.error('[Auth Callback] Missing target_service');
+      return NextResponse.redirect(new URL('/error?msg=missing_target_service', request.url));
+    }
 
     // Validate ticket
     if (!ticket || ticket.length !== 32) {
@@ -40,28 +57,36 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange ticket with Core API endpoint
-    const requestBody = { 
-      ticket, 
-      target_org: targetOrg,
-      target_service: targetService 
+    const requestBody = {
+      ticket,
+      target_org: targetOrg || targetTenantId,
+      target_tenant_id: targetTenantId,
+      target_service: resolvedTargetService,
     };
     console.log('[Auth Callback] Exchanging ticket:', { 
       exchangeUrl, 
       ticketPrefix: ticket.substring(0, 8),
       targetOrg,
-      targetService,
+      targetService: resolvedTargetService,
       anonKeyPrefix: coreAnonKey.substring(0, 20)
     });
+
+    console.log(`Exchange Ticket Value: ${ticket}`);
+
+    const exchangeTimeoutMs = Number.parseInt(
+      process.env.CORE_EXCHANGE_TIMEOUT_MS || '15000',
+      10
+    );
 
     const exchangeResponse = await fetch(exchangeUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': coreAnonKey,
-        Authorization: `Bearer ${coreAnonKey}`,
+        'apikey': process.env.CORE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${process.env.CORE_SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(exchangeTimeoutMs),
     });
 
     if (!exchangeResponse.ok) {
