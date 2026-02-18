@@ -1,2 +1,2 @@
 // Re-export from the actual client location
-export { createClient } from '../../supabase/client';
+export { createClient, createBrowserAuthedClient } from '../../supabase/client';
