@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { Package, AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
+import type { DashboardWidget } from '@/types/dashboard';
 
 interface InventorySummary {
   total_items: number;
@@ -20,7 +21,7 @@ interface InventorySummary {
   total_locations: number;
 }
 
-export function InventorySummaryWidget() {
+export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) {
   const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

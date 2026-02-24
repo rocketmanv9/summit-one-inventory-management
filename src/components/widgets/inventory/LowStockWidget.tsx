@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { AlertTriangle, AlertCircle, Package, TrendingDown } from 'lucide-react';
 import Link from 'next/link';
+import type { DashboardWidget } from '@/types/dashboard';
 
 interface LowStockItem {
   catalog_item_id: string;
@@ -21,7 +22,7 @@ interface LowStockItem {
   severity: string;
 }
 
-export function LowStockWidget() {
+export function LowStockWidget({ widget }: { widget: DashboardWidget }) {
   const [items, setItems] = useState<LowStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
