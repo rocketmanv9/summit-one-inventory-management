@@ -228,7 +228,8 @@ export function useAiChat(options?: AiChatOptions) {
 
   const advanceFlow = useCallback(
     async (flow: ActiveFlow) => {
-      let { action, currentStepIndex, collectedParams } = flow;
+      const { action, collectedParams } = flow;
+      let { currentStepIndex } = flow;
 
       while (currentStepIndex < action.steps.length) {
         const step = action.steps[currentStepIndex];

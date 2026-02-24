@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
 
       const functionName = toolCall.function.name;
 
-      let params: Record<string, string> = {};
+      const params: Record<string, string> = {};
       try {
         const parsed = JSON.parse(toolCall.function.arguments || '{}');
         // Flatten all values to strings for consistency with the chat system
