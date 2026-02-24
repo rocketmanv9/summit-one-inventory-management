@@ -12,6 +12,7 @@ import {
   Settings,
   Cpu,
   Bug,
+  Bot,
   CalendarCheck,
   ArrowLeftRight,
   PackageOpen,
@@ -19,6 +20,7 @@ import {
   FileText,
   Boxes,
   History,
+  Tag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -44,6 +46,11 @@ const navigation: NavSection[] = [
         icon: LayoutDashboard,
       },
       {
+        title: 'AI Workspace',
+        href: '/ai',
+        icon: Bot,
+      },
+      {
         title: 'Debug',
         href: '/debug',
         icon: Bug,
@@ -67,6 +74,11 @@ const navigation: NavSection[] = [
         title: 'Locations',
         href: '/inventory/locations',
         icon: MapPin,
+      },
+      {
+        title: 'Location Types',
+        href: '/inventory/location-types',
+        icon: Tag,
       },
       {
         title: 'Assets',

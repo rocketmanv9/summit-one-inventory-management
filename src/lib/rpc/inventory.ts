@@ -21,6 +21,7 @@ type LocationInsert = Database['inventory']['Tables']['locations']['Insert'];
 type LocationUpdate = Database['inventory']['Tables']['locations']['Update'];
 type LocationTypeRow = Database['inventory']['Tables']['location_types']['Row'];
 type LocationTypeInsert = Database['inventory']['Tables']['location_types']['Insert'];
+type LocationTypeUpdate = Database['inventory']['Tables']['location_types']['Update'];
 type SkuSettingsRow = Database['inventory']['Tables']['sku_settings']['Row'];
 type SkuSettingsInsert = Database['inventory']['Tables']['sku_settings']['Insert'];
 type AssignmentTypeRow = {
@@ -79,6 +80,7 @@ type ItemCategoryUpdatePayload = Omit<ItemCategoryUpdate, 'tenant_id'> & { tenan
 type LocationInsertPayload = Omit<LocationInsert, 'tenant_id'> & { tenant_id?: string };
 type LocationUpdatePayload = Omit<LocationUpdate, 'tenant_id'> & { tenant_id?: string };
 type LocationTypeInsertPayload = Omit<LocationTypeInsert, 'tenant_id'> & { tenant_id?: string };
+type LocationTypeUpdatePayload = Omit<LocationTypeUpdate, 'tenant_id'> & { tenant_id?: string };
 type SkuSettingsInsertPayload = Omit<SkuSettingsInsert, 'tenant_id'> & { tenant_id?: string };
 type LocationWithType = LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null };
 type AssetInsertPayload = Omit<AssetInsert, 'tenant_id'> & { tenant_id?: string };
@@ -350,18 +352,40 @@ export const InventoryRPC = {
   },
 
   /**
-   * Reassign catalog items to a different category
-   * Table: inventory.catalog_items
+   * Reassign catalog items to a different category.
+   * Updates each item individually to preserve OCC via last_event_id.
+   * The trigger_catalog_item_events trigger handles outbox emission on UPDATE.
    */
   async reassignCatalogItemsCategory(oldCategoryId: string, newCategoryId: string) {
     const supabase = createBrowserAuthedClient().schema('inventory');
-    const { error } = await supabase
+
+    // Fetch items to get their last_event_id for OCC
+    const { data: items, error: fetchError } = await supabase
       .from('catalog_items')
-      .update({ category_id: newCategoryId })
+      .select('id, last_event_id')
       .eq('category_id', oldCategoryId);
 
-    if (error) {
-      throw new Error(`Failed to reassign category items: ${error.message}`);
+    if (fetchError) {
+      throw new Error(`Failed to fetch category items for reassignment: ${fetchError.message}`);
+    }
+
+    if (!items || items.length === 0) return;
+
+    for (const item of items) {
+      const { data: updated, error } = await supabase
+        .from('catalog_items')
+        .update({ category_id: newCategoryId })
+        .eq('id', item.id)
+        .eq('last_event_id', item.last_event_id)
+        .select('id')
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Failed to reassign catalog item ${item.id}: ${error.message}`);
+      }
+      if (!updated) {
+        throw new Error(`Concurrent modification detected on catalog item ${item.id} (OCC conflict)`);
+      }
     }
   },
 
@@ -536,6 +560,36 @@ export const InventoryRPC = {
   },
 
   /**
+   * Update a location type with optimistic concurrency control
+   */
+  async updateLocationType(id: string, updates: LocationTypeUpdatePayload, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as LocationTypeUpdatePayload & {
+      id?: string;
+      created_at?: string;
+      tenant_id?: string;
+      last_event_id?: string;
+    };
+
+    const { data, error } = await supabase
+      .from('location_types')
+      .update({ ...safeUpdates })
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update location type: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Location type was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
    * Get SKU settings for a category
    * Table: inventory.sku_settings
    */
@@ -698,6 +752,95 @@ export const InventoryRPC = {
     }
 
     return (data || []) as AssignmentTypeRow[];
+  },
+
+  /**
+   * Create an assignment type
+   * Table: inventory.assignment_types
+   */
+  async createAssignmentType(payload: {
+    type_key: string;
+    display_name: string;
+    description?: string | null;
+    icon?: string | null;
+    sort_order?: number;
+    requires_id?: boolean;
+  }) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const insertPayload = {
+      type_key: payload.type_key,
+      display_name: payload.display_name,
+      description: payload.description ?? null,
+      icon: payload.icon ?? null,
+      sort_order: payload.sort_order ?? 100,
+      requires_id: payload.requires_id ?? true,
+      last_event_id: crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('assignment_types')
+      .insert(insertPayload)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create assignment type: ${error.message}`);
+    }
+
+    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Update an assignment type with optimistic concurrency control
+   */
+  async updateAssignmentType(id: string, updates: {
+    display_name?: string;
+    description?: string | null;
+    icon?: string | null;
+    sort_order?: number;
+    requires_id?: boolean;
+    is_active?: boolean;
+  }, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('assignment_types')
+      .update({ ...updates, last_event_id: crypto.randomUUID() })
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update assignment type: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Assignment type was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+  },
+
+  /**
+   * Delete an assignment type with optimistic concurrency control
+   */
+  async deleteAssignmentType(id: string, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('assignment_types')
+      .delete()
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete assignment type: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Assignment type was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as Pick<AssignmentTypeRow, 'id'>;
   },
 
   /**

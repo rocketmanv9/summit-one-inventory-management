@@ -259,6 +259,10 @@ async function shimRequest(
       return new Response(JSON.stringify({ data }), { status: 200 });
     }
     case 'POST': {
+      // Ensure last_event_id for idempotency on insert
+      if (!basePayload.last_event_id) {
+        basePayload.last_event_id = crypto.randomUUID();
+      }
       const { data, error } = await scoped.from(table).insert(basePayload).select();
       if (error) {
         if (allowAuthRetry && isAuthError(error)) {
@@ -282,11 +286,15 @@ async function shimRequest(
       if (!updateId) {
         return new Response(JSON.stringify({ error: 'Missing id for update' }), { status: 400 });
       }
-      const { data, error } = await scoped
+      let updateQuery = scoped
         .from(table)
         .update(basePayload)
-        .eq('id', updateId)
-        .select();
+        .eq('id', updateId);
+      // OCC guard: if body includes last_event_id, use it for optimistic locking
+      if (basePayload.last_event_id) {
+        updateQuery = updateQuery.eq('last_event_id', basePayload.last_event_id);
+      }
+      const { data, error } = await updateQuery.select();
       if (error) {
         if (allowAuthRetry && isAuthError(error)) {
           const refreshedToken = await refreshAccessToken();
@@ -308,11 +316,15 @@ async function shimRequest(
       if (!deleteId) {
         return new Response(JSON.stringify({ error: 'Missing id for delete' }), { status: 400 });
       }
-      const { data, error } = await scoped
+      let deleteQuery = scoped
         .from(table)
         .delete()
-        .eq('id', deleteId)
-        .select();
+        .eq('id', deleteId);
+      // OCC guard: if body includes last_event_id, use it for optimistic locking
+      if (basePayload.last_event_id) {
+        deleteQuery = deleteQuery.eq('last_event_id', basePayload.last_event_id);
+      }
+      const { data, error } = await deleteQuery.select();
       if (error) {
         if (allowAuthRetry && isAuthError(error)) {
           const refreshedToken = await refreshAccessToken();

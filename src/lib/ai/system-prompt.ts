@@ -3,7 +3,54 @@
  * Describes the inventory domain and behavioral rules.
  */
 
-export function buildSystemPrompt(activeFlowContext?: string): string {
+import type { PageContext } from './types';
+
+/** Map pathname to friendly page name */
+const PAGE_NAMES: Record<string, string> = {
+  '/dashboard': 'Dashboard',
+  '/inventory/stock': 'Stock Balances',
+  '/inventory/items': 'Catalog Items',
+  '/inventory/locations': 'Locations',
+  '/inventory/location-types': 'Location Types',
+  '/inventory/assets': 'Assets',
+  '/inventory/vendors': 'Vendors',
+  '/inventory/reservations': 'Reservations',
+  '/inventory/transfers': 'Transfers',
+  '/inventory/purchasing': 'Purchasing / Purchase Orders',
+  '/inventory/receiving': 'Receiving / Receipts',
+  '/inventory/cycle-counts': 'Cycle Counts',
+  '/inventory/audit': 'Audit Ledger',
+  '/inventory/reports': 'Reports',
+  '/ai': 'AI Workspace',
+};
+
+function formatPageContext(ctx: PageContext): string {
+  const pageName = PAGE_NAMES[ctx.currentPage] || ctx.currentPage;
+  const lines = [
+    `\nCURRENT PAGE CONTEXT:`,
+    `- Page: ${pageName} (${ctx.currentPage})`,
+    `- User is looking at ${pageName.toLowerCase()} data.`,
+    `Prefer actions relevant to this page. For small contextual actions, propose the action directly. For complex multi-step or cross-module tasks, suggest the user open the AI Workspace at /ai.`,
+  ];
+
+  if (ctx.selectedEntityId) {
+    lines.push(`- Selected entity ID: ${ctx.selectedEntityId}`);
+  }
+
+  if (ctx.activeFilters && Object.keys(ctx.activeFilters).length > 0) {
+    const filters = Object.entries(ctx.activeFilters)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    lines.push(`- Active filters: ${filters}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function buildSystemPrompt(
+  activeFlowContext?: string,
+  pageContext?: PageContext
+): string {
   const base = `You are an inventory management assistant for a construction/materials company. You help users manage vendors, catalog items, stock levels, purchase orders, transfers, assets, and locations.
 
 You should understand natural, conversational language. Users will talk to you casually — interpret their intent even when phrasing is informal.
@@ -43,9 +90,15 @@ DOMAIN CONTEXT:
 - "Receipts" record materials received from vendors against a PO
 - Stock adjustments correct inventory counts (cycle counts, damage, theft)`;
 
-  if (activeFlowContext) {
-    return `${base}\n\nCURRENT CONTEXT:\n${activeFlowContext}`;
+  let prompt = base;
+
+  if (pageContext) {
+    prompt += formatPageContext(pageContext);
   }
 
-  return base;
+  if (activeFlowContext) {
+    prompt += `\n\nCURRENT FLOW CONTEXT:\n${activeFlowContext}`;
+  }
+
+  return prompt;
 }

@@ -25,14 +25,18 @@ export interface BaseEvent<TPayload = any> {
 }
 
 // ============================================================================
-// Supply Chain Event Names (12 total)
+// Supply Chain Event Names (16 total)
 // ============================================================================
 
 export type SupplyChainEventName =
   // Vendor Events (2)
   | 'supply_chain.vendor.created'
   | 'supply_chain.vendor.updated'
-  // Purchase Order Events (7)
+  // Vendor Item Events (3)
+  | 'supply_chain.vendor_item.created'
+  | 'supply_chain.vendor_item.updated'
+  | 'supply_chain.vendor_item.deleted'
+  // Purchase Order Events (8)
   | 'supply_chain.purchase_order.created'
   | 'supply_chain.purchase_order.submitted'
   | 'supply_chain.purchase_order.approved'
@@ -40,13 +44,14 @@ export type SupplyChainEventName =
   | 'supply_chain.purchase_order.received'
   | 'supply_chain.purchase_order.cancelled'
   | 'supply_chain.purchase_order.closed'
+  | 'supply_chain.purchase_order.voided'
   // Receipt Events (3)
   | 'supply_chain.receipt.created'
   | 'supply_chain.receipt.line_added'
   | 'supply_chain.receipt.posted';
 
 // ============================================================================
-// Inventory Event Names (34 total)
+// Inventory Event Names (42 total)
 // ============================================================================
 
 export type InventoryEventName =
@@ -54,13 +59,28 @@ export type InventoryEventName =
   | 'inventory.item.created'
   | 'catalog_item.updated'
   | 'catalog_item.deactivated'
+  | 'inventory.catalog_item.deleted'
   // Location Events
   | 'location.created'
   | 'location.updated'
   | 'location.deactivated'
+  | 'inventory.location.deleted'
+  // Location Type Events
+  | 'inventory.location_type.created'
+  | 'inventory.location_type.updated'
+  | 'inventory.location_type.deleted'
   // Category Events
   | 'category.created'
   | 'category.updated'
+  | 'inventory.item_category.deleted'
+  // Assignment Type Events
+  | 'inventory.assignment_type.created'
+  | 'inventory.assignment_type.updated'
+  | 'inventory.assignment_type.deleted'
+  // Reservation Type Events
+  | 'inventory.reservation_type.created'
+  | 'inventory.reservation_type.updated'
+  | 'inventory.reservation_type.deleted'
   // Stock Events
   | 'stock.replenished'
   | 'stock.issued'
@@ -71,7 +91,13 @@ export type InventoryEventName =
   // Transfer Events
   | 'transfer.created'
   | 'transfer.completed'
-  | 'transfer.cancelled'
+  | 'transfer.updated'
+  | 'inventory.transfer.shipped'
+  | 'inventory.transfer.cancelled'
+  // Transfer Line Events
+  | 'inventory.transfer_line.created'
+  | 'inventory.transfer_line.updated'
+  | 'inventory.transfer_line.deleted'
   // Asset Events
   | 'asset.created'
   | 'asset.updated'
@@ -361,7 +387,7 @@ export function isInventoryEvent(eventName: string): eventName is InventoryEvent
 }
 
 export function isVendorEvent(eventName: string): boolean {
-  return eventName.startsWith('supply_chain.vendor.');
+  return eventName.startsWith('supply_chain.vendor.') || eventName.startsWith('supply_chain.vendor_item.');
 }
 
 export function isPurchaseOrderEvent(eventName: string): boolean {
@@ -391,6 +417,7 @@ export function isReservationEvent(eventName: string): boolean {
 export const SUPPLY_CHAIN_PATTERNS = {
   ALL: 'supply_chain.%',
   VENDOR: 'supply_chain.vendor.%',
+  VENDOR_ITEM: 'supply_chain.vendor_item.%',
   PURCHASE_ORDER: 'supply_chain.purchase_order.%',
   RECEIPT: 'supply_chain.receipt.%',
 } as const;
@@ -399,7 +426,18 @@ export const INVENTORY_PATTERNS = {
   STOCK: 'stock.%',
   ASSET: 'asset.%',
   TRANSFER: 'transfer.%',
+  TRANSFER_PREFIXED: 'inventory.transfer.%',
+  TRANSFER_LINE: 'inventory.transfer_line.%',
+  CATALOG_ITEM: 'catalog_item.%',
+  CATALOG_ITEM_PREFIXED: 'inventory.catalog_item.%',
+  LOCATION: 'location.%',
+  LOCATION_PREFIXED: 'inventory.location.%',
+  CATEGORY: 'category.%',
+  CATEGORY_PREFIXED: 'inventory.item_category.%',
   RESERVATION: 'reservation.%',
   CYCLE_COUNT: 'cycle_count.%',
   ADJUSTMENT: 'adjustment.%',
+  LOCATION_TYPE: 'inventory.location_type.%',
+  ASSIGNMENT_TYPE: 'inventory.assignment_type.%',
+  RESERVATION_TYPE: 'inventory.reservation_type.%',
 } as const;

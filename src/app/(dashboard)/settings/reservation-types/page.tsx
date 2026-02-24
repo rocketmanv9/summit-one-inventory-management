@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable } from '@/components/ui/DataTable';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { ReservationTypeModal } from '@/components/modals/ReservationTypeModal';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface ReservationType {
@@ -14,11 +17,13 @@ interface ReservationType {
   is_active: boolean;
   sort_order: number;
   description?: string | null;
+  last_event_id: string;
 }
 
 export default function ReservationTypesSettingsPage() {
   const [types, setTypes] = useState<ReservationType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingType, setEditingType] = useState<ReservationType | null>(null);
 
@@ -72,6 +77,101 @@ export default function ReservationTypesSettingsPage() {
     }
   };
 
+  const columns = [
+    {
+      key: 'display_name',
+      header: 'Type',
+      sortable: true,
+      render: (row: ReservationType) => (
+        <span className={`font-medium ${!row.is_active ? 'opacity-50' : ''}`}>{row.display_name}</span>
+      ),
+    },
+    {
+      key: 'type_key',
+      header: 'Key',
+      render: (row: ReservationType) => (
+        <code className="bg-gray-100 px-2 py-1 rounded text-xs">{row.type_key}</code>
+      ),
+    },
+    {
+      key: 'description',
+      header: 'Description',
+      render: (row: ReservationType) => (
+        <span className="text-muted-foreground">{row.description || '-'}</span>
+      ),
+    },
+    {
+      key: 'is_active',
+      header: 'Status',
+      render: (row: ReservationType) => (
+        <span className={`inline-flex px-2 py-1 text-xs font-medium rounded ${
+          row.is_active
+            ? 'bg-green-100 text-green-800'
+            : 'bg-gray-100 text-gray-800'
+        }`}>
+          {row.is_active ? 'Active' : 'Inactive'}
+        </span>
+      ),
+    },
+    {
+      key: 'scope',
+      header: 'Scope',
+      render: (row: ReservationType) => (
+        <span className="text-muted-foreground">{row.is_system || !row.tenant_id ? 'Global' : 'Tenant'}</span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (row: ReservationType) => (
+        <div className="flex gap-2">
+          {!row.is_system && row.tenant_id && (
+            <>
+              <button
+                onClick={() => setEditingType(row)}
+                className="text-primary hover:text-primary/80 text-sm font-medium"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => handleToggleActive(row)}
+                className="text-orange-600 hover:text-orange-800 text-sm font-medium"
+              >
+                {row.is_active ? 'Deactivate' : 'Activate'}
+              </button>
+              <button
+                onClick={() => handleDelete(row)}
+                className="text-red-600 hover:text-red-800 text-sm font-medium"
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  const filterConfig = [
+    {
+      key: 'search',
+      label: 'Search',
+      type: 'search' as const,
+      placeholder: 'Type name or key...',
+    },
+  ];
+
+  const filteredTypes = types.filter((type) => {
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      return (
+        type.display_name.toLowerCase().includes(term) ||
+        type.type_key.toLowerCase().includes(term)
+      );
+    }
+    return true;
+  });
+
   return (
     <AppShell>
       <div className="space-y-6">
@@ -90,7 +190,7 @@ export default function ReservationTypesSettingsPage() {
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">
-            <span className="text-blue-600">ℹ️</span>
+            <span className="text-blue-600">i</span>
             <div className="flex-1">
               <h3 className="font-medium text-blue-900">About Reservation Types</h3>
               <p className="text-sm text-blue-700 mt-1">
@@ -101,236 +201,40 @@ export default function ReservationTypesSettingsPage() {
           </div>
         </div>
 
-        {loading ? (
-          <div className="text-center py-12 text-gray-500">Loading...</div>
-        ) : (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Scope</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {types.map((type) => (
-                  <tr key={type.id} className={!type.is_active ? 'opacity-50' : ''}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="font-medium text-gray-900">{type.display_name}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <span className="bg-gray-100 px-2 py-1 rounded">{type.type_key}</span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {type.description || '—'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded ${
-                        type.is_active
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {type.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {type.is_system || !type.tenant_id ? 'Global' : 'Tenant'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
-                      {!type.is_system && type.tenant_id && (
-                        <>
-                          <button
-                            onClick={() => setEditingType(type)}
-                            className="text-blue-600 hover:text-blue-800"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleToggleActive(type)}
-                            className="text-orange-600 hover:text-orange-800"
-                          >
-                            {type.is_active ? 'Deactivate' : 'Activate'}
-                          </button>
-                          <button
-                            onClick={() => handleDelete(type)}
-                            className="text-red-600 hover:text-red-800"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <FilterBar
+          filters={filterConfig}
+          values={filters}
+          onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
+          onClear={() => setFilters({})}
+        />
 
-        {showCreateModal && (
-          <ReservationTypeModal
-            onClose={() => setShowCreateModal(false)}
-            onComplete={() => {
-              setShowCreateModal(false);
-              fetchTypes();
-            }}
-          />
-        )}
+        <DataTable
+          data={filteredTypes}
+          columns={columns}
+          loading={loading}
+          emptyMessage="No reservation types found"
+          rowKey={(row) => row.id}
+        />
 
-        {editingType && (
-          <ReservationTypeModal
-            type={editingType}
-            onClose={() => setEditingType(null)}
-            onComplete={() => {
-              setEditingType(null);
-              fetchTypes();
-            }}
-          />
-        )}
+        <ReservationTypeModal
+          open={showCreateModal}
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={() => {
+            setShowCreateModal(false);
+            fetchTypes();
+          }}
+        />
+
+        <ReservationTypeModal
+          open={!!editingType}
+          onClose={() => setEditingType(null)}
+          onSuccess={() => {
+            setEditingType(null);
+            fetchTypes();
+          }}
+          item={editingType ?? undefined}
+        />
       </div>
     </AppShell>
-  );
-}
-
-function ReservationTypeModal({
-  type,
-  onClose,
-  onComplete,
-}: {
-  type?: ReservationType;
-  onClose: () => void;
-  onComplete: () => void;
-}) {
-  const [form, setForm] = useState({
-    type_key: type?.type_key || '',
-    display_name: type?.display_name || '',
-    description: type?.description || '',
-    sort_order: type?.sort_order?.toString() || '0',
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const isEdit = !!type;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setSaving(true);
-
-    try {
-      if (!form.display_name.trim()) {
-        throw new Error('Display name is required');
-      }
-
-      if (!form.type_key.trim()) {
-        throw new Error('Type key is required');
-      }
-
-      const payload = {
-        type_key: form.type_key.trim(),
-        display_name: form.display_name.trim(),
-        description: form.description.trim() || null,
-        sort_order: parseInt(form.sort_order || '0', 10) || 0,
-      };
-
-      if (isEdit && type) {
-        await InventoryRPC.updateReservationType(type.id, {
-          display_name: payload.display_name,
-          description: payload.description,
-          sort_order: payload.sort_order,
-        });
-      } else {
-        await InventoryRPC.createReservationType(payload);
-      }
-
-      onComplete();
-    } catch (err: any) {
-      setError(err.message || 'Failed to save reservation type');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-md w-full">
-        <h2 className="text-xl font-semibold mb-4">
-          {isEdit ? 'Edit Reservation Type' : 'Add Reservation Type'}
-        </h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Display Name *</label>
-            <input
-              type="text"
-              value={form.display_name}
-              onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Type Key *</label>
-            <input
-              type="text"
-              value={form.type_key}
-              onChange={(e) => setForm({ ...form, type_key: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="job, project, custom_label"
-              disabled={isEdit}
-            />
-            {isEdit && (
-              <p className="text-xs text-muted-foreground mt-1">Type key cannot be changed after creation.</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Description</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={3}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Sort Order</label>
-            <input
-              type="number"
-              value={form.sort_order}
-              onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
   );
 }

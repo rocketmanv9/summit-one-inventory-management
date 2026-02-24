@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { LocationTypeModal } from '@/components/modals/LocationTypeModal';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
@@ -37,7 +39,7 @@ export default function LocationsPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [locationTypes, setLocationTypes] = useState<LocationType[]>([]);
-  const [showAddTypeModal, setShowAddTypeModal] = useState(false);
+  const [showQuickAddType, setShowQuickAddType] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
 
@@ -80,8 +82,6 @@ export default function LocationsPage() {
       }
 
       await InventoryRPC.deleteLocation(location.id, location.last_event_id);
-
-      // Refresh the list
       fetchLocations();
     } catch (err: any) {
       alert(err.message);
@@ -94,17 +94,16 @@ export default function LocationsPage() {
       header: 'Name',
       sortable: true,
       render: (row: Location) => {
-        // Find parent location to show hierarchy
-        const parent = row.parent_location_id 
+        const parent = row.parent_location_id
           ? locations.find(loc => loc.id === row.parent_location_id)
           : null;
-        
+
         return (
           <div>
             <div className="font-medium">{row.name}</div>
             {parent && (
               <div className="text-xs text-gray-500 mt-0.5">
-                ↳ Under: {parent.name}
+                Under: {parent.name}
               </div>
             )}
           </div>
@@ -191,12 +190,12 @@ export default function LocationsPage() {
           description="Manage warehouses, yards, trucks, and other inventory locations. Example: Set up locations like 'Main Plant Yard', 'Truck #12', 'Highway 50 Job Site', or 'Vendor: ABC Concrete Supply' to track where materials are stored or in transit."
           actions={
             <div className="flex gap-2">
-              <button
-                onClick={() => setShowAddTypeModal(true)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+              <Link
+                href="/inventory/location-types"
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors inline-flex items-center"
               >
                 Manage Types
-              </button>
+              </Link>
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
@@ -234,19 +233,18 @@ export default function LocationsPage() {
               setEditingLocation(null);
               fetchLocations();
             }}
-            onAddNewType={() => setShowAddTypeModal(true)}
+            onAddNewType={() => setShowQuickAddType(true)}
           />
         )}
 
-        {showAddTypeModal && (
-          <AddLocationTypeModal
-            onClose={() => setShowAddTypeModal(false)}
-            onCreated={() => {
-              setShowAddTypeModal(false);
-              fetchLocationTypes();
-            }}
-          />
-        )}
+        <LocationTypeModal
+          open={showQuickAddType}
+          onClose={() => setShowQuickAddType(false)}
+          onSuccess={() => {
+            setShowQuickAddType(false);
+            fetchLocationTypes();
+          }}
+        />
       </div>
     </AppShell>
   );
@@ -276,7 +274,6 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
       const data = await InventoryRPC.getLocationTypes();
       const normalized = normalizeLocationTypes(data);
       setLocationTypes(normalized);
-      // Set first type as default only when creating a new location (not editing)
       if (normalized.length > 0 && !isEditing && !form.location_type_id) {
         setForm(prev => ({ ...prev, location_type_id: normalized[0].value }));
       }
@@ -288,8 +285,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
   const fetchAvailableParents = async () => {
     try {
       const data = await InventoryRPC.getLocations();
-      // Filter out the current location when editing to prevent circular references
-      const filtered = isEditing 
+      const filtered = isEditing
         ? (data || []).filter((loc: Location) => loc.id !== location.id)
         : (data || []);
       setAvailableParents(filtered);
@@ -311,7 +307,6 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         throw new Error('Please select a location type.');
       }
 
-      // Convert empty string to null for parent_location_id
       const payload = {
         ...form,
         location_type: locationTypeName,
@@ -340,7 +335,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">{isEditing ? 'Edit Location' : 'Create Location'}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">x</button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -400,7 +395,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">Optional: Organize locations hierarchically (e.g., Warehouse → Zone → Aisle)</p>
+            <p className="text-xs text-gray-500 mt-1">Optional: Organize locations hierarchically (e.g., Warehouse &rarr; Zone &rarr; Aisle)</p>
           </div>
 
           <div>
@@ -430,198 +425,6 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
             </button>
           </div>
         </form>
-      </div>
-    </div>
-  );
-}
-
-function AddLocationTypeModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({
-    name: '',
-    description: '',
-  });
-  const [existingTypes, setExistingTypes] = useState<LocationType[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
-
-  const toCode = (value: string) => {
-    return value
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
-  };
-
-  useEffect(() => {
-    fetchTypes();
-  }, []);
-
-  const fetchTypes = async () => {
-    try {
-      const data = await InventoryRPC.getLocationTypes();
-      setExistingTypes(normalizeLocationTypes(data));
-    } catch (error) {
-      console.error('Error fetching types:', error);
-    }
-  };
-
-  const handleDelete = async (type: LocationType) => {
-    if (!confirm(`Are you sure you want to delete location type "${type.label}"?\n\nYou can only delete types that are not in use.`)) {
-      return;
-    }
-
-    try {
-      if (!type.last_event_id) {
-        throw new Error('Missing last_event_id for this location type. Please refresh and try again.');
-      }
-
-      await InventoryRPC.deleteLocationType(type.value, type.last_event_id);
-
-      fetchTypes();
-      onCreated(); // Refresh parent list
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError('');
-
-    try {
-      const code = toCode(form.name);
-      if (!code) {
-        throw new Error('Name must include at least one letter or number.');
-      }
-      await InventoryRPC.createLocationType({
-        name: form.name,
-        description: form.description || null,
-        code,
-        last_event_id: crypto.randomUUID(),
-      });
-
-      // Reset form and refresh list
-      setForm({ name: '', description: '' });
-      setShowAddForm(false);
-      fetchTypes();
-      onCreated();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Manage Location Types</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
-        </div>
-
-        <div className="p-6 overflow-y-auto flex-1">
-          {/* Existing Types List */}
-          <div className="mb-6">
-            <h4 className="text-sm font-medium mb-3">Existing Types ({existingTypes.length})</h4>
-            {existingTypes.length === 0 ? (
-              <p className="text-sm text-gray-500">No location types yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {existingTypes.map((type) => (
-                  <div key={type.value} className="flex items-center justify-between p-3 border rounded-md">
-                    <div>
-                      <div className="font-medium">{type.label}</div>
-                      {type.description && (
-                        <div className="text-sm text-gray-500">{type.description}</div>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleDelete(type)}
-                      className="text-red-600 hover:text-red-800 text-sm font-medium"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Add New Type Form */}
-          {!showAddForm ? (
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="w-full px-4 py-2 border-2 border-dashed border-gray-300 text-gray-600 rounded-md hover:border-gray-400 hover:text-gray-700"
-            >
-              + Add New Type
-            </button>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4 p-4 border rounded-md bg-gray-50">
-              {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-                  {error}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Name *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g., Storage Facility"
-                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  required
-                />
-                <p className="text-xs text-gray-500 mt-1">A unique code will be generated automatically</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Description</label>
-                <textarea
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="Optional description"
-                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  rows={2}
-                />
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setError('');
-                    setForm({ name: '', description: '' });
-                  }}
-                  className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {saving ? 'Adding...' : 'Add Type'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        <div className="px-6 py-4 border-t">
-          <button
-            onClick={onClose}
-            className="w-full px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-          >
-            Close
-          </button>
-        </div>
       </div>
     </div>
   );

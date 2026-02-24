@@ -21,6 +21,7 @@ interface PurchaseOrder {
   expected_delivery_date?: string;
   notes?: string;
   created_at: string;
+  last_event_id: string;
   purchase_order_lines?: Array<{
     id: string;
     catalog_item_id: string;
@@ -90,22 +91,22 @@ export default function PurchasingPage() {
     return totalQty > 0 ? Math.round((receivedQty / totalQty) * 100) : 0;
   };
 
-  const handleSubmitForApproval = async (poId: string, status: string) => {
+  const handleSubmitForApproval = async (poId: string, status: string, lastEventId: string) => {
     if (status !== 'draft') {
       alert(`Cannot submit PO in status: ${status}. Only draft POs can be submitted.`);
       return;
     }
-    
+
     if (!confirm('Submit this PO for approval?')) return;
-    
+
     try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'awaiting_approval');
-      
+      const { error } = await updatePurchaseOrderStatus(poId, 'awaiting_approval', lastEventId);
+
       if (error) {
         alert(`Error: ${error.message}`);
         return;
       }
-      
+
       alert('PO submitted for approval!');
       fetchOrders();
     } catch (error) {
@@ -114,22 +115,22 @@ export default function PurchasingPage() {
     }
   };
 
-  const handleApprovePO = async (poId: string, status: string) => {
+  const handleApprovePO = async (poId: string, status: string, lastEventId: string) => {
     if (status !== 'awaiting_approval') {
       alert(`Cannot approve PO in status: ${status}. Only POs awaiting approval can be approved.`);
       return;
     }
-    
+
     if (!confirm('Approve this PO?')) return;
-    
+
     try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'approved');
-      
+      const { error } = await updatePurchaseOrderStatus(poId, 'approved', lastEventId);
+
       if (error) {
         alert(`Error: ${error.message}`);
         return;
       }
-      
+
       alert('PO approved!');
       fetchOrders();
     } catch (error) {
@@ -138,22 +139,22 @@ export default function PurchasingPage() {
     }
   };
 
-  const handlePlacePO = async (poId: string, status: string) => {
+  const handlePlacePO = async (poId: string, status: string, lastEventId: string) => {
     if (status !== 'approved') {
       alert(`Cannot place PO in status: ${status}. Only approved POs can be placed.`);
       return;
     }
-    
+
     if (!confirm('Place this PO with vendor?')) return;
-    
+
     try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'placed');
-      
+      const { error } = await updatePurchaseOrderStatus(poId, 'placed', lastEventId);
+
       if (error) {
         alert(`Error: ${error.message}`);
         return;
       }
-      
+
       alert('PO placed with vendor!');
       fetchOrders();
     } catch (error) {
@@ -162,29 +163,29 @@ export default function PurchasingPage() {
     }
   };
 
-  const handleDeletePO = async (poId: string, status: string, poNumber: string) => {
+  const handleDeletePO = async (poId: string, status: string, poNumber: string, lastEventId: string) => {
     if (!['draft', 'awaiting_approval'].includes(status)) {
       alert(`Cannot delete PO in status: ${status}. Only draft or awaiting approval POs can be deleted.`);
       return;
     }
 
-    if (!confirm(`Delete PO ${poNumber}? This will cancel the purchase order.`)) {
+    if (!confirm(`Delete PO ${poNumber}? This will void the purchase order.`)) {
       return;
     }
 
     try {
-      const { error } = await deletePurchaseOrder(poId);
+      const { error } = await deletePurchaseOrder(poId, lastEventId);
 
       if (error) {
         alert(`Error: ${error.message}`);
         return;
       }
 
-      alert('PO deleted successfully!');
+      alert('PO voided successfully!');
       fetchOrders();
     } catch (error) {
-      console.error('Error deleting PO:', error);
-      alert('Failed to delete PO. Please try again.');
+      console.error('Error voiding PO:', error);
+      alert('Failed to void PO. Please try again.');
     }
   };
 
@@ -283,7 +284,7 @@ export default function PurchasingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleSubmitForApproval(row.id, row.status);
+                  handleSubmitForApproval(row.id, row.status, row.last_event_id);
                 }}
                 className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
                 title="Submit for approval"
@@ -297,7 +298,7 @@ export default function PurchasingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleApprovePO(row.id, row.status);
+                  handleApprovePO(row.id, row.status, row.last_event_id);
                 }}
                 className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white"
                 title="Approve purchase order"
@@ -311,7 +312,7 @@ export default function PurchasingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handlePlacePO(row.id, row.status);
+                  handlePlacePO(row.id, row.status, row.last_event_id);
                 }}
                 className="px-3 py-1 text-sm rounded bg-purple-600 hover:bg-purple-700 text-white"
                 title="Place order with vendor"
@@ -340,7 +341,7 @@ export default function PurchasingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleDeletePO(row.id, row.status, row.po_number);
+                  handleDeletePO(row.id, row.status, row.po_number, row.last_event_id);
                 }}
                 className="px-3 py-1 text-sm rounded bg-red-600 hover:bg-red-700 text-white"
                 title="Delete purchase order"
@@ -533,7 +534,7 @@ function PODetailPanel({
   const updateStatus = async (newStatus: string) => {
     setUpdatingStatus(true);
     try {
-      const { error } = await updatePurchaseOrderStatus(po.id, newStatus);
+      const { error } = await updatePurchaseOrderStatus(po.id, newStatus, po.last_event_id);
 
       if (error) {
         throw new Error(error.message);
@@ -550,24 +551,24 @@ function PODetailPanel({
   };
 
   const deletePO = async () => {
-    if (!confirm(`Are you sure you want to delete PO ${po.po_number}? This will cancel the purchase order.`)) {
+    if (!confirm(`Are you sure you want to void PO ${po.po_number}? This will cancel the purchase order.`)) {
       return;
     }
 
     setUpdatingStatus(true);
     try {
-      const { error } = await deletePurchaseOrder(po.id);
+      const { error } = await deletePurchaseOrder(po.id, po.last_event_id);
 
       if (error) {
         throw new Error(error.message);
       }
 
-      // Close panel and refresh to remove deleted PO from list
+      // Close panel and refresh to remove voided PO from list
       onClose();
       window.location.reload();
     } catch (error: any) {
-      console.error('Error deleting PO:', error);
-      alert(`Failed to delete PO: ${error.message}`);
+      console.error('Error voiding PO:', error);
+      alert(`Failed to void PO: ${error.message}`);
     } finally {
       setUpdatingStatus(false);
     }
@@ -1129,7 +1130,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
     setError('');
 
     try {
-      const { error } = await updatePurchaseOrder(po.id, {
+      const { error } = await updatePurchaseOrder(po.id, po.last_event_id, {
         vendor_id: form.vendor_id,
         delivery_location_id: form.ship_to_location_id,
         needed_by_date: form.expected_delivery_date || null,

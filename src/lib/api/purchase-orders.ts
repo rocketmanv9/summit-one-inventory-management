@@ -505,73 +505,88 @@ export function useNextPONumber() {
 }
 
 /**
- * Update purchase order status
+ * Update purchase order status with optimistic concurrency control
  */
 export async function updatePurchaseOrderStatus(
   poId: string,
-  status: string
+  status: string,
+  lastEventId: string
 ): Promise<{ data: any | null; error: Error | null }> {
   const supabase = createBrowserAuthedClient().schema('supply_chain');
-  
+
   try {
     const { data, error } = await supabase
       .from('purchase_orders')
       .update({ status })
       .eq('id', poId)
+      .eq('last_event_id', lastEventId)
       .select()
       .single();
-    
+
     if (error) {
       console.error('Error updating PO status:', error);
       return { data: null, error: new Error(error.message) };
     }
-    
+    if (!data) {
+      return { data: null, error: new Error('Purchase order was updated by someone else. Please refresh and try again.') };
+    }
+
     return { data, error: null };
   } catch (err) {
     console.error('Exception updating PO status:', err);
-    return { 
-      data: null, 
-      error: err instanceof Error ? err : new Error('Unknown error') 
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error('Unknown error')
     };
   }
 }
 
 /**
- * Delete purchase order
+ * Void (soft-delete) a purchase order with optimistic concurrency control.
+ * Sets status to 'voided' instead of hard-deleting so the existing
+ * trigger_po_status_events trigger emits a status-change event to the outbox.
  */
 export async function deletePurchaseOrder(
-  poId: string
+  poId: string,
+  lastEventId: string
 ): Promise<{ data: any | null; error: Error | null }> {
   const supabase = createBrowserAuthedClient().schema('supply_chain');
-  
+
   try {
     const { data, error } = await supabase
       .from('purchase_orders')
-      .delete()
-      .eq('id', poId);
-    
+      .update({ status: 'voided' })
+      .eq('id', poId)
+      .eq('last_event_id', lastEventId)
+      .select()
+      .single();
+
     if (error) {
-      console.error('Error deleting PO:', error);
+      console.error('Error voiding PO:', error);
       return { data: null, error: new Error(error.message) };
     }
-    
+    if (!data) {
+      return { data: null, error: new Error('Purchase order was updated by someone else. Please refresh and try again.') };
+    }
+
     return { data, error: null };
   } catch (err) {
-    console.error('Exception deleting PO:', err);
-    return { 
-      data: null, 
-      error: err instanceof Error ? err : new Error('Unknown error') 
+    console.error('Exception voiding PO:', err);
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error('Unknown error')
     };
   }
 }
 
 /**
- * Update purchase order (header and lines)
+ * Update purchase order (header) with optimistic concurrency control.
  * Note: This is a simplified update. For production, consider creating an RPC function
  * that handles the full transactional update of PO + lines.
  */
 export async function updatePurchaseOrder(
   poId: string,
+  lastEventId: string,
   updates: {
     vendor_id?: string;
     delivery_location_id?: string;
@@ -586,34 +601,40 @@ export async function updatePurchaseOrder(
   }
 ): Promise<{ data: any | null; error: Error | null }> {
   const supabase = createBrowserAuthedClient().schema('supply_chain');
-  
+
   try {
-    // Update PO header
+    // Update PO header with OCC guard
     const headerUpdates: any = {};
     if (updates.vendor_id) headerUpdates.vendor_id = updates.vendor_id;
     if (updates.delivery_location_id) headerUpdates.delivery_location_id = updates.delivery_location_id;
     if (updates.needed_by_date !== undefined) headerUpdates.needed_by_date = updates.needed_by_date;
     if (updates.notes !== undefined) headerUpdates.notes = updates.notes;
-    
-    const { error: headerError } = await supabase
+
+    const { data, error: headerError } = await supabase
       .from('purchase_orders')
       .update(headerUpdates)
-      .eq('id', poId);
-    
+      .eq('id', poId)
+      .eq('last_event_id', lastEventId)
+      .select()
+      .single();
+
     if (headerError) {
       console.error('Error updating PO header:', headerError);
       return { data: null, error: new Error(headerError.message) };
     }
-    
+    if (!data) {
+      return { data: null, error: new Error('Purchase order was updated by someone else. Please refresh and try again.') };
+    }
+
     // TODO: Handle line updates (requires deleting old lines and inserting new ones)
     // For now, this is a simplified implementation
-    
+
     return { data: { success: true }, error: null };
   } catch (err) {
     console.error('Exception updating PO:', err);
-    return { 
-      data: null, 
-      error: err instanceof Error ? err : new Error('Unknown error') 
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error('Unknown error')
     };
   }
 }

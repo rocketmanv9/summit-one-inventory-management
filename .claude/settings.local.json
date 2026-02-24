@@ -24,7 +24,12 @@
       "Bash(npm view:*)",
       "Bash(npx get-shit-done-cc)",
       "Bash(npx tsc:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(node scripts/audit-event-compliance.mjs:*)",
+      "Bash(grep:*)",
+      "Bash(npx supabase migration list:*)",
+      "Bash(npx supabase migration repair:*)",
+      "Bash(wc -l:*)"
     ]
   }
 }
