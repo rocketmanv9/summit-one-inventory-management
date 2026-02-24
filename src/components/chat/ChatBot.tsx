@@ -14,12 +14,14 @@ export function ChatBot() {
   const pathname = usePathname();
 
   // Persist open/closed state in localStorage
-  const [isOpen, setIsOpen] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('chatbot-open') === 'true';
-    }
-    return false;
-  });
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasMounted, setHasMounted] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('chatbot-open') === 'true';
+    setIsOpen(saved);
+    setHasMounted(true);
+  }, []);
 
   const chat = useAiChat({
     mode: 'corner',
