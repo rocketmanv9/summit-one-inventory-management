@@ -2180,4 +2180,502 @@ export const InventoryRPC = {
 
     return data as Pick<ReservationTypeRow, 'id'>;
   },
+
+  // ==========================================================================
+  // Feature Expansion: New RPC Methods
+  // ==========================================================================
+
+  /**
+   * Get UOM conversions
+   * Table: inventory.uom_conversions
+   */
+  async getUomConversions(): Promise<Array<{
+    id: string;
+    from_uom: string;
+    to_uom: string;
+    conversion_factor: number;
+    is_bidirectional: boolean;
+    last_event_id: string;
+    created_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('uom_conversions')
+      .select('id, from_uom, to_uom, conversion_factor, is_bidirectional, last_event_id, created_at')
+      .order('from_uom');
+
+    if (error) {
+      throw new Error(`Failed to fetch UOM conversions: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Create a UOM conversion
+   * Table: inventory.uom_conversions
+   */
+  async createUomConversion(payload: {
+    from_uom: string;
+    to_uom: string;
+    conversion_factor: number;
+    is_bidirectional?: boolean;
+  }) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const insertPayload = {
+      from_uom: payload.from_uom.toUpperCase(),
+      to_uom: payload.to_uom.toUpperCase(),
+      conversion_factor: payload.conversion_factor,
+      is_bidirectional: payload.is_bidirectional ?? true,
+      last_event_id: crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('uom_conversions')
+      .insert(insertPayload)
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create UOM conversion: ${error.message}`);
+    }
+
+    return data as { id: string; last_event_id: string };
+  },
+
+  /**
+   * Delete a UOM conversion with OCC
+   */
+  async deleteUomConversion(id: string, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('uom_conversions')
+      .delete()
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete UOM conversion: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('UOM conversion was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as { id: string };
+  },
+
+  /**
+   * Convert UOM quantity via RPC
+   */
+  async convertUom(qty: number, fromUom: string, toUom: string): Promise<number> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('convert_uom', {
+      p_tenant_id: tenantId,
+      p_qty: qty,
+      p_from_uom: fromUom,
+      p_to_uom: toUom,
+    });
+
+    if (error) {
+      throw new Error(`Failed to convert UOM: ${error.message}`);
+    }
+
+    return data as number;
+  },
+
+  /**
+   * Get dead stock report
+   * View: inventory.v_dead_stock_report
+   */
+  async getDeadStockReport(options?: { minDays?: number; agingStatus?: string }): Promise<Array<{
+    catalog_item_id: string;
+    sku: string;
+    item_name: string;
+    location_id: string;
+    location_name: string;
+    qty_on_hand: number;
+    capital_locked: number;
+    last_movement_at: string | null;
+    days_since_movement: number;
+    aging_status: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('v_dead_stock_report')
+      .select('*')
+      .order('days_since_movement', { ascending: false });
+
+    if (options?.minDays) {
+      query = query.gte('days_since_movement', options.minDays);
+    }
+    if (options?.agingStatus) {
+      query = query.eq('aging_status', options.agingStatus);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Failed to fetch dead stock report: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get item velocity data
+   * Materialized view: inventory.mv_item_velocity
+   */
+  async getItemVelocity(catalogItemId?: string): Promise<Array<{
+    catalog_item_id: string;
+    location_id: string;
+    usage_30d: number;
+    usage_60d: number;
+    usage_90d: number;
+    daily_rate_30d: number;
+    days_of_stock: number | null;
+    qty_available: number;
+    refreshed_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('mv_item_velocity')
+      .select('*')
+      .order('daily_rate_30d', { ascending: false });
+
+    if (catalogItemId) {
+      query = query.eq('catalog_item_id', catalogItemId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Failed to fetch item velocity: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get replenishment suggestions
+   * RPC: inventory.get_replenishment_suggestions
+   */
+  async getReplenishmentSuggestions(): Promise<Array<{
+    catalog_item_id: string;
+    sku: string;
+    item_name: string;
+    location_id: string;
+    location_name: string;
+    qty_available: number;
+    daily_rate: number;
+    days_of_stock: number | null;
+    lead_time_days: number | null;
+    reorder_point: number | null;
+    suggested_order_qty: number;
+    urgency: string;
+    preferred_vendor_id: string | null;
+    preferred_vendor_name: string | null;
+  }>> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('get_replenishment_suggestions', {
+      p_tenant_id: tenantId,
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch replenishment suggestions: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get transfer suggestions
+   * RPC: inventory.get_transfer_suggestions
+   */
+  async getTransferSuggestions(): Promise<Array<{
+    catalog_item_id: string;
+    sku: string;
+    item_name: string;
+    from_location_id: string;
+    from_location_name: string;
+    from_qty_available: number;
+    to_location_id: string;
+    to_location_name: string;
+    to_qty_available: number;
+    to_reorder_point: number;
+    suggested_qty: number;
+    reason: string;
+  }>> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('get_transfer_suggestions', {
+      p_tenant_id: tenantId,
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch transfer suggestions: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get cycle count suggestions
+   * RPC: inventory.get_cycle_count_suggestions
+   */
+  async getCycleCountSuggestions(limit?: number): Promise<Array<{
+    catalog_item_id: string;
+    sku: string;
+    item_name: string;
+    location_id: string;
+    location_name: string;
+    priority_score: number;
+    abc_class: string;
+    days_since_last_count: number;
+    last_variance_pct: number;
+    movement_frequency: number;
+    reasons: string[];
+  }>> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('get_cycle_count_suggestions', {
+      p_tenant_id: tenantId,
+      p_limit: limit ?? 20,
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch cycle count suggestions: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get ledger with running balance
+   * RPC: inventory.get_ledger_with_running_balance
+   */
+  async getLedgerWithBalance(catalogItemId: string, locationId: string, limit?: number): Promise<Array<{
+    movement_id: string;
+    occurred_at: string;
+    movement_type: string;
+    quantity_delta: number;
+    qty_before: number;
+    qty_after: number;
+    reason: string | null;
+    source_ref_type: string | null;
+    source_ref_id: string | null;
+    posting_status: string;
+    created_by_user_id: string | null;
+    last_event_id: string;
+  }>> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('get_ledger_with_running_balance', {
+      p_tenant_id: tenantId,
+      p_catalog_item_id: catalogItemId,
+      p_location_id: locationId,
+      p_limit: limit ?? 100,
+    });
+
+    if (error) {
+      throw new Error(`Failed to fetch ledger with running balance: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get inventory forecast
+   * View: inventory.v_inventory_forecast
+   */
+  async getInventoryForecast(): Promise<Array<{
+    catalog_item_id: string;
+    sku: string;
+    item_name: string;
+    total_on_hand: number;
+    total_reserved: number;
+    total_available: number;
+    qty_incoming_po: number;
+    future_demand: number;
+    net_position: number;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('v_inventory_forecast')
+      .select('*')
+      .order('net_position');
+
+    if (error) {
+      throw new Error(`Failed to fetch inventory forecast: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Get location utilization
+   * View: inventory.v_location_utilization
+   */
+  async getLocationUtilization(): Promise<Array<{
+    location_id: string;
+    location_name: string;
+    location_type: string | null;
+    max_capacity: number | null;
+    capacity_uom: string | null;
+    current_qty: number;
+    utilization_pct: number | null;
+    is_over_capacity: boolean;
+    active: boolean;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('v_location_utilization')
+      .select('*')
+      .order('utilization_pct', { ascending: false, nullsFirst: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch location utilization: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Check reservation availability
+   * RPC: inventory.check_reservation_availability
+   */
+  async checkReservationAvailability(itemId: string, locationId: string, qty: number): Promise<{
+    available: boolean;
+    qty_available: number;
+    qty_after_reserve: number;
+    conflicts: Array<{
+      reservation_id: string;
+      qty: number;
+      commitment_level: string;
+      allocation_type: string | null;
+      needed_by: string | null;
+      job_ref: any;
+    }>;
+  }> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('check_reservation_availability', {
+      p_tenant_id: tenantId,
+      p_catalog_item_id: itemId,
+      p_location_id: locationId,
+      p_qty: qty,
+    });
+
+    if (error) {
+      throw new Error(`Failed to check reservation availability: ${error.message}`);
+    }
+
+    return data as any;
+  },
+
+  /**
+   * Get negative inventory config
+   * Table: inventory.negative_inventory_config
+   */
+  async getNegativeInventoryConfig(): Promise<Array<{
+    id: string;
+    scope: string;
+    category_id: string | null;
+    catalog_item_id: string | null;
+    allow_negative: boolean;
+    last_event_id: string;
+    created_at: string;
+    updated_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('negative_inventory_config')
+      .select('id, scope, category_id, catalog_item_id, allow_negative, last_event_id, created_at, updated_at')
+      .order('scope');
+
+    if (error) {
+      throw new Error(`Failed to fetch negative inventory config: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
+   * Upsert negative inventory config
+   * Table: inventory.negative_inventory_config
+   */
+  async upsertNegativeInventoryConfig(payload: {
+    scope: 'global' | 'category' | 'item';
+    category_id?: string | null;
+    catalog_item_id?: string | null;
+    allow_negative: boolean;
+  }) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const insertPayload = {
+      scope: payload.scope,
+      category_id: payload.category_id ?? null,
+      catalog_item_id: payload.catalog_item_id ?? null,
+      allow_negative: payload.allow_negative,
+      last_event_id: crypto.randomUUID(),
+    };
+
+    const { data, error } = await supabase
+      .from('negative_inventory_config')
+      .upsert(insertPayload, {
+        onConflict: 'tenant_id,scope,COALESCE(category_id,\'00000000-0000-0000-0000-000000000000\'::uuid),COALESCE(catalog_item_id,\'00000000-0000-0000-0000-000000000000\'::uuid)',
+      })
+      .select('id, last_event_id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to save negative inventory config: ${error.message}`);
+    }
+
+    return data as { id: string; last_event_id: string };
+  },
+
+  /**
+   * Delete negative inventory config with OCC
+   */
+  async deleteNegativeInventoryConfig(id: string, lastEventId: string) {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('negative_inventory_config')
+      .delete()
+      .eq('id', id)
+      .eq('last_event_id', lastEventId)
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to delete negative inventory config: ${error.message}`);
+    }
+    if (!data) {
+      throw new Error('Config was updated by someone else. Please refresh and try again.');
+    }
+
+    return data as { id: string };
+  },
+
+  /**
+   * Auto-create draft PO from reorder alert
+   * RPC: inventory.auto_create_draft_po
+   */
+  async autoCreateDraftPO(alertId: string): Promise<string | null> {
+    const { tenantId } = getAuthContext();
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('auto_create_draft_po', {
+      p_alert_id: alertId,
+      p_tenant_id: tenantId,
+    });
+
+    if (error) {
+      throw new Error(`Failed to auto-create draft PO: ${error.message}`);
+    }
+
+    return data as string | null;
+  },
 };
