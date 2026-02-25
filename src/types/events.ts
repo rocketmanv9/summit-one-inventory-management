@@ -119,7 +119,10 @@ export type InventoryEventName =
   | 'adjustment.approved'
   | 'adjustment.rejected'
   // Wizard Events
-  | 'inventory.item.wizard_created';
+  | 'inventory.item.wizard_created'
+  // Guardrail Events
+  | 'inventory.guardrail_policy.updated'
+  | 'inventory.guardrail_exception.created';
 
 // Combined event name type
 export type AllEventNames = SupplyChainEventName | InventoryEventName;
@@ -361,6 +364,24 @@ export interface ItemWizardCreatedPayload {
   created_entities: Array<{ type: string; id?: string; name?: string }>;
 }
 
+export interface GuardrailPolicyUpdatedPayload {
+  policy_id: string;
+  over_receipt_policy: string;
+  over_receipt_threshold_pct: number;
+  uom_mismatch_policy: string;
+  require_override_reason: boolean;
+}
+
+export interface GuardrailExceptionCreatedPayload {
+  exception_id: string;
+  actor_user_id?: string;
+  context_type: string;
+  context_id: string;
+  rule: string;
+  override_reason: string;
+  metadata?: Record<string, any>;
+}
+
 // ============================================================================
 // Typed Event Interfaces
 // ============================================================================
@@ -385,6 +406,8 @@ export type AssetAssignedEvent = BaseEvent<AssetAssignedPayload>;
 export type ReservationCreatedEvent = BaseEvent<ReservationCreatedPayload>;
 export type CycleCountStartedEvent = BaseEvent<CycleCountStartedPayload>;
 export type AdjustmentCreatedEvent = BaseEvent<AdjustmentCreatedPayload>;
+export type GuardrailPolicyUpdatedEvent = BaseEvent<GuardrailPolicyUpdatedPayload>;
+export type GuardrailExceptionCreatedEvent = BaseEvent<GuardrailExceptionCreatedPayload>;
 
 // ============================================================================
 // Event Type Guards
@@ -452,4 +475,6 @@ export const INVENTORY_PATTERNS = {
   LOCATION_TYPE: 'inventory.location_type.%',
   ASSIGNMENT_TYPE: 'inventory.assignment_type.%',
   RESERVATION_TYPE: 'inventory.reservation_type.%',
+  GUARDRAIL_POLICY: 'inventory.guardrail_policy.%',
+  GUARDRAIL_EXCEPTION: 'inventory.guardrail_exception.%',
 } as const;
