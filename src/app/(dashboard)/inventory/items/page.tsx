@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -43,6 +44,7 @@ type TrackingMode = CatalogItemRow['tracking_mode'];
 type SkuSettings = Pick<SkuSettingsRow, 'separator' | 'next_sequence'>;
 
 export default function ItemsPage() {
+  const router = useRouter();
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -153,22 +155,23 @@ export default function ItemsPage() {
       header: 'Actions',
       className: 'text-right',
       render: (row: CatalogItem) => (
-        <div className="flex gap-2 justify-end">
+        <div className="flex gap-1 justify-end items-center">
           <button
             onClick={() => {
               setEditingItem(row);
               setShowCreateModal(true);
             }}
-            className="text-blue-600 hover:text-blue-800 px-3 py-1 text-sm font-medium"
+            className="text-blue-600 hover:text-blue-800 px-2 py-1 text-sm font-medium"
           >
             Edit
           </button>
           <button
             onClick={() => handleDelete(row.id, row.name, row.last_event_id ?? null)}
-            className="text-red-600 hover:text-red-800 px-3 py-1 text-sm font-medium"
+            className="text-red-600 hover:text-red-800 px-2 py-1 text-sm font-medium"
           >
             Delete
           </button>
+          <QuickActionsMenu itemId={row.id} itemName={row.name} />
         </div>
       ),
     },
@@ -222,9 +225,15 @@ export default function ItemsPage() {
               </button>
               <button
                 onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                Quick Add
+              </button>
+              <button
+                onClick={() => router.push('/inventory/items/new')}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
-                + Add Item
+                + New Item Wizard
               </button>
             </div>
           }
@@ -283,6 +292,59 @@ export default function ItemsPage() {
         />
       </div>
     </AppShell>
+  );
+}
+
+function QuickActionsMenu({ itemId, itemName }: { itemId: string; itemName: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const actions = [
+    { label: 'Adjust Stock', href: `/inventory/stock?item_id=${itemId}` },
+    { label: 'Create PO', href: `/inventory/purchasing/create?item_id=${itemId}` },
+    { label: 'Transfer', href: `/inventory/transfers?item_id=${itemId}` },
+    { label: 'Reserve', href: `/inventory/reservations?item_id=${itemId}` },
+    { label: 'Receive', href: `/inventory/receiving?item_id=${itemId}` },
+  ];
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-gray-400 hover:text-gray-600 px-2 py-1 text-lg font-bold leading-none"
+        title={`Quick actions for ${itemName}`}
+      >
+        &#x22EF;
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-md border bg-white shadow-lg py-1">
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              onClick={() => {
+                setOpen(false);
+                router.push(action.href);
+              }}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

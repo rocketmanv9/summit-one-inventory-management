@@ -2678,4 +2678,94 @@ export const InventoryRPC = {
 
     return data as string | null;
   },
+
+  /**
+   * Wizard: Create item with optional inline dependencies + initial stock
+   * RPC: inventory.rpc_wizard_create_item
+   *
+   * Atomic transaction: creates category/vendor/location/item/stock in one call.
+   * Idempotent via idempotency_key.
+   */
+  async wizardCreateItem(params: {
+    name: string;
+    description?: string | null;
+    unit_of_measure?: string;
+    tracking_mode?: string;
+    reorder_point?: number | null;
+    base_sku?: string | null;
+    sku?: string | null;
+    category_id?: string | null;
+    create_category?: {
+      name: string;
+      sku_prefix?: string | null;
+      sku_mode?: string;
+      parent_category_id?: string | null;
+    } | null;
+    vendor_id?: string | null;
+    create_vendor?: {
+      name: string;
+      code?: string | null;
+      contact_name?: string | null;
+      contact_email?: string | null;
+      contact_phone?: string | null;
+      payment_terms?: string;
+      lead_time_days?: number | null;
+    } | null;
+    vendor_sku?: string | null;
+    vendor_unit_cost?: number | null;
+    location_id?: string | null;
+    create_location?: {
+      name: string;
+      location_type_id: string;
+      address?: string | null;
+    } | null;
+    initial_qty?: number | null;
+    initial_cost?: number | null;
+    idempotency_key: string;
+  }): Promise<{
+    success: boolean;
+    idempotent_hit: boolean;
+    item_id: string;
+    item_sku: string;
+    category_id: string | null;
+    vendor_id: string | null;
+    location_id: string | null;
+    created_entities: Array<{
+      type: string;
+      id?: string;
+      name?: string;
+      sku?: string;
+      location_id?: string;
+      quantity?: number;
+      unit_cost?: number | null;
+    }>;
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_wizard_create_item', {
+      p_name: params.name,
+      p_description: params.description ?? null,
+      p_unit_of_measure: params.unit_of_measure ?? 'EA',
+      p_tracking_mode: params.tracking_mode ?? 'stock',
+      p_reorder_point: params.reorder_point ?? null,
+      p_base_sku: params.base_sku ?? null,
+      p_sku: params.sku ?? null,
+      p_category_id: params.category_id ?? null,
+      p_create_category: params.create_category ?? null,
+      p_vendor_id: params.vendor_id ?? null,
+      p_create_vendor: params.create_vendor ?? null,
+      p_vendor_sku: params.vendor_sku ?? null,
+      p_vendor_unit_cost: params.vendor_unit_cost ?? null,
+      p_location_id: params.location_id ?? null,
+      p_create_location: params.create_location ?? null,
+      p_initial_qty: params.initial_qty ?? null,
+      p_initial_cost: params.initial_cost ?? null,
+      p_idempotency_key: params.idempotency_key,
+    });
+
+    if (error) {
+      throw new Error(`Failed to create item via wizard: ${error.message}`);
+    }
+
+    return data as any;
+  },
 };

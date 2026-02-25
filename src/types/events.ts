@@ -117,7 +117,9 @@ export type InventoryEventName =
   // Adjustment Events
   | 'adjustment.created'
   | 'adjustment.approved'
-  | 'adjustment.rejected';
+  | 'adjustment.rejected'
+  // Wizard Events
+  | 'inventory.item.wizard_created';
 
 // Combined event name type
 export type AllEventNames = SupplyChainEventName | InventoryEventName;
@@ -347,6 +349,16 @@ export interface AdjustmentCreatedPayload {
   qty_change: number;
   reason: string;
   requires_approval: boolean;
+}
+
+export interface ItemWizardCreatedPayload {
+  item_id: string;
+  item_sku: string;
+  category_id?: string;
+  vendor_id?: string;
+  location_id?: string;
+  initial_qty?: number;
+  created_entities: Array<{ type: string; id?: string; name?: string }>;
 }
 
 // ============================================================================
