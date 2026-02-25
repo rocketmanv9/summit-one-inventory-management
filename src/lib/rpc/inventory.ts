@@ -2768,4 +2768,116 @@ export const InventoryRPC = {
 
     return data as any;
   },
+
+  // ─── Global Search & Stock Snapshots ─────────────────────────────────
+
+  /**
+   * Global search across items, assets, locations, vendors, POs, reservations.
+   * RPC: inventory.rpc_global_search
+   */
+  async globalSearch(query: string, limit: number = 5): Promise<{
+    items: Array<{ id: string; name: string; sku: string; url_hint: string }>;
+    assets: Array<{ id: string; tag: string; serial_number: string | null; status: string; url_hint: string }>;
+    locations: Array<{ id: string; name: string; address: string | null; url_hint: string }>;
+    vendors: Array<{ id: string; name: string; code: string | null; url_hint: string }>;
+    purchase_orders: Array<{ id: string; po_number: string; vendor_name: string | null; status: string; url_hint: string }>;
+    reservations: Array<{ id: string; ref: string | null; status: string; qty: number; url_hint: string }>;
+  }> {
+    if (!query || query.trim().length === 0) {
+      return { items: [], assets: [], locations: [], vendors: [], purchase_orders: [], reservations: [] };
+    }
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_global_search', {
+      p_query: query.trim(),
+      p_limit: limit,
+    });
+
+    if (error) {
+      throw new Error(`Global search failed: ${error.message}`);
+    }
+
+    return data as any;
+  },
+
+  /**
+   * Item stock snapshot: on_hand, reserved, available, inbound, locations breakdown.
+   * RPC: inventory.rpc_item_stock_snapshot
+   */
+  async getItemStockSnapshot(catalogItemId: string): Promise<{
+    item: {
+      id: string;
+      name: string;
+      sku: string;
+      unit_of_measure: string | null;
+      tracking_mode: string;
+      reorder_point: number | null;
+      category_name: string | null;
+      active: boolean;
+    };
+    on_hand: number;
+    reserved: number;
+    available: number;
+    inbound: number;
+    locations: Array<{
+      location_id: string;
+      location_name: string;
+      on_hand: number;
+      reserved: number;
+      available: number;
+    }>;
+    last_movement_at: string | null;
+    last_count_at: string | null;
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_item_stock_snapshot', {
+      p_catalog_item_id: catalogItemId,
+    });
+
+    if (error) {
+      throw new Error(`Item stock snapshot failed: ${error.message}`);
+    }
+
+    return data as any;
+  },
+
+  /**
+   * Location inventory snapshot: totals + items at location.
+   * RPC: inventory.rpc_location_inventory_snapshot
+   */
+  async getLocationInventorySnapshot(locationId: string): Promise<{
+    location: {
+      id: string;
+      name: string;
+      address: string | null;
+      active: boolean;
+      location_type: string | null;
+      max_capacity: number | null;
+      capacity_uom: string | null;
+    };
+    totals: {
+      on_hand: number;
+      reserved: number;
+      available: number;
+    };
+    items: Array<{
+      item_id: string;
+      item_name: string;
+      sku: string | null;
+      unit_of_measure: string | null;
+      on_hand: number;
+      reserved: number;
+      available: number;
+    }>;
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_location_inventory_snapshot', {
+      p_location_id: locationId,
+    });
+
+    if (error) {
+      throw new Error(`Location inventory snapshot failed: ${error.message}`);
+    }
+
+    return data as any;
+  },
 };
