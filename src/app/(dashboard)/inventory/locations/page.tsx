@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -35,6 +36,7 @@ function normalizeLocationTypes(data: LocationTypeRow[] | null | undefined): Loc
 }
 
 export default function LocationsPage() {
+  const router = useRouter();
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -100,7 +102,12 @@ export default function LocationsPage() {
 
         return (
           <div>
-            <div className="font-medium">{row.name}</div>
+            <button
+              onClick={() => router.push(`/inventory/locations/${row.id}`)}
+              className="font-medium text-primary hover:underline text-left"
+            >
+              {row.name}
+            </button>
             {parent && (
               <div className="text-xs text-gray-500 mt-0.5">
                 Under: {parent.name}

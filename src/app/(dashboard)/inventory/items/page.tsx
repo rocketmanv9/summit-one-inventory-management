@@ -102,7 +102,12 @@ export default function ItemsPage() {
       sortable: true,
       render: (row: CatalogItem) => (
         <div>
-          <div className="font-medium">{row.name}</div>
+          <button
+            onClick={() => router.push(`/inventory/items/${row.id}`)}
+            className="font-medium text-primary hover:underline text-left"
+          >
+            {row.name}
+          </button>
           {row.description && (
             <div className="text-xs text-muted-foreground truncate max-w-xs">
               {row.description}
