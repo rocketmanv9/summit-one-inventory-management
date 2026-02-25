@@ -120,14 +120,30 @@ export interface TenantSettings {
 export interface PostReceiptToInventoryParams {
   receipt_id: string;
   actor_user_id?: string;
+  override_reason?: string;
+}
+
+export interface GuardrailError {
+  code: 'OVER_RECEIPT_BLOCKED' | 'OVERRIDE_REASON_REQUIRED' | string;
+  message: string;
+  details?: Record<string, any>;
+  action?: string;
 }
 
 export interface PostReceiptToInventoryResult {
   success: boolean;
-  receipt_id: string;
-  lines_posted: number;
-  events_created: number;
-  stock_updated: number;
+  error?: GuardrailError;
+  receipt_id?: string;
+  receipt_number?: string;
+  posted_lines?: number;
+  rejected_lines?: number;
+  damaged_lines?: number;
+  skipped_lines?: number;
+  override_logged?: boolean;
+  message?: string;
+  lines_posted?: number;
+  events_created?: number;
+  stock_updated?: number;
 }
 
 export const SupplyChainRPC = {
@@ -213,23 +229,25 @@ export const SupplyChainRPC = {
   },
 
   /**
-   * Post receipt to inventory (atomic bridge)
-   * RPC: supply_chain.rpc_post_receipt_to_inventory
+   * Post receipt to inventory (atomic bridge, v2 with guardrails)
+   * RPC: supply_chain.rpc_post_receipt_to_inventory_v2
+   * Validates over-receipt against PO open qty. Returns structured error when blocked.
    */
   async postReceiptToInventory(
     params: PostReceiptToInventoryParams
   ): Promise<PostReceiptToInventoryResult> {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const { data, error } = await supabase.rpc('rpc_post_receipt_to_inventory', {
+    const { data, error } = await supabase.rpc('rpc_post_receipt_to_inventory_v2', {
       p_receipt_id: params.receipt_id,
-      p_actor_user_id: params.actor_user_id,
+      p_actor_user_id: params.actor_user_id ?? null,
+      p_override_reason: params.override_reason ?? null,
     });
 
     if (error) {
       throw new Error(`Failed to post receipt: ${error.message}`);
     }
 
-    return data;
+    return data as any;
   },
 
   /**

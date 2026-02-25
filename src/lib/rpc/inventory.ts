@@ -228,14 +228,25 @@ export interface AdjustInventoryParams {
   new_qty: number;
   reason: 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other';
   notes: string;
+  override_reason?: string;
+}
+
+export interface GuardrailError {
+  code: 'NEGATIVE_INVENTORY_BLOCKED' | 'OVER_RECEIPT_BLOCKED' | 'OVERRIDE_REASON_REQUIRED' | 'UOM_MISMATCH_BLOCKED';
+  message: string;
+  details?: Record<string, any>;
+  action?: string;
 }
 
 export interface AdjustInventoryResult {
   success: boolean;
-  old_qty: number;
-  new_qty: number;
-  delta: number;
-  reason: string;
+  error?: GuardrailError;
+  current_qty?: number;
+  old_qty?: number;
+  new_qty?: number;
+  delta?: number;
+  reason?: string;
+  override_logged?: boolean;
 }
 
 export const InventoryRPC = {
@@ -277,6 +288,7 @@ export const InventoryRPC = {
       p_new_qty: params.new_qty,
       p_reason: params.reason,
       p_notes: params.notes,
+      p_override_reason: params.override_reason ?? null,
     });
 
     if (error) {
@@ -1541,8 +1553,15 @@ export const InventoryRPC = {
 
   /**
    * Receive transfer fully via RPC
+   * Returns jsonb with guardrail support (success/error structure)
    */
-  async receiveTransferFull(transferId: string) {
+  async receiveTransferFull(transferId: string, overrideReason?: string): Promise<{
+    success: boolean;
+    error?: GuardrailError;
+    transfer_id?: string;
+    transfer_number?: string;
+    override_logged?: boolean;
+  }> {
     const { tenantId, userId } = getAuthContext();
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase.rpc('rpc_inv_transfer_execute', {
@@ -1550,13 +1569,14 @@ export const InventoryRPC = {
       p_transfer_id: transferId,
       p_received_by_user_id: requireUserId(userId),
       p_last_event_id: crypto.randomUUID(),
+      p_override_reason: overrideReason ?? null,
     });
 
     if (error) {
       throw new Error(`Failed to receive transfer: ${error.message}`);
     }
 
-    return data as boolean;
+    return data as any;
   },
 
   /**
@@ -2879,5 +2899,107 @@ export const InventoryRPC = {
     }
 
     return data as any;
+  },
+
+  // =====================================================
+  // Guardrail Policies & Exceptions
+  // =====================================================
+
+  /**
+   * Get guardrail policies for current tenant
+   */
+  async getGuardrailPolicies(): Promise<{
+    id?: string;
+    over_receipt_policy: string;
+    over_receipt_threshold_pct: number;
+    uom_mismatch_policy: string;
+    require_override_reason: boolean;
+  } | null> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('guardrail_policies')
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch guardrail policies: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Upsert guardrail policies for current tenant
+   */
+  async upsertGuardrailPolicies(params: {
+    over_receipt_policy: string;
+    over_receipt_threshold_pct: number;
+    uom_mismatch_policy: string;
+    require_override_reason: boolean;
+  }): Promise<any> {
+    const tenantId = getTenantIdFromToken(getStoredAccessToken() || '');
+    if (!tenantId) throw new Error('No tenant ID');
+
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('guardrail_policies')
+      .upsert({
+        tenant_id: tenantId,
+        over_receipt_policy: params.over_receipt_policy,
+        over_receipt_threshold_pct: params.over_receipt_threshold_pct,
+        uom_mismatch_policy: params.uom_mismatch_policy,
+        require_override_reason: params.require_override_reason,
+        last_event_id: crypto.randomUUID(),
+      }, { onConflict: 'tenant_id' })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to save guardrail policies: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Get guardrail exceptions (audit trail) for current tenant
+   */
+  async getGuardrailExceptions(filters?: {
+    context_type?: string;
+    rule?: string;
+    limit?: number;
+  }): Promise<Array<{
+    id: string;
+    actor_user_id: string | null;
+    context_type: string;
+    context_id: string;
+    rule: string;
+    override_reason: string;
+    metadata: Record<string, any>;
+    created_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('guardrail_exceptions')
+      .select('id, actor_user_id, context_type, context_id, rule, override_reason, metadata, created_at')
+      .order('created_at', { ascending: false });
+
+    if (filters?.context_type) {
+      query = query.eq('context_type', filters.context_type);
+    }
+    if (filters?.rule) {
+      query = query.eq('rule', filters.rule);
+    }
+    if (filters?.limit) {
+      query = query.limit(filters.limit);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Failed to fetch guardrail exceptions: ${error.message}`);
+    }
+
+    return (data || []) as any;
   },
 };

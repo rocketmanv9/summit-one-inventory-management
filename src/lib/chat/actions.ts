@@ -469,9 +469,17 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             reason: params.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
             notes: params.notes || `Adjusted via chat assistant`,
           });
+          if (!result.success && result.error) {
+            return {
+              success: false,
+              message: result.error.message,
+              data: result.error,
+            };
+          }
+          const delta = result.delta ?? 0;
           return {
             success: true,
-            message: `Stock adjusted! Old: ${result.old_qty} -> New: ${result.new_qty} (delta: ${result.delta > 0 ? '+' : ''}${result.delta})`,
+            message: `Stock adjusted! Old: ${result.current_qty} -> New: ${result.new_qty} (delta: ${delta > 0 ? '+' : ''}${delta})`,
             data: result,
           };
         },
