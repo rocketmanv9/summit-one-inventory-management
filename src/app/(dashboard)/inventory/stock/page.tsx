@@ -41,9 +41,16 @@ export default function StockBalancesPage() {
     new_qty: '',
     reason: 'count_variance',
     notes: '',
+    override_reason: '',
   });
   const [adjustError, setAdjustError] = useState('');
   const [adjustSaving, setAdjustSaving] = useState(false);
+  const [guardrailBlock, setGuardrailBlock] = useState<{
+    code: string;
+    message: string;
+    details?: Record<string, any>;
+    action?: string;
+  } | null>(null);
   const [adjustItems, setAdjustItems] = useState<Array<{ id: string; name: string; sku: string }>>([]);
   const [adjustLocations, setAdjustLocations] = useState<Array<{ id: string; name: string }>>([]);
 
@@ -176,6 +183,7 @@ export default function StockBalancesPage() {
         new_qty: prefill.on_hand_qty?.toString() ?? '',
         reason: 'count_variance',
         notes: '',
+        override_reason: '',
       });
     } else {
       setAdjustForm({
@@ -184,13 +192,16 @@ export default function StockBalancesPage() {
         new_qty: '',
         reason: 'count_variance',
         notes: '',
+        override_reason: '',
       });
     }
+    setGuardrailBlock(null);
     setShowAdjustModal(true);
   };
 
   const submitAdjustment = async () => {
     setAdjustError('');
+    setGuardrailBlock(null);
     if (!adjustForm.catalog_item_id || !adjustForm.location_id) {
       setAdjustError('Select an item and location.');
       return;
@@ -203,14 +214,32 @@ export default function StockBalancesPage() {
 
     setAdjustSaving(true);
     try {
-      await InventoryRPC.adjustInventory({
+      const result = await InventoryRPC.adjustInventory({
         catalog_item_id: adjustForm.catalog_item_id,
         location_id: adjustForm.location_id,
         new_qty: qty,
         reason: adjustForm.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
         notes: adjustForm.notes,
+        override_reason: adjustForm.override_reason || undefined,
       });
+
+      if (!result.success && result.error) {
+        if (result.error.code === 'OVERRIDE_REASON_REQUIRED') {
+          // Show override reason form
+          setGuardrailBlock(result.error);
+        } else {
+          // Hard block
+          setGuardrailBlock(result.error);
+        }
+        return;
+      }
+
+      if (result.override_logged) {
+        alert('Adjustment saved. Override has been logged for audit.');
+      }
+
       setShowAdjustModal(false);
+      setGuardrailBlock(null);
       await fetchStock();
       setSelectedItem(null);
     } catch (error: any) {
@@ -477,8 +506,9 @@ export default function StockBalancesPage() {
           locations={adjustLocations}
           saving={adjustSaving}
           error={adjustError}
-          onClose={() => setShowAdjustModal(false)}
-          onChange={(next) => setAdjustForm((prev) => ({ ...prev, ...next }))}
+          guardrailBlock={guardrailBlock}
+          onClose={() => { setShowAdjustModal(false); setGuardrailBlock(null); }}
+          onChange={(next) => { setAdjustForm((prev) => ({ ...prev, ...next })); setGuardrailBlock(null); }}
           onSubmit={submitAdjustment}
         />
       )}
@@ -492,6 +522,7 @@ function AdjustStockModal({
   locations,
   saving,
   error,
+  guardrailBlock,
   onClose,
   onChange,
   onSubmit,
@@ -502,25 +533,56 @@ function AdjustStockModal({
     new_qty: string;
     reason: string;
     notes: string;
+    override_reason: string;
   };
   items: Array<{ id: string; name: string; sku: string }>;
   locations: Array<{ id: string; name: string }>;
   saving: boolean;
   error: string;
+  guardrailBlock: { code: string; message: string; details?: Record<string, any>; action?: string } | null;
   onClose: () => void;
   onChange: (next: Partial<typeof form>) => void;
   onSubmit: () => void;
 }) {
+  const isOverrideRequired = guardrailBlock?.code === 'OVERRIDE_REASON_REQUIRED';
+  const isHardBlock = !!guardrailBlock && !isOverrideRequired;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Add Starting Stock</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">x</button>
         </div>
 
         {error && (
           <div className="mb-3 text-sm text-red-600">{error}</div>
+        )}
+
+        {guardrailBlock && (
+          <div className={`mb-3 p-3 rounded-md border ${isHardBlock ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`text-sm font-medium ${isHardBlock ? 'text-red-800' : 'text-amber-800'}`}>
+              {guardrailBlock.message}
+            </div>
+            {guardrailBlock.details && (
+              <div className="mt-1 text-xs text-gray-600 space-y-0.5">
+                {guardrailBlock.details.current_qty !== undefined && (
+                  <div>Current on-hand: <span className="font-mono">{guardrailBlock.details.current_qty}</span></div>
+                )}
+                {guardrailBlock.details.attempted_qty !== undefined && (
+                  <div>Attempted: <span className="font-mono">{guardrailBlock.details.attempted_qty}</span></div>
+                )}
+                {guardrailBlock.details.delta !== undefined && (
+                  <div>Change: <span className="font-mono">{guardrailBlock.details.delta > 0 ? '+' : ''}{guardrailBlock.details.delta}</span></div>
+                )}
+              </div>
+            )}
+            {guardrailBlock.action && (
+              <div className={`mt-2 text-xs ${isHardBlock ? 'text-red-600' : 'text-amber-700'}`}>
+                {guardrailBlock.action}
+              </div>
+            )}
+          </div>
         )}
 
         <div className="space-y-3">
@@ -530,6 +592,7 @@ function AdjustStockModal({
               value={form.catalog_item_id}
               onChange={(e) => onChange({ catalog_item_id: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
+              disabled={isHardBlock}
             >
               <option value="">Select item...</option>
               {items.map((item) => (
@@ -546,6 +609,7 @@ function AdjustStockModal({
               value={form.location_id}
               onChange={(e) => onChange({ location_id: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
+              disabled={isHardBlock}
             >
               <option value="">Select location...</option>
               {locations.map((loc) => (
@@ -560,10 +624,10 @@ function AdjustStockModal({
             <label className="block text-sm font-medium mb-1">On Hand Quantity</label>
             <input
               type="number"
-              min="0"
               value={form.new_qty}
               onChange={(e) => onChange({ new_qty: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
+              disabled={isHardBlock}
             />
           </div>
 
@@ -573,6 +637,7 @@ function AdjustStockModal({
               value={form.reason}
               onChange={(e) => onChange({ reason: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
+              disabled={isHardBlock}
             >
               <option value="count_variance">Initial count</option>
               <option value="damage">Damage</option>
@@ -589,8 +654,25 @@ function AdjustStockModal({
               onChange={(e) => onChange({ notes: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
               rows={3}
+              disabled={isHardBlock}
             />
           </div>
+
+          {isOverrideRequired && (
+            <div>
+              <label className="block text-sm font-medium mb-1 text-amber-800">
+                Override Reason (required) *
+              </label>
+              <textarea
+                value={form.override_reason}
+                onChange={(e) => onChange({ override_reason: e.target.value })}
+                className="w-full px-3 py-2 border border-amber-300 rounded-md bg-amber-50 focus:ring-amber-500 focus:border-amber-500"
+                rows={2}
+                placeholder="Explain why negative inventory is acceptable for this adjustment..."
+                autoFocus
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex gap-3 mt-6">
@@ -600,13 +682,19 @@ function AdjustStockModal({
           >
             Cancel
           </button>
-          <button
-            onClick={onSubmit}
-            disabled={saving}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
+          {!isHardBlock && (
+            <button
+              onClick={onSubmit}
+              disabled={saving || (isOverrideRequired && !form.override_reason.trim())}
+              className={`flex-1 px-4 py-2 text-white rounded-md disabled:opacity-50 ${
+                isOverrideRequired
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              {saving ? 'Saving...' : isOverrideRequired ? 'Override & Save' : 'Save'}
+            </button>
+          )}
         </div>
       </div>
     </div>

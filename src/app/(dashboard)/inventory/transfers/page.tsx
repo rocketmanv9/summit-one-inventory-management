@@ -99,11 +99,31 @@ export default function TransfersPage() {
     }
   };
 
-  const handleReceive = async (transferId: string) => {
-    if (!confirm('Confirm full receipt of this transfer?')) return;
+  const handleReceive = async (transferId: string, overrideReason?: string) => {
+    if (!overrideReason && !confirm('Confirm full receipt of this transfer?')) return;
 
     try {
-      await InventoryRPC.receiveTransferFull(transferId);
+      const result = await InventoryRPC.receiveTransferFull(transferId, overrideReason);
+
+      if (!result.success && result.error) {
+        if (result.error.code === 'OVERRIDE_REASON_REQUIRED') {
+          const reason = prompt(
+            `${result.error.message}\n\nEnter an override reason to proceed:`
+          );
+          if (reason && reason.trim()) {
+            return handleReceive(transferId, reason.trim());
+          }
+          return;
+        }
+        // Hard block
+        alert(`Blocked: ${result.error.message}${result.error.action ? '\n\n' + result.error.action : ''}`);
+        return;
+      }
+
+      if (result.override_logged) {
+        alert('Transfer received. Override has been logged for audit.');
+      }
+
       fetchTransfers();
     } catch (error: any) {
       console.error('Error receiving transfer:', error);
