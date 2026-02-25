@@ -38,13 +38,14 @@ export async function POST(request: NextRequest) {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       web_search_options: {
-        search_context_size: 'low',
+        search_context_size: 'medium',
       },
       messages: [
         {
           role: 'system',
           content: [
             'You are a company research assistant.',
+            'The company name may contain typos or misspellings. Correct them before searching. For example "oldea casstle" means "Old Castle", "home depo" means "Home Depot". Always search for the most likely correct company name.',
             'Search the web for the given company and return a JSON object with whatever contact details you can find.',
             'Return ONLY a valid JSON object with these fields (omit any you cannot find):',
             '  name           — official company name',

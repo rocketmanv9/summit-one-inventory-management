@@ -126,6 +126,18 @@ export default function LocationsPage() {
       ),
     },
     {
+      key: 'capacity',
+      header: 'Capacity',
+      render: (row: Location) => {
+        if (!(row as any).max_capacity) return <span className="text-muted-foreground">-</span>;
+        return (
+          <span className="text-sm font-mono">
+            {(row as any).max_capacity} {(row as any).capacity_uom || ''}
+          </span>
+        );
+      },
+    },
+    {
       key: 'status',
       header: 'Status',
       render: (row: Location) => (
@@ -258,6 +270,8 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
     address: location?.address || '',
     parent_location_id: location?.parent_location_id || '',
     active: location?.active !== undefined ? location.active : true,
+    max_capacity: (location as any)?.max_capacity?.toString() || '',
+    capacity_uom: (location as any)?.capacity_uom || '',
   });
   const [locationTypes, setLocationTypes] = useState<LocationType[]>([]);
   const [availableParents, setAvailableParents] = useState<Location[]>([]);
@@ -311,6 +325,8 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         ...form,
         location_type: locationTypeName,
         parent_location_id: form.parent_location_id || null,
+        max_capacity: form.max_capacity ? parseFloat(form.max_capacity) : null,
+        capacity_uom: form.capacity_uom || null,
       };
 
       if (isEditing && location) {
@@ -406,6 +422,35 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               rows={2}
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Capacity</label>
+              <input
+                type="number"
+                step="any"
+                value={form.max_capacity}
+                onChange={(e) => setForm({ ...form, max_capacity: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Leave empty for unlimited"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Capacity Unit</label>
+              <select
+                value={form.capacity_uom}
+                onChange={(e) => setForm({ ...form, capacity_uom: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">None</option>
+                <option value="unit">Units</option>
+                <option value="pallet">Pallets</option>
+                <option value="sqft">Sq. Feet</option>
+                <option value="ton">Tons</option>
+                <option value="cy">Cubic Yards</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex gap-3 pt-4">

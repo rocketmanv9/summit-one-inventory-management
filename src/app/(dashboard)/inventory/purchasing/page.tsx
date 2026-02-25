@@ -8,6 +8,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 
 interface PurchaseOrder {
@@ -41,6 +42,8 @@ export default function PurchasingPage() {
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
   const [locations, setLocations] = useState<Map<string, string>>(new Map());
   const [catalogItems, setCatalogItems] = useState<Map<string, any>>(new Map());
+  const [showVendorModal, setShowVendorModal] = useState(false);
+  const [pendingVendorId, setPendingVendorId] = useState<string | null>(null);
 
   useEffect(() => {
     loadReferenceData();
@@ -466,6 +469,8 @@ export default function PurchasingPage() {
               setShowCreateModal(false);
               fetchOrders();
             }}
+            onAddVendor={() => setShowVendorModal(true)}
+            newVendorId={pendingVendorId}
           />
         )}
 
@@ -481,8 +486,30 @@ export default function PurchasingPage() {
               setSelectedOrder(null);
               fetchOrders();
             }}
+            onAddVendor={() => setShowVendorModal(true)}
+            newVendorId={pendingVendorId}
           />
         )}
+
+        <AddVendorModal
+          open={showVendorModal}
+          onClose={() => setShowVendorModal(false)}
+          onSuccess={async (_vendorName: string) => {
+            setShowVendorModal(false);
+            // Fetch latest vendors to get the new one's ID for auto-selection
+            try {
+              const vendors = await SupplyChainRPC.getVendors();
+              const newest = vendors.sort((a, b) =>
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0];
+              if (newest) {
+                setPendingVendorId(newest.id);
+              }
+            } catch {
+              // Vendor was created but auto-select failed — modal will refresh its list
+            }
+          }}
+        />
       </div>
     </AppShell>
   );
@@ -774,30 +801,47 @@ function PODetailPanel({
   );
 }
 
-function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClose: () => void; onCreated: () => void; onAddVendor: () => void; newVendorId?: string | null }) {
+  type POLine = { catalog_item_id: string; item_description: string; unit_of_measure: string; qty: string; unit_cost: string };
+  const emptyLine: POLine = { catalog_item_id: '', item_description: '', unit_of_measure: 'EA', qty: '', unit_cost: '' };
   const [form, setForm] = useState({
     vendor_id: '',
     ship_to_location_id: '',
     expected_delivery_date: '',
     notes: '',
-    lines: [{ catalog_item_id: '', qty: '', unit_cost: '' }],
+    lines: [{ ...emptyLine }],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null; created_at: string }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } | null }>>([]);
+  const [useFreetextLines, setUseFreetextLines] = useState(false);
 
   useEffect(() => {
     fetchVendors();
     fetchLocations();
   }, []);
 
+  // When a new vendor is created inline, refresh and auto-select it
+  useEffect(() => {
+    if (!newVendorId) return;
+    fetchVendors().then(() => {
+      setForm((prev) => ({
+        ...prev,
+        vendor_id: newVendorId,
+        lines: [{ ...emptyLine }],
+      }));
+    });
+  }, [newVendorId]);
+
   useEffect(() => {
     if (form.vendor_id) {
       fetchVendorItems(form.vendor_id);
+      setUseFreetextLines(false);
     } else {
       setVendorItems([]);
+      setUseFreetextLines(false);
     }
   }, [form.vendor_id]);
 
@@ -832,7 +876,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   const addLine = () => {
     setForm({
       ...form,
-      lines: [...form.lines, { catalog_item_id: '', qty: '', unit_cost: '' }],
+      lines: [...form.lines, { ...emptyLine }],
     });
   };
 
@@ -855,13 +899,34 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     setError('');
 
     try {
-      const validLines = form.lines
-        .filter(l => l.catalog_item_id && l.qty)
-        .map(l => ({
-          catalog_item_id: l.catalog_item_id,
-          qty_ordered: parseInt(l.qty),
-          unit_cost: parseFloat(l.unit_cost) || 0,
-        }));
+      let validLines: Array<{
+        catalog_item_id?: string;
+        item_description?: string;
+        unit_of_measure?: string;
+        qty_ordered: number;
+        unit_cost: number;
+      }>;
+
+      if (useFreetextLines) {
+        // Free-text line items (non-catalog)
+        validLines = form.lines
+          .filter(l => l.item_description.trim() && l.qty)
+          .map(l => ({
+            item_description: l.item_description.trim(),
+            unit_of_measure: l.unit_of_measure || 'EA',
+            qty_ordered: parseInt(l.qty),
+            unit_cost: parseFloat(l.unit_cost) || 0,
+          }));
+      } else {
+        // Catalog-based line items
+        validLines = form.lines
+          .filter(l => l.catalog_item_id && l.qty)
+          .map(l => ({
+            catalog_item_id: l.catalog_item_id,
+            qty_ordered: parseInt(l.qty),
+            unit_cost: parseFloat(l.unit_cost) || 0,
+          }));
+      }
 
       if (validLines.length === 0) {
         throw new Error('Please add at least one line item');
@@ -900,14 +965,27 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Vendor *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium">Vendor *</label>
+                <button
+                  type="button"
+                  onClick={onAddVendor}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  + Add New
+                </button>
+              </div>
               <select
                 value={form.vendor_id}
                 onChange={(e) => {
-                  setForm({ 
-                    ...form, 
+                  if (e.target.value === '__create_new__') {
+                    onAddVendor();
+                    return;
+                  }
+                  setForm({
+                    ...form,
                     vendor_id: e.target.value,
-                    lines: [{ catalog_item_id: '', qty: '', unit_cost: '' }] // Reset lines when vendor changes
+                    lines: [{ ...emptyLine }],
                   });
                 }}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
@@ -919,6 +997,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
                     {vendor.code ? `${vendor.code} - ${vendor.name}` : vendor.name}
                   </option>
                 ))}
+                <option value="__create_new__">+ Add New Vendor...</option>
               </select>
             </div>
             <div>
@@ -952,9 +1031,26 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="font-medium">Line Items</h4>
-              <button type="button" onClick={addLine} className="text-sm text-primary hover:underline">
-                + Add Line
-              </button>
+              <div className="flex items-center gap-3">
+                {form.vendor_id && vendorItems.length === 0 && !useFreetextLines && (
+                  <span className="text-xs text-muted-foreground">No mapped items</span>
+                )}
+                {form.vendor_id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseFreetextLines(!useFreetextLines);
+                      setForm({ ...form, lines: [{ ...emptyLine }] });
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    {useFreetextLines ? 'Use catalog items' : 'Use free-text items'}
+                  </button>
+                )}
+                <button type="button" onClick={addLine} className="text-sm text-primary hover:underline">
+                  + Add Line
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {!form.vendor_id && (
@@ -962,32 +1058,63 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
                   Select a vendor first to see available items
                 </p>
               )}
+
+              {form.vendor_id && !useFreetextLines && vendorItems.length === 0 && (
+                <p className="text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded p-2">
+                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or map items on the Vendor Items page.
+                </p>
+              )}
+
               {form.lines.map((line, index) => (
                 <div key={index} className="flex gap-2 items-center">
-                  <select
-                    value={line.catalog_item_id}
-                    onChange={(e) => {
-                      const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
+                  {useFreetextLines ? (
+                    <>
+                      <input
+                        type="text"
+                        value={line.item_description}
+                        onChange={(e) => updateLine(index, 'item_description', e.target.value)}
+                        className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Item description..."
+                      />
+                      <select
+                        value={line.unit_of_measure}
+                        onChange={(e) => updateLine(index, 'unit_of_measure', e.target.value)}
+                        className="w-20 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                      >
+                        <option value="EA">EA</option>
+                        <option value="TON">TON</option>
+                        <option value="CY">CY</option>
+                        <option value="LB">LB</option>
+                        <option value="GAL">GAL</option>
+                        <option value="FT">FT</option>
+                        <option value="BOX">BOX</option>
+                      </select>
+                    </>
+                  ) : (
+                    <select
+                      value={line.catalog_item_id}
+                      onChange={(e) => {
+                        const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
 
-                      // Update both catalog_item_id and unit_cost in a single state update
-                      const newLines = [...form.lines];
-                      newLines[index] = {
-                        ...newLines[index],
-                        catalog_item_id: e.target.value,
-                        unit_cost: selectedItem?.unit_cost ? selectedItem.unit_cost.toString() : newLines[index].unit_cost,
-                      };
-                      setForm({ ...form, lines: newLines });
-                    }}
-                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    disabled={!form.vendor_id}
-                  >
-                    <option value="">Select an item...</option>
-                    {vendorItems.map(vi => (
-                      <option key={vi.id} value={vi.catalog_items?.id}>
-                        {vi.vendor_sku} - {vi.catalog_items?.name}
-                      </option>
-                    ))}
-                  </select>
+                        const newLines = [...form.lines];
+                        newLines[index] = {
+                          ...newLines[index],
+                          catalog_item_id: e.target.value,
+                          unit_cost: selectedItem?.unit_cost ? selectedItem.unit_cost.toString() : newLines[index].unit_cost,
+                        };
+                        setForm({ ...form, lines: newLines });
+                      }}
+                      className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                      disabled={!form.vendor_id}
+                    >
+                      <option value="">Select an item...</option>
+                      {vendorItems.map(vi => (
+                        <option key={vi.id} value={vi.catalog_items?.id}>
+                          {vi.vendor_sku} - {vi.catalog_items?.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <input
                     type="number"
                     value={line.qty}
@@ -1043,7 +1170,7 @@ function CreatePOModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   );
 }
 
-function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: () => void; onUpdated: () => void }) {
+function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po: PurchaseOrder; onClose: () => void; onUpdated: () => void; onAddVendor: () => void; newVendorId?: string | null }) {
   const [form, setForm] = useState({
     vendor_id: po.vendor_id || '',
     ship_to_location_id: po.delivery_location_id || '',
@@ -1069,6 +1196,18 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
       fetchVendorItems(form.vendor_id);
     }
   }, []);
+
+  // Auto-select newly created vendor
+  useEffect(() => {
+    if (!newVendorId) return;
+    fetchVendors().then(() => {
+      setForm((prev) => ({
+        ...prev,
+        vendor_id: newVendorId,
+        lines: [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+      }));
+    });
+  }, [newVendorId]);
 
   useEffect(() => {
     if (form.vendor_id && form.vendor_id !== po.vendor_id) {
@@ -1174,12 +1313,25 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Vendor *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium">Vendor *</label>
+                <button
+                  type="button"
+                  onClick={onAddVendor}
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  + Add New
+                </button>
+              </div>
               <select
                 value={form.vendor_id}
                 onChange={(e) => {
-                  setForm({ 
-                    ...form, 
+                  if (e.target.value === '__create_new__') {
+                    onAddVendor();
+                    return;
+                  }
+                  setForm({
+                    ...form,
                     vendor_id: e.target.value,
                     lines: [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }]
                   });
@@ -1193,6 +1345,7 @@ function EditPOModal({ po, onClose, onUpdated }: { po: PurchaseOrder; onClose: (
                     {vendor.code ? `${vendor.code} - ${vendor.name}` : vendor.name}
                   </option>
                 ))}
+                <option value="__create_new__">+ Add New Vendor...</option>
               </select>
             </div>
             <div>

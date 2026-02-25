@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { CategoryModal } from '@/components/modals/CategoryModal';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
@@ -47,6 +48,8 @@ export default function ItemsPage() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingItem, setEditingItem] = useState<CatalogItem | undefined>();
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [pendingCategoryId, setPendingCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchItems();
@@ -254,20 +257,46 @@ export default function ItemsPage() {
               setEditingItem(undefined);
               fetchItems();
             }}
+            onAddCategory={() => setShowCategoryModal(true)}
+            newCategoryId={pendingCategoryId}
           />
         )}
+
+        <CategoryModal
+          open={showCategoryModal}
+          onClose={() => setShowCategoryModal(false)}
+          onSuccess={async (_name: string) => {
+            setShowCategoryModal(false);
+            // Fetch latest categories to get the new one's ID
+            try {
+              const cats = await InventoryRPC.getItemCategories();
+              const newest = cats.sort((a, b) =>
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0];
+              if (newest) {
+                setPendingCategoryId(newest.id);
+              }
+            } catch {
+              // Category was created but we couldn't auto-select it — the modal will refresh its list
+            }
+          }}
+        />
       </div>
     </AppShell>
   );
 }
 
-function CreateItemModal({ 
-  onClose, 
+function CreateItemModal({
+  onClose,
   onCreated,
-  item 
-}: { 
-  onClose: () => void; 
+  onAddCategory,
+  newCategoryId,
+  item
+}: {
+  onClose: () => void;
   onCreated: () => void;
+  onAddCategory: () => void;
+  newCategoryId?: string | null;
   item?: CatalogItem;
 }) {
   const isEditing = !!item;
@@ -297,19 +326,29 @@ function CreateItemModal({
   const [locations, setLocations] = useState<Location[]>([]);
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
   const [levelsSaving, setLevelsSaving] = useState(false);
+
+  // Initial stock state (for new items only)
+  const [initialStockLocation, setInitialStockLocation] = useState('');
+  const [initialStockQty, setInitialStockQty] = useState('');
+
   const formatLocationType = (value: Location['location_type']) => {
     if (!value) return '';
     const raw = typeof value === 'string' ? value : value.name;
     if (!raw) return '';
     return raw.replace(/_/g, ' ');
   };
-  const handleAddCategory = () => {
-    window.open('/inventory/categories', '_blank');
-  };
 
   useEffect(() => {
     fetchCategories();
   }, []);
+
+  // When a new category is created via the inline modal, refresh and auto-select it
+  useEffect(() => {
+    if (!newCategoryId) return;
+    fetchCategories().then(() => {
+      setForm((prev) => ({ ...prev, category_id: newCategoryId }));
+    });
+  }, [newCategoryId]);
 
   useEffect(() => {
     if (!form.category_id) {
@@ -508,6 +547,30 @@ function CreateItemModal({
         }
       }
 
+      // Set initial stock for new items (via stock adjustment)
+      if (!isEditing && catalogItemId && initialStockLocation && initialStockQty) {
+        const qty = Number(initialStockQty);
+        if (qty > 0) {
+          try {
+            await InventoryRPC.adjustInventory({
+              location_id: initialStockLocation,
+              catalog_item_id: catalogItemId,
+              new_qty: qty,
+              reason: 'count_variance' as const,
+              notes: 'Initial stock set during item creation',
+            });
+          } catch (stockErr: any) {
+            console.error('Initial stock adjustment failed:', stockErr);
+            // Item was created successfully, just warn about stock
+            setError(`Item created but initial stock failed: ${stockErr.message}. You can adjust stock later.`);
+            setSaving(false);
+            // Still call onCreated after a short delay so the item shows up
+            setTimeout(onCreated, 2000);
+            return;
+          }
+        }
+      }
+
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -579,15 +642,21 @@ function CreateItemModal({
               <label className="block text-sm font-medium">Category</label>
               <button
                 type="button"
-                onClick={handleAddCategory}
+                onClick={onAddCategory}
                 className="text-xs text-blue-600 hover:text-blue-700 font-medium"
               >
-                Add category
+                + Create New
               </button>
             </div>
             <select
               value={form.category_id}
-              onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+              onChange={(e) => {
+                if (e.target.value === '__create_new__') {
+                  onAddCategory();
+                  return;
+                }
+                setForm({ ...form, category_id: e.target.value });
+              }}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="">-- Select Category (Optional) --</option>
@@ -596,10 +665,8 @@ function CreateItemModal({
                   {cat.name}
                 </option>
               ))}
+              <option value="__create_new__">+ Create New Category...</option>
             </select>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Can't find a match? Add a new category in a new tab.
-            </p>
           </div>
 
           <div>
@@ -691,6 +758,48 @@ function CreateItemModal({
               Used when a location does not have a specific reorder point.
             </p>
           </div>
+
+          {/* Initial Stock section for new items */}
+          {!isEditing && (
+            <div className="border-t pt-4">
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold">Initial Stock <span className="text-muted-foreground font-normal">(optional)</span></h4>
+                <p className="text-xs text-muted-foreground">
+                  Set initial quantity at a location. You can adjust stock later from the Stock page.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1">Location</label>
+                  <select
+                    value={initialStockLocation}
+                    onChange={(e) => setInitialStockLocation(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded-md text-sm"
+                  >
+                    <option value="">-- None --</option>
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={initialStockQty}
+                    onChange={(e) => setInitialStockQty(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded-md text-sm"
+                    placeholder="0"
+                    disabled={!initialStockLocation}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-3">

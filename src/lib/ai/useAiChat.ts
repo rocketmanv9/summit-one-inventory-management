@@ -366,6 +366,26 @@ export function useAiChat(options?: AiChatOptions) {
 
     // Intercept modal-preferred intents
     if (intentType === 'add_vendor') {
+      // Check for duplicate vendor before opening modal
+      if (extractedParams.name) {
+        try {
+          const vendors = await SupplyChainRPC.getVendors();
+          const vendorEntities = vendors.map((v) => ({ name: v.name, code: v.code ?? undefined, id: v.id }));
+          const matchId = fuzzyMatch(extractedParams.name, vendorEntities);
+          if (matchId) {
+            const matched = vendors.find((v) => v.id === matchId);
+            addMessage(
+              'assistant',
+              `Found existing vendor "${matched?.name ?? extractedParams.name}". Opening it for editing instead.`,
+              { navigateTo: '/inventory/vendors' }
+            );
+            return;
+          }
+        } catch {
+          // If vendor lookup fails, proceed with modal normally
+        }
+      }
+
       setVendorModalInitialName(extractedParams.name || undefined);
       setVendorModalOpen(true);
       addMessage(

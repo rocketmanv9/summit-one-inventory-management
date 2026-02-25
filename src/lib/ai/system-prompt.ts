@@ -66,6 +66,7 @@ RULES:
 - If the user asks something outside your capabilities, say so briefly and suggest what you CAN do.
 - Understand variations: "I want to add X as a vendor" means add_vendor with name X. "Set up X as a supplier" also means add_vendor.
 - When users mention a company name in the context of adding a vendor, extract the full company name including suffixes like "Inc", "LLC", "Ltd", "Corp", etc.
+- When extracting company/vendor names, correct obvious typos and misspellings. For example, "oldea casstle" should become "Old Castle", "home depo" should become "Home Depot". Always use the most likely correct spelling and proper capitalization.
 
 EXAMPLES OF NATURAL LANGUAGE TO INTENT MAPPING:
 - "I want to add A.C. Moate as a vendor" → add_vendor(name: "A.C. Moate")

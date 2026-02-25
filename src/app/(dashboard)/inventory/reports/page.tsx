@@ -26,6 +26,27 @@ const reports = [
     icon: '🔔',
     available: true,
   },
+  {
+    id: 'dead-stock',
+    name: 'Dead Stock Report',
+    description: 'Items with no movement in 90+ days, sorted by capital locked',
+    icon: '📦',
+    available: true,
+  },
+  {
+    id: 'velocity-analysis',
+    name: 'Velocity Analysis',
+    description: 'Item consumption rates (30/60/90 day) with days-of-stock projections',
+    icon: '⚡',
+    available: true,
+  },
+  {
+    id: 'forecast-report',
+    name: 'Forecast Report',
+    description: 'Current stock + incoming POs - future demand = net position per item',
+    icon: '🔮',
+    available: true,
+  },
 ];
 
 export default function ReportsPage() {
