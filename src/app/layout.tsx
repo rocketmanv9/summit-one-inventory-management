@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ChatBotWrapper } from "@/components/chat/ChatBotWrapper";
+import { ErrorBoundary } from "@/components/error-boundary";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,10 +30,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Suspense fallback={<div className="min-h-screen" />}>
-          {children}
-        </Suspense>
-        <ChatBotWrapper />
+        <ErrorBoundary>
+          <Suspense fallback={<div className="min-h-screen" />}>
+            {children}
+          </Suspense>
+          <ChatBotWrapper />
+        </ErrorBoundary>
       </body>
     </html>
   );

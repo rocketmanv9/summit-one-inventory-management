@@ -44,3 +44,23 @@ next-env.d.ts
 .venv
 venv
 env
+
+# Playwright E2E tests
+playwright-report/
+test-results/
+playwright/.auth/
+
+# Bundle analyzer
+.next/analyze/
+
+# Lighthouse
+lighthouse-report.html
+.lighthouseci/
+
+# Sentry
+.sentryclirc
+
+# Supabase
+.branches
+.temp
+supabase/.env

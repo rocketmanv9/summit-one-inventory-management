@@ -10,6 +10,7 @@ import {
   CalendarCheck,
   Search,
   AlertTriangle,
+  Tag,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -195,7 +196,7 @@ export default function LocationDetailPage() {
         </div>
 
         {/* Totals */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard label="Total On Hand" value={formatQty(totals.on_hand)} />
           <StatCard
             label="Total Reserved"
@@ -206,6 +207,11 @@ export default function LocationDetailPage() {
             label="Total Available"
             value={formatQty(totals.available)}
             color={Number(totals.available) > 0 ? 'green' : 'red'}
+          />
+          <StatCard
+            label="Assets Here"
+            value={String(totals.asset_count ?? snapshot.assets?.length ?? 0)}
+            color={Number(totals.asset_count ?? snapshot.assets?.length ?? 0) > 0 ? 'green' : 'default'}
           />
         </div>
 
@@ -247,10 +253,62 @@ export default function LocationDetailPage() {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              No inventory at this location yet. Receive or transfer items here to see them.
+              No fungible inventory at this location.
             </div>
           )}
         </div>
+
+        {/* Assets Here table */}
+        {snapshot.assets && snapshot.assets.length > 0 && (
+          <div>
+            <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
+              <Tag className="h-4 w-4" />
+              Assets Here
+              <span className="text-sm font-normal text-muted-foreground">
+                ({snapshot.assets.length} asset{snapshot.assets.length !== 1 ? 's' : ''})
+              </span>
+            </h3>
+            <DataTable
+              data={snapshot.assets}
+              columns={[
+                {
+                  key: 'asset_tag',
+                  header: 'Asset Tag',
+                  sortable: true,
+                  render: (row: LocationSnapshot['assets'][number]) => (
+                    <span className="font-mono font-medium">{row.asset_tag}</span>
+                  ),
+                },
+                {
+                  key: 'item_name',
+                  header: 'Item',
+                  sortable: true,
+                  render: (row: LocationSnapshot['assets'][number]) => (
+                    <div>
+                      <div className="font-medium">{row.item_name || '-'}</div>
+                      {row.sku && (
+                        <div className="font-mono text-xs text-muted-foreground">{row.sku}</div>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'serial_number',
+                  header: 'Serial #',
+                  render: (row: LocationSnapshot['assets'][number]) => row.serial_number || '-',
+                },
+                {
+                  key: 'status',
+                  header: 'Status',
+                  render: (row: LocationSnapshot['assets'][number]) => (
+                    <StatusChip status={row.status} />
+                  ),
+                },
+              ]}
+              rowKey={(row) => row.asset_id}
+            />
+          </div>
+        )}
       </div>
     </AppShell>
   );

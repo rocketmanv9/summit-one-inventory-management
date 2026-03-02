@@ -2878,6 +2878,7 @@ export const InventoryRPC = {
       on_hand: number;
       reserved: number;
       available: number;
+      asset_count: number;
     };
     items: Array<{
       item_id: string;
@@ -2887,6 +2888,15 @@ export const InventoryRPC = {
       on_hand: number;
       reserved: number;
       available: number;
+    }>;
+    assets: Array<{
+      asset_id: string;
+      asset_tag: string;
+      serial_number: string | null;
+      status: string;
+      item_id: string | null;
+      item_name: string | null;
+      sku: string | null;
     }>;
   }> {
     const supabase = createBrowserAuthedClient().schema('inventory');

@@ -1050,7 +1050,7 @@ COMMENT ON FUNCTION inventory.rpc_inv_transfer_execute IS
 -- 9. Event catalog entries
 -- ============================================================
 
-INSERT INTO public.event_catalog (event_key, event_name, description, schema_name, entity_name, version)
+INSERT INTO public.event_catalog (event_key, display_name, description, owner_module, aggregate_type, event_version)
 VALUES
     ('inventory.guardrail_policy.updated', 'Guardrail Policy Updated', 'Tenant guardrail policy was updated', 'inventory', 'guardrail_policy', 1),
     ('inventory.guardrail_exception.created', 'Guardrail Exception Created', 'A guardrail override exception was logged', 'inventory', 'guardrail_exception', 1)

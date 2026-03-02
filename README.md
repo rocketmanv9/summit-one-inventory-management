@@ -16,26 +16,34 @@ Summit One Inventory Management is a Next.js microservice in the Summit One ecos
 - Supabase CLI (for local Postgres)
 
 ### Environment variables
-Copy [.env.example](.env.example) to [.env.local](.env.local) and fill in values. Required keys used by the app:
 
-- NEXT_PUBLIC_SUPABASE_URL
-- NEXT_PUBLIC_SUPABASE_ANON_KEY
-- SUPABASE_JWT_SECRET
-- CORE_EXCHANGE_URL
-- CORE_SUPABASE_ANON_KEY
-- NEXT_PUBLIC_CORE_APP_URL
+Copy [.env.example](.env.example) to `.env.local` and fill in values.
 
-Commonly used for local dev and tooling:
+#### ✅ REQUIRED (App will not function without these):
 
-- SUPABASE_SERVICE_ROLE_KEY
-- DATABASE_URL
-- DIRECT_URL
-- WEBHOOK_SECRET
-- NEXT_PUBLIC_APP_URL
-- NEXT_PUBLIC_SERVICE_BASE_URL
-- NEXT_PUBLIC_SERVICE_NAME
-- NEXT_PUBLIC_SERVICE_SLUG
-- NEXT_PUBLIC_TENANT_ID
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL | `https://xxx.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon public key | `eyJhbG...` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-side only) | `eyJhbG...` |
+| `SUPABASE_JWT_SECRET` | Supabase JWT secret | `your-secret-32-chars+` |
+| `CORE_EXCHANGE_URL` | Summit Core SSO exchange endpoint | `https://core.app/api/auth/exchange` |
+| `CORE_SUPABASE_ANON_KEY` | Core's Supabase anon key | `eyJhbG...` |
+| `NEXT_PUBLIC_CORE_APP_URL` | Summit Core app URL | `https://core.app` |
+| `NEXT_PUBLIC_APP_URL` | This app's URL | `http://localhost:3000` |
+
+#### 🔧 OPTIONAL (Recommended for production):
+
+| Variable | Description | When needed |
+|----------|-------------|-------------|
+| `DATABASE_URL` | Direct DB connection | Migrations, scripts |
+| `WEBHOOK_SECRET` | Webhook signature verification | Core webhooks |
+| `EVENTS_WEBHOOK_URL` | Event consumer endpoint | Event-driven integrations |
+| `SENTRY_DSN` | Error tracking | Production monitoring |
+| `UPSTASH_REDIS_REST_URL` | Rate limiting | Production API protection |
+| `OPENAI_API_KEY` | AI chat | NLP features |
+
+See [.env.example](.env.example) for full list and descriptions.
 
 ### Run locally
 1. Install dependencies: `npm install`
@@ -56,7 +64,35 @@ Commonly used for local dev and tooling:
 This service uses Summit One Core ticket-based SSO and mints Supabase-compatible JWTs. See [docs/AUTH.md](docs/AUTH.md) for the full flow and implementation details.
 
 ## Deployment
-This service is designed to deploy on Vercel. No Vercel config file is currently present in the repo.
+
+This service is designed to deploy on Vercel with branch-based environments:
+
+- **main** → Production
+- **stage** → Staging
+- **dev** → Development
+
+### Vercel Setup
+
+1. **Import project** to Vercel from GitHub
+2. **Set environment variables** in Vercel Dashboard for each environment:
+   - Go to Project Settings > Environment Variables
+   - Set all REQUIRED variables listed above
+   - Use environment-specific values (dev/stage/prod)
+3. **Deploy** - Vercel auto-deploys on git push
+4. **Database migrations** run automatically via GitHub Actions (see `.github/workflows/supabase-sync.yml`)
+
+### Production Checklist
+
+Before deploying to production, ensure:
+
+- [ ] All REQUIRED environment variables are set
+- [ ] `SENTRY_DSN` configured for error tracking
+- [ ] `UPSTASH_REDIS_*` configured for rate limiting
+- [ ] Supabase project is on paid plan (RLS, cron jobs)
+- [ ] Events poller cron is scheduled (see `supabase/config.toml`)
+- [ ] Database backups are enabled in Supabase
+- [ ] SSL certificates are valid
+- [ ] CORS is properly configured
 
 ## Scripts
 From the [scripts](scripts) directory:

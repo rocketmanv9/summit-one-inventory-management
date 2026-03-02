@@ -48,9 +48,8 @@ CREATE INDEX IF NOT EXISTS idx_vendors_code_trgm
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_po_number_trgm
   ON supply_chain.purchase_orders USING gin (po_number gin_trgm_ops);
 
--- reservations: search by job_ref
-CREATE INDEX IF NOT EXISTS idx_reservations_job_ref_trgm
-  ON inventory.reservations USING gin (job_ref gin_trgm_ops);
+-- reservations: job_ref is jsonb so skip trigram index
+-- (baseline already has idx_reservations_job_ref GIN index on the jsonb column)
 
 -- =============================================================================
 -- 3. rpc_global_search - Cross-entity search
@@ -177,7 +176,7 @@ BEGIN
            '/inventory/reservations?res_id=' || res.id AS url_hint
     FROM inventory.reservations res
     WHERE res.tenant_id = v_tenant_id
-      AND res.job_ref ILIKE v_pattern
+      AND res.job_ref::text ILIKE v_pattern
     ORDER BY res.created_at DESC
     LIMIT p_limit
   ) r;

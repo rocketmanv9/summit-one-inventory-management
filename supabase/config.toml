@@ -57,10 +57,10 @@ schema_paths = []
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
-enabled = false
+enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = []
+sql_paths = ["./seed.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.
@@ -361,6 +361,15 @@ deno_version = 2
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
+
+# Edge Function cron jobs
+# NOTE: Cron configuration via config.toml is for Supabase hosted platform.
+# For local dev, cron jobs run manually or via external scheduler.
+# For production, these are automatically registered when deployed to Supabase.
+[[edge_runtime.crons]]
+name = "events-poller"
+schedule = "* * * * *"  # Every minute
+function = "events-poller"
 
 [analytics]
 enabled = true
