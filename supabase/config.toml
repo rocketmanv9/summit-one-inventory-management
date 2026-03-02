@@ -363,13 +363,17 @@ deno_version = 2
 # secret_key = "env(SECRET_VALUE)"
 
 # Edge Function cron jobs
-# NOTE: Cron configuration via config.toml is for Supabase hosted platform.
-# For local dev, cron jobs run manually or via external scheduler.
-# For production, these are automatically registered when deployed to Supabase.
-[[edge_runtime.crons]]
-name = "events-poller"
-schedule = "* * * * *"  # Every minute
-function = "events-poller"
+# NOTE: Cron configuration is only supported on Supabase hosted platform (not local CLI).
+# Uncomment the section below when deploying to Supabase Cloud:
+#
+# [[edge_runtime.crons]]
+# name = "events-poller"
+# schedule = "* * * * *"  # Every minute
+# function = "events-poller"
+#
+# For local development:
+# - Use the pg_cron migration (20260227000000_schedule_events_poller.sql)
+# - Or manually trigger: curl http://localhost:55321/functions/v1/events-poller
 
 [analytics]
 enabled = true
