@@ -31,18 +31,7 @@ jobs:
         run: npx next lint
 
       - name: Test
-        run: npm test --if-present
-
-      - name: Chassis compliance audit
-        run: npx chassis audit --strict --ci --summary-file .chassis/audit-summary.json
-
-      - name: Upload compliance summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: chassis-audit-summary
-          path: .chassis/audit-summary.json
-          if-no-files-found: ignore
+        run: npm test
 
       - name: Build
         run: npm run build

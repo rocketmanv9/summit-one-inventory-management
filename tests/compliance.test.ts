@@ -40,6 +40,8 @@ describe('chassis compliance', () => {
         'src\\app\\dev-login\\page.tsx', // Windows path variant
         'src/app/api/webhooks/core-events/route.ts', // Type-only import for handler signatures
         'src\\app\\api\\webhooks\\core-events\\route.ts', // Windows path variant
+        'supabase/migrations/20260325000001', // Consolidation migration — no new tables, only ALTER/INSERT
+        'supabase\\migrations\\20260325000001', // Windows path variant
       ],
     });
 
