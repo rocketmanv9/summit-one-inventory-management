@@ -5,6 +5,7 @@
 
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { IntentType } from './intents';
 
 export interface ConversationStep {
@@ -202,8 +203,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         execute: async (params) => {
           // First fetch current vendor to get last_event_id
           const vendor = await SupplyChainRPC.getVendorById(params.vendor_id);
-          if (!vendor) throw new Error('Vendor not found');
-          if (!vendor.last_event_id) throw new Error('Vendor is missing concurrency token. Please try from the vendors page.');
+          if (!vendor) throw AppError.notFound('Vendor not found');
+          if (!vendor.last_event_id) throw AppError.badRequest('Vendor is missing concurrency token. Please try from the vendors page.');
 
           const updates: Record<string, any> = {
             [params.field_to_update]: params.new_value,
@@ -352,8 +353,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         execute: async (params) => {
           const items = await InventoryRPC.getCatalogItems({ active: true });
           const item = items.find((i) => i.id === params.catalog_item_id);
-          if (!item) throw new Error('Item not found');
-          if (!item.last_event_id) throw new Error('Item is missing concurrency token. Please try from the items page.');
+          if (!item) throw AppError.notFound('Item not found');
+          if (!item.last_event_id) throw AppError.badRequest('Item is missing concurrency token. Please try from the items page.');
 
           const updates: Record<string, any> = {
             [params.field_to_update]: params.new_value,
@@ -722,8 +723,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         ],
         execute: async (params) => {
           const vendor = await SupplyChainRPC.getVendorById(params.vendor_id);
-          if (!vendor) throw new Error('Vendor not found');
-          if (!vendor.last_event_id) throw new Error('Vendor is missing concurrency token.');
+          if (!vendor) throw AppError.notFound('Vendor not found');
+          if (!vendor.last_event_id) throw AppError.badRequest('Vendor is missing concurrency token.');
 
           await SupplyChainRPC.deleteVendor(params.vendor_id, vendor.last_event_id);
           return {
@@ -759,8 +760,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         execute: async (params) => {
           const items = await InventoryRPC.getCatalogItems({ active: true });
           const item = items.find((i) => i.id === params.catalog_item_id);
-          if (!item) throw new Error('Item not found');
-          if (!item.last_event_id) throw new Error('Item is missing concurrency token.');
+          if (!item) throw AppError.notFound('Item not found');
+          if (!item.last_event_id) throw AppError.badRequest('Item is missing concurrency token.');
 
           await InventoryRPC.deleteCatalogItem(params.catalog_item_id, item.last_event_id);
           return {

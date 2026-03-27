@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getAuthContext } from '@/lib/auth';
-import { createAuthenticatedClient } from '@/supabase/client';
-import { cookies } from 'next/headers';
+import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
+import { AppError } from '@rocketmanv9/chassis/errors';
+
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const VALID_REPORTS = [
   'stock-valuation',
@@ -29,52 +30,39 @@ const RPC_MAP: Record<ReportId, string> = {
  * Generates a report by calling the corresponding RPC function.
  * Tenant-scoped via current_tenant_id() inside each RPC.
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ reportId: string }> }
-) {
-  try {
-    const auth = await getAuthContext();
-    if (!auth) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
+  const url = new URL(req.url);
+  const segments = url.pathname.split('/');
+  // /api/inventory/reports/[reportId] -> segments = ['', 'api', 'inventory', 'reports', REPORT_ID]
+  const reportId = segments[segments.length - 1];
 
-    const { reportId } = await params;
-    if (!VALID_REPORTS.includes(reportId as ReportId)) {
-      return NextResponse.json({ error: 'Invalid report ID' }, { status: 400 });
-    }
-
-    const cookieStore = await cookies();
-    const accessToken = cookieStore.get('access_token')?.value;
-    if (!accessToken) {
-      return NextResponse.json({ error: 'No access token' }, { status: 401 });
-    }
-
-    const supabase = createAuthenticatedClient(accessToken).schema('inventory' as any);
-    const rpcName = RPC_MAP[reportId as ReportId];
-
-    // Movement summary accepts optional date range query params
-    const rpcParams: Record<string, string> = {};
-    if (reportId === 'movement-summary') {
-      const startDate = request.nextUrl.searchParams.get('start_date');
-      const endDate = request.nextUrl.searchParams.get('end_date');
-      if (startDate) rpcParams.p_start_date = startDate;
-      if (endDate) rpcParams.p_end_date = endDate;
-    }
-
-    const { data, error } = await (supabase as any).rpc(rpcName, rpcParams);
-
-    if (error) {
-      console.error(`[Reports] RPC error for ${reportId}:`, error);
-      return NextResponse.json(
-        { error: 'Failed to generate report' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ data: data || [] });
-  } catch (error) {
-    console.error('[Reports] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  if (!VALID_REPORTS.includes(reportId as ReportId)) {
+    throw AppError.badRequest('Invalid report ID');
   }
-}
+
+  const rpcName = RPC_MAP[reportId as ReportId];
+
+  // Movement summary accepts optional date range query params
+  const rpcParams: Record<string, string> = {};
+  if (reportId === 'movement-summary') {
+    const startDate = url.searchParams.get('start_date');
+    const endDate = url.searchParams.get('end_date');
+    if (startDate) rpcParams.p_start_date = startDate;
+    if (endDate) rpcParams.p_end_date = endDate;
+  }
+
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId,
+  });
+
+  const { data, error } = await (supabase as any).schema('inventory').rpc(rpcName, rpcParams);
+
+  if (error) {
+    log.error(`[Reports] RPC error for ${reportId}:`, error);
+    throw AppError.internal('Failed to generate report');
+  }
+
+  return Response.json({ data: data || [] });
+}, { serviceName: SERVICE_NAME });

@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-restricted-imports -- client-side browser code needs raw Supabase client
 import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   clearStoredAccessToken,

@@ -1,185 +1,190 @@
-export type JwtPayload = {
-  sub?: string;
-  exp?: number;
-  app_metadata?: {
-    tenant_id?: string;
-    tenantId?: string;
-    role?: string;
-    [key: string]: any;
-  };
-  user_metadata?: {
-    email?: string;
-    [key: string]: any;
-  };
-  [key: string]: any;
-};
+/**
+ * Client-side auth token manager.
+ *
+ * Caches the access token in memory and auto-refreshes 5 minutes before expiry.
+ * Usage: const token = await getAuthToken();
+ */
 
-let cachedAccessToken: string | null = null;
-let accessTokenPromise: Promise<string | null> | null = null;
-let refreshPromise: Promise<string | null> | null = null;
-let refreshTimeoutId: number | null = null;
+let cachedToken: string | null = null;
+let expiresAt = 0;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-function clearRefreshTimer(): void {
-  if (typeof window === 'undefined') return;
-  if (refreshTimeoutId !== null) {
-    window.clearTimeout(refreshTimeoutId);
-    refreshTimeoutId = null;
-  }
-}
+/** Margin before expiry to trigger refresh (5 minutes). */
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
-function scheduleRefreshFromToken(token: string): void {
-  if (typeof window === 'undefined') return;
-
-  clearRefreshTimer();
-
-  const expiresAt = getJwtExpiration(token);
-  if (!expiresAt) return;
-
-  const refreshAt = expiresAt - 5 * 60 * 1000;
-  const delay = Math.max(0, refreshAt - Date.now());
-
-  refreshTimeoutId = window.setTimeout(() => {
-    void refreshAccessToken().then((nextToken) => {
-      if (nextToken) {
-        scheduleRefreshFromToken(nextToken);
-        return;
-      }
-
-      clearStoredAccessToken();
-      redirectToCoreLogin();
-    });
-  }, delay);
-}
-
-async function fetchAccessTokenFromServer(): Promise<string | null> {
-  const response = await fetch('/api/auth/token', {
-    method: 'GET',
-    credentials: 'include',
-    cache: 'no-store',
-  }).catch(() => null);
-
-  if (!response?.ok) return null;
-  const data = (await response.json()) as { access_token?: string };
-  return typeof data.access_token === 'string' ? data.access_token : null;
-}
-
-export function getStoredAccessToken(): string | null {
-  return cachedAccessToken;
-}
-
-export async function loadAccessToken(force = false): Promise<string | null> {
-  if (!force && cachedAccessToken) return cachedAccessToken;
-  if (typeof window === 'undefined') return null;
-
-  if (!force && accessTokenPromise) {
-    return accessTokenPromise;
+/**
+ * Returns a valid access token, fetching or refreshing as needed.
+ */
+export async function getAuthToken(): Promise<string | null> {
+  if (cachedToken && Date.now() < expiresAt - REFRESH_MARGIN_MS) {
+    return cachedToken;
   }
 
-  accessTokenPromise = fetchAccessTokenFromServer();
-
-  const token = await accessTokenPromise;
-  accessTokenPromise = null;
-
-  if (!token) {
-    cachedAccessToken = null;
-    clearRefreshTimer();
-    return null;
-  }
-
-  cachedAccessToken = token;
-  scheduleRefreshFromToken(token);
-  return token;
+  return fetchToken();
 }
 
-export async function refreshAccessToken(): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
-  if (refreshPromise) return refreshPromise;
-
-  refreshPromise = fetch('/api/auth/refresh', {
-    method: 'POST',
-    credentials: 'include',
-    cache: 'no-store',
-  })
-    .then(async (response) => {
-      if (!response.ok) return null;
-      return loadAccessToken(true);
-    })
-    .catch(() => null)
-    .finally(() => {
-      refreshPromise = null;
-    });
-
-  return refreshPromise;
-}
-
-export function clearStoredAccessToken(): void {
-  cachedAccessToken = null;
-  accessTokenPromise = null;
-  refreshPromise = null;
-  clearRefreshTimer();
-
-  if (typeof window === 'undefined') return;
-  fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
-}
-
-export function parseJwtPayload(token: string): JwtPayload | null {
+async function fetchToken(): Promise<string | null> {
   try {
-    const payloadSegment = token.split('.')[1];
-    if (!payloadSegment) return null;
+    const res = await fetch('/api/auth/token', { credentials: 'include' });
 
-    const normalized = payloadSegment.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const decoded = atob(padded);
+    if (!res.ok) {
+      clearCache();
+      return null;
+    }
 
-    return JSON.parse(decoded) as JwtPayload;
+    const { access_token } = await res.json();
+    if (!access_token) {
+      clearCache();
+      return null;
+    }
+
+    // Decode exp from JWT payload (middle segment)
+    const payload = JSON.parse(atob(access_token.split('.')[1]));
+    const expMs = payload.exp * 1000;
+
+    cachedToken = access_token;
+    expiresAt = expMs;
+
+    // Schedule auto-refresh 5 minutes before expiry
+    scheduleRefresh(expMs);
+
+    return cachedToken;
   } catch {
+    clearCache();
     return null;
   }
 }
 
-export function getJwtExpiration(token: string): number | null {
-  const payload = parseJwtPayload(token);
-  if (!payload?.exp) return null;
-  return payload.exp * 1000;
+function scheduleRefresh(expMs: number) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+
+  const refreshAt = expMs - REFRESH_MARGIN_MS - Date.now();
+  if (refreshAt <= 0) return;
+
+  refreshTimer = setTimeout(async () => {
+    try {
+      const res = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        await fetchToken(); // Re-fetch the new access token
+      } else {
+        clearCache();
+      }
+    } catch {
+      clearCache();
+    }
+  }, refreshAt);
 }
 
-export function isJwtExpired(token: string, skewSeconds = 30): boolean {
-  const expiresAt = getJwtExpiration(token);
-  if (!expiresAt) return false;
-  return Date.now() >= expiresAt - skewSeconds * 1000;
+function clearCache() {
+  cachedToken = null;
+  expiresAt = 0;
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
 }
 
+/**
+ * Force-clear the cached token (call on logout).
+ */
+export function clearAuthToken() {
+  clearCache();
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility wrappers — these names are used by consumer files
+// (supabase/client.ts, api-client.ts, RPC layer, dashboard pages, etc.)
+// ---------------------------------------------------------------------------
+
+/** Async load — alias for getAuthToken(). */
+export const loadAccessToken = getAuthToken;
+
+/** Synchronous read of the in-memory cached token (may be null). */
+export function getStoredAccessToken(): string | null {
+  return cachedToken;
+}
+
+/** Trigger a refresh via the /api/auth/refresh endpoint, return the new token. */
+export async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      clearCache();
+      return null;
+    }
+    return fetchToken();
+  } catch {
+    clearCache();
+    return null;
+  }
+}
+
+/** Clear the cached token — alias for clearAuthToken(). */
+export const clearStoredAccessToken = clearAuthToken;
+
+/** Redirect to the Core login page. */
 export function redirectToCoreLogin(): void {
   if (typeof window === 'undefined') return;
-  const coreUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || 'https://dev.summit-one.app';
-  window.location.href = `${coreUrl}/login`;
+  const coreUrl =
+    (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_CORE_APP_URL) ||
+    '/';
+  window.location.href = coreUrl;
 }
 
-export function handleSupabaseAuthError(error: { message?: string; status?: number; code?: string } | null) {
-  if (!error) return;
-
-  const message = error.message?.toLowerCase() || '';
-  const isAuthError =
-    message.includes('jwt expired') ||
-    message.includes('invalid jwt') ||
-    error.status === 401 ||
-    error.status === 403;
-
-  if (isAuthError) {
-    void refreshAccessToken().then((token) => {
-      if (token) return;
-      clearStoredAccessToken();
-      redirectToCoreLogin();
-    });
+/** Decode the payload (middle segment) of a JWT. */
+export function parseJwtPayload(token: string): Record<string, any> {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch {
+    return {};
   }
 }
 
-export function getTenantIdFromToken(token: string): string | null {
+/** Returns true when the token's `exp` claim is in the past. */
+export function isJwtExpired(token: string): boolean {
   const payload = parseJwtPayload(token);
-  return payload?.app_metadata?.tenant_id || payload?.app_metadata?.tenantId || null;
+  if (!payload.exp) return true;
+  return Date.now() >= payload.exp * 1000;
 }
 
+/** Extract tenant_id from the JWT's app_metadata. */
+export function getTenantIdFromToken(token: string): string | null {
+  const payload = parseJwtPayload(token);
+  return payload.app_metadata?.tenant_id ?? null;
+}
+
+/** Extract the user id (sub claim) from the JWT. */
 export function getUserIdFromToken(token: string): string | null {
   const payload = parseJwtPayload(token);
-  return payload?.sub || null;
+  return payload.sub ?? null;
+}
+
+/** Handle a Supabase auth error — clear token and redirect on 401/403. */
+export function handleSupabaseAuthError(error: any): boolean {
+  if (!error) return false;
+  const status = typeof error.status === 'number' ? error.status : null;
+  const code = typeof error.code === 'string' ? error.code : '';
+  const message = String(error.message || '').toLowerCase();
+
+  const isAuth =
+    status === 401 ||
+    status === 403 ||
+    code === 'PGRST301' ||
+    message.includes('jwt') ||
+    message.includes('unauthorized') ||
+    message.includes('invalid token') ||
+    message.includes('not authenticated');
+
+  if (isAuth) {
+    clearCache();
+    redirectToCoreLogin();
+  }
+  return isAuth;
 }

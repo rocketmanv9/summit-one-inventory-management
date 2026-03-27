@@ -6,6 +6,7 @@ import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { Package, Plus, AlertCircle, Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface Location {
   id: string;
@@ -88,7 +89,7 @@ export default function CreateReceiptPage() {
     try {
       // Validate
       if (!form.location_id) {
-        throw new Error('Please select a location');
+        throw AppError.badRequest('Please select a location');
       }
 
       const validLines = lines.filter(
@@ -96,7 +97,7 @@ export default function CreateReceiptPage() {
       );
 
       if (validLines.length === 0) {
-        throw new Error('Please add at least one item with quantity > 0');
+        throw AppError.badRequest('Please add at least one item with quantity > 0');
       }
 
       // Create receipt using RPC

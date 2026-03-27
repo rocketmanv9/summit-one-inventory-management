@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
@@ -117,7 +119,7 @@ export default function VendorsPage() {
 
     try {
       if (!vendor.last_event_id) {
-        throw new Error('Missing last_event_id for this vendor. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this vendor. Please refresh and try again.');
       }
 
       await SupplyChainRPC.deleteVendor(vendor.id, vendor.last_event_id);

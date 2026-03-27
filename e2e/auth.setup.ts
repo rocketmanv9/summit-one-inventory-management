@@ -1,5 +1,6 @@
 import { test as setup, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 /**
  * E2E Test Setup - Authentication
@@ -31,7 +32,7 @@ setup('authenticate', async ({ page }) => {
 
   if (error) {
     console.error('Auth setup failed:', error);
-    throw new Error(`Failed to authenticate: ${error.message}`);
+    throw AppError.internal(`Failed to authenticate: ${error.message}`);
   }
 
   expect(data.session).toBeTruthy();

@@ -1,230 +1,57 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { createReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { SignJWT } from 'jose';
+import {
+  exchangeTicketWithCore,
+  mintSessionTokens,
+  accessTokenCookieConfig,
+  refreshTokenCookieConfig,
+} from '@rocketmanv9/chassis/auth';
 
-// Prevent caching/prefetching of this route
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
- * Exchange ticket for JWT and session
+ * SSO callback — Core redirects here with a one-time ticket.
  *
- * Flow:
- * 1. Validate ticket with Core API
- * 2. Get identity and tenant context from response
- * 3. Mint Supabase JWT signed with SUPABASE_JWT_SECRET
- * 4. Store JWT in HttpOnly cookie for browser Supabase header injection
- * 5. Redirect to dashboard
+ * Flow: Core -> /auth/callback?ticket=XXX -> exchange ticket -> mint JWTs -> set cookies -> /dashboard
  */
-export async function GET(request: NextRequest) {
-  try {
-    console.log('[Auth Debug] Local Time:', new Date().toISOString());
-    const noStoreHeaders = { 'Cache-Control': 'no-store, max-age=0' };
-    const { searchParams } = new URL(request.url);
-    const ticket = searchParams.get('ticket');
-    const targetOrg = searchParams.get('target_org');
-    const targetTenantId = searchParams.get('target_tenant_id') || targetOrg;
-    const targetService = searchParams.get('target_service');
-    const resolvedTargetService = targetService || undefined;
+export const GET = createReadRoute(async ({ req }) => {
+  const { searchParams } = new URL(req.url);
+  const ticket = searchParams.get('ticket');
+  const targetOrg = searchParams.get('target_org');
+  const targetService = searchParams.get('target_service');
 
-    console.log('[Auth Callback] Request:', {
-      ticketLength: ticket?.length,
-      ticket,
-      targetOrg,
-      targetTenantId,
-      targetService: resolvedTargetService,
-    });
-
-    if (!resolvedTargetService) {
-      console.error('[Auth Callback] Missing target_service');
-      return NextResponse.redirect(new URL('/error?msg=missing_target_service', request.url), {
-        headers: noStoreHeaders,
-      });
-    }
-
-    // Validate ticket
-    if (!ticket || ticket.length !== 32) {
-      console.error('[Auth Callback] Invalid ticket');
-      return NextResponse.redirect(new URL('/error?msg=no_ticket', request.url), {
-        headers: noStoreHeaders,
-      });
-    }
-
-    const exchangeUrl = process.env.CORE_EXCHANGE_URL;
-    const coreAnonKey = process.env.CORE_ANON_KEY;
-
-    console.log('[Auth Debug] Env Check:', {
-      hasUrl: !!process.env.CORE_EXCHANGE_URL,
-      hasKey: !!process.env.CORE_ANON_KEY,
-    });
-
-    if (!exchangeUrl || !coreAnonKey) {
-      console.error('[Auth Callback] Missing Core configuration');
-      throw new Error('Missing Core configuration');
-    }
-
-    // Exchange ticket with Core API endpoint
-    const requestBody = {
-      ticket,
-      target_service: resolvedTargetService,
-      target_org: targetOrg,
-      target_tenant_id: targetOrg,
-    };
-    console.log('[Auth Callback] Exchanging ticket:', { 
-      exchangeUrl, 
-      ticketPrefix: ticket.substring(0, 8),
-      targetOrg,
-      targetService: resolvedTargetService,
-      anonKeyPrefix: coreAnonKey.substring(0, 20)
-    });
-
-    console.log(`Exchange Ticket Value: ${ticket}`);
-
-    const exchangeTimeoutMs = Number.parseInt(
-      process.env.CORE_EXCHANGE_TIMEOUT_MS || '15000',
-      10
-    );
-
-    const exchangeResponse = await fetch(exchangeUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': coreAnonKey,
-        Authorization: `Bearer ${coreAnonKey}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(exchangeTimeoutMs),
-    });
-
-    if (!exchangeResponse.ok) {
-      const errorText = await exchangeResponse.text();
-      const responseHeaders = Object.fromEntries(exchangeResponse.headers.entries());
-      console.error('[Auth Callback] Exchange failed:', {
-        status: exchangeResponse.status,
-        error: errorText,
-        headers: responseHeaders,
-      });
-      throw new Error(`Exchange failed: ${exchangeResponse.status}`);
-    }
-
-    const userData = await exchangeResponse.json();
-
-    const {
-      userId,
-      tenantId,
-      email,
-      name,
-      role,
-      user,
-      target_tenant_id,
-    } = userData;
-
-    const resolvedUserId = userId || user?.id;
-    const resolvedTenantId = tenantId || target_tenant_id;
-    const resolvedEmail = email || user?.email || '';
-    const resolvedName = name || user?.full_name || user?.name || '';
-    const resolvedRole = role || 'authenticated';
-
-    if (!resolvedUserId || !resolvedTenantId) {
-      console.error('[Auth Callback] Invalid response from Core:', userData);
-      throw new Error('Invalid response from Core');
-    }
-
-    console.log('[Auth Callback] Success:', { userId: resolvedUserId, tenantId: resolvedTenantId });
-
-    // Mint JWT for Supabase RLS
-    const jwtSecret = process.env.SUPABASE_JWT_SECRET;
-    if (!jwtSecret) {
-      console.error('[Auth Callback] SUPABASE_JWT_SECRET not configured');
-      throw new Error('JWT signing not configured');
-    }
-
-    const secretKey = new TextEncoder().encode(jwtSecret);
-    const accessToken = await new SignJWT({
-      sub: resolvedUserId,
-      email: resolvedEmail || undefined,
-      role: 'authenticated',
-      app_metadata: {
-        tenant_id: resolvedTenantId,
-        role: resolvedRole,
-      },
-      user_metadata: {
-        full_name: resolvedName || undefined,
-        email: resolvedEmail || undefined,
-        role: resolvedRole,
-      },
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('1h')
-      .sign(secretKey);
-
-    const refreshToken = await new SignJWT({
-      sub: resolvedUserId,
-      email: resolvedEmail || undefined,
-      role: 'authenticated',
-      token_use: 'refresh',
-      app_metadata: {
-        tenant_id: resolvedTenantId,
-        role: resolvedRole,
-      },
-      user_metadata: {
-        full_name: resolvedName || undefined,
-        email: resolvedEmail || undefined,
-        role: resolvedRole,
-      },
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('7d')
-      .sign(secretKey);
-
-    console.log('[Auth Callback] JWT minted:', {
-      userId: resolvedUserId,
-      tenantId: resolvedTenantId,
-      tokenLength: accessToken.length,
-    });
-
-    // Create access token cookie (single source of truth)
-    const cookieStore = await cookies();
-
-    cookieStore.set('access_token', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 3600,
-      path: '/',
-    });
-
-    cookieStore.set('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 604800,
-      path: '/',
-    });
-
-    // Redirect to dashboard without leaking JWT in URL
-    return NextResponse.redirect(new URL('/dashboard', request.url), {
-      headers: noStoreHeaders,
-    });
-
-  } catch (error) {
-    console.error('[Auth Callback] Error:', error);
-    return NextResponse.redirect(
-      new URL(`/error?msg=${encodeURIComponent(error instanceof Error ? error.message : 'Unknown error')}`, request.url),
-      { headers: { 'Cache-Control': 'no-store, max-age=0' } }
-    );
+  if (!ticket) {
+    return NextResponse.redirect(new URL('/error?code=missing_ticket', req.url));
   }
-}
 
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
-}
+  try {
+    // 1. Exchange ticket with Core for user identity
+    const user = await exchangeTicketWithCore({
+      ticket,
+      targetOrg,
+      targetService: targetService || process.env.INTERNAL_JWT_ISSUER || undefined,
+      forwardHeaders: {
+        'x-forwarded-for': req.headers.get('x-forwarded-for') || 'unknown',
+        'user-agent': req.headers.get('user-agent') || 'unknown',
+      },
+    });
+
+    // 2. Mint access + refresh tokens signed with SUPABASE_JWT_SECRET
+    const { accessToken, refreshToken } = await mintSessionTokens(user);
+
+    // 3. Set httpOnly cookies
+    const cookieStore = await cookies();
+    const accessCfg = accessTokenCookieConfig(accessToken);
+    const refreshCfg = refreshTokenCookieConfig(refreshToken);
+
+    cookieStore.set(accessCfg.name, accessCfg.value, accessCfg);
+    cookieStore.set(refreshCfg.name, refreshCfg.value, refreshCfg);
+
+    // 4. Redirect to dashboard
+    return NextResponse.redirect(new URL('/dashboard', req.url));
+  } catch (error) {
+    console.error('[Auth Callback] Exchange failed:', error);
+    return NextResponse.redirect(new URL('/error?code=exchange_failed', req.url));
+  }
+}, { serviceName: SERVICE_NAME, auth: 'public' });

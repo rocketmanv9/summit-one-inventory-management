@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -115,7 +117,7 @@ export default function ReservationsPage() {
 
     try {
       if (!reservation.last_event_id) {
-        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this reservation. Please refresh and try again.');
       }
 
       await InventoryRPC.fulfillReservation(reservation.id, reservation.last_event_id);
@@ -142,7 +144,7 @@ export default function ReservationsPage() {
 
     try {
       if (!reservation.last_event_id) {
-        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this reservation. Please refresh and try again.');
       }
 
       await InventoryRPC.releaseReservation(reservation.id, reservation.last_event_id);
@@ -163,7 +165,7 @@ export default function ReservationsPage() {
 
     try {
       if (!reservation.last_event_id) {
-        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this reservation. Please refresh and try again.');
       }
 
       await InventoryRPC.undoFulfillReservation(reservation.id, reservation.last_event_id);
@@ -184,7 +186,7 @@ export default function ReservationsPage() {
 
     try {
       if (!reservation.last_event_id) {
-        throw new Error('Missing last_event_id for this reservation. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this reservation. Please refresh and try again.');
       }
 
       await InventoryRPC.undoReleaseReservation(reservation.id, reservation.last_event_id);
@@ -638,7 +640,7 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
 
     try {
       if ((form.reserved_from && !form.reserved_until) || (!form.reserved_from && form.reserved_until)) {
-        throw new Error('Please set both Reserve From and Reserve Until, or leave both blank.');
+        throw AppError.badRequest('Please set both Reserve From and Reserve Until, or leave both blank.');
       }
 
       const reservedFrom = form.reserved_from ? new Date(form.reserved_from).toISOString() : null;
@@ -659,7 +661,7 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
       if (isSerializedItem(selectedItem?.tracking_mode)) {
         // Serialized reservation
         if (form.asset_ids.length === 0) {
-          throw new Error('Please select at least one asset');
+          throw AppError.badRequest('Please select at least one asset');
         }
         for (const assetId of form.asset_ids) {
           await InventoryRPC.reserveAsset({
@@ -678,10 +680,10 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
       } else {
         // Fungible reservation
         if (!form.qty || parseInt(form.qty) <= 0) {
-          throw new Error('Please enter a valid quantity');
+          throw AppError.badRequest('Please enter a valid quantity');
         }
         if (!form.location_id) {
-          throw new Error('Please select a location');
+          throw AppError.badRequest('Please select a location');
         }
         await InventoryRPC.reserveFungible({
           catalog_item_id: form.catalog_item_id,

@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -564,7 +566,7 @@ function PODetailPanel({
       const { error } = await updatePurchaseOrderStatus(po.id, newStatus, po.last_event_id);
 
       if (error) {
-        throw new Error(error.message);
+        throw AppError.internal(error.message);
       }
 
       // Refresh the page to show updated PO
@@ -587,7 +589,7 @@ function PODetailPanel({
       const { error } = await deletePurchaseOrder(po.id, po.last_event_id);
 
       if (error) {
-        throw new Error(error.message);
+        throw AppError.internal(error.message);
       }
 
       // Close panel and refresh to remove voided PO from list
@@ -929,7 +931,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
       }
 
       if (validLines.length === 0) {
-        throw new Error('Please add at least one line item');
+        throw AppError.badRequest('Please add at least one line item');
       }
 
       await SupplyChainRPC.createPurchaseOrder({
@@ -1285,7 +1287,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
       });
 
       if (error) {
-        throw new Error(error.message);
+        throw AppError.internal(error.message);
       }
 
       onUpdated();

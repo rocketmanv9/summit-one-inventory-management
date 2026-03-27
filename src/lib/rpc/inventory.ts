@@ -6,6 +6,7 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -182,12 +183,12 @@ type StockMovementWithRelations = {
 function getAuthContext() {
   const token = getStoredAccessToken();
   if (!token) {
-    throw new Error('Authentication required');
+    throw AppError.unauthorized('Authentication required');
   }
 
   const tenantId = getTenantIdFromToken(token);
   if (!tenantId) {
-    throw new Error('Missing tenant context');
+    throw AppError.unauthorized('Missing tenant context');
   }
 
   return {
@@ -198,7 +199,7 @@ function getAuthContext() {
 
 function requireUserId(userId: string | null): string {
   if (!userId) {
-    throw new Error('Missing user identity');
+    throw AppError.unauthorized('Missing user identity');
   }
   return userId;
 }
@@ -268,7 +269,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to issue inventory: ${error.message}`);
+      throw AppError.internal(`Failed to issue inventory: ${error.message}`);
     }
 
     return data;
@@ -292,7 +293,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to adjust inventory: ${error.message}`);
+      throw AppError.internal(`Failed to adjust inventory: ${error.message}`);
     }
 
     return data;
@@ -332,7 +333,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch catalog items: ${error.message}`);
+      throw AppError.internal(`Failed to fetch catalog items: ${error.message}`);
     }
 
     const normalized = (data || []).map((item: any) => ({
@@ -357,7 +358,7 @@ export const InventoryRPC = {
       .eq('category_id', categoryId);
 
     if (error) {
-      throw new Error(`Failed to count category items: ${error.message}`);
+      throw AppError.internal(`Failed to count category items: ${error.message}`);
     }
 
     return count ?? 0;
@@ -378,7 +379,7 @@ export const InventoryRPC = {
       .eq('category_id', oldCategoryId);
 
     if (fetchError) {
-      throw new Error(`Failed to fetch category items for reassignment: ${fetchError.message}`);
+      throw AppError.internal(`Failed to fetch category items for reassignment: ${fetchError.message}`);
     }
 
     if (!items || items.length === 0) return;
@@ -393,10 +394,10 @@ export const InventoryRPC = {
         .maybeSingle();
 
       if (error) {
-        throw new Error(`Failed to reassign catalog item ${item.id}: ${error.message}`);
+        throw AppError.internal(`Failed to reassign catalog item ${item.id}: ${error.message}`);
       }
       if (!updated) {
-        throw new Error(`Concurrent modification detected on catalog item ${item.id} (OCC conflict)`);
+        throw AppError.conflict(`Concurrent modification detected on catalog item ${item.id} (OCC conflict)`);
       }
     }
   },
@@ -413,7 +414,7 @@ export const InventoryRPC = {
       .order('name');
 
     if (error) {
-      throw new Error(`Failed to fetch item categories: ${error.message}`);
+      throw AppError.internal(`Failed to fetch item categories: ${error.message}`);
     }
 
     return (data || []) as ItemCategoryRow[];
@@ -437,7 +438,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create category: ${error.message}`);
+      throw AppError.internal(`Failed to create category: ${error.message}`);
     }
 
     return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
@@ -464,10 +465,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update category: ${error.message}`);
+      throw AppError.internal(`Failed to update category: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Category was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
@@ -485,7 +486,7 @@ export const InventoryRPC = {
       .eq('category_id', id);
 
     if (skuError) {
-      throw new Error(`Failed to delete category SKU settings: ${skuError.message}`);
+      throw AppError.internal(`Failed to delete category SKU settings: ${skuError.message}`);
     }
 
     const { data, error } = await supabase
@@ -497,10 +498,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete category: ${error.message}`);
+      throw AppError.internal(`Failed to delete category: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Category was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<ItemCategoryRow, 'id'>;
@@ -518,7 +519,7 @@ export const InventoryRPC = {
       .order('name');
 
     if (error) {
-      throw new Error(`Failed to fetch location types: ${error.message}`);
+      throw AppError.internal(`Failed to fetch location types: ${error.message}`);
     }
 
     return (data || []) as LocationTypeRow[];
@@ -542,7 +543,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create location type: ${error.message}`);
+      throw AppError.internal(`Failed to create location type: ${error.message}`);
     }
 
     return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
@@ -562,10 +563,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete location type: ${error.message}`);
+      throw AppError.internal(`Failed to delete location type: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Location type was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<LocationTypeRow, 'id'>;
@@ -592,10 +593,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update location type: ${error.message}`);
+      throw AppError.internal(`Failed to update location type: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Location type was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
@@ -612,7 +613,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch SKU settings: ${error.message}`);
+      throw AppError.internal(`Failed to fetch SKU settings: ${error.message}`);
     }
 
     if (!data || data.length === 0) return null;
@@ -630,7 +631,7 @@ export const InventoryRPC = {
       .upsert(payload, { onConflict: 'category_id' });
 
     if (error) {
-      throw new Error(`Failed to update SKU settings: ${error.message}`);
+      throw AppError.internal(`Failed to update SKU settings: ${error.message}`);
     }
   },
 
@@ -653,10 +654,10 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create catalog item: ${error.message}`);
+      throw AppError.internal(`Failed to create catalog item: ${error.message}`);
     }
     if (!data || data.length === 0) {
-      throw new Error('Failed to create catalog item: no data returned');
+      throw AppError.internal('Failed to create catalog item: no data returned');
     }
 
     return data[0] as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
@@ -683,10 +684,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update catalog item: ${error.message}`);
+      throw AppError.internal(`Failed to update catalog item: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Catalog item was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
@@ -706,10 +707,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete catalog item: ${error.message}`);
+      throw AppError.internal(`Failed to delete catalog item: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Catalog item was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<CatalogItemRow, 'id'>;
@@ -727,7 +728,7 @@ export const InventoryRPC = {
       .eq('catalog_item_id', catalogItemId);
 
     if (error) {
-      throw new Error(`Failed to fetch inventory levels: ${error.message}`);
+      throw AppError.internal(`Failed to fetch inventory levels: ${error.message}`);
     }
 
     return (data || []) as InventoryLevelRow[];
@@ -744,7 +745,7 @@ export const InventoryRPC = {
       .upsert(payload, { onConflict: 'catalog_item_id,location_id' });
 
     if (error) {
-      throw new Error(`Failed to save inventory levels: ${error.message}`);
+      throw AppError.internal(`Failed to save inventory levels: ${error.message}`);
     }
   },
 
@@ -760,7 +761,7 @@ export const InventoryRPC = {
       .order('sort_order');
 
     if (error) {
-      throw new Error(`Failed to fetch assignment types: ${error.message}`);
+      throw AppError.internal(`Failed to fetch assignment types: ${error.message}`);
     }
 
     return (data || []) as AssignmentTypeRow[];
@@ -796,7 +797,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create assignment type: ${error.message}`);
+      throw AppError.internal(`Failed to create assignment type: ${error.message}`);
     }
 
     return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
@@ -823,10 +824,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update assignment type: ${error.message}`);
+      throw AppError.internal(`Failed to update assignment type: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Assignment type was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
@@ -846,10 +847,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete assignment type: ${error.message}`);
+      throw AppError.internal(`Failed to delete assignment type: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Assignment type was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<AssignmentTypeRow, 'id'>;
@@ -878,7 +879,7 @@ export const InventoryRPC = {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to fetch assets: ${error.message}`);
+      throw AppError.internal(`Failed to fetch assets: ${error.message}`);
     }
 
     const normalized = (data || []).map((item: any) => ({
@@ -914,11 +915,11 @@ export const InventoryRPC = {
       .maybeSingle();
 
     if (existingError) {
-      throw new Error(`Failed to check existing asset: ${existingError.message}`);
+      throw AppError.internal(`Failed to check existing asset: ${existingError.message}`);
     }
 
     if (existingAsset && existingAsset.status !== 'retired') {
-      throw new Error('An asset with this tag already exists. Edit the existing asset or choose a different tag.');
+      throw AppError.conflict('An asset with this tag already exists. Edit the existing asset or choose a different tag.');
     }
 
     if (existingAsset && existingAsset.status === 'retired') {
@@ -944,7 +945,7 @@ export const InventoryRPC = {
         .single();
 
       if (restoreError) {
-        throw new Error(`Failed to restore asset: ${restoreError.message}`);
+        throw AppError.internal(`Failed to restore asset: ${restoreError.message}`);
       }
 
       return restored as Pick<AssetRow, 'id' | 'last_event_id'>;
@@ -957,7 +958,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create asset: ${error.message}`);
+      throw AppError.internal(`Failed to create asset: ${error.message}`);
     }
 
     return data as Pick<AssetRow, 'id' | 'last_event_id'>;
@@ -984,10 +985,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update asset: ${error.message}`);
+      throw AppError.internal(`Failed to update asset: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Asset was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<AssetRow, 'id' | 'last_event_id'>;
@@ -1008,10 +1009,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete asset: ${error.message}`);
+      throw AppError.internal(`Failed to delete asset: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Asset was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<AssetRow, 'id' | 'last_event_id'>;
@@ -1040,7 +1041,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to assign asset: ${error.message}`);
+      throw AppError.internal(`Failed to assign asset: ${error.message}`);
     }
 
     return data as string;
@@ -1060,7 +1061,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to return asset: ${error.message}`);
+      throw AppError.internal(`Failed to return asset: ${error.message}`);
     }
 
     return data as boolean;
@@ -1087,7 +1088,7 @@ export const InventoryRPC = {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to fetch reservations: ${error.message}`);
+      throw AppError.internal(`Failed to fetch reservations: ${error.message}`);
     }
 
     const normalized = (data || []).map((item: any) => ({
@@ -1147,7 +1148,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create reservation: ${error.message}`);
+      throw AppError.internal(`Failed to create reservation: ${error.message}`);
     }
 
     return data as string;
@@ -1187,7 +1188,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create reservation: ${error.message}`);
+      throw AppError.internal(`Failed to create reservation: ${error.message}`);
     }
 
     return data as string;
@@ -1213,7 +1214,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch available assets: ${error.message}`);
+      throw AppError.internal(`Failed to fetch available assets: ${error.message}`);
     }
 
     return data as Array<{
@@ -1240,7 +1241,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fulfill reservation: ${error.message}`);
+      throw AppError.internal(`Failed to fulfill reservation: ${error.message}`);
     }
 
     return data as string;
@@ -1260,7 +1261,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to release reservation: ${error.message}`);
+      throw AppError.internal(`Failed to release reservation: ${error.message}`);
     }
 
     return data as boolean;
@@ -1280,7 +1281,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to undo fulfillment: ${error.message}`);
+      throw AppError.internal(`Failed to undo fulfillment: ${error.message}`);
     }
 
     return data as boolean;
@@ -1300,7 +1301,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to undo release: ${error.message}`);
+      throw AppError.internal(`Failed to undo release: ${error.message}`);
     }
 
     return data as boolean;
@@ -1324,7 +1325,7 @@ export const InventoryRPC = {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to fetch transfers: ${error.message}`);
+      throw AppError.internal(`Failed to fetch transfers: ${error.message}`);
     }
 
     const normalized = (data || []).map((item: any) => ({
@@ -1362,7 +1363,7 @@ export const InventoryRPC = {
       .maybeSingle();
 
     if (error) {
-      throw new Error(`Failed to fetch transfer: ${error.message}`);
+      throw AppError.internal(`Failed to fetch transfer: ${error.message}`);
     }
 
     if (!data) {
@@ -1407,7 +1408,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create transfer: ${error.message}`);
+      throw AppError.internal(`Failed to create transfer: ${error.message}`);
     }
 
     return data as string;
@@ -1432,10 +1433,10 @@ export const InventoryRPC = {
       .single();
 
     if (headerError) {
-      throw new Error(`Failed to update transfer: ${headerError.message}`);
+      throw AppError.internal(`Failed to update transfer: ${headerError.message}`);
     }
     if (!header) {
-      throw new Error('Transfer was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
     }
 
     const { data: existingLines, error: existingError } = await supabase
@@ -1444,7 +1445,7 @@ export const InventoryRPC = {
       .eq('transfer_id', transferId);
 
     if (existingError) {
-      throw new Error(`Failed to load transfer lines: ${existingError.message}`);
+      throw AppError.internal(`Failed to load transfer lines: ${existingError.message}`);
     }
 
     const existing = existingLines || [];
@@ -1459,7 +1460,7 @@ export const InventoryRPC = {
           .eq('last_event_id', line.last_event_id);
 
         if (deleteError) {
-          throw new Error(`Failed to delete transfer line: ${deleteError.message}`);
+          throw AppError.internal(`Failed to delete transfer line: ${deleteError.message}`);
         }
       }
     }
@@ -1470,7 +1471,7 @@ export const InventoryRPC = {
 
       if (line.id) {
         if (!line.last_event_id) {
-          throw new Error('Missing last_event_id for transfer line. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for transfer line. Please refresh and try again.');
         }
 
         const { error: lineError } = await supabase
@@ -1484,7 +1485,7 @@ export const InventoryRPC = {
           .eq('last_event_id', line.last_event_id);
 
         if (lineError) {
-          throw new Error(`Failed to update transfer line: ${lineError.message}`);
+          throw AppError.internal(`Failed to update transfer line: ${lineError.message}`);
         }
       } else {
         const { error: insertError } = await supabase
@@ -1498,7 +1499,7 @@ export const InventoryRPC = {
           });
 
         if (insertError) {
-          throw new Error(`Failed to add transfer line: ${insertError.message}`);
+          throw AppError.internal(`Failed to add transfer line: ${insertError.message}`);
         }
       }
     }
@@ -1516,11 +1517,11 @@ export const InventoryRPC = {
       .eq('transfer_id', transferId);
 
     if (lineError) {
-      throw new Error(`Failed to load transfer lines: ${lineError.message}`);
+      throw AppError.internal(`Failed to load transfer lines: ${lineError.message}`);
     }
 
     if (!lines || lines.length === 0) {
-      throw new Error('No transfer lines found. Please refresh and try again.');
+      throw AppError.notFound('No transfer lines found. Please refresh and try again.');
     }
 
     for (const line of lines) {
@@ -1531,7 +1532,7 @@ export const InventoryRPC = {
         .eq('last_event_id', line.last_event_id);
 
       if (updateError) {
-        throw new Error(`Failed to ship transfer line: ${updateError.message}`);
+        throw AppError.internal(`Failed to ship transfer line: ${updateError.message}`);
       }
     }
 
@@ -1544,10 +1545,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to ship transfer: ${error.message}`);
+      throw AppError.internal(`Failed to ship transfer: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Transfer was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
     }
   },
 
@@ -1573,7 +1574,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to receive transfer: ${error.message}`);
+      throw AppError.internal(`Failed to receive transfer: ${error.message}`);
     }
 
     return data as any;
@@ -1594,7 +1595,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to receive transfer: ${error.message}`);
+      throw AppError.internal(`Failed to receive transfer: ${error.message}`);
     }
 
     return data as boolean;
@@ -1614,10 +1615,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to cancel transfer: ${error.message}`);
+      throw AppError.internal(`Failed to cancel transfer: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Transfer was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
     }
   },
 
@@ -1635,7 +1636,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to undo cancellation: ${error.message}`);
+      throw AppError.internal(`Failed to undo cancellation: ${error.message}`);
     }
 
     return data as boolean;
@@ -1656,7 +1657,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create return transfer: ${error.message}`);
+      throw AppError.internal(`Failed to create return transfer: ${error.message}`);
     }
 
     return data as string;
@@ -1678,7 +1679,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to undo shipment: ${error.message}`);
+      throw AppError.internal(`Failed to undo shipment: ${error.message}`);
     }
 
     return data as boolean;
@@ -1700,7 +1701,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to reverse receipt: ${error.message}`);
+      throw AppError.internal(`Failed to reverse receipt: ${error.message}`);
     }
 
     return data as boolean;
@@ -1719,7 +1720,7 @@ export const InventoryRPC = {
       .order('name', { foreignTable: 'catalog_items' });
 
     if (stockError) {
-      throw new Error(`Failed to load location stock: ${stockError.message}`);
+      throw AppError.internal(`Failed to load location stock: ${stockError.message}`);
     }
 
     const { data: assetData, error: assetError } = await supabase
@@ -1729,7 +1730,7 @@ export const InventoryRPC = {
       .in('status', ['available', 'assigned']);
 
     if (assetError) {
-      throw new Error(`Failed to load location assets: ${assetError.message}`);
+      throw AppError.internal(`Failed to load location assets: ${assetError.message}`);
     }
 
     const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null }>();
@@ -1827,7 +1828,7 @@ export const InventoryRPC = {
       .order('asset_tag');
 
     if (error) {
-      throw new Error(`Failed to load assets for transfer: ${error.message}`);
+      throw AppError.internal(`Failed to load assets for transfer: ${error.message}`);
     }
 
     return (data || []) as Array<{
@@ -1864,7 +1865,7 @@ export const InventoryRPC = {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to fetch stock movements: ${error.message}`);
+      throw AppError.internal(`Failed to fetch stock movements: ${error.message}`);
     }
 
     const normalized = (data || []).map((item: any) => ({
@@ -1895,7 +1896,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to reverse movement: ${error.message}`);
+      throw AppError.internal(`Failed to reverse movement: ${error.message}`);
     }
 
     return data as string;
@@ -1925,7 +1926,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch locations: ${error.message}`);
+      throw AppError.internal(`Failed to fetch locations: ${error.message}`);
     }
 
     return (data || []) as LocationWithType[];
@@ -1951,7 +1952,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create location: ${error.message}`);
+      throw AppError.internal(`Failed to create location: ${error.message}`);
     }
 
     return data;
@@ -1983,10 +1984,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update location: ${error.message}`);
+      throw AppError.internal(`Failed to update location: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Location was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
     }
 
     return data;
@@ -2006,10 +2007,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete location: ${error.message}`);
+      throw AppError.internal(`Failed to delete location: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Location was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
     }
 
     return data;
@@ -2047,7 +2048,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch stock balances: ${error.message}`);
+      throw AppError.internal(`Failed to fetch stock balances: ${error.message}`);
     }
 
     return data;
@@ -2065,7 +2066,7 @@ export const InventoryRPC = {
       .order('total_available');
 
     if (error) {
-      throw new Error(`Failed to fetch low stock items: ${error.message}`);
+      throw AppError.internal(`Failed to fetch low stock items: ${error.message}`);
     }
 
     return data;
@@ -2083,7 +2084,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to fetch inventory summary: ${error.message}`);
+      throw AppError.internal(`Failed to fetch inventory summary: ${error.message}`);
     }
 
     return data;
@@ -2108,7 +2109,7 @@ export const InventoryRPC = {
 
     const { data, error } = await query;
     if (error) {
-      throw new Error(`Failed to fetch reservation types: ${error.message}`);
+      throw AppError.internal(`Failed to fetch reservation types: ${error.message}`);
     }
 
     return (data || []) as ReservationTypeRow[];
@@ -2143,7 +2144,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create reservation type: ${error.message}`);
+      throw AppError.internal(`Failed to create reservation type: ${error.message}`);
     }
 
     return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
@@ -2174,7 +2175,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update reservation type: ${error.message}`);
+      throw AppError.internal(`Failed to update reservation type: ${error.message}`);
     }
 
     return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
@@ -2195,7 +2196,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete reservation type: ${error.message}`);
+      throw AppError.internal(`Failed to delete reservation type: ${error.message}`);
     }
 
     return data as Pick<ReservationTypeRow, 'id'>;
@@ -2225,7 +2226,7 @@ export const InventoryRPC = {
       .order('from_uom');
 
     if (error) {
-      throw new Error(`Failed to fetch UOM conversions: ${error.message}`);
+      throw AppError.internal(`Failed to fetch UOM conversions: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2257,7 +2258,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create UOM conversion: ${error.message}`);
+      throw AppError.internal(`Failed to create UOM conversion: ${error.message}`);
     }
 
     return data as { id: string; last_event_id: string };
@@ -2277,10 +2278,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete UOM conversion: ${error.message}`);
+      throw AppError.internal(`Failed to delete UOM conversion: ${error.message}`);
     }
     if (!data) {
-      throw new Error('UOM conversion was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('UOM conversion was updated by someone else. Please refresh and try again.');
     }
 
     return data as { id: string };
@@ -2300,7 +2301,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to convert UOM: ${error.message}`);
+      throw AppError.internal(`Failed to convert UOM: ${error.message}`);
     }
 
     return data as number;
@@ -2338,7 +2339,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch dead stock report: ${error.message}`);
+      throw AppError.internal(`Failed to fetch dead stock report: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2372,7 +2373,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch item velocity: ${error.message}`);
+      throw AppError.internal(`Failed to fetch item velocity: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2405,7 +2406,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch replenishment suggestions: ${error.message}`);
+      throw AppError.internal(`Failed to fetch replenishment suggestions: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2436,7 +2437,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch transfer suggestions: ${error.message}`);
+      throw AppError.internal(`Failed to fetch transfer suggestions: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2467,7 +2468,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch cycle count suggestions: ${error.message}`);
+      throw AppError.internal(`Failed to fetch cycle count suggestions: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2501,7 +2502,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch ledger with running balance: ${error.message}`);
+      throw AppError.internal(`Failed to fetch ledger with running balance: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2529,7 +2530,7 @@ export const InventoryRPC = {
       .order('net_position');
 
     if (error) {
-      throw new Error(`Failed to fetch inventory forecast: ${error.message}`);
+      throw AppError.internal(`Failed to fetch inventory forecast: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2557,7 +2558,7 @@ export const InventoryRPC = {
       .order('utilization_pct', { ascending: false, nullsFirst: false });
 
     if (error) {
-      throw new Error(`Failed to fetch location utilization: ${error.message}`);
+      throw AppError.internal(`Failed to fetch location utilization: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2590,7 +2591,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to check reservation availability: ${error.message}`);
+      throw AppError.internal(`Failed to check reservation availability: ${error.message}`);
     }
 
     return data as any;
@@ -2617,7 +2618,7 @@ export const InventoryRPC = {
       .order('scope');
 
     if (error) {
-      throw new Error(`Failed to fetch negative inventory config: ${error.message}`);
+      throw AppError.internal(`Failed to fetch negative inventory config: ${error.message}`);
     }
 
     return (data || []) as any[];
@@ -2651,7 +2652,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to save negative inventory config: ${error.message}`);
+      throw AppError.internal(`Failed to save negative inventory config: ${error.message}`);
     }
 
     return data as { id: string; last_event_id: string };
@@ -2671,10 +2672,10 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete negative inventory config: ${error.message}`);
+      throw AppError.internal(`Failed to delete negative inventory config: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Config was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Config was updated by someone else. Please refresh and try again.');
     }
 
     return data as { id: string };
@@ -2693,7 +2694,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to auto-create draft PO: ${error.message}`);
+      throw AppError.internal(`Failed to auto-create draft PO: ${error.message}`);
     }
 
     return data as string | null;
@@ -2783,7 +2784,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create item via wizard: ${error.message}`);
+      throw AppError.internal(`Failed to create item via wizard: ${error.message}`);
     }
 
     return data as any;
@@ -2813,7 +2814,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Global search failed: ${error.message}`);
+      throw AppError.internal(`Global search failed: ${error.message}`);
     }
 
     return data as any;
@@ -2854,7 +2855,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Item stock snapshot failed: ${error.message}`);
+      throw AppError.internal(`Item stock snapshot failed: ${error.message}`);
     }
 
     return data as any;
@@ -2905,7 +2906,7 @@ export const InventoryRPC = {
     });
 
     if (error) {
-      throw new Error(`Location inventory snapshot failed: ${error.message}`);
+      throw AppError.internal(`Location inventory snapshot failed: ${error.message}`);
     }
 
     return data as any;
@@ -2932,7 +2933,7 @@ export const InventoryRPC = {
       .maybeSingle();
 
     if (error) {
-      throw new Error(`Failed to fetch guardrail policies: ${error.message}`);
+      throw AppError.internal(`Failed to fetch guardrail policies: ${error.message}`);
     }
 
     return data;
@@ -2948,7 +2949,7 @@ export const InventoryRPC = {
     require_override_reason: boolean;
   }): Promise<any> {
     const tenantId = getTenantIdFromToken(getStoredAccessToken() || '');
-    if (!tenantId) throw new Error('No tenant ID');
+    if (!tenantId) throw AppError.unauthorized('No tenant ID');
 
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
@@ -2965,7 +2966,7 @@ export const InventoryRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to save guardrail policies: ${error.message}`);
+      throw AppError.internal(`Failed to save guardrail policies: ${error.message}`);
     }
 
     return data;
@@ -3007,7 +3008,7 @@ export const InventoryRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch guardrail exceptions: ${error.message}`);
+      throw AppError.internal(`Failed to fetch guardrail exceptions: ${error.message}`);
     }
 
     return (data || []) as any;

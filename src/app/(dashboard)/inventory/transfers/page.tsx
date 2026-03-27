@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -1162,7 +1164,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
           const trackingMode = getItemMeta(line.catalog_item_id)?.catalog_items?.tracking_mode || 'stock';
           if (isSerializedMode(trackingMode)) {
             if (line.asset_ids.length === 0) {
-              throw new Error('Select at least one asset for serialized items.');
+              throw AppError.badRequest('Select at least one asset for serialized items.');
             }
             return {
               catalog_item_id: line.catalog_item_id,
@@ -1172,7 +1174,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
           }
 
           if (!line.qty) {
-            throw new Error('Enter a quantity for each stock line.');
+            throw AppError.badRequest('Enter a quantity for each stock line.');
           }
 
           return {
@@ -1496,7 +1498,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
 
     try {
       if (!transfer.last_event_id) {
-        throw new Error('Missing last_event_id. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id. Please refresh and try again.');
       }
 
       await InventoryRPC.updateTransfer(transfer.id, transfer.last_event_id, {

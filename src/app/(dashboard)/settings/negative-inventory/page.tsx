@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface NegativeInvConfig {
   id: string;
@@ -214,10 +215,10 @@ function CreateNegativeInvModal({
 
     try {
       if (form.scope === 'category' && !form.category_id) {
-        throw new Error('Please select a category');
+        throw AppError.badRequest('Please select a category');
       }
       if (form.scope === 'item' && !form.catalog_item_id) {
-        throw new Error('Please select an item');
+        throw AppError.badRequest('Please select an item');
       }
 
       await InventoryRPC.upsertNegativeInventoryConfig({

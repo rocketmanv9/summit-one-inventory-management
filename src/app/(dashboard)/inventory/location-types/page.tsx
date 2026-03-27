@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -41,7 +43,7 @@ export default function LocationTypesPage() {
 
     try {
       if (!type.last_event_id) {
-        throw new Error('Missing last_event_id for this location type. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this location type. Please refresh and try again.');
       }
 
       await InventoryRPC.deleteLocationType(type.id, type.last_event_id);

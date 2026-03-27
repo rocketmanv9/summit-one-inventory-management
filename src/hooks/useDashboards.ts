@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 
 type DashboardStats = {
@@ -34,7 +35,7 @@ export function useDashboards() {
       try {
         const tenantId = resolveTenantId();
         if (!tenantId) {
-          throw new Error('Missing tenant context. Please log in again.');
+          throw AppError.unauthorized('Missing tenant context. Please log in again.');
         }
 
         const { data, error } = await supabase
@@ -75,7 +76,7 @@ export function useDashboardOverview() {
       try {
         const tenantId = resolveTenantId();
         if (!tenantId) {
-          throw new Error('Missing tenant context. Please log in again.');
+          throw AppError.unauthorized('Missing tenant context. Please log in again.');
         }
 
         const supabase = createBrowserAuthedClient();
@@ -94,13 +95,13 @@ export function useDashboardOverview() {
         if (statsQuery.error) {
           handleSupabaseAuthError(statsQuery.error);
           console.error('Stats error:', statsQuery.error);
-          throw new Error(statsQuery.error.message || 'Failed to load dashboard stats');
+          throw AppError.internal(statsQuery.error.message || 'Failed to load dashboard stats');
         }
 
         if (widgetsQuery.error) {
           handleSupabaseAuthError(widgetsQuery.error);
           console.error('Widgets error:', widgetsQuery.error);
-          throw new Error(widgetsQuery.error.message || 'Failed to load widgets');
+          throw AppError.internal(widgetsQuery.error.message || 'Failed to load widgets');
         }
 
         if (!isMounted) return;
@@ -164,7 +165,7 @@ export function useDashboard(id: string | null) {
     try {
       const tenantId = resolveTenantId();
       if (!tenantId) {
-        throw new Error('Missing tenant context. Please log in again.');
+        throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
 
       const supabase = createBrowserAuthedClient();
@@ -216,7 +217,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     try {
       const tenantId = resolveTenantId();
       if (!tenantId) {
-        throw new Error('Missing tenant context. Please log in again.');
+        throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
 
       const { data, error } = await supabase
@@ -247,7 +248,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
   const updateWidget = async (widgetId: string, updates: Partial<DashboardWidget>) => {
     const tenantId = resolveTenantId();
     if (!tenantId) {
-      return { error: new Error('Missing tenant context. Please log in again.') };
+      return { error: AppError.unauthorized('Missing tenant context. Please log in again.') };
     }
 
     const lastEventId = `ui_widget_${crypto.randomUUID()}`;
@@ -274,7 +275,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     try {
       const tenantId = resolveTenantId();
       if (!tenantId) {
-        throw new Error('Missing tenant context. Please log in again.');
+        throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
 
       const lastEventId = `ui_widget_${crypto.randomUUID()}`;
@@ -350,7 +351,7 @@ export async function saveLayout(dashboardId: string, widgets: DashboardWidget[]
   try {
     const tenantId = resolveTenantId();
     if (!tenantId) {
-      throw new Error('Missing tenant context. Please log in again.');
+      throw AppError.unauthorized('Missing tenant context. Please log in again.');
     }
 
     const supabase = createBrowserAuthedClient();
@@ -385,7 +386,7 @@ export async function saveWidgetConfig(
 ) {
   const tenantId = resolveTenantId();
   if (!tenantId) {
-    return { error: new Error('Missing tenant context. Please log in again.') };
+    return { error: AppError.unauthorized('Missing tenant context. Please log in again.') };
   }
 
   const supabase = createBrowserAuthedClient();

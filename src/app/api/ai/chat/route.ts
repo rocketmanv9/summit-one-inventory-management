@@ -2,31 +2,25 @@
  * AI Chat API Route
  * Server-side OpenAI integration for the inventory assistant.
  *
- * - Checks auth via getAuthContext()
+ * - Auth handled by chassis route factory
  * - Returns { fallbackToKeyword: true } if no API key configured
  * - Calls OpenAI with function tools and returns structured JSON
  * - Falls back gracefully on any error
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getAuthContext } from '@/lib/auth';
+import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { INVENTORY_TOOLS } from '@/lib/ai/tools';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt';
 import OpenAI from 'openai';
 
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 const MAX_MESSAGES = 20;
 
 function fallbackResponse() {
-  return NextResponse.json({ fallbackToKeyword: true });
+  return Response.json({ fallbackToKeyword: true });
 }
 
-export async function POST(request: NextRequest) {
-  // Auth check
-  const auth = await getAuthContext();
-  if (!auth) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export const POST = createSessionReadRoute(async ({ req, session, log }) => {
   // Check for API key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -34,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const body = await req.json();
     const messages: Array<{ role: 'user' | 'assistant'; content: string }> = body.messages || [];
 
     if (messages.length === 0) {
@@ -95,7 +89,7 @@ export async function POST(request: NextRequest) {
         // If argument parsing fails, use empty params
       }
 
-      return NextResponse.json({
+      return Response.json({
         type: 'tool_use',
         intent: functionName,
         params,
@@ -104,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     // Text response (no tool call)
     if (message.content) {
-      return NextResponse.json({
+      return Response.json({
         type: 'text',
         content: message.content,
       });
@@ -112,7 +106,7 @@ export async function POST(request: NextRequest) {
 
     return fallbackResponse();
   } catch (err: any) {
-    console.error('[AI Chat] Error:', err.message || err);
+    log.error('[AI Chat] Error:', err.message || err);
     return fallbackResponse();
   }
-}
+}, { serviceName: SERVICE_NAME });

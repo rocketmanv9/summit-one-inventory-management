@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -80,7 +82,7 @@ export default function LocationsPage() {
 
     try {
       if (!location.last_event_id) {
-        throw new Error('Missing last_event_id for this location. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this location. Please refresh and try again.');
       }
 
       await InventoryRPC.deleteLocation(location.id, location.last_event_id);
@@ -325,7 +327,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
       const locationTypeName = selectedType?.label || location?.location_type?.name || '';
 
       if (!locationTypeName) {
-        throw new Error('Please select a location type.');
+        throw AppError.badRequest('Please select a location type.');
       }
 
       const payload = {
@@ -338,7 +340,7 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
 
       if (isEditing && location) {
         if (!location.last_event_id) {
-          throw new Error('Missing last_event_id for this location. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this location. Please refresh and try again.');
         }
         await InventoryRPC.updateLocation(location.id, payload, location.last_event_id);
       } else {

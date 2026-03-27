@@ -1,79 +1,52 @@
-import { NextResponse } from 'next/server';
+import { createReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { cookies } from 'next/headers';
-import { jwtVerify, SignJWT } from 'jose';
+import {
+  verifyRefreshToken,
+  mintSessionTokens,
+  accessTokenCookieConfig,
+  refreshTokenCookieConfig,
+  REFRESH_TOKEN_COOKIE,
+} from '@rocketmanv9/chassis/auth';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-export async function POST() {
+/**
+ * POST /api/auth/refresh — verify the refresh token and mint a fresh pair.
+ *
+ * The refresh token includes full user claims (app_metadata, user_metadata),
+ * so no need to read the expired access token.
+ */
+export const POST = createReadRoute(async ({ req }) => {
+  const cookieStore = await cookies();
+  const refreshToken = cookieStore.get(REFRESH_TOKEN_COOKIE)?.value;
+
+  if (!refreshToken) {
+    throw AppError.unauthorized('No refresh token');
+  }
+
   try {
-    const cookieStore = await cookies();
-    const refreshToken = cookieStore.get('refresh_token')?.value;
+    // Verify the refresh token — contains full user claims
+    const claims = await verifyRefreshToken(refreshToken);
 
-    if (!refreshToken) {
-      return NextResponse.json({ error: 'Refresh token missing' }, { status: 401 });
-    }
-
-    const jwtSecret = process.env.SUPABASE_JWT_SECRET;
-    if (!jwtSecret) {
-      console.error('[Auth Refresh] SUPABASE_JWT_SECRET not configured');
-      return NextResponse.json({ error: 'Auth not configured' }, { status: 500 });
-    }
-
-    const secretKey = new TextEncoder().encode(jwtSecret);
-
-    let refreshClaims: Record<string, unknown>;
-    try {
-      const { payload: refreshPayload } = await jwtVerify(refreshToken, secretKey, {
-        algorithms: ['HS256'],
-      });
-
-      refreshClaims = refreshPayload as Record<string, unknown>;
-      const tokenUse = refreshClaims.token_use;
-      const subject = refreshClaims.sub;
-      const appMetadata = refreshClaims.app_metadata as Record<string, unknown> | undefined;
-      const tenantId = appMetadata?.tenant_id;
-
-      if (
-        tokenUse !== 'refresh' ||
-        typeof subject !== 'string' ||
-        typeof tenantId !== 'string'
-      ) {
-        return NextResponse.json({ error: 'Invalid refresh token' }, { status: 401 });
-      }
-    } catch {
-      return NextResponse.json({ error: 'Refresh token expired or invalid' }, { status: 401 });
-    }
-
-    const {
-      exp: _exp,
-      iat: _iat,
-      nbf: _nbf,
-      jti: _jti,
-      token_use: _tokenUse,
-      ...claims
-    } = refreshClaims;
-
-    const newAccessToken = await new SignJWT(claims)
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('1h')
-      .sign(secretKey);
-
-    cookieStore.set('access_token', newAccessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 3600,
-      path: '/',
+    // Mint new pair from the refresh token's claims
+    const { accessToken: newAccess, refreshToken: newRefresh } = await mintSessionTokens({
+      userId: claims.sub,
+      tenantId: claims.app_metadata?.tenant_id ?? null,
+      email: claims.user_metadata?.email ?? claims.email ?? '',
+      name: claims.user_metadata?.full_name ?? '',
+      role: claims.app_metadata?.role ?? 'authenticated',
+      isDeveloper: claims.app_metadata?.is_developer === true,
     });
 
-    return NextResponse.json(
-      { expiresAt: Date.now() + 3600 * 1000 },
-      { status: 200, headers: { 'Cache-Control': 'no-store' } }
-    );
-  } catch (error) {
-    console.error('[Auth Refresh] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    const accessCfg = accessTokenCookieConfig(newAccess);
+    const refreshCfg = refreshTokenCookieConfig(newRefresh);
+
+    cookieStore.set(accessCfg.name, accessCfg.value, accessCfg);
+    cookieStore.set(refreshCfg.name, refreshCfg.value, refreshCfg);
+
+    return Response.json({ refreshed: true });
+  } catch {
+    throw AppError.unauthorized('Invalid refresh token');
   }
-}
+}, { serviceName: SERVICE_NAME, auth: 'public' });

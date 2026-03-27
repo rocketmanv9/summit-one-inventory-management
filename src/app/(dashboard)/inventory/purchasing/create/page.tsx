@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -102,11 +104,11 @@ export default function CreatePurchaseOrderPage() {
     try {
       // Validate
       if (!form.vendor_id) {
-        throw new Error('Please select a vendor');
+        throw AppError.badRequest('Please select a vendor');
       }
 
       if (!form.delivery_location_id) {
-        throw new Error('Please select a delivery location');
+        throw AppError.badRequest('Please select a delivery location');
       }
 
       const validLines = lines.filter(
@@ -115,7 +117,7 @@ export default function CreatePurchaseOrderPage() {
       );
 
       if (validLines.length === 0) {
-        throw new Error('Please add at least one line item');
+        throw AppError.badRequest('Please add at least one line item');
       }
 
       // Create PO using RPC

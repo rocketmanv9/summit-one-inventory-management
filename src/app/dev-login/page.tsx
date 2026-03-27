@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+// eslint-disable-next-line no-restricted-imports -- dev-only page needs raw Supabase client
 import { createClient } from '@supabase/supabase-js';
 
 export default function DevLoginPage() {

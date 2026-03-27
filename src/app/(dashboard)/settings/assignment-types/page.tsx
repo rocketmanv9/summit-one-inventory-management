@@ -8,6 +8,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { AssignmentTypeModal } from '@/components/modals/AssignmentTypeModal';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface AssignmentType {
   id: string;
@@ -70,7 +71,7 @@ export default function AssignmentTypesSettingsPage() {
 
     try {
       if (!type.last_event_id) {
-        throw new Error('Missing last_event_id for this assignment type. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this assignment type. Please refresh and try again.');
       }
       await InventoryRPC.deleteAssignmentType(type.id, type.last_event_id);
       await fetchTypes();
@@ -88,7 +89,7 @@ export default function AssignmentTypesSettingsPage() {
 
     try {
       if (!type.last_event_id) {
-        throw new Error('Missing last_event_id for this assignment type. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this assignment type. Please refresh and try again.');
       }
       await InventoryRPC.updateAssignmentType(
         type.id,

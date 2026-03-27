@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface UomConversion {
   id: string;
@@ -174,12 +175,12 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
 
     try {
       if (!form.from_uom || !form.to_uom || !form.conversion_factor) {
-        throw new Error('All fields are required');
+        throw AppError.badRequest('All fields are required');
       }
 
       const factor = parseFloat(form.conversion_factor);
       if (isNaN(factor) || factor <= 0) {
-        throw new Error('Conversion factor must be a positive number');
+        throw AppError.badRequest('Conversion factor must be a positive number');
       }
 
       await InventoryRPC.createUomConversion({

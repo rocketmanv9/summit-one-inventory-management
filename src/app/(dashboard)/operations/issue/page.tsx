@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { Package, Plus, AlertCircle, Check, Info } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface Location {
   id: string;
@@ -120,11 +121,11 @@ export default function IssueInventoryPage() {
     try {
       // Validate
       if (!form.location_id) {
-        throw new Error('Please select a location');
+        throw AppError.badRequest('Please select a location');
       }
 
       if (!form.issued_to_ref) {
-        throw new Error('Please enter who/what the inventory is issued to');
+        throw AppError.badRequest('Please enter who/what the inventory is issued to');
       }
 
       const validItems = issueItems.filter(
@@ -132,7 +133,7 @@ export default function IssueInventoryPage() {
       );
 
       if (validItems.length === 0) {
-        throw new Error('Please add at least one item with quantity > 0');
+        throw AppError.badRequest('Please add at least one item with quantity > 0');
       }
 
       // Check availability
@@ -140,7 +141,7 @@ export default function IssueInventoryPage() {
         const available = getAvailableQty(item.catalog_item_id);
         if (item.qty_issued > available) {
           const itemName = items.find((i) => i.id === item.catalog_item_id)?.name || 'Unknown';
-          throw new Error(
+          throw AppError.badRequest(
             `Insufficient stock for ${itemName}. Available: ${available}, Requested: ${item.qty_issued}`
           );
         }

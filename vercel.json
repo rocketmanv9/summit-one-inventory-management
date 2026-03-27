@@ -1,46 +1,4 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
-  "framework": "nextjs",
-  "installCommand": "npm install",
-  "regions": ["iad1"],
-  "functions": {
-    "src/app/api/**/*.ts": {
-      "memory": 1024,
-      "maxDuration": 10
-    },
-    "src/app/api/ai/**/*.ts": {
-      "memory": 1024,
-      "maxDuration": 30
-    }
-  },
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "X-Content-Type-Options",
-          "value": "nosniff"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "DENY"
-        },
-        {
-          "key": "X-XSS-Protection",
-          "value": "1; mode=block"
-        },
-        {
-          "key": "Referrer-Policy",
-          "value": "strict-origin-when-cross-origin"
-        }
-      ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
-    }
-  ]
+  "buildCommand": "echo \"$NPM_RC\" > .npmrc && npm ci && npm run build",
+  "framework": "nextjs"
 }

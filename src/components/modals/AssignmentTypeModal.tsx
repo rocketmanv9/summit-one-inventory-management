@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface AssignmentType {
   id: string;
@@ -86,7 +87,7 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
     try {
       if (isEdit && item) {
         if (!item.last_event_id) {
-          throw new Error('Missing last_event_id for this assignment type. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this assignment type. Please refresh and try again.');
         }
         await InventoryRPC.updateAssignmentType(
           item.id,

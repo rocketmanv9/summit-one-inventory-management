@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
@@ -73,7 +75,7 @@ export default function ReceiptDetailPage() {
       const receiptData = await receiptRes.json();
       
       if (!receiptRes.ok) {
-        throw new Error(receiptData.error || 'Failed to load receipt');
+        throw AppError.internal(receiptData.error || 'Failed to load receipt');
       }
 
       const receipt = receiptData.receipt;
@@ -84,7 +86,7 @@ export default function ReceiptDetailPage() {
       const poData = await poRes.json();
       
       if (!poRes.ok) {
-        throw new Error(poData.error || 'Failed to load PO');
+        throw AppError.internal(poData.error || 'Failed to load PO');
       }
 
       setPODetail(poData.po);
@@ -138,7 +140,7 @@ export default function ReceiptDetailPage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to reverse receipt');
+        throw AppError.internal(data.error || 'Failed to reverse receipt');
       }
 
       alert('Receipt reversed successfully');
@@ -171,7 +173,7 @@ export default function ReceiptDetailPage() {
         .filter(line => line.qty_received > 0);
 
       if (nonZeroLines.length === 0) {
-        throw new Error('At least one line must have quantity > 0');
+        throw AppError.badRequest('At least one line must have quantity > 0');
       }
 
       // Call confirm receipt API endpoint
@@ -182,7 +184,7 @@ export default function ReceiptDetailPage() {
       
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to confirm receipt');
+        throw AppError.internal(data.error || 'Failed to confirm receipt');
       }
       
       // Update status to confirmed and stay on page (don't redirect)

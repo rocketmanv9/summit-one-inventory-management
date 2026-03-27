@@ -1,62 +1,49 @@
-import { NextResponse } from 'next/server';
-import { clearAuth, getAuthContext } from '@/lib/auth';
+import { createReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { cookies } from 'next/headers';
+import {
+  verifySessionToken,
+  ACCESS_TOKEN_COOKIE,
+  REFRESH_TOKEN_COOKIE,
+} from '@rocketmanv9/chassis/auth';
+import { AppError } from '@rocketmanv9/chassis/errors';
+
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
- * GET /api/auth/session
- *
- * Returns current session information from JWT claims in access_token cookie
- *
- * Response:
- * {
- *   user_id: string,
- *   tenant_id: string,
- *   email: string
- * }
+ * GET /api/auth/session — return the current user context from the access token.
  */
-export async function GET() {
-  try {
-    const auth = await getAuthContext();
-    if (!auth) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
-    }
+export const GET = createReadRoute(async ({ req, session }) => {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(ACCESS_TOKEN_COOKIE)?.value;
 
-    return NextResponse.json({
-      user_id: auth.userId,
-      tenant_id: auth.tenantId,
-      email: auth.userEmail || '',
+  if (!token) {
+    throw AppError.unauthorized('Not authenticated');
+  }
+
+  try {
+    const claims = await verifySessionToken(token);
+
+    return Response.json({
+      authenticated: true,
+      userId: claims.sub,
+      email: claims.email,
+      tenantId: claims.app_metadata?.tenant_id ?? null,
+      name: claims.user_metadata?.full_name ?? '',
+      role: claims.app_metadata?.role ?? 'authenticated',
+      isDeveloper: claims.app_metadata?.is_developer === true,
     });
-
-  } catch (error) {
-    console.error('[Auth Session] Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  } catch {
+    throw AppError.unauthorized('Not authenticated');
   }
-}
+}, { serviceName: SERVICE_NAME, auth: 'session' });
 
 /**
- * DELETE /api/auth/session
- *
- * Logout - clears session cookies
+ * DELETE /api/auth/session — clear the session (alias for logout).
  */
-export async function DELETE() {
-  try {
-    await clearAuth();
+export const DELETE = createReadRoute(async ({ req }) => {
+  const cookieStore = await cookies();
+  cookieStore.set(ACCESS_TOKEN_COOKIE, '', { maxAge: 0, path: '/' });
+  cookieStore.set(REFRESH_TOKEN_COOKIE, '', { maxAge: 0, path: '/' });
 
-    return NextResponse.json(
-      { message: 'Logged out' },
-      { status: 200 }
-    );
-
-  } catch (error) {
-    console.error('[Auth Session] Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+  return Response.json({ cleared: true });
+}, { serviceName: SERVICE_NAME, auth: 'public' });

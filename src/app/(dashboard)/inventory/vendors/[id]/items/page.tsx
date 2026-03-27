@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect, useMemo } from 'react';
 import type { FormEvent } from 'react';
 import { useParams, useRouter } from 'next/navigation';
@@ -139,7 +141,7 @@ export default function VendorItemsPage() {
 
       if (editingItem) {
         if (!editingItem.last_event_id) {
-          throw new Error('Missing last_event_id for update');
+          throw AppError.badRequest('Missing last_event_id for update');
         }
         await SupplyChainRPC.updateVendorItem(editingItem.id, payload, editingItem.last_event_id);
       } else {
@@ -177,7 +179,7 @@ export default function VendorItemsPage() {
     try {
       const item = vendorItems.find((vendorItem) => vendorItem.id === id);
       if (!item?.last_event_id) {
-        throw new Error('Missing last_event_id for delete');
+        throw AppError.badRequest('Missing last_event_id for delete');
       }
       await SupplyChainRPC.deleteVendorItem(id, item.last_event_id);
 

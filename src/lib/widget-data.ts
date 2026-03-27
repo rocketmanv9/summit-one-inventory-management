@@ -1,5 +1,5 @@
 import { createBrowserAuthedClient } from '@/supabase/client';
-import { getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
+import { getAuthToken } from '@/lib/auth-token';
 
 type WidgetDataRequest = {
   widget_key?: string;
@@ -62,8 +62,21 @@ function buildDefaultTable(stats: DashboardStatsRow | null): WidgetDataResponse 
 }
 
 async function fetchDashboardStats(): Promise<DashboardStatsRow | null> {
-  const accessToken = getStoredAccessToken();
-  const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
+  const accessToken = await getAuthToken();
+  if (!accessToken) {
+    console.warn('[WidgetData] Missing auth token; skipping dashboard_stats lookup.');
+    return null;
+  }
+
+  let tenantId: string | null = null;
+  try {
+    const payload = JSON.parse(atob(accessToken.split('.')[1]));
+    tenantId = payload.tenant_id ?? null;
+  } catch {
+    console.warn('[WidgetData] Failed to decode tenant from token.');
+    return null;
+  }
+
   if (!tenantId) {
     console.warn('[WidgetData] Missing tenant context; skipping dashboard_stats lookup.');
     return null;
@@ -77,7 +90,6 @@ async function fetchDashboardStats(): Promise<DashboardStatsRow | null> {
     .single();
 
   if (error) {
-    handleSupabaseAuthError(error);
     console.warn('[WidgetData] Failed to fetch dashboard_stats:', error.message);
     return null;
   }

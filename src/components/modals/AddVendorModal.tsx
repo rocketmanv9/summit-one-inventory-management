@@ -16,6 +16,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2, Search } from 'lucide-react';
 import { searchVendorOnline } from '@/lib/ai/client';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
 type Vendor = Database['supply_chain']['Tables']['vendors']['Row'];
@@ -297,7 +298,7 @@ export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }
 
       if (isEdit && vendor) {
         if (!vendor.last_event_id) {
-          throw new Error('Missing last_event_id for this vendor. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this vendor. Please refresh and try again.');
         }
         await SupplyChainRPC.updateVendor(vendor.id, payload, vendor.last_event_id);
       } else {

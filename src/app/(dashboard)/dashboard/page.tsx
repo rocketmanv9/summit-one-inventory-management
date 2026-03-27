@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { useRouter } from 'next/navigation';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
@@ -233,7 +234,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
       const userId = accessToken ? getUserIdFromToken(accessToken) : null;
 
       if (!tenantId) {
-        throw new Error('Missing tenant token. Please log in again.');
+        throw AppError.unauthorized('Missing tenant token. Please log in again.');
       }
 
       const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;
@@ -270,7 +271,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
         .maybeSingle();
 
       if (existingError) throw existingError;
-      if (!existing?.id) throw new Error('Failed to resolve dashboard id.');
+      if (!existing?.id) throw AppError.internal('Failed to resolve dashboard id.');
       onCreate(existing.id);
     } catch (err: any) {
       console.error('Error creating dashboard:', err);

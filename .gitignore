@@ -64,3 +64,4 @@ lighthouse-report.html
 .branches
 .temp
 supabase/.env
+.chassis-init.json

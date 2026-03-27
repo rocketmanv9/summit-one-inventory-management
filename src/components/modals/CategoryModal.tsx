@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
 type Category = Database['inventory']['Tables']['item_categories']['Row'];
@@ -121,7 +122,7 @@ export function CategoryModal({ open, onClose, onSuccess, item }: CategoryModalP
 
       if (isEdit && item) {
         if (!item.last_event_id) {
-          throw new Error('Missing last_event_id for this category. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
         }
         await InventoryRPC.updateItemCategory(item.id, payload, item.last_event_id);
       } else {

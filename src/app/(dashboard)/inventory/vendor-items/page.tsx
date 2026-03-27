@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
@@ -130,7 +132,7 @@ export default function VendorItemsPage() {
     try {
       if (editingItem) {
         if (!editingItem.last_event_id) {
-          throw new Error('Missing last_event_id for this vendor item. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this vendor item. Please refresh and try again.');
         }
 
         await SupplyChainRPC.updateVendorItem(editingItem.id, payload, editingItem.last_event_id);
@@ -172,7 +174,7 @@ export default function VendorItemsPage() {
 
     try {
       if (!item.last_event_id) {
-        throw new Error('Missing last_event_id for this vendor item. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this vendor item. Please refresh and try again.');
       }
 
       await SupplyChainRPC.deleteVendorItem(item.id, item.last_event_id);

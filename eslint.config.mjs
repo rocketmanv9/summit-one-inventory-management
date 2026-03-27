@@ -1,6 +1,7 @@
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { FlatCompat } from "@eslint/eslintrc";
+import chassisRules from "./eslint.chassis.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -47,6 +48,7 @@ const eslintConfig = [
       "src/components/modals/PlaceOrderModal.tsx",
     ],
   },
+  ...chassisRules,
 ];
 
 export default eslintConfig;

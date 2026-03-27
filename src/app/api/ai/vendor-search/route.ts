@@ -6,27 +6,23 @@
  * Returns { found: true, vendor: {...} } or { found: false }
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getAuthContext } from '@/lib/auth';
+import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import OpenAI from 'openai';
 
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
+
 function notFound() {
-  return NextResponse.json({ found: false });
+  return Response.json({ found: false });
 }
 
-export async function POST(request: NextRequest) {
-  const auth = await getAuthContext();
-  if (!auth) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export const POST = createSessionReadRoute(async ({ req, session, log }) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return notFound();
   }
 
   try {
-    const body = await request.json();
+    const body = await req.json();
     const name = typeof body.name === 'string' ? body.name.trim() : '';
 
     if (!name) {
@@ -100,9 +96,9 @@ export async function POST(request: NextRequest) {
       return notFound();
     }
 
-    return NextResponse.json({ found: true, vendor });
+    return Response.json({ found: true, vendor });
   } catch (err: any) {
-    console.error('[Vendor Search] Error:', err.message || err);
+    log.error('[Vendor Search] Error:', err.message || err);
     return notFound();
   }
-}
+}, { serviceName: SERVICE_NAME });

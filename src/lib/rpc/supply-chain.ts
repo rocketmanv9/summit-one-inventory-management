@@ -6,6 +6,7 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
 type VendorRow = Database['supply_chain']['Tables']['vendors']['Row'];
@@ -23,12 +24,12 @@ type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id
 function requireAdminRole(): void {
   const token = getStoredAccessToken();
   if (!token) {
-    throw new Error('Authentication required');
+    throw AppError.unauthorized('Authentication required');
   }
 
   const role = parseJwtPayload(token)?.app_metadata?.role;
   if (role !== 'admin') {
-    throw new Error('Admin role required');
+    throw AppError.forbidden('Admin role required');
   }
 }
 
@@ -156,7 +157,7 @@ export const SupplyChainRPC = {
     const { data, error } = await supabase.rpc('rpc_get_tenant_settings');
 
     if (error) {
-      throw new Error(`Failed to fetch tenant settings: ${error.message}`);
+      throw AppError.internal(`Failed to fetch tenant settings: ${error.message}`);
     }
 
     return data as TenantSettings;
@@ -174,7 +175,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to update tenant settings: ${error.message}`);
+      throw AppError.internal(`Failed to update tenant settings: ${error.message}`);
     }
 
     return data as TenantSettings;
@@ -192,7 +193,7 @@ export const SupplyChainRPC = {
       .maybeSingle();
 
     if (error) {
-      throw new Error(`Failed to fetch vendor: ${error.message}`);
+      throw AppError.internal(`Failed to fetch vendor: ${error.message}`);
     }
 
     return data as VendorRow | null;
@@ -222,7 +223,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create PO: ${error.message}`);
+      throw AppError.internal(`Failed to create PO: ${error.message}`);
     }
 
     return data as CreatePurchaseOrderResult;
@@ -244,7 +245,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to post receipt: ${error.message}`);
+      throw AppError.internal(`Failed to post receipt: ${error.message}`);
     }
 
     return data as any;
@@ -263,7 +264,7 @@ export const SupplyChainRPC = {
       .order('name');
 
     if (error) {
-      throw new Error(`Failed to fetch vendors: ${error.message}`);
+      throw AppError.internal(`Failed to fetch vendors: ${error.message}`);
     }
 
     return (data ?? []) as VendorRow[];
@@ -287,11 +288,11 @@ export const SupplyChainRPC = {
       .maybeSingle();
 
     if (existingError) {
-      throw new Error(`Failed to check existing vendor: ${existingError.message}`);
+      throw AppError.internal(`Failed to check existing vendor: ${existingError.message}`);
     }
 
     if (existingByName?.active) {
-      throw new Error('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
+      throw AppError.conflict('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
     }
 
     if (existingByName && !existingByName.active) {
@@ -317,7 +318,7 @@ export const SupplyChainRPC = {
         .single();
 
       if (restoreError) {
-        throw new Error(`Failed to restore vendor: ${restoreError.message}`);
+        throw AppError.internal(`Failed to restore vendor: ${restoreError.message}`);
       }
 
       return restored as Pick<VendorRow, 'id' | 'last_event_id'>;
@@ -330,7 +331,7 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create vendor: ${error.message}`);
+      throw AppError.internal(`Failed to create vendor: ${error.message}`);
     }
 
     return data as Pick<VendorRow, 'id' | 'last_event_id'>;
@@ -357,10 +358,10 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update vendor: ${error.message}`);
+      throw AppError.internal(`Failed to update vendor: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Vendor was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<VendorRow, 'id' | 'last_event_id'>;
@@ -381,10 +382,10 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete vendor: ${error.message}`);
+      throw AppError.internal(`Failed to delete vendor: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Vendor was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<VendorRow, 'id' | 'last_event_id'>;
@@ -408,7 +409,7 @@ export const SupplyChainRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch vendor items: ${error.message}`);
+      throw AppError.internal(`Failed to fetch vendor items: ${error.message}`);
     }
 
     return (data || []) as VendorItemRow[];
@@ -428,7 +429,7 @@ export const SupplyChainRPC = {
       .order('vendor_sku');
 
     if (viError) {
-      throw new Error(`Failed to fetch vendor items: ${viError.message}`);
+      throw AppError.internal(`Failed to fetch vendor items: ${viError.message}`);
     }
 
     if (!vendorItems || vendorItems.length === 0) {
@@ -442,7 +443,7 @@ export const SupplyChainRPC = {
       .in('id', catalogItemIds);
 
     if (ciError) {
-      throw new Error(`Failed to fetch catalog items: ${ciError.message}`);
+      throw AppError.internal(`Failed to fetch catalog items: ${ciError.message}`);
     }
 
     const catalogMap = new Map((catalogItems || []).map(ci => [ci.id, ci]));
@@ -476,7 +477,7 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create vendor item: ${error.message}`);
+      throw AppError.internal(`Failed to create vendor item: ${error.message}`);
     }
 
     return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
@@ -503,10 +504,10 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update vendor item: ${error.message}`);
+      throw AppError.internal(`Failed to update vendor item: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Vendor item was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
@@ -526,10 +527,10 @@ export const SupplyChainRPC = {
       .single();
 
     if (error) {
-      throw new Error(`Failed to delete vendor item: ${error.message}`);
+      throw AppError.internal(`Failed to delete vendor item: ${error.message}`);
     }
     if (!data) {
-      throw new Error('Vendor item was updated by someone else. Please refresh and try again.');
+      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
     }
 
     return data as Pick<VendorItemRow, 'id'>;
@@ -577,7 +578,7 @@ export const SupplyChainRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch POs: ${error.message}`);
+      throw AppError.internal(`Failed to fetch POs: ${error.message}`);
     }
 
     return data;
@@ -615,7 +616,7 @@ export const SupplyChainRPC = {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to fetch receipts: ${error.message}`);
+      throw AppError.internal(`Failed to fetch receipts: ${error.message}`);
     }
 
     return data;
@@ -639,7 +640,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch open POs for receiving: ${error.message}`);
+      throw AppError.internal(`Failed to fetch open POs for receiving: ${error.message}`);
     }
 
     return data;
@@ -657,7 +658,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch recent receipts: ${error.message}`);
+      throw AppError.internal(`Failed to fetch recent receipts: ${error.message}`);
     }
 
     return data;
@@ -675,7 +676,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to fetch PO receiving detail: ${error.message}`);
+      throw AppError.internal(`Failed to fetch PO receiving detail: ${error.message}`);
     }
 
     return data;
@@ -717,7 +718,7 @@ export const SupplyChainRPC = {
     });
 
     if (error) {
-      throw new Error(`Failed to create receipt: ${error.message}`);
+      throw AppError.internal(`Failed to create receipt: ${error.message}`);
     }
 
     return data;

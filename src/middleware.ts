@@ -1,58 +1,32 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import { assertChassisSchemaVersion } from '@rocketmanv9/chassis/config';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 
-/**
- * Next.js Middleware
- *
- * Runs before all requests to apply global logic:
- * - Security headers
- * - Request logging (optional)
- * - Path-based routing
- *
- * Note: Rate limiting is handled per-route in API handlers
- * (middleware runs on Edge, but rate limiting needs Upstash which
- * is initialized per-route for better control)
- */
+// One-time schema version check on first request
+let schemaChecked = false;
 
-export function middleware(request: NextRequest) {
-  const response = NextResponse.next();
-
-  // Add security headers to all responses
-  response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', 'DENY');
-  response.headers.set('X-XSS-Protection', '1; mode=block');
-  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-  response.headers.set(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=()'
-  );
-
-  // Add HSTS header in production
-  if (process.env.NODE_ENV === 'production') {
-    response.headers.set(
-      'Strict-Transport-Security',
-      'max-age=31536000; includeSubDomains'
-    );
+export async function middleware(request: NextRequest) {
+  // Verify chassis DB migrations are applied (runs once per cold start)
+  if (!schemaChecked) {
+    try {
+      const supabaseAdmin = await createTenantServiceClient({
+        url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        tenantId: '__system__',
+      });
+      await assertChassisSchemaVersion(supabaseAdmin);
+      schemaChecked = true;
+    } catch (err) {
+      console.error('[chassis] Schema version check failed:', err);
+      // Don't block requests — log and continue, check again next request
+    }
   }
 
-  // Optional: Log requests (disable in production for performance)
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[${request.method}] ${request.nextUrl.pathname}`);
-  }
-
-  return response;
+  return NextResponse.next({ request });
 }
 
-// Configure which routes use this middleware
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public assets
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.svg|.*\\.png|.*\\.jpg).*)',
+    '/((?!_next/static|_next/image|debug|api/system/debug|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|json)$).*)',
   ],
 };

@@ -5,6 +5,7 @@
  * but routes inventory/supply-chain calls directly to Supabase.
  */
 
+// eslint-disable-next-line no-restricted-imports -- client-side API shim needs raw Supabase client
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import {
   clearStoredAccessToken,

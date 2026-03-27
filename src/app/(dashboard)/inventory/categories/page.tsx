@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -61,7 +63,7 @@ export default function CategoriesPage() {
       }
 
       if (!category.last_event_id) {
-        throw new Error('Missing last_event_id for this category. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
       }
 
       await InventoryRPC.deleteItemCategory(category.id, category.last_event_id);

@@ -9,6 +9,7 @@
  */
 
 import { createBrowserAuthedClient } from '@/supabase/client';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 export interface EmitEventParams {
   /** Event type key, e.g. 'supply_chain.vendor_item.deleted' */
@@ -47,7 +48,7 @@ export async function emitEvent(params: EmitEventParams): Promise<EmitEventResul
   });
 
   if (error) {
-    throw new Error(`Failed to emit event '${params.event_type}': ${error.message}`);
+    throw AppError.internal(`Failed to emit event '${params.event_type}': ${error.message}`);
   }
 
   return { outbox_id: data as string };

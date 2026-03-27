@@ -7,6 +7,7 @@ import { WidgetContainer } from '@/components/widgets/WidgetContainer';
 import { saveLayout } from '@/hooks/useDashboards';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken } from '@/lib/auth-token';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import 'react-grid-layout/css/styles.css';
 
 type LayoutItem = {
@@ -139,7 +140,7 @@ export function EditableDashboardGrid({
       const accessToken = getStoredAccessToken();
       const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
       if (!tenantId) {
-        throw new Error('Missing tenant context. Please log in again.');
+        throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
 
       const lastEventId = `ui_dashboard_${crypto.randomUUID()}`;

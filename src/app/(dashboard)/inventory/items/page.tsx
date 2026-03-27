@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
@@ -84,7 +86,7 @@ export default function ItemsPage() {
 
     try {
       if (!lastEventId) {
-        throw new Error('Missing last_event_id for this item. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id for this item. Please refresh and try again.');
       }
 
       await InventoryRPC.deleteCatalogItem(itemId, lastEventId);
@@ -590,7 +592,7 @@ function CreateItemModal({
 
       if (isEditing && item) {
         if (!item.last_event_id) {
-          throw new Error('Missing last_event_id for this item. Please refresh and try again.');
+          throw AppError.badRequest('Missing last_event_id for this item. Please refresh and try again.');
         }
 
         await InventoryRPC.updateCatalogItem(item.id, payload as Parameters<typeof InventoryRPC.updateCatalogItem>[1], item.last_event_id);

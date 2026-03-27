@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -216,7 +218,7 @@ export default function CycleCountsPage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to start count');
+        throw AppError.internal(data.error || 'Failed to start count');
       }
 
       fetchCycleCounts();
@@ -383,7 +385,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
       });
       
       if (!res.ok) {
-        throw new Error('Failed to update asset count');
+        throw AppError.internal('Failed to update asset count');
       }
       
       fetchCountLines();
@@ -399,7 +401,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         method: 'PATCH',
         body: { actual_qty: actualQty }
       });
-      if (!res.ok) throw new Error('Failed to update count');
+      if (!res.ok) throw AppError.internal('Failed to update count');
       fetchCountLines();
     } catch (error) {
       alert('Error updating count');
@@ -414,7 +416,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to record decision');
+        throw AppError.internal(data.error || 'Failed to record decision');
       }
       fetchCountLines();
     } catch (error: any) {
@@ -813,7 +815,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   });
                   if (!res.ok) {
                     const data = await res.json();
-                    throw new Error(data.error || 'Failed to start count');
+                    throw AppError.internal(data.error || 'Failed to start count');
                   }
                   onClose();
                   onUpdate();
@@ -846,7 +848,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   });
                   if (!res.ok) {
                     const data = await res.json();
-                    throw new Error(data.error || 'Failed to submit');
+                    throw AppError.internal(data.error || 'Failed to submit');
                   }
                   onUpdate();
                   onClose();
@@ -1003,7 +1005,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   
                   if (!res.ok) {
                     const data = await res.json();
-                    throw new Error(data.error || 'Failed to approve');
+                    throw AppError.internal(data.error || 'Failed to approve');
                   }
 
                   const result = await res.json();
@@ -1104,7 +1106,7 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
 
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed to start cycle count');
+        throw AppError.internal(data.error || 'Failed to start cycle count');
       }
 
       onCreated();

@@ -1,5 +1,7 @@
 'use client';
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -409,7 +411,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
           .filter(tag => tag.length > 0);
         
         if (tagsToCreate.length !== quantity) {
-          throw new Error(`Expected ${quantity} custom tags, but found ${tagsToCreate.length}`);
+          throw AppError.badRequest(`Expected ${quantity} custom tags, but found ${tagsToCreate.length}`);
         }
       }
       
@@ -718,7 +720,7 @@ function EditAssetModal({
 
     try {
       if (!asset.last_event_id) {
-        throw new Error('Missing last_event_id. Please refresh and try again.');
+        throw AppError.badRequest('Missing last_event_id. Please refresh and try again.');
       }
 
       await InventoryRPC.updateAsset(

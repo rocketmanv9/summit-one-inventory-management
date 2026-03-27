@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getAuthContext } from '@/lib/auth';
-import { createAuthenticatedClient } from '@/supabase/client';
-import { cookies } from 'next/headers';
+import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
+import { AppError } from '@rocketmanv9/chassis/errors';
+
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
  * GET /api/search?q=...&limit=5
@@ -9,42 +10,32 @@ import { cookies } from 'next/headers';
  * Global cross-entity search. Tenant-scoped via RLS + JWT.
  * Returns grouped results: items, assets, locations, vendors, purchase_orders, reservations.
  */
-export async function GET(request: NextRequest) {
-  try {
-    const auth = await getAuthContext();
-    if (!auth) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
+  const url = new URL(req.url);
+  const q = url.searchParams.get('q')?.trim();
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '5', 10) || 5, 1), 20);
 
-    const q = request.nextUrl.searchParams.get('q')?.trim();
-    const limit = Math.min(Math.max(parseInt(request.nextUrl.searchParams.get('limit') || '5', 10) || 5, 1), 20);
-
-    if (!q || q.length === 0) {
-      return NextResponse.json({
-        items: [], assets: [], locations: [], vendors: [], purchase_orders: [], reservations: [],
-      });
-    }
-
-    const cookieStore = await cookies();
-    const accessToken = cookieStore.get('access_token')?.value;
-    if (!accessToken) {
-      return NextResponse.json({ error: 'No access token' }, { status: 401 });
-    }
-
-    const supabase = createAuthenticatedClient(accessToken).schema('inventory' as any);
-    const { data, error } = await (supabase as any).rpc('rpc_global_search', {
-      p_query: q,
-      p_limit: limit,
+  if (!q || q.length === 0) {
+    return Response.json({
+      items: [], assets: [], locations: [], vendors: [], purchase_orders: [], reservations: [],
     });
-
-    if (error) {
-      console.error('[Search] RPC error:', error);
-      return NextResponse.json({ error: 'Search failed' }, { status: 500 });
-    }
-
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error('[Search] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-}
+
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId,
+  });
+
+  const { data, error } = await (supabase as any).schema('inventory').rpc('rpc_global_search', {
+    p_query: q,
+    p_limit: limit,
+  });
+
+  if (error) {
+    log.error('[Search] RPC error:', error);
+    throw AppError.internal('Search failed');
+  }
+
+  return Response.json(data);
+}, { serviceName: SERVICE_NAME });

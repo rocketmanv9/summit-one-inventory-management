@@ -1,38 +1,29 @@
-import { NextResponse } from 'next/server';
-import { clearAuth } from '@/lib/auth';
+import { createReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { cookies } from 'next/headers';
+import {
+  ACCESS_TOKEN_COOKIE,
+  REFRESH_TOKEN_COOKIE,
+} from '@rocketmanv9/chassis/auth';
+import { loadConfig } from '@rocketmanv9/chassis/config';
 
-export async function POST() {
-  try {
-    await clearAuth();
-    
-    // Redirect to Core login page
-    const coreUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || 'https://dev.summit-one.app';
-    
-    return NextResponse.json({ 
-      success: true, 
-      redirectUrl: coreUrl 
-    });
-    
-  } catch (error) {
-    console.error('[Logout] Error:', error);
-    return NextResponse.json(
-      { error: 'Logout failed' },
-      { status: 500 }
-    );
-  }
-}
+const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-export async function GET() {
-  try {
-    await clearAuth();
-    
-    // Redirect to Core login page
-    const coreUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || 'https://dev.summit-one.app';
-    
-    return NextResponse.redirect(coreUrl);
-    
-  } catch (error) {
-    console.error('[Logout] Error:', error);
-    return NextResponse.redirect(new URL('/error?msg=logout_failed', process.env.NEXT_PUBLIC_SERVICE_BASE_URL || 'http://localhost:3000'));
-  }
-}
+/**
+ * GET|POST /api/auth/logout — clear session cookies and return Core login URL.
+ */
+const handler = createReadRoute(async ({ req }) => {
+  const cookieStore = await cookies();
+  const config = loadConfig();
+
+  // Clear both session cookies
+  cookieStore.set(ACCESS_TOKEN_COOKIE, '', { maxAge: 0, path: '/' });
+  cookieStore.set(REFRESH_TOKEN_COOKIE, '', { maxAge: 0, path: '/' });
+
+  return Response.json({
+    loggedOut: true,
+    redirectTo: config.NEXT_PUBLIC_CORE_APP_URL,
+  });
+}, { serviceName: SERVICE_NAME, auth: 'public' });
+
+export const GET = handler;
+export const POST = handler;
