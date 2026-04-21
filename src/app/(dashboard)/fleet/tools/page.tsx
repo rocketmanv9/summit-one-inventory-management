@@ -38,16 +38,17 @@ type ActiveTab = 'my-tools' | 'catalog';
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export default function ToolsPage() {
+export default function FleetToolsPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('my-tools');
   const [tools, setTools] = useState<Tool[]>([]);
   const [catalogTools, setCatalogTools] = useState<CatalogTool[]>([]);
   const [loading, setLoading] = useState(true);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
+  const [notesTool, setNotesTool] = useState<Tool | null>(null);
 
   /* ---- Fetching ---- */
 
@@ -82,29 +83,26 @@ export default function ToolsPage() {
   useEffect(() => {
     if (activeTab === 'my-tools') {
       fetchTools();
-    } else {
+    } else if (catalogTools.length === 0) {
       fetchCatalog();
     }
   }, [activeTab]);
 
   /* ---- Handlers ---- */
 
-  const handleDelete = async (tool: Tool) => {
-    if (!confirm(`Delete tool "${tool.name}"? This cannot be undone.`)) return;
+  const handleRemove = async (tool: Tool) => {
+    if (!confirm(`Remove "${tool.name}" from your fleet?`)) return;
 
     try {
       const res = await fetch(`/api/gv/tools/${tool.id}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': crypto.randomUUID(),
-        },
+        headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw new Error('Failed to delete tool');
+      if (!res.ok) throw new Error('Failed to remove tool');
       await fetchTools();
     } catch (err) {
-      console.error('Error deleting tool:', err);
-      alert('Failed to delete tool');
+      console.error('Error removing tool:', err);
+      alert('Failed to remove tool');
     }
   };
 
@@ -136,16 +134,13 @@ export default function ToolsPage() {
   const toggleCatalogSelection = (id: string) => {
     setSelectedCatalogIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  /* ---- My Tools table ---- */
+  /* ---- Table config ---- */
 
   const columns = [
     {
@@ -153,13 +148,6 @@ export default function ToolsPage() {
       header: 'Name',
       sortable: true,
       render: (row: Tool) => <span className="font-medium">{row.name}</span>,
-    },
-    {
-      key: 'tool_type_id',
-      header: 'Type',
-      render: (row: Tool) => (
-        <span className="text-sm text-muted-foreground">{row.tool_type_id || '-'}</span>
-      ),
     },
     {
       key: 'manufacturer',
@@ -185,6 +173,15 @@ export default function ToolsPage() {
       ),
     },
     {
+      key: 'notes',
+      header: 'Notes',
+      render: (row: Tool) => (
+        <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
+          {row.notes || '-'}
+        </span>
+      ),
+    },
+    {
       key: 'status',
       header: 'Status',
       render: (row: Tool) => (
@@ -197,22 +194,16 @@ export default function ToolsPage() {
       render: (row: Tool) => (
         <div className="flex gap-2">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              // Edit not yet wired — placeholder
-            }}
-            className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded hover:bg-gray-200"
+            onClick={(e) => { e.stopPropagation(); setNotesTool(row); }}
+            className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
           >
-            Edit
+            Notes
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete(row);
-            }}
-            className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200"
+            onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
+            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
           >
-            Delete
+            Remove
           </button>
         </div>
       ),
@@ -220,18 +211,11 @@ export default function ToolsPage() {
   ];
 
   const filterConfig = [
-    {
-      key: 'search',
-      label: 'Search',
-      type: 'search' as const,
-      placeholder: 'Tool name...',
-    },
+    { key: 'search', label: 'Search', type: 'search' as const, placeholder: 'Tool name...' },
   ];
 
   const filteredTools = tools.filter((tool) => {
-    if (filters.search) {
-      return tool.name.toLowerCase().includes(filters.search.toLowerCase());
-    }
+    if (filters.search) return tool.name.toLowerCase().includes(filters.search.toLowerCase());
     return true;
   });
 
@@ -241,15 +225,15 @@ export default function ToolsPage() {
     <AppShell>
       <div className="space-y-6">
         <PageHeader
-          title="Tools"
-          description="Manage your organization's tools and equipment references. Browse the shared catalog to adopt standard tools, or add custom tools specific to your operations."
+          title="Fleet Tools"
+          description="Reference your fleet's tools from inventory. Add from the shared catalog, create custom entries, or leave notes."
           actions={
             activeTab === 'my-tools' ? (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => setShowAddModal(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
-                + Add Tool
+                + Add Custom
               </button>
             ) : selectedCatalogIds.size > 0 ? (
               <button
@@ -257,32 +241,30 @@ export default function ToolsPage() {
                 disabled={adopting}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
-                {adopting
-                  ? 'Adopting...'
-                  : `Adopt Selected (${selectedCatalogIds.size})`}
+                {adopting ? 'Adding...' : `Add Selected (${selectedCatalogIds.size})`}
               </button>
             ) : null
           }
         />
 
-        {/* Tab buttons */}
-        <div className="flex gap-2">
+        {/* Tabs */}
+        <div className="flex gap-2 border-b">
           <button
             onClick={() => setActiveTab('my-tools')}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'my-tools'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             My Tools
           </button>
           <button
             onClick={() => setActiveTab('catalog')}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'catalog'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             Catalog
@@ -298,12 +280,11 @@ export default function ToolsPage() {
               onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
               onClear={() => setFilters({})}
             />
-
             <DataTable
               data={filteredTools}
               columns={columns}
               loading={loading}
-              emptyMessage="No tools found. Add a custom tool or adopt from the catalog."
+              emptyMessage="No tools in your fleet yet. Add from the catalog or create a custom entry."
               rowKey={(row) => row.id}
             />
           </>
@@ -313,18 +294,8 @@ export default function ToolsPage() {
         {activeTab === 'catalog' && (
           <>
             {catalogLoading ? (
-              <div className="rounded-lg border bg-card">
-                <div className="animate-pulse">
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <div key={i} className="h-20 border-b last:border-b-0 flex items-center px-4 gap-4">
-                      <div className="h-4 w-4 bg-gray-200 rounded" />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-4 bg-gray-200 rounded w-1/3" />
-                        <div className="h-3 bg-gray-200 rounded w-2/3" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                Loading catalog...
               </div>
             ) : catalogTools.length === 0 ? (
               <div className="rounded-lg border bg-card p-12 text-center">
@@ -350,7 +321,7 @@ export default function ToolsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="font-medium">{ct.name}</div>
                       <div className="text-sm text-muted-foreground mt-0.5">
-                        {[ct.manufacturer, ct.model].filter(Boolean).join(' - ') || 'No manufacturer/model'}
+                        {[ct.manufacturer, ct.model].filter(Boolean).join(' - ') || 'No details'}
                       </div>
                       {ct.description && (
                         <div className="text-sm text-muted-foreground mt-1 line-clamp-2">
@@ -365,14 +336,22 @@ export default function ToolsPage() {
           </>
         )}
 
-        {/* Create Tool Modal */}
-        {showCreateModal && (
-          <CreateToolModal
-            onClose={() => setShowCreateModal(false)}
-            onComplete={() => {
-              setShowCreateModal(false);
-              fetchTools();
-            }}
+        {/* Add Custom Tool Modal */}
+        {showAddModal && (
+          <AddCustomToolModal
+            onClose={() => setShowAddModal(false)}
+            onComplete={() => { setShowAddModal(false); fetchTools(); }}
+          />
+        )}
+
+        {/* Notes Modal */}
+        {notesTool && (
+          <NotesModal
+            item={notesTool}
+            entityLabel="tool"
+            endpoint={`/api/gv/tools/${notesTool.id}`}
+            onClose={() => setNotesTool(null)}
+            onSaved={() => { setNotesTool(null); fetchTools(); }}
           />
         )}
       </div>
@@ -381,24 +360,11 @@ export default function ToolsPage() {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Create Tool Modal                                                         */
+/*  Add Custom Tool Modal                                                     */
 /* -------------------------------------------------------------------------- */
 
-function CreateToolModal({
-  onClose,
-  onComplete,
-}: {
-  onClose: () => void;
-  onComplete: () => void;
-}) {
-  const [form, setForm] = useState({
-    name: '',
-    tool_type_id: '',
-    manufacturer: '',
-    model: '',
-    description: '',
-    notes: '',
-  });
+function AddCustomToolModal({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
+  const [form, setForm] = useState({ name: '', manufacturer: '', model: '', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -409,26 +375,20 @@ function CreateToolModal({
 
     try {
       const payload: Record<string, unknown> = { name: form.name };
-      if (form.tool_type_id) payload.tool_type_id = form.tool_type_id;
       if (form.manufacturer) payload.manufacturer = form.manufacturer;
       if (form.model) payload.model = form.model;
-      if (form.description) payload.description = form.description;
       if (form.notes) payload.notes = form.notes;
 
       const res = await fetch('/api/gv/tools', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': crypto.randomUUID(),
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.message || 'Failed to create tool');
+        throw new Error(errJson?.message || 'Failed to add tool');
       }
-
       onComplete();
     } catch (err: any) {
       setError(err.message);
@@ -439,95 +399,109 @@ function CreateToolModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
-          <h3 className="text-lg font-semibold">Add Custom Tool</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            ✕
-          </button>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Add Custom Tool to Fleet</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
-
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
+          {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1">Name *</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g. Crafco SS 125"
-              required
-            />
+              placeholder="e.g. Crafco SS 125" required />
           </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Manufacturer</label>
-              <input
-                type="text"
-                value={form.manufacturer}
-                onChange={(e) => setForm({ ...form, manufacturer: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g. Crafco"
-              />
+              <input type="text" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. Crafco" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Model</label>
-              <input
-                type="text"
-                value={form.model}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g. SS 125"
-              />
+              <input type="text" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. SS 125" />
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Description</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={2}
-              placeholder="Brief description of the tool..."
-            />
-          </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={2}
-              placeholder="Internal notes..."
-            />
+              rows={3} placeholder="Any notes about this tool..." />
           </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? 'Creating...' : 'Create Tool'}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Adding...' : 'Add Tool'}
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Notes Modal (shared pattern)                                              */
+/* -------------------------------------------------------------------------- */
+
+function NotesModal({
+  item,
+  entityLabel,
+  endpoint,
+  onClose,
+  onSaved,
+}: {
+  item: { id: string; name: string; notes: string | null };
+  entityLabel: string;
+  endpoint: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [notes, setNotes] = useState(item.notes || '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ notes }),
+      });
+      if (!res.ok) throw new Error(`Failed to update ${entityLabel} notes`);
+      onSaved();
+    } catch (err) {
+      console.error(`Error updating ${entityLabel} notes:`, err);
+      alert(`Failed to save notes`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Notes — {item.name}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            rows={5}
+            placeholder={`Notes about this ${entityLabel}...`}
+          />
+          <div className="flex gap-3">
+            <button onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Save Notes'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -1,10 +1,4 @@
 /** @type {import('next').NextConfig} */
-const { withSentryConfig } = require('@sentry/nextjs');
-
-// Bundle analyzer (enable with ANALYZE=true npm run build)
-const withBundleAnalyzer = require('@next/bundle-analyzer')({
-  enabled: process.env.ANALYZE === 'true',
-});
 
 const nextConfig = {
   eslint: {
@@ -17,10 +11,6 @@ const nextConfig = {
     // your project has type errors.
     ignoreBuildErrors: false,
   },
-  // Enable experimental features if needed
-  experimental: {
-    // serverActions: true,
-  },
   // Performance optimizations
   poweredByHeader: false, // Remove X-Powered-By header
   compress: true, // Enable gzip compression
@@ -29,29 +19,34 @@ const nextConfig = {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 60,
   },
-  // Sentry will be enabled if SENTRY_DSN is set
-  sentry: {
-    hideSourceMaps: true,
-    disableServerWebpackPlugin: !process.env.SENTRY_AUTH_TOKEN,
-    disableClientWebpackPlugin: !process.env.SENTRY_AUTH_TOKEN,
-  },
 };
 
 // Compose all wrappers
 let finalConfig = nextConfig;
 
-// Add bundle analyzer
-finalConfig = withBundleAnalyzer(finalConfig);
+// Bundle analyzer — only loaded when ANALYZE=true (devDependency, may not be installed in prod)
+if (process.env.ANALYZE === 'true') {
+  try {
+    const withBundleAnalyzer = require('@next/bundle-analyzer')({ enabled: true });
+    finalConfig = withBundleAnalyzer(finalConfig);
+  } catch {
+    console.warn('[@next/bundle-analyzer] not installed, skipping.');
+  }
+}
 
-// Add Sentry (only if configured)
+// Sentry — only loaded when SENTRY_DSN is set
 if (process.env.SENTRY_DSN) {
-  finalConfig = withSentryConfig(finalConfig, {
-    // Sentry webpack plugin options
-    silent: true,
-    org: process.env.SENTRY_ORG,
-    project: process.env.SENTRY_PROJECT,
-    authToken: process.env.SENTRY_AUTH_TOKEN,
-  });
+  try {
+    const { withSentryConfig } = require('@sentry/nextjs');
+    finalConfig = withSentryConfig(finalConfig, {
+      silent: true,
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+    });
+  } catch {
+    console.warn('[@sentry/nextjs] not installed, skipping.');
+  }
 }
 
 module.exports = finalConfig;

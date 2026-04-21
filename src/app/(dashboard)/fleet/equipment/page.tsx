@@ -7,11 +7,11 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/*  Types                                                                     */
+/* -------------------------------------------------------------------------- */
 
-type Equipment = {
+interface Equipment {
   id: string;
   name: string;
   equipment_type_id: string | null;
@@ -22,37 +22,35 @@ type Equipment = {
   is_active: boolean;
   is_custom: boolean;
   tags: string[] | null;
-};
+}
 
-type CatalogEquipment = {
+interface CatalogEquipment {
   id: string;
   name: string;
   manufacturer: string | null;
   model: string | null;
   description: string | null;
-  equipment_type_id: string | null;
-};
+}
 
-/* ------------------------------------------------------------------ */
-/*  Page                                                               */
-/* ------------------------------------------------------------------ */
+type ActiveTab = 'my-equipment' | 'catalog';
 
-export default function EquipmentPage() {
-  const [activeTab, setActiveTab] = useState<'my' | 'catalog'>('my');
+/* -------------------------------------------------------------------------- */
+/*  Page                                                                      */
+/* -------------------------------------------------------------------------- */
 
-  /* ---- My Equipment state ---- */
+export default function FleetEquipmentPage() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('my-equipment');
   const [equipment, setEquipment] = useState<Equipment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<Record<string, string>>({});
-  const [showCreateModal, setShowCreateModal] = useState(false);
-
-  /* ---- Catalog state ---- */
   const [catalog, setCatalog] = useState<CatalogEquipment[]>([]);
+  const [loading, setLoading] = useState(true);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showAddModal, setShowAddModal] = useState(false);
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
+  const [notesItem, setNotesItem] = useState<Equipment | null>(null);
 
-  /* ---- Data fetching ---- */
+  /* ---- Fetching ---- */
 
   const fetchEquipment = async () => {
     setLoading(true);
@@ -83,36 +81,35 @@ export default function EquipmentPage() {
   };
 
   useEffect(() => {
-    fetchEquipment();
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === 'catalog' && catalog.length === 0) {
+    if (activeTab === 'my-equipment') {
+      fetchEquipment();
+    } else if (catalog.length === 0) {
       fetchCatalog();
     }
   }, [activeTab]);
 
-  /* ---- Actions ---- */
+  /* ---- Handlers ---- */
 
-  const handleDelete = async (item: Equipment) => {
-    if (!confirm(`Delete equipment "${item.name}"? This cannot be undone.`)) return;
+  const handleRemove = async (item: Equipment) => {
+    if (!confirm(`Remove "${item.name}" from your fleet?`)) return;
 
     try {
       const res = await fetch(`/api/gv/equipment/${item.id}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw new Error('Failed to delete equipment');
+      if (!res.ok) throw new Error('Failed to remove equipment');
       await fetchEquipment();
     } catch (err) {
-      console.error('Error deleting equipment:', err);
-      alert('Failed to delete equipment');
+      console.error('Error removing equipment:', err);
+      alert('Failed to remove equipment');
     }
   };
 
   const handleAdopt = async () => {
     if (selectedCatalogIds.size === 0) return;
     setAdopting(true);
+
     try {
       const res = await fetch('/api/gv/equipment/adopt', {
         method: 'POST',
@@ -123,12 +120,12 @@ export default function EquipmentPage() {
         body: JSON.stringify({ catalogEquipmentIds: Array.from(selectedCatalogIds) }),
       });
       if (!res.ok) throw new Error('Failed to adopt equipment');
+
       setSelectedCatalogIds(new Set());
-      setActiveTab('my');
-      await fetchEquipment();
+      setActiveTab('my-equipment');
     } catch (err) {
       console.error('Error adopting equipment:', err);
-      alert('Failed to adopt equipment');
+      alert('Failed to adopt selected equipment');
     } finally {
       setAdopting(false);
     }
@@ -137,32 +134,13 @@ export default function EquipmentPage() {
   const toggleCatalogSelection = (id: string) => {
     setSelectedCatalogIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  /* ---- Derived stats ---- */
-
-  const totalCount = equipment.length;
-  const catalogCount = equipment.filter((e) => !e.is_custom).length;
-  const customCount = equipment.filter((e) => e.is_custom).length;
-
-  /* ---- Filtered equipment ---- */
-
-  const filteredEquipment = equipment.filter((item) => {
-    if (filters.search) {
-      const search = filters.search.toLowerCase();
-      if (!item.name.toLowerCase().includes(search)) return false;
-    }
-    return true;
-  });
-
-  /* ---- Columns ---- */
+  /* ---- Table config ---- */
 
   const columns = [
     {
@@ -170,11 +148,6 @@ export default function EquipmentPage() {
       header: 'Name',
       sortable: true,
       render: (row: Equipment) => <span className="font-medium">{row.name}</span>,
-    },
-    {
-      key: 'equipment_type_id',
-      header: 'Type',
-      render: (row: Equipment) => <span className="text-sm">{row.equipment_type_id || '-'}</span>,
     },
     {
       key: 'manufacturer',
@@ -190,14 +163,21 @@ export default function EquipmentPage() {
       key: 'source',
       header: 'Source',
       render: (row: Equipment) => (
-        <span
-          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-            row.is_custom
-              ? 'bg-purple-100 text-purple-800'
-              : 'bg-blue-100 text-blue-800'
-          }`}
-        >
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+          row.is_custom
+            ? 'bg-purple-100 text-purple-800'
+            : 'bg-blue-100 text-blue-800'
+        }`}>
           {row.is_custom ? 'Custom' : 'Catalog'}
+        </span>
+      ),
+    },
+    {
+      key: 'notes',
+      header: 'Notes',
+      render: (row: Equipment) => (
+        <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
+          {row.notes || '-'}
         </span>
       ),
     },
@@ -214,23 +194,16 @@ export default function EquipmentPage() {
       render: (row: Equipment) => (
         <div className="flex gap-2">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              // Edit not implemented yet — placeholder
-              alert('Edit coming soon');
-            }}
-            className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded hover:bg-gray-200"
+            onClick={(e) => { e.stopPropagation(); setNotesItem(row); }}
+            className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
           >
-            Edit
+            Notes
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete(row);
-            }}
-            className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded hover:bg-red-200"
+            onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
+            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
           >
-            Delete
+            Remove
           </button>
         </div>
       ),
@@ -238,13 +211,13 @@ export default function EquipmentPage() {
   ];
 
   const filterConfig = [
-    {
-      key: 'search',
-      label: 'Search',
-      type: 'search' as const,
-      placeholder: 'Search by name...',
-    },
+    { key: 'search', label: 'Search', type: 'search' as const, placeholder: 'Equipment name...' },
   ];
+
+  const filteredEquipment = equipment.filter((item) => {
+    if (filters.search) return item.name.toLowerCase().includes(filters.search.toLowerCase());
+    return true;
+  });
 
   /* ---- Render ---- */
 
@@ -252,42 +225,34 @@ export default function EquipmentPage() {
     <AppShell>
       <div className="space-y-6">
         <PageHeader
-          title="Equipment"
-          description="Manage your organization's heavy equipment references. Browse the shared catalog to adopt standard equipment types, or add custom equipment specific to your operations."
+          title="Fleet Equipment"
+          description="Reference your fleet's equipment from inventory. Add from the shared catalog, create custom entries, or leave notes."
           actions={
-            activeTab === 'my' ? (
+            activeTab === 'my-equipment' ? (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => setShowAddModal(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
-                + Add Equipment
+                + Add Custom
               </button>
-            ) : undefined
+            ) : selectedCatalogIds.size > 0 ? (
+              <button
+                onClick={handleAdopt}
+                disabled={adopting}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {adopting ? 'Adding...' : `Add Selected (${selectedCatalogIds.size})`}
+              </button>
+            ) : null
           }
         />
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-            <div className="text-2xl font-bold text-gray-700">{totalCount}</div>
-            <div className="text-sm text-gray-600">Total Equipment</div>
-          </div>
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="text-2xl font-bold text-blue-700">{catalogCount}</div>
-            <div className="text-sm text-blue-600">Catalog</div>
-          </div>
-          <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <div className="text-2xl font-bold text-purple-700">{customCount}</div>
-            <div className="text-sm text-purple-600">Custom</div>
-          </div>
-        </div>
-
-        {/* Tab buttons */}
+        {/* Tabs */}
         <div className="flex gap-2 border-b">
           <button
-            onClick={() => setActiveTab('my')}
+            onClick={() => setActiveTab('my-equipment')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'my'
+              activeTab === 'my-equipment'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
@@ -307,7 +272,7 @@ export default function EquipmentPage() {
         </div>
 
         {/* My Equipment tab */}
-        {activeTab === 'my' && (
+        {activeTab === 'my-equipment' && (
           <>
             <FilterBar
               filters={filterConfig}
@@ -315,12 +280,11 @@ export default function EquipmentPage() {
               onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
               onClear={() => setFilters({})}
             />
-
             <DataTable
               data={filteredEquipment}
               columns={columns}
               loading={loading}
-              emptyMessage="No equipment found. Add custom equipment or adopt from the catalog."
+              emptyMessage="No equipment in your fleet yet. Add from the catalog or create a custom entry."
               rowKey={(row) => row.id}
             />
           </>
@@ -329,89 +293,63 @@ export default function EquipmentPage() {
         {/* Catalog tab */}
         {activeTab === 'catalog' && (
           <>
-            {selectedCatalogIds.size > 0 && (
-              <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <span className="text-sm text-blue-800 font-medium">
-                  {selectedCatalogIds.size} item{selectedCatalogIds.size !== 1 ? 's' : ''} selected
-                </span>
-                <button
-                  onClick={handleAdopt}
-                  disabled={adopting}
-                  className="px-4 py-1.5 bg-primary text-primary-foreground text-sm rounded-md hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                >
-                  {adopting ? 'Adopting...' : 'Adopt Selected'}
-                </button>
-                <button
-                  onClick={() => setSelectedCatalogIds(new Set())}
-                  className="text-sm text-muted-foreground hover:text-foreground"
-                >
-                  Clear selection
-                </button>
-              </div>
-            )}
-
             {catalogLoading ? (
-              <div className="rounded-lg border bg-card">
-                <div className="animate-pulse">
-                  {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="p-4 border-b last:border-b-0">
-                      <div className="h-5 bg-gray-200 rounded w-1/3 mb-2" />
-                      <div className="h-4 bg-gray-100 rounded w-2/3" />
-                    </div>
-                  ))}
-                </div>
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                Loading catalog...
               </div>
             ) : catalog.length === 0 ? (
               <div className="rounded-lg border bg-card p-12 text-center">
                 <p className="text-muted-foreground">No catalog equipment available.</p>
               </div>
             ) : (
-              <div className="grid gap-3">
-                {catalog.map((item) => {
-                  const isSelected = selectedCatalogIds.has(item.id);
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => toggleCatalogSelection(item.id)}
-                      className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'bg-primary/5 border-primary'
-                          : 'bg-card hover:bg-muted/50'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleCatalogSelection(item.id)}
-                        className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-sm text-muted-foreground">
-                          {[item.manufacturer, item.model].filter(Boolean).join(' - ') || 'No details'}
-                        </div>
-                        {item.description && (
-                          <div className="text-sm text-muted-foreground mt-1 truncate">
-                            {item.description}
-                          </div>
-                        )}
+              <div className="space-y-2">
+                {catalog.map((item) => (
+                  <label
+                    key={item.id}
+                    className={`flex items-start gap-4 p-4 rounded-lg border cursor-pointer transition-colors ${
+                      selectedCatalogIds.has(item.id)
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border bg-card hover:bg-muted/30'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedCatalogIds.has(item.id)}
+                      onChange={() => toggleCatalogSelection(item.id)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-sm text-muted-foreground mt-0.5">
+                        {[item.manufacturer, item.model].filter(Boolean).join(' - ') || 'No details'}
                       </div>
+                      {item.description && (
+                        <div className="text-sm text-muted-foreground mt-1 line-clamp-2">{item.description}</div>
+                      )}
                     </div>
-                  );
-                })}
+                  </label>
+                ))}
               </div>
             )}
           </>
         )}
 
-        {/* Create modal */}
-        {showCreateModal && (
-          <CreateEquipmentModal
-            onClose={() => setShowCreateModal(false)}
-            onComplete={() => {
-              setShowCreateModal(false);
-              fetchEquipment();
-            }}
+        {/* Add Custom Equipment Modal */}
+        {showAddModal && (
+          <AddCustomEquipmentModal
+            onClose={() => setShowAddModal(false)}
+            onComplete={() => { setShowAddModal(false); fetchEquipment(); }}
+          />
+        )}
+
+        {/* Notes Modal */}
+        {notesItem && (
+          <NotesModal
+            item={notesItem}
+            entityLabel="equipment"
+            endpoint={`/api/gv/equipment/${notesItem.id}`}
+            onClose={() => setNotesItem(null)}
+            onSaved={() => { setNotesItem(null); fetchEquipment(); }}
           />
         )}
       </div>
@@ -419,24 +357,12 @@ export default function EquipmentPage() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Create Equipment Modal                                             */
-/* ------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
+/*  Add Custom Equipment Modal                                                */
+/* -------------------------------------------------------------------------- */
 
-function CreateEquipmentModal({
-  onClose,
-  onComplete,
-}: {
-  onClose: () => void;
-  onComplete: () => void;
-}) {
-  const [form, setForm] = useState({
-    name: '',
-    manufacturer: '',
-    model: '',
-    description: '',
-    notes: '',
-  });
+function AddCustomEquipmentModal({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
+  const [form, setForm] = useState({ name: '', manufacturer: '', model: '', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -446,26 +372,21 @@ function CreateEquipmentModal({
     setError('');
 
     try {
+      const payload: Record<string, unknown> = { name: form.name };
+      if (form.manufacturer) payload.manufacturer = form.manufacturer;
+      if (form.model) payload.model = form.model;
+      if (form.notes) payload.notes = form.notes;
+
       const res = await fetch('/api/gv/equipment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          name: form.name,
-          manufacturer: form.manufacturer || undefined,
-          model: form.model || undefined,
-          description: form.description || undefined,
-          notes: form.notes || undefined,
-        }),
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        throw new Error(json?.error?.message || 'Failed to create equipment');
+        throw new Error(json?.error?.message || 'Failed to add equipment');
       }
-
       onComplete();
     } catch (err: any) {
       setError(err.message);
@@ -476,95 +397,109 @@ function CreateEquipmentModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
-          <h3 className="text-lg font-semibold">Add Equipment</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            ✕
-          </button>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Add Custom Equipment to Fleet</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
-
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
+          {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1">Name *</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g. CAT 420F2 Backhoe Loader"
-              required
-            />
+              placeholder="e.g. CAT 420F2 Backhoe Loader" required />
           </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Manufacturer</label>
-              <input
-                type="text"
-                value={form.manufacturer}
-                onChange={(e) => setForm({ ...form, manufacturer: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g. Caterpillar"
-              />
+              <input type="text" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. Caterpillar" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Model</label>
-              <input
-                type="text"
-                value={form.model}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g. 420F2"
-              />
+              <input type="text" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. 420F2" />
             </div>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Description</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={3}
-              placeholder="Brief description of this equipment type..."
-            />
-          </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={2}
-              placeholder="Internal notes..."
-            />
+              rows={3} placeholder="Any notes about this equipment..." />
           </div>
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? 'Creating...' : 'Create Equipment'}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Adding...' : 'Add Equipment'}
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Notes Modal                                                               */
+/* -------------------------------------------------------------------------- */
+
+function NotesModal({
+  item,
+  entityLabel,
+  endpoint,
+  onClose,
+  onSaved,
+}: {
+  item: { id: string; name: string; notes: string | null };
+  entityLabel: string;
+  endpoint: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [notes, setNotes] = useState(item.notes || '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ notes }),
+      });
+      if (!res.ok) throw new Error(`Failed to update ${entityLabel} notes`);
+      onSaved();
+    } catch (err) {
+      console.error(`Error updating ${entityLabel} notes:`, err);
+      alert('Failed to save notes');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Notes — {item.name}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+            rows={5}
+            placeholder={`Notes about this ${entityLabel}...`}
+          />
+          <div className="flex gap-3">
+            <button onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Save Notes'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
