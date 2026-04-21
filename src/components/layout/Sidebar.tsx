@@ -21,6 +21,8 @@ import {
   Boxes,
   History,
   Tag,
+  Wrench,
+  HardHat,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -89,6 +91,26 @@ const navigation: NavSection[] = [
         title: 'Vendors',
         href: '/inventory/vendors',
         icon: Users,
+      },
+    ],
+  },
+  {
+    title: 'Fleet & Equipment',
+    items: [
+      {
+        title: 'Tools',
+        href: '/fleet/tools',
+        icon: Wrench,
+      },
+      {
+        title: 'Vehicles',
+        href: '/fleet/vehicles',
+        icon: Truck,
+      },
+      {
+        title: 'Equipment',
+        href: '/fleet/equipment',
+        icon: HardHat,
       },
     ],
   },

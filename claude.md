@@ -95,6 +95,24 @@ const body = CreateItemSchema.parse(await req.json());
 - Use `buildLabelMap()` to populate dropdowns; use `displayLabel()` for single term resolution.
 - For vendor adoption, call `vendors.adopt([catalogVendorId])` — this copies contacts and addresses automatically.
 
+## Tools, Vehicles & Equipment Rules
+
+Three additional GV entity SDKs are available via the chassis. Each follows the same catalog + tenant client pattern as vendors.
+
+| Entity | Catalog Client | Tenant Client | Import Path |
+|--------|---------------|---------------|-------------|
+| Tools | `getToolCatalogClient()` from `@/lib/tools` | `getTenantToolClient(tenantId)` from `@/lib/tools` | `@rocketmanv9/chassis/tools` |
+| Vehicles | `getVehicleCatalogClient()` from `@/lib/vehicles` | `getTenantVehicleClient(tenantId)` from `@/lib/vehicles` | `@rocketmanv9/chassis/vehicles` |
+| Equipment | `getEquipmentCatalogClient()` from `@/lib/equipment` | `getTenantEquipmentClient(tenantId)` from `@/lib/equipment` | `@rocketmanv9/chassis/equipment` |
+
+- **Catalog clients** are lazy singletons (read-only, 30s cache) — use for browsing the shared GV catalog.
+- **Tenant clients** are scoped per-tenant (RLS-aware) — use for CRUD, adoption, and submissions.
+- API proxy routes live under `src/app/api/gv/{tools,vehicles,equipment}/` — the frontend calls these since GV is a separate Supabase project.
+- GV proxy write routes return `events: []` because the GV service emits its own outbox events — this is expected and not a bug.
+- For adoption: `client.adopt([catalogId1, catalogId2])` — copies contacts and addresses automatically.
+- For submissions: `client.submitToCatalog(id, { tenantId, userId, email })` — proposes a custom item to the shared catalog.
+- UI pages live under `src/app/(dashboard)/fleet/{tools,vehicles,equipment}/`.
+
 ## Event Rules
 
 - All state-changing operations **must** emit outbox events.
