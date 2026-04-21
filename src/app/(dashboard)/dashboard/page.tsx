@@ -216,7 +216,6 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
   const [isDefault, setIsDefault] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-  const supabase = createBrowserAuthedClient();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,6 +228,7 @@ function CreateDashboardModal({ onClose, onCreate }: { onClose: () => void; onCr
     setError('');
 
     try {
+      const supabase = createBrowserAuthedClient();
       const accessToken = getStoredAccessToken();
       const tenantId = accessToken ? getTenantIdFromToken(accessToken) : null;
       const userId = accessToken ? getUserIdFromToken(accessToken) : null;
