@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(ls:*)",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\grant\\\\summit-one-inventory-management\\\\src\\\\app\\\\dashboards\")",
+      "Bash(npx next build:*)",
+      "Bash(npx supabase db push:*)",
+      "Bash(xargs:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npx next lint:*)",
+      "Bash(xxd:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npm run build:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(echo:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npm view:*)",
+      "Bash(npx get-shit-done-cc)",
+      "Bash(npx tsc:*)",
+      "Bash(git status:*)",
+      "Bash(node scripts/audit-event-compliance.mjs:*)",
+      "Bash(grep:*)",
+      "Bash(npx supabase migration list:*)",
+      "Bash(npx supabase migration repair:*)",
+      "Bash(wc -l:*)",
+      "Bash(find:*)",
+      "Bash(tee:*)",
+      "Bash(npx supabase:*)",
+      "Bash(npm ls:*)",
+      "Bash(1 --prefix \"C:/Users/grant/summit-one-inventory-management\")",
+      "Bash(node -e:*)"
+    ]
+  }
+}
