@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createBrowserAuthedClient } from '@/supabase/client';
-import { getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
+import { getAuthToken, getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 
@@ -19,9 +19,18 @@ type DashboardWidgetSummary = {
   position: number;
 };
 
-function resolveTenantId() {
-  const accessToken = getStoredAccessToken();
-  return accessToken ? getTenantIdFromToken(accessToken) : null;
+/**
+ * Resolve tenant ID — awaits async token fetch on first load,
+ * then falls back to the synchronous cache for subsequent calls.
+ */
+async function resolveTenantId(): Promise<string | null> {
+  // Try synchronous cache first (instant on subsequent calls)
+  const cached = getStoredAccessToken();
+  if (cached) return getTenantIdFromToken(cached);
+
+  // First load: wait for the token to be fetched
+  const token = await getAuthToken();
+  return token ? getTenantIdFromToken(token) : null;
 }
 
 export function useDashboards() {
@@ -33,7 +42,7 @@ export function useDashboards() {
   useEffect(() => {
     async function fetchDashboards() {
       try {
-        const tenantId = resolveTenantId();
+        const tenantId = await resolveTenantId();
         if (!tenantId) {
           throw AppError.unauthorized('Missing tenant context. Please log in again.');
         }
@@ -74,7 +83,7 @@ export function useDashboardOverview() {
 
     async function fetchOverview() {
       try {
-        const tenantId = resolveTenantId();
+        const tenantId = await resolveTenantId();
         if (!tenantId) {
           throw AppError.unauthorized('Missing tenant context. Please log in again.');
         }
@@ -163,7 +172,7 @@ export function useDashboard(id: string | null) {
     }
 
     try {
-      const tenantId = resolveTenantId();
+      const tenantId = await resolveTenantId();
       if (!tenantId) {
         throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
@@ -215,7 +224,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     }
 
     try {
-      const tenantId = resolveTenantId();
+      const tenantId = await resolveTenantId();
       if (!tenantId) {
         throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
@@ -246,7 +255,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
   }, [dashboardId]);
 
   const updateWidget = async (widgetId: string, updates: Partial<DashboardWidget>) => {
-    const tenantId = resolveTenantId();
+    const tenantId = await resolveTenantId();
     if (!tenantId) {
       return { error: AppError.unauthorized('Missing tenant context. Please log in again.') };
     }
@@ -273,7 +282,7 @@ export function useDashboardWidgets(dashboardId: string | null) {
     console.log('Deleting widget:', widgetId);
     
     try {
-      const tenantId = resolveTenantId();
+      const tenantId = await resolveTenantId();
       if (!tenantId) {
         throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
@@ -349,7 +358,7 @@ export function useWidgetRegistry() {
 
 export async function saveLayout(dashboardId: string, widgets: DashboardWidget[]) {
   try {
-    const tenantId = resolveTenantId();
+    const tenantId = await resolveTenantId();
     if (!tenantId) {
       throw AppError.unauthorized('Missing tenant context. Please log in again.');
     }
@@ -384,7 +393,7 @@ export async function saveWidgetConfig(
   title?: string,
   refresh_seconds?: number
 ) {
-  const tenantId = resolveTenantId();
+  const tenantId = await resolveTenantId();
   if (!tenantId) {
     return { error: AppError.unauthorized('Missing tenant context. Please log in again.') };
   }

@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bug, Activity, RefreshCw, CheckCircle, Clock, XCircle, ArrowRight, BookOpen, Code, FileText } from 'lucide-react';
+import { Bug, Activity, RefreshCw, CheckCircle, Clock, XCircle, ArrowRight, BookOpen, Code, FileText, ShieldAlert } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { authenticatedFetch } from '@/lib/api-client';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { loadAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { useSession } from '@/hooks/useSession';
 
 interface Session {
   userId: string;
@@ -63,6 +64,7 @@ interface EventDefinition {
 }
 
 export default function DebugPage() {
+  const { session: authSession, loading: authLoading } = useSession();
   const [session, setSession] = useState<Session | null>(null);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [events, setEvents] = useState<OutboxEvent[]>([]);
@@ -166,7 +168,7 @@ export default function DebugPage() {
     await loadData();
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <AppShell>
       <div className="flex items-center justify-center min-h-[400px]">
@@ -175,6 +177,22 @@ export default function DebugPage() {
           <p className="text-muted-foreground">Loading debug data...</p>
         </div>
       </div>
+      </AppShell>
+    );
+  }
+
+  if (!authSession?.isDeveloper) {
+    return (
+      <AppShell>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <ShieldAlert className="h-12 w-12 text-destructive mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
+            <p className="text-muted-foreground">
+              This page is only available to developer accounts.
+            </p>
+          </div>
+        </div>
       </AppShell>
     );
   }

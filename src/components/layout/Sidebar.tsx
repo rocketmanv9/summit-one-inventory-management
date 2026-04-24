@@ -25,12 +25,14 @@ import {
   HardHat,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useSession } from '@/hooks/useSession';
 
 interface NavItem {
   title: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: number;
+  requiresDeveloper?: boolean;
 }
 
 interface NavSection {
@@ -56,6 +58,7 @@ const navigation: NavSection[] = [
         title: 'Debug',
         href: '/debug',
         icon: Bug,
+        requiresDeveloper: true,
       },
     ],
   },
@@ -163,6 +166,8 @@ const navigation: NavSection[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { session } = useSession();
+  const isDeveloper = session?.isDeveloper === true;
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">
@@ -183,13 +188,19 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-4">
-        {navigation.map((section) => (
+        {navigation.map((section) => {
+          const visibleItems = section.items.filter(
+            (item) => !item.requiresDeveloper || isDeveloper
+          );
+          if (visibleItems.length === 0) return null;
+
+          return (
           <div key={section.title} className="mb-6">
             <h3 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {section.title}
             </h3>
             <ul className="space-y-1">
-              {section.items.map((item) => {
+              {visibleItems.map((item) => {
                 const isActive = pathname === item.href;
                 const Icon = item.icon;
 
@@ -217,7 +228,8 @@ export function Sidebar() {
               })}
             </ul>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Footer */}
