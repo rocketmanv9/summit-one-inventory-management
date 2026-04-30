@@ -18,8 +18,8 @@ import { isServerTool, executeServerTool, type ServerToolContext } from '@/lib/a
 import OpenAI from 'openai';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
-const MAX_MESSAGES = 20;
-const MAX_SERVER_TOOL_ROUNDS = 3;
+const MAX_MESSAGES = 40;
+const MAX_SERVER_TOOL_ROUNDS = 5;
 
 function fallbackResponse() {
   return Response.json({ fallbackToKeyword: true });
@@ -29,6 +29,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
   // Check for API key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
+    log.warn('[AI Chat] No OPENAI_API_KEY configured — falling back to keyword mode');
     return fallbackResponse();
   }
 
@@ -87,12 +88,12 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
 
     for (let round = 0; round < MAX_SERVER_TOOL_ROUNDS; round++) {
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-4.1',
         messages: openaiMessages,
         tools: INVENTORY_TOOLS,
         tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 1024,
+        temperature: 0.4,
+        max_tokens: 4096,
       });
 
       const choice = completion.choices[0];

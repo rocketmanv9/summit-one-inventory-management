@@ -634,8 +634,8 @@ export function useAiChat(options?: AiChatOptions) {
 
         // Track conversation for AI
         conversationHistory.current.push({ role: 'user', content: text });
-        if (conversationHistory.current.length > 40) {
-          conversationHistory.current = conversationHistory.current.slice(-30);
+        if (conversationHistory.current.length > 60) {
+          conversationHistory.current = conversationHistory.current.slice(-50);
         }
 
         // ── Try AI mode first ──
@@ -686,12 +686,36 @@ export function useAiChat(options?: AiChatOptions) {
             if (aiFailCount.current >= 3) {
               setAiAvailable(false);
               console.warn('[useAiChat] AI disabled after 3 consecutive failures');
+              addMessage(
+                'assistant',
+                'AI mode is currently unavailable — I\'ll use basic keyword matching for now. For full conversational capabilities, check that the OPENAI_API_KEY is configured.',
+                { status: 'error' }
+              );
             }
           }
         }
 
         // ── Keyword fallback ──
         const intent = parseIntent(text);
+
+        if (intent.type === 'unknown') {
+          const fallbackMsg = "I wasn't able to understand that. Here's what I can help with:\n\n" +
+            "  **Stock** — \"What's in stock?\", \"What's running low?\"\n" +
+            "  **Vendors** — \"Show vendors\", \"Add a vendor\"\n" +
+            "  **Purchase Orders** — \"Create a PO\", \"Show late orders\"\n" +
+            "  **Transfers** — \"Move stock\", \"Show transfers\"\n" +
+            "  **Analytics** — \"Inventory value?\", \"Turnover?\", \"Forecast?\"\n" +
+            "  **Dashboards** — \"Create a dashboard\"\n" +
+            "  **Navigation** — \"Go to purchasing\"\n\n" +
+            "Try rephrasing, or type **help** for the full list.";
+          addMessage('assistant', fallbackMsg);
+          conversationHistory.current.push({
+            role: 'assistant',
+            content: fallbackMsg,
+          });
+          return;
+        }
+
         await startActionFlow(intent.type, intent.extractedParams, text);
 
         conversationHistory.current.push({

@@ -15,15 +15,19 @@ export type AvatarStatus = 'idle' | 'talking' | 'thinking';
 interface AvatarState {
   status: AvatarStatus;
   ttsMuted: boolean;
+  hovering: boolean;
   setStatus: (status: AvatarStatus) => void;
   toggleMute: () => void;
+  setHovering: (v: boolean) => void;
 }
 
 const AvatarStateContext = createContext<AvatarState>({
   status: 'idle',
   ttsMuted: false,
+  hovering: false,
   setStatus: () => {},
   toggleMute: () => {},
+  setHovering: () => {},
 });
 
 const MUTE_STORAGE_KEY = 'isla-tts-muted';
@@ -31,6 +35,7 @@ const MUTE_STORAGE_KEY = 'isla-tts-muted';
 export function AvatarStateProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AvatarStatus>('idle');
   const [ttsMuted, setTtsMuted] = useState(false);
+  const [hovering, setHovering] = useState(false);
 
   // Restore mute preference from localStorage
   useEffect(() => {
@@ -49,7 +54,7 @@ export function AvatarStateProvider({ children }: { children: ReactNode }) {
 
   return React.createElement(
     AvatarStateContext.Provider,
-    { value: { status, ttsMuted, setStatus, toggleMute } },
+    { value: { status, ttsMuted, hovering, setStatus, toggleMute, setHovering } },
     children
   );
 }

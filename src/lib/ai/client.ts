@@ -72,8 +72,8 @@ export async function sendToAI(messages: ChatMessage[]): Promise<AIResponse> {
   });
 
   if (!res.ok) {
-    // Non-200 => fall back
-    return { fallbackToKeyword: true };
+    console.warn(`[sendToAI] API returned ${res.status}: ${res.statusText}`);
+    return { fallbackToKeyword: true, error: `API ${res.status}` };
   }
 
   return res.json();

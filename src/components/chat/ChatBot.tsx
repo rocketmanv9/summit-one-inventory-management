@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Loader2, ExternalLink, Check, XCircle } from 'lucide-react';
+import { X, Send, Loader2, ExternalLink, Check, XCircle } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { useAiChat } from '@/lib/ai/useAiChat';
@@ -11,18 +11,12 @@ import { AiDataRenderer } from '@/components/ai/AiDataRenderer';
 
 // ─── Component ────────────────────────────────────────────────────────
 
-export function ChatBot() {
+interface ChatBotProps {
+  onClose?: () => void;
+}
+
+export function ChatBot({ onClose }: ChatBotProps) {
   const pathname = usePathname();
-
-  // Persist open/closed state in localStorage
-  const [isOpen, setIsOpen] = useState(false);
-  const [hasMounted, setHasMounted] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('chatbot-open') === 'true';
-    setIsOpen(saved);
-    setHasMounted(true);
-  }, []);
 
   const chat = useAiChat({
     mode: 'corner',
@@ -32,22 +26,15 @@ export function ChatBot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Persist open/closed state
-  useEffect(() => {
-    localStorage.setItem('chatbot-open', String(isOpen));
-  }, [isOpen]);
-
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chat.messages]);
 
-  // Focus input when opened
+  // Focus input when mounted
   useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isOpen]);
+    inputRef.current?.focus();
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -62,15 +49,6 @@ export function ChatBot() {
 
   return (
     <>
-      {/* Floating Button */}
-      <button
-        onClick={() => setIsOpen((prev) => !prev)}
-        className={`fixed bottom-6 right-6 p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-110 z-50 ${isOpen ? 'hidden' : ''}`}
-        aria-label="Open chat assistant"
-      >
-        <MessageCircle className="w-6 h-6" />
-      </button>
-
       {/* Vendor Modal */}
       <AddVendorModal
         open={chat.vendorModal.open}
@@ -80,29 +58,24 @@ export function ChatBot() {
       />
 
       {/* Chat Window */}
-      <div
-        className={`fixed bottom-6 right-6 w-[420px] h-[620px] bg-white rounded-xl shadow-2xl flex flex-col z-50 border border-gray-200 overflow-hidden transition-all duration-200 origin-bottom-right ${
-          isOpen
-            ? 'scale-100 opacity-100 pointer-events-auto'
-            : 'scale-95 opacity-0 pointer-events-none'
-        }`}
-      >
+      <div className="fixed bottom-6 right-6 w-[420px] h-[620px] bg-white rounded-xl shadow-2xl flex flex-col z-50 border border-gray-200 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-blue-600 text-white">
           <div className="flex items-center gap-2">
-            <MessageCircle className="w-5 h-5" />
             <div>
-              <h3 className="font-semibold text-sm">Inventory Assistant</h3>
-              <p className="text-xs text-blue-100">Ask me anything</p>
+              <h3 className="font-semibold text-sm">Isabelle Martinez</h3>
+              <p className="text-xs text-blue-100">Inventory Assistant</p>
             </div>
           </div>
-          <button
-            onClick={() => setIsOpen(false)}
-            className="hover:bg-blue-700 rounded p-1 transition-colors"
-            aria-label="Close chat"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="hover:bg-blue-700 rounded p-1 transition-colors"
+              aria-label="Close chat"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Messages */}

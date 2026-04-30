@@ -5,13 +5,11 @@
  *
  * Layout:
  * ┌──────────────────────────────────────────────┐
- * │          Avatar Video (40% height)           │
- * │    [Isabelle Martinez]  [Speaking...]  [🔇]      │
+ * │ [80px] Isabelle Martinez · Online       [🔇] │  ← header in chat column
  * ├──────────────────────────────────────────────┤
- * │  Chat Messages (60%)  │  Actions Panel       │
- * │  [flex-3]             │  [flex-2, max 440px] │
- * │                       │  Proposed / History  │
- * │  [Input bar]          │                      │
+ * │  Chat Messages         │  Actions Panel      │
+ * │  [flex-3]              │  [flex-2, max 440px] │
+ * │  [Input bar]           │                      │
  * └──────────────────────────────────────────────┘
  */
 
@@ -37,18 +35,29 @@ import { AiDataRenderer } from './AiDataRenderer';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import type { Message, ChatAction } from '@/lib/ai/types';
 
+// Words indicating a problem → use "thinking" (concerned) video
+const PROBLEM_WORDS = /\b(low stock|missing|overdue|shortage|alert|warning|error|fail|critical|out of stock|below minimum)\b/i;
+// Words indicating success → use "talking" (thumbs up) video
+const SUCCESS_WORDS = /\b(created|completed|confirmed|success|done|ready|updated|approved|processed)\b/i;
+
+function detectSentiment(text: string): 'thinking' | 'talking' {
+  if (PROBLEM_WORDS.test(text)) return 'thinking';
+  return 'talking';
+}
+
 export function AvatarChatPage() {
-  const { status, ttsMuted, setStatus, toggleMute } = useAvatarState();
+  const { status, ttsMuted, hovering, setStatus, toggleMute, setHovering } = useAvatarState();
 
   const tts = useTts({
     muted: ttsMuted,
-    onStart: () => setStatus('talking'),
+    onStart: () => {}, // status already set by sentiment detection
     onEnd: () => setStatus('idle'),
   });
 
   const onAssistantMessage = useCallback(
     (text: string) => {
-      setStatus('thinking');
+      const sentiment = detectSentiment(text);
+      setStatus(sentiment);
       tts.speak(text);
     },
     [setStatus, tts]
@@ -107,21 +116,20 @@ export function AvatarChatPage() {
       />
 
       <div className="flex flex-col h-[calc(100vh-7rem)]">
-        {/* ── Avatar Video Section (40%) ──────────────────────── */}
-        <div className="relative flex-shrink-0" style={{ height: '40%' }}>
-          <div className="h-full p-4 pb-0">
-            <AvatarVideo status={status} />
-          </div>
-
-          {/* Name plate overlay */}
-          <div className="absolute bottom-2 left-8 flex items-center gap-3">
-            <div className="bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center gap-3">
-              <img
-                src="/avatar/avatar.svg"
-                alt="Isabelle"
-                className="w-8 h-8 rounded-full border border-teal-400/50"
-              />
-              <div>
+        {/* ── Main Section: Chat + Actions ────────────────────── */}
+        <div className="flex flex-1 min-h-0 gap-4 p-4">
+          {/* ── Chat Column ──────────────────────────────── */}
+          <div className="flex flex-col flex-[3] min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {/* ── Avatar Header ──────────────────────────── */}
+            <div className="flex items-center gap-4 px-5 py-3 bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700">
+              <div
+                onMouseEnter={() => setHovering(true)}
+                onMouseLeave={() => setHovering(false)}
+                className="cursor-pointer"
+              >
+                <AvatarVideo status={status} hovering={hovering} />
+              </div>
+              <div className="flex-1 min-w-0">
                 <div className="text-white text-sm font-semibold">Isabelle Martinez</div>
                 <div className={`text-xs ${
                   status === 'talking' ? 'text-teal-300' :
@@ -131,30 +139,19 @@ export function AvatarChatPage() {
                   {statusLabel}
                 </div>
               </div>
+              <button
+                onClick={toggleMute}
+                className="rounded-lg px-3 py-2 text-white hover:bg-white/10 transition-colors flex items-center gap-2"
+                aria-label={ttsMuted ? 'Unmute' : 'Mute'}
+              >
+                {ttsMuted ? (
+                  <VolumeX className="w-4 h-4 text-red-400" />
+                ) : (
+                  <Volume2 className="w-4 h-4 text-teal-300" />
+                )}
+                <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
+              </button>
             </div>
-          </div>
-
-          {/* Mute toggle */}
-          <div className="absolute bottom-2 right-8">
-            <button
-              onClick={toggleMute}
-              className="bg-black/60 backdrop-blur-sm rounded-lg px-3 py-2 text-white hover:bg-black/80 transition-colors flex items-center gap-2"
-              aria-label={ttsMuted ? 'Unmute' : 'Mute'}
-            >
-              {ttsMuted ? (
-                <VolumeX className="w-4 h-4 text-red-400" />
-              ) : (
-                <Volume2 className="w-4 h-4 text-teal-300" />
-              )}
-              <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* ── Bottom Section: Chat + Actions (60%) ────────────── */}
-        <div className="flex flex-1 min-h-0 gap-4 p-4 pt-2">
-          {/* ── Chat Column ──────────────────────────────── */}
-          <div className="flex flex-col flex-[3] min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {chat.messages.map((message) => (
