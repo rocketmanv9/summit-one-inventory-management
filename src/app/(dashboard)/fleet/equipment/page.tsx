@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -56,7 +57,7 @@ export default function FleetEquipmentPage() {
     setLoading(true);
     try {
       const res = await fetch('/api/gv/equipment');
-      if (!res.ok) throw new Error('Failed to fetch equipment');
+      if (!res.ok) throw AppError.internal('Failed to fetch equipment');
       const json = await res.json();
       setEquipment(json.data || []);
     } catch (err) {
@@ -70,7 +71,7 @@ export default function FleetEquipmentPage() {
     setCatalogLoading(true);
     try {
       const res = await fetch('/api/gv/equipment/catalog');
-      if (!res.ok) throw new Error('Failed to fetch catalog');
+      if (!res.ok) throw AppError.internal('Failed to fetch catalog');
       const json = await res.json();
       setCatalog(json.data || []);
     } catch (err) {
@@ -98,7 +99,7 @@ export default function FleetEquipmentPage() {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw new Error('Failed to remove equipment');
+      if (!res.ok) throw AppError.internal('Failed to remove equipment');
       await fetchEquipment();
     } catch (err) {
       console.error('Error removing equipment:', err);
@@ -119,7 +120,7 @@ export default function FleetEquipmentPage() {
         },
         body: JSON.stringify({ catalogEquipmentIds: Array.from(selectedCatalogIds) }),
       });
-      if (!res.ok) throw new Error('Failed to adopt equipment');
+      if (!res.ok) throw AppError.internal('Failed to adopt equipment');
 
       setSelectedCatalogIds(new Set());
       setActiveTab('my-equipment');
@@ -385,7 +386,7 @@ function AddCustomEquipmentModal({ onClose, onComplete }: { onClose: () => void;
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        throw new Error(json?.error?.message || 'Failed to add equipment');
+        throw AppError.internal(json?.error?.message || 'Failed to add equipment');
       }
       onComplete();
     } catch (err: any) {
@@ -468,7 +469,7 @@ function NotesModal({
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ notes }),
       });
-      if (!res.ok) throw new Error(`Failed to update ${entityLabel} notes`);
+      if (!res.ok) throw AppError.internal(`Failed to update ${entityLabel} notes`);
       onSaved();
     } catch (err) {
       console.error(`Error updating ${entityLabel} notes:`, err);

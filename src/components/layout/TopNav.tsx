@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Search, User, ChevronDown, LogOut, Settings } from 'lucide-react';
+import { Bell, Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
+import { useAiPanel } from '@/lib/ai/panel-store';
 
 export function TopNav() {
   const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMac, setIsMac] = useState(false);
+  const aiPanel = useAiPanel();
 
   useEffect(() => {
     setIsMac(navigator.platform.toUpperCase().indexOf('MAC') >= 0);
@@ -55,6 +57,23 @@ export function TopNav() {
 
         {/* Right side */}
         <div className="flex items-center gap-4">
+          {/* AI Assistant Toggle */}
+          <button
+            onClick={aiPanel.toggle}
+            className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              aiPanel.isOpen
+                ? 'bg-blue-100 text-blue-700'
+                : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+            aria-label="Toggle AI assistant"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden sm:inline">AI</span>
+            <kbd className="ml-1 hidden rounded border bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+              {isMac ? '\u2318' : 'Ctrl+'}J
+            </kbd>
+          </button>
+
           {/* Notifications */}
           <button
             className="relative rounded-lg p-2 hover:bg-muted"

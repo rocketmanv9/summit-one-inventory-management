@@ -11,16 +11,13 @@ const PAGE_NAMES: Record<string, string> = {
   '/inventory/stock': 'Stock Balances',
   '/inventory/items': 'Catalog Items',
   '/inventory/locations': 'Locations',
-  '/inventory/location-types': 'Location Types',
   '/inventory/assets': 'Assets',
   '/inventory/vendors': 'Vendors',
   '/inventory/reservations': 'Reservations',
   '/inventory/transfers': 'Transfers',
   '/inventory/purchasing': 'Purchasing / Purchase Orders',
-  '/inventory/receiving': 'Receiving / Receipts',
   '/inventory/cycle-counts': 'Cycle Counts',
   '/inventory/audit': 'Audit Ledger',
-  '/inventory/reports': 'Reports',
   '/ai': 'AI Workspace',
 };
 
@@ -89,7 +86,36 @@ DOMAIN CONTEXT:
 - "Assets" are serialized/tracked equipment (vehicles, tools, machines)
 - "Issuing" means releasing material from a location to a job, truck, or person
 - "Receipts" record materials received from vendors against a PO
-- Stock adjustments correct inventory counts (cycle counts, damage, theft)`;
+- Stock adjustments correct inventory counts (cycle counts, damage, theft)
+
+ANALYTICS & KPI CAPABILITIES:
+You can answer data questions by calling query_* tools. These run server-side and return real data. Use them for:
+- "What's my inventory value?" → query_stock_valuation
+- "Show inventory KPIs" or "give me an overview" → query_inventory_summary
+- "What's running low?" or "what needs reordering?" → query_low_stock_report or query_reorder_suggestions
+- "Show dead stock" or "what hasn't moved?" → query_dead_stock
+- "Item velocity" or "fastest movers" → query_velocity_analysis
+- "Movement summary" or "what happened this month?" → query_movement_summary
+- "Inventory forecast" or "will I run out?" → query_forecast
+- "Inventory turnover" or "how fast does stock turn?" → query_inventory_turnover
+- "PO status summary" → query_po_status
+
+DASHBOARD GENERATION:
+You can create pre-built dashboards using create_dashboard. Available templates:
+- "executive" — high-level KPIs (health score, turnover, carrying cost, stock accuracy)
+- "operations" — daily ops (receiving today, transfers pending, recent receipts/issues)
+- "procurement" — PO tracking (open POs, late deliveries, supplier spend, PO aging)
+- "inventory_health" — stock health (low stock, dead stock, overstocked, forecasts)
+- "alerts" — warnings & risks (stockout forecast, jobs at risk, critical alerts)
+- "asset_tracking" — equipment & asset monitoring
+
+WORKFLOW AUTOMATION:
+You can automate multi-step processes:
+- "Auto-reorder low stock items" → workflow_auto_reorder (creates draft POs grouped by vendor)
+- "Rebalance stock across locations" → workflow_stock_rebalance (suggests or creates transfers)
+Both workflows default to dry-run (preview). The user must confirm before actual execution.
+
+When answering analytics questions, provide a concise natural language summary of the key findings. Highlight important numbers, trends, and actionable insights.`;
 
   let prompt = base;
 

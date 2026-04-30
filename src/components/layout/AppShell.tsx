@@ -1,18 +1,27 @@
+'use client';
+
 import { Sidebar } from './Sidebar';
 import { TopNav } from './TopNav';
+import { AiPanelProvider, useAiPanel } from '@/lib/ai/panel-store';
+import { AiSidePanel } from '@/components/ai/AiSidePanel';
 
 interface AppShellProps {
   children: React.ReactNode;
 }
 
-export function AppShell({ children }: AppShellProps) {
+function AppShellInner({ children }: AppShellProps) {
+  const { isOpen } = useAiPanel();
+
   return (
     <div className="relative flex h-screen overflow-hidden">
       {/* Sidebar - Fixed left */}
       <Sidebar />
 
       {/* Main content area */}
-      <div className="flex flex-1 flex-col overflow-hidden pl-64">
+      <div
+        className="flex flex-1 flex-col overflow-hidden pl-64 transition-[padding] duration-200"
+        style={{ paddingRight: isOpen ? 400 : 0 }}
+      >
         {/* Top navigation */}
         <TopNav />
 
@@ -23,6 +32,17 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         </main>
       </div>
+
+      {/* AI Side Panel */}
+      <AiSidePanel />
     </div>
+  );
+}
+
+export function AppShell({ children }: AppShellProps) {
+  return (
+    <AiPanelProvider>
+      <AppShellInner>{children}</AppShellInner>
+    </AiPanelProvider>
   );
 }

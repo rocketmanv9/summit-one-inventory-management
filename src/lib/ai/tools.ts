@@ -352,4 +352,150 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
       parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+
+  // ── Analytics / KPI queries (server-side) ────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'query_inventory_summary',
+      description: 'Get high-level inventory KPIs: total items, total quantity on hand, reserved, available, and alert counts. Use for questions like "how much inventory do we have?" or "give me an overview".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_stock_valuation',
+      description: 'Get inventory value broken down by location and category. Shows item count, total quantity, average unit cost, and total value. Use for questions about inventory value or worth.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_low_stock_report',
+      description: 'Get items below minimum stock levels with shortage amounts. Use for "what needs reordering?" or "what is running low?".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_dead_stock',
+      description: 'Get items with no recent movement, showing days idle and capital locked up. Use for "what is not selling?" or "dead stock" or "idle inventory".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_velocity_analysis',
+      description: 'Get item usage velocity over 30/60/90 day periods with daily rate and days-of-stock remaining. Use for "which items move fastest?" or "velocity analysis".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_movement_summary',
+      description: 'Get stock movement totals by type (received, issued, adjusted, transferred) over a date range. Use for "movement summary" or "what happened this month?".',
+      parameters: {
+        type: 'object',
+        properties: {
+          start_date: { type: 'string', description: 'Start date (ISO 8601). Defaults to 30 days ago.' },
+          end_date: { type: 'string', description: 'End date (ISO 8601). Defaults to now.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_reorder_suggestions',
+      description: 'Get recommended reorder quantities based on current stock vs reorder points. Shows shortage, suggested order qty, and preferred vendor. Use for "what should I reorder?" or "reorder suggestions".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_forecast',
+      description: 'Get inventory forecast showing on-hand, reserved, incoming PO quantities, projected demand, and net position. Use for "forecast" or "will I run out?".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_inventory_turnover',
+      description: 'Get inventory turnover ratio and velocity metrics. Use for "inventory turnover" or "how fast does stock move?".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_po_status',
+      description: 'Get purchase order status summary showing open, late, and recently completed POs with amounts. Use for "PO status" or "purchase order summary".',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  // ── Dashboard generation (server-side) ───────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'create_dashboard',
+      description: 'Create a pre-configured dashboard from a template. Available templates: executive (high-level KPIs), operations (daily ops), procurement (PO tracking), inventory_health (stock health), alerts (warnings & risks), asset_tracking (equipment & assets).',
+      parameters: {
+        type: 'object',
+        properties: {
+          template: {
+            type: 'string',
+            description: 'Dashboard template to use',
+            enum: ['executive', 'operations', 'procurement', 'inventory_health', 'alerts', 'asset_tracking'],
+          },
+          name: { type: 'string', description: 'Custom dashboard name (optional, template name used if omitted)' },
+        },
+        required: ['template'],
+      },
+    },
+  },
+
+  // ── Workflow automation (server-side) ─────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'workflow_auto_reorder',
+      description: 'Create draft purchase orders for all items below their reorder point, grouped by preferred vendor. Defaults to dry run (preview only). Say "confirm" or set dry_run=false to actually create the POs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dry_run: {
+            type: 'boolean',
+            description: 'If true (default), show what would be created without creating anything. Set to false to actually create draft POs.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'workflow_stock_rebalance',
+      description: 'Suggest stock transfers to balance inventory across locations based on demand patterns. Defaults to dry run (preview only). Say "confirm" or set dry_run=false to actually create the transfers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dry_run: {
+            type: 'boolean',
+            description: 'If true (default), show suggested transfers without creating them. Set to false to create the transfers.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];

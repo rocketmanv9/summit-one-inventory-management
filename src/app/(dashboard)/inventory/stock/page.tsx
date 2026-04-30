@@ -446,21 +446,12 @@ export default function StockBalancesPage() {
 
                   <div className="border-t pt-4">
                     <h4 className="font-medium mb-2">Quick Actions</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button className="px-3 py-2 text-sm bg-blue-100 text-blue-800 rounded hover:bg-blue-200 transition-colors">
-                        Reserve
-                      </button>
-                      <button className="px-3 py-2 text-sm bg-purple-100 text-purple-800 rounded hover:bg-purple-200 transition-colors">
-                        Transfer
-                      </button>
+                    <div className="grid grid-cols-1 gap-2">
                       <button
                         onClick={() => openAdjustModal(selectedItem)}
                         className="px-3 py-2 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
                       >
-                        Adjust
-                      </button>
-                      <button className="px-3 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200 transition-colors">
-                        Count
+                        Adjust Stock
                       </button>
                     </div>
                   </div>

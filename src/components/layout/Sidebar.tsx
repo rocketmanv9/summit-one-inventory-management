@@ -15,12 +15,9 @@ import {
   Bot,
   CalendarCheck,
   ArrowLeftRight,
-  PackageOpen,
   Users,
-  FileText,
   Boxes,
   History,
-  Tag,
   Wrench,
   HardHat,
 } from 'lucide-react';
@@ -81,11 +78,6 @@ const navigation: NavSection[] = [
         icon: MapPin,
       },
       {
-        title: 'Location Types',
-        href: '/inventory/location-types',
-        icon: Tag,
-      },
-      {
         title: 'Assets',
         href: '/inventory/assets',
         icon: Truck,
@@ -136,11 +128,6 @@ const navigation: NavSection[] = [
         icon: ShoppingCart,
       },
       {
-        title: 'Receiving',
-        href: '/inventory/receiving',
-        icon: PackageOpen,
-      },
-      {
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
@@ -154,11 +141,6 @@ const navigation: NavSection[] = [
         title: 'Ledger',
         href: '/inventory/audit',
         icon: History,
-      },
-      {
-        title: 'Reports',
-        href: '/inventory/reports',
-        icon: FileText,
       },
     ],
   },

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -58,7 +59,7 @@ export default function FleetVehiclesPage() {
     setLoading(true);
     try {
       const res = await fetch('/api/gv/vehicles');
-      if (!res.ok) throw new Error('Failed to fetch vehicles');
+      if (!res.ok) throw AppError.internal('Failed to fetch vehicles');
       const json = await res.json();
       setVehicles(json.data || []);
     } catch (err) {
@@ -72,7 +73,7 @@ export default function FleetVehiclesPage() {
     setCatalogLoading(true);
     try {
       const res = await fetch('/api/gv/vehicles/catalog');
-      if (!res.ok) throw new Error('Failed to fetch catalog');
+      if (!res.ok) throw AppError.internal('Failed to fetch catalog');
       const json = await res.json();
       setCatalogVehicles(json.data || []);
     } catch (err) {
@@ -100,7 +101,7 @@ export default function FleetVehiclesPage() {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw new Error('Failed to remove vehicle');
+      if (!res.ok) throw AppError.internal('Failed to remove vehicle');
       await fetchVehicles();
     } catch (err) {
       console.error('Error removing vehicle:', err);
@@ -121,7 +122,7 @@ export default function FleetVehiclesPage() {
         },
         body: JSON.stringify({ catalogVehicleIds: Array.from(selectedCatalogIds) }),
       });
-      if (!res.ok) throw new Error('Failed to adopt vehicles');
+      if (!res.ok) throw AppError.internal('Failed to adopt vehicles');
 
       setSelectedCatalogIds(new Set());
       setActiveTab('my-vehicles');
@@ -400,7 +401,7 @@ function AddCustomVehicleModal({ onClose, onComplete }: { onClose: () => void; o
 
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error?.message || 'Failed to add vehicle');
+        throw AppError.internal(json.error?.message || 'Failed to add vehicle');
       }
       onComplete();
     } catch (err: any) {
@@ -488,7 +489,7 @@ function NotesModal({
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ notes }),
       });
-      if (!res.ok) throw new Error(`Failed to update ${entityLabel} notes`);
+      if (!res.ok) throw AppError.internal(`Failed to update ${entityLabel} notes`);
       onSaved();
     } catch (err) {
       console.error(`Error updating ${entityLabel} notes:`, err);

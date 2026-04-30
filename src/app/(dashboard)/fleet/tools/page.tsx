@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -56,7 +57,7 @@ export default function FleetToolsPage() {
     setLoading(true);
     try {
       const res = await fetch('/api/gv/tools');
-      if (!res.ok) throw new Error('Failed to fetch tools');
+      if (!res.ok) throw AppError.internal('Failed to fetch tools');
       const json = await res.json();
       setTools(json.data || []);
     } catch (err) {
@@ -70,7 +71,7 @@ export default function FleetToolsPage() {
     setCatalogLoading(true);
     try {
       const res = await fetch('/api/gv/tools/catalog');
-      if (!res.ok) throw new Error('Failed to fetch catalog');
+      if (!res.ok) throw AppError.internal('Failed to fetch catalog');
       const json = await res.json();
       setCatalogTools(json.data || []);
     } catch (err) {
@@ -98,7 +99,7 @@ export default function FleetToolsPage() {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw new Error('Failed to remove tool');
+      if (!res.ok) throw AppError.internal('Failed to remove tool');
       await fetchTools();
     } catch (err) {
       console.error('Error removing tool:', err);
@@ -119,7 +120,7 @@ export default function FleetToolsPage() {
         },
         body: JSON.stringify({ catalogToolIds: Array.from(selectedCatalogIds) }),
       });
-      if (!res.ok) throw new Error('Failed to adopt tools');
+      if (!res.ok) throw AppError.internal('Failed to adopt tools');
 
       setSelectedCatalogIds(new Set());
       setActiveTab('my-tools');
@@ -387,7 +388,7 @@ function AddCustomToolModal({ onClose, onComplete }: { onClose: () => void; onCo
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw new Error(errJson?.message || 'Failed to add tool');
+        throw AppError.internal(errJson?.message || 'Failed to add tool');
       }
       onComplete();
     } catch (err: any) {
@@ -470,7 +471,7 @@ function NotesModal({
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ notes }),
       });
-      if (!res.ok) throw new Error(`Failed to update ${entityLabel} notes`);
+      if (!res.ok) throw AppError.internal(`Failed to update ${entityLabel} notes`);
       onSaved();
     } catch (err) {
       console.error(`Error updating ${entityLabel} notes:`, err);

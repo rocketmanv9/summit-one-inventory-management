@@ -4,6 +4,7 @@
  */
 
 import type { IntentType } from '@/lib/chat/intents';
+import type { AiDataDisplay } from './types';
 
 export interface ToolUseResult {
   type: 'tool_use';
@@ -16,12 +17,19 @@ export interface TextResult {
   content: string;
 }
 
-export type ParsedAIResponse = ToolUseResult | TextResult;
+export interface DataResult {
+  type: 'data_result';
+  content: string;
+  dataDisplay: AiDataDisplay;
+}
+
+export type ParsedAIResponse = ToolUseResult | TextResult | DataResult;
 
 /**
  * All valid intent names that map to function tool names.
  */
 const VALID_INTENTS: Set<string> = new Set([
+  // Client-side CRUD/list tools
   'add_vendor', 'update_vendor', 'delete_vendor', 'list_vendors',
   'add_item', 'update_item', 'delete_item', 'list_items',
   'adjust_stock', 'update_stock', 'check_stock', 'low_stock',
@@ -32,6 +40,13 @@ const VALID_INTENTS: Set<string> = new Set([
   'create_asset', 'list_assets',
   'list_receipts',
   'inventory_summary', 'navigate', 'help',
+  // Server-side analytics tools
+  'query_inventory_summary', 'query_stock_valuation', 'query_low_stock_report',
+  'query_dead_stock', 'query_velocity_analysis', 'query_movement_summary',
+  'query_reorder_suggestions', 'query_forecast', 'query_inventory_turnover',
+  'query_po_status',
+  // Dashboard & workflow tools
+  'create_dashboard', 'workflow_auto_reorder', 'workflow_stock_rebalance',
 ]);
 
 /**
@@ -44,10 +59,20 @@ export function parseAIResponse(body: {
   params?: Record<string, string>;
   content?: string;
   error?: string;
+  dataDisplay?: AiDataDisplay;
 }): ParsedAIResponse | null {
   // Server says to fall back to keyword matching
   if (body.fallbackToKeyword) {
     return null;
+  }
+
+  // Data result — server-side query returned structured data + summary
+  if (body.type === 'data_result' && body.content && body.dataDisplay) {
+    return {
+      type: 'data_result',
+      content: body.content,
+      dataDisplay: body.dataDisplay,
+    };
   }
 
   // Tool use response

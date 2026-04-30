@@ -10,11 +10,13 @@ export interface ChatMessage {
 
 export interface AIResponse {
   fallbackToKeyword?: boolean;
-  type?: 'tool_use' | 'text';
+  type?: 'tool_use' | 'text' | 'data_result';
   intent?: string;
   params?: Record<string, string>;
   content?: string;
   error?: string;
+  /** Structured data display for server-side query results */
+  dataDisplay?: import('./types').AiDataDisplay;
 }
 
 /**

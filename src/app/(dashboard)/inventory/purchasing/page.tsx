@@ -772,15 +772,6 @@ function PODetailPanel({
               </button>
             )}
 
-            {(po.status === 'placed' || po.status === 'acknowledged' || po.status === 'partially_received') && (
-              <a
-                href={`/inventory/receiving?po=${po.id}`}
-                className="w-full px-4 py-2 text-center bg-green-600 text-white rounded-md hover:bg-green-700 block"
-              >
-                Receive Items
-              </a>
-            )}
-
             {(po.status === 'partially_received' || po.status === 'fully_received') && (
               <button
                 onClick={() => updateStatus('closed')}

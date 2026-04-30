@@ -17,6 +17,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { useAiChat } from '@/lib/ai/useAiChat';
 import type { Message, ChatAction } from '@/lib/ai/types';
+import { AiDataRenderer } from '@/components/ai/AiDataRenderer';
 
 export default function AIWorkspacePage() {
   const chat = useAiChat({ mode: 'workspace' });
@@ -75,6 +76,13 @@ export default function AIWorkspacePage() {
                   message={message}
                   onNavigate={chat.navigate}
                 />
+
+                {/* Data display for server-side query results */}
+                {message.dataDisplay && (
+                  <div className="max-w-[75%]">
+                    <AiDataRenderer data={message.dataDisplay} />
+                  </div>
+                )}
 
                 {/* Inline select options */}
                 {message.selectOptions &&

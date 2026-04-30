@@ -3,7 +3,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
+
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -211,12 +211,6 @@ export default function LocationsPage() {
           description="Manage warehouses, yards, trucks, and other inventory locations. Example: Set up locations like 'Main Plant Yard', 'Truck #12', 'Highway 50 Job Site', or 'Vendor: ABC Concrete Supply' to track where materials are stored or in transit."
           actions={
             <div className="flex gap-2">
-              <Link
-                href="/inventory/location-types"
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors inline-flex items-center"
-              >
-                Manage Types
-              </Link>
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"

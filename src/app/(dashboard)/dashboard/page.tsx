@@ -78,13 +78,6 @@ export default function DashboardPage() {
   // Only show this page if there's no default dashboard (user needs to select/create one)
   const quickActions = [
     {
-      title: 'Quick Receive',
-      description: 'Scan packing slip and receive items',
-      icon: '📦',
-      href: '/inventory/receiving',
-      color: 'bg-blue-50 border-blue-200 hover:bg-blue-100'
-    },
-    {
       title: 'Quick PO',
       description: 'Create purchase order from vendor',
       icon: '🛒',
@@ -92,18 +85,25 @@ export default function DashboardPage() {
       color: 'bg-green-50 border-green-200 hover:bg-green-100'
     },
     {
-      title: 'Add Vendor + Item',
-      description: 'Quick wizard for new vendor and items',
-      icon: '⚡',
-      onClick: () => alert('Vendor+Item wizard coming soon!'),
-      color: 'bg-purple-50 border-purple-200 hover:bg-purple-100'
-    },
-    {
       title: 'Inventory Lookup',
       description: 'Search and view stock levels',
       icon: '🔍',
       href: '/inventory/stock',
       color: 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+    },
+    {
+      title: 'New Item',
+      description: 'Add a new item to the catalog',
+      icon: '📦',
+      href: '/inventory/items/new',
+      color: 'bg-blue-50 border-blue-200 hover:bg-blue-100'
+    },
+    {
+      title: 'Transfers',
+      description: 'Move inventory between locations',
+      icon: '🔄',
+      href: '/inventory/transfers',
+      color: 'bg-purple-50 border-purple-200 hover:bg-purple-100'
     }
   ];
 
@@ -114,42 +114,21 @@ export default function DashboardPage() {
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {quickActions.map((action) => {
-              const content = (
-                <>
-                  <div className="text-4xl mb-3">{action.icon}</div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                    {action.title}
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    {action.description}
-                  </p>
-                </>
-              );
-
-              if (action.href) {
-                return (
-                  <Link
-                    key={action.title}
-                    href={action.href}
-                    className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
-                  >
-                    {content}
-                  </Link>
-                );
-              }
-
-              return (
-                <button
-                  key={action.title}
-                  type="button"
-                  onClick={action.onClick}
-                  className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
-                >
-                  {content}
-                </button>
-              );
-            })}
+            {quickActions.map((action) => (
+              <Link
+                key={action.title}
+                href={action.href}
+                className={`p-6 border rounded-lg transition-all text-left ${action.color}`}
+              >
+                <div className="text-4xl mb-3">{action.icon}</div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                  {action.title}
+                </h3>
+                <p className="text-sm text-gray-600">
+                  {action.description}
+                </p>
+              </Link>
+            ))}
           </div>
         </div>
 

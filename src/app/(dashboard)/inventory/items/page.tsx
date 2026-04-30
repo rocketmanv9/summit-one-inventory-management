@@ -323,7 +323,6 @@ function QuickActionsMenu({ itemId, itemName }: { itemId: string; itemName: stri
     { label: 'Create PO', href: `/inventory/purchasing/create?item_id=${itemId}` },
     { label: 'Transfer', href: `/inventory/transfers?item_id=${itemId}` },
     { label: 'Reserve', href: `/inventory/reservations?item_id=${itemId}` },
-    { label: 'Receive', href: `/inventory/receiving?item_id=${itemId}` },
   ];
 
   return (

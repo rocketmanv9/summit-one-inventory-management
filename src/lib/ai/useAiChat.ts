@@ -644,6 +644,18 @@ export function useAiChat(options?: AiChatOptions) {
             if (parsed) {
               aiFailCount.current = 0;
 
+              if (parsed.type === 'data_result') {
+                conversationHistory.current.push({
+                  role: 'assistant',
+                  content: parsed.content,
+                });
+                addMessage('assistant', parsed.content, {
+                  status: 'success',
+                  dataDisplay: parsed.dataDisplay,
+                });
+                return;
+              }
+
               if (parsed.type === 'tool_use') {
                 const resolvedParams = await resolveAIParams(parsed.intent, parsed.params);
                 conversationHistory.current.push({

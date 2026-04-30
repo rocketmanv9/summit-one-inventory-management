@@ -1070,7 +1070,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             success: true,
             message: `Found ${receipts.length} recent receipt(s):\n\n${list}${suffix}`,
             data: receipts,
-            navigateTo: '/inventory/receiving',
+            navigateTo: '/inventory/purchasing',
           };
         },
       };
@@ -1180,7 +1180,6 @@ export function resolveNavigation(message: string): string | null {
     '/inventory/items': ['items', 'catalog'],
     '/inventory/vendors': ['vendors', 'suppliers'],
     '/inventory/purchasing': ['purchasing', 'purchase orders', 'pos'],
-    '/inventory/receiving': ['receiving', 'receipts'],
     '/inventory/locations': ['locations', 'warehouses', 'yards'],
     '/inventory/transfers': ['transfers'],
     '/inventory/reservations': ['reservations'],
@@ -1188,7 +1187,6 @@ export function resolveNavigation(message: string): string | null {
     '/inventory/categories': ['categories'],
     '/inventory/movements': ['movements', 'stock movements'],
     '/inventory/alerts': ['alerts', 'low stock'],
-    '/inventory/reports': ['reports'],
     '/settings': ['settings', 'configuration'],
   };
 

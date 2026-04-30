@@ -7,7 +7,7 @@ import type { ActionDefinition, ActionResult } from '@/lib/chat/actions';
 
 // ─── Intent Classification ────────────────────────────────────────────
 
-export type ChatIntent = 'READ' | 'MUTATION';
+export type ChatIntent = 'READ' | 'MUTATION' | 'ANALYTICS' | 'WORKFLOW';
 
 const READ_INTENTS: Set<IntentType> = new Set([
   'list_vendors',
@@ -25,8 +25,74 @@ const READ_INTENTS: Set<IntentType> = new Set([
   'navigate',
 ]);
 
-export function classifyIntent(intent: IntentType): ChatIntent {
-  return READ_INTENTS.has(intent) ? 'READ' : 'MUTATION';
+/** Server-side analytics tools — executed on the API route, not client-side */
+const ANALYTICS_INTENTS = new Set([
+  'query_inventory_summary',
+  'query_stock_valuation',
+  'query_low_stock_report',
+  'query_dead_stock',
+  'query_velocity_analysis',
+  'query_movement_summary',
+  'query_reorder_suggestions',
+  'query_forecast',
+  'query_inventory_turnover',
+  'query_po_status',
+]);
+
+/** Workflow tools — multi-step operations with dry-run support */
+const WORKFLOW_INTENTS = new Set([
+  'workflow_auto_reorder',
+  'workflow_stock_rebalance',
+  'create_dashboard',
+]);
+
+export function classifyIntent(intent: IntentType | string): ChatIntent {
+  if (ANALYTICS_INTENTS.has(intent)) return 'ANALYTICS';
+  if (WORKFLOW_INTENTS.has(intent)) return 'WORKFLOW';
+  if (READ_INTENTS.has(intent as IntentType)) return 'READ';
+  return 'MUTATION';
+}
+
+// ─── AI Data Display (server-side query results) ─────────────────────
+
+export type AiDataDisplay =
+  | AiMetricDisplay
+  | AiTableDisplay
+  | AiChartDisplay
+  | AiDashboardLinkDisplay;
+
+export interface AiMetricDisplay {
+  displayType: 'metric';
+  label: string;
+  value: string | number;
+  unit?: string;
+  change?: string;
+  trend?: 'up' | 'down' | 'neutral';
+  secondaryMetrics?: Array<{ label: string; value: string | number }>;
+}
+
+export interface AiTableDisplay {
+  displayType: 'table';
+  columns: Array<{ key: string; label: string }>;
+  rows: Record<string, any>[];
+  totalRows?: number;
+}
+
+export interface AiChartDisplay {
+  displayType: 'chart';
+  chartType: 'bar' | 'horizontal_bar';
+  labels: string[];
+  datasets: Array<{
+    label: string;
+    data: number[];
+    color?: string;
+  }>;
+}
+
+export interface AiDashboardLinkDisplay {
+  displayType: 'dashboard_link';
+  dashboardId: string;
+  dashboardName: string;
 }
 
 // ─── Chat Action (proposal → execution lifecycle) ─────────────────────
@@ -58,6 +124,8 @@ export interface Message {
   isConfirm?: boolean;
   /** When a MUTATION is proposed, the message carries the action for preview */
   action?: ChatAction;
+  /** When a server-side query returns structured data, the message carries it for rich rendering */
+  dataDisplay?: AiDataDisplay;
 }
 
 // ─── Active Flow ──────────────────────────────────────────────────────
@@ -79,7 +147,7 @@ export interface PageContext {
 // ─── Hook Options ─────────────────────────────────────────────────────
 
 export interface AiChatOptions {
-  mode?: 'corner' | 'workspace';
+  mode?: 'corner' | 'workspace' | 'panel';
   pageContext?: PageContext;
 }
 
@@ -95,6 +163,8 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
     { label: 'Low stock', message: 'Show low stock items' },
     { label: 'Adjust stock', message: 'Adjust stock balance' },
     { label: 'Check stock', message: 'Check stock levels' },
+    { label: 'Turnover', message: 'What is my inventory turnover?' },
+    { label: 'Dead stock', message: 'Show dead stock report' },
   ],
   '/inventory/vendors': [
     { label: 'Add vendor', message: 'Add a vendor' },
@@ -103,11 +173,14 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/inventory/items': [
     { label: 'Add item', message: 'Add a catalog item' },
     { label: 'List items', message: 'List items' },
+    { label: 'Velocity', message: 'Show item velocity analysis' },
   ],
   '/inventory/purchasing': [
     { label: 'Create PO', message: 'Create a purchase order' },
     { label: 'List POs', message: 'List purchase orders' },
     { label: 'Late orders', message: 'Show late orders' },
+    { label: 'Auto-reorder', message: 'Auto-reorder low stock items' },
+    { label: 'PO status', message: 'Show PO status summary' },
   ],
   '/inventory/locations': [
     { label: 'Add location', message: 'Add a location' },
@@ -116,16 +189,16 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/inventory/transfers': [
     { label: 'New transfer', message: 'Create a transfer' },
     { label: 'List transfers', message: 'List transfers' },
+    { label: 'Rebalance', message: 'Suggest stock rebalance across locations' },
   ],
   '/inventory/assets': [
     { label: 'New asset', message: 'Create an asset' },
     { label: 'List assets', message: 'List assets' },
   ],
-  '/inventory/receiving': [
-    { label: 'List receipts', message: 'List receipts' },
-  ],
   '/dashboard': [
-    { label: 'Summary', message: 'Show inventory summary' },
+    { label: 'KPIs', message: 'Show me inventory KPIs' },
     { label: 'Low stock', message: 'Show low stock items' },
+    { label: 'Exec dashboard', message: 'Create an executive dashboard' },
+    { label: 'Valuation', message: "What's my total inventory value?" },
   ],
 };
