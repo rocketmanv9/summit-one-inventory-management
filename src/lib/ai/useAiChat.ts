@@ -158,7 +158,7 @@ const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
   content:
-    "Hi! I'm your inventory assistant. I can help you manage vendors, stock, purchase orders, and more.\n\nTry saying something like:\n  \"Add a vendor\"\n  \"Adjust stock balance\"\n  \"Show me low stock items\"\n  \"List purchase orders\"\n\nType \"help\" to see everything I can do.",
+    "Hey! I'm Isabelle, your inventory specialist. I can help you manage stock, vendors, purchase orders, and more — or just ask me how things are looking and I'll pull up the data. What can I help with today?",
   timestamp: new Date(),
 };
 
@@ -173,6 +173,8 @@ export function useAiChat(options?: AiChatOptions) {
   const [activeFlow, setActiveFlow] = useState<ActiveFlow | null>(null);
   const [aiAvailable, setAiAvailable] = useState(true);
   const [actions, setActions] = useState<ChatAction[]>([]);
+
+  const [isThinking, setIsThinking] = useState(false);
 
   // Vendor modal state
   const [vendorModalOpen, setVendorModalOpen] = useState(false);
@@ -616,6 +618,7 @@ export function useAiChat(options?: AiChatOptions) {
       }
 
       setIsLoading(true);
+      setIsThinking(true);
 
       try {
         // Check for cancel/abort
@@ -653,6 +656,7 @@ export function useAiChat(options?: AiChatOptions) {
                   status: 'success',
                   dataDisplay: parsed.dataDisplay,
                 });
+                options?.onAssistantMessage?.(parsed.content);
                 return;
               }
 
@@ -672,6 +676,7 @@ export function useAiChat(options?: AiChatOptions) {
                   content: parsed.content,
                 });
                 addMessage('assistant', parsed.content);
+                options?.onAssistantMessage?.(parsed.content);
                 return;
               }
             }
@@ -702,9 +707,10 @@ export function useAiChat(options?: AiChatOptions) {
         );
       } finally {
         setIsLoading(false);
+        setIsThinking(false);
       }
     },
-    [input, isLoading, activeFlow, aiAvailable, addMessage, handleFlowInput]
+    [input, isLoading, activeFlow, aiAvailable, addMessage, handleFlowInput, options]
   );
 
   // ── Return ─────────────────────────────────────────────────────────
@@ -715,6 +721,7 @@ export function useAiChat(options?: AiChatOptions) {
     input,
     setInput,
     isLoading,
+    isThinking,
     activeFlow,
     aiAvailable,
     actions,

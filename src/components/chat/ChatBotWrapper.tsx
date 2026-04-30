@@ -1,7 +1,7 @@
 'use client';
 
-import { ChatBot } from './ChatBot';
+import { AvatarBubble } from '@/components/ai/AvatarBubble';
 
 export function ChatBotWrapper() {
-  return <ChatBot />;
+  return <AvatarBubble />;
 }

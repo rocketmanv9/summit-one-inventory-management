@@ -47,7 +47,7 @@ const navigation: NavSection[] = [
         icon: LayoutDashboard,
       },
       {
-        title: 'AI Workspace',
+        title: 'Isabelle Martinez',
         href: '/ai',
         icon: Bot,
       },

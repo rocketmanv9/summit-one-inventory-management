@@ -2,7 +2,7 @@
 
 import { useRef, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { X, Send, Loader2, Bot, ExternalLink } from 'lucide-react';
+import { X, Send, Loader2, ExternalLink } from 'lucide-react';
 import { useAiPanel } from '@/lib/ai/panel-store';
 import { useAiChat } from '@/lib/ai/useAiChat';
 import { QUICK_ACTIONS } from '@/lib/ai/types';
@@ -65,10 +65,14 @@ export function AiSidePanel() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-gradient-to-r from-blue-600 to-blue-700 text-white flex-shrink-0">
           <div className="flex items-center gap-2">
-            <Bot className="w-5 h-5" />
+            <img
+              src="/avatar/avatar.svg"
+              alt="Isabelle"
+              className="w-8 h-8 rounded-full border border-white/30"
+            />
             <div>
-              <h3 className="font-semibold text-sm">AI Assistant</h3>
-              <p className="text-xs text-blue-100">Ask anything about your inventory</p>
+              <h3 className="font-semibold text-sm">Isabelle Martinez</h3>
+              <p className="text-xs text-blue-100">Ask Isabelle anything</p>
             </div>
           </div>
           <button

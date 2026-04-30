@@ -149,6 +149,7 @@ export interface PageContext {
 export interface AiChatOptions {
   mode?: 'corner' | 'workspace' | 'panel';
   pageContext?: PageContext;
+  onAssistantMessage?: (text: string) => void;
 }
 
 // ─── Quick Actions ────────────────────────────────────────────────────
