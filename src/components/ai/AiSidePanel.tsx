@@ -8,6 +8,7 @@ import { useAiChat } from '@/lib/ai/useAiChat';
 import { QUICK_ACTIONS } from '@/lib/ai/types';
 import type { Message } from '@/lib/ai/types';
 import { AiDataRenderer } from './AiDataRenderer';
+import { ImageAttachment } from './ImageAttachment';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 
 export function AiSidePanel() {
@@ -171,7 +172,13 @@ export function AiSidePanel() {
 
         {/* Input */}
         <div className="p-3 border-t flex-shrink-0">
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <ImageAttachment
+              pendingImage={chat.pendingImage}
+              onImageAttach={(dataUrl) => chat.setPendingImage(dataUrl)}
+              onImageRemove={() => chat.setPendingImage(null)}
+              disabled={chat.isLoading}
+            />
             <input
               ref={inputRef}
               type="text"
@@ -179,16 +186,18 @@ export function AiSidePanel() {
               onChange={(e) => chat.setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                chat.activeFlow
-                  ? 'Type your answer...'
-                  : 'Ask me anything...'
+                chat.pendingImage
+                  ? 'Describe the image or say "add 4 to Auburn Yard"...'
+                  : chat.activeFlow
+                    ? 'Type your answer...'
+                    : 'Ask me anything...'
               }
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               disabled={chat.isLoading}
             />
             <button
               onClick={() => chat.sendMessage()}
-              disabled={!chat.input.trim() || chat.isLoading}
+              disabled={(!chat.input.trim() && !chat.pendingImage) || chat.isLoading}
               className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Send message"
             >
@@ -227,6 +236,15 @@ function PanelMessageBubble({
                 : 'bg-gray-100 text-gray-900'
         }`}
       >
+        {/* Attached image */}
+        {message.imageUrl && (
+          <img
+            src={message.imageUrl}
+            alt="Attached"
+            className="rounded max-w-[200px] max-h-[200px] object-contain mb-1"
+          />
+        )}
+
         {message.status === 'executing' ? (
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />

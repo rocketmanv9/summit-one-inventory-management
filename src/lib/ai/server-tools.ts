@@ -48,6 +48,7 @@ const SERVER_TOOLS = new Set([
   'create_dashboard',
   'workflow_auto_reorder',
   'workflow_stock_rebalance',
+  'smart_stock_receive',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -88,6 +89,8 @@ export async function executeServerTool(
       return workflowAutoReorder(params, ctx);
     case 'workflow_stock_rebalance':
       return workflowStockRebalance(params, ctx);
+    case 'smart_stock_receive':
+      return smartStockReceive(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -652,6 +655,62 @@ async function workflowStockRebalance(
     return {
       text: `Workflow failed: ${err.message}`,
       dataDisplay: { displayType: 'metric', label: 'Error', value: 'Workflow failed' },
+    };
+  }
+}
+
+// ─── Smart Stock Receive ────────────────────────────────────────────
+
+async function smartStockReceive(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  try {
+    const res = await fetch(`${ctx.baseUrl}/api/ai/stock-receive`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': ctx.cookieHeader,
+      },
+      body: JSON.stringify({
+        item_name: params.item_name,
+        item_description: params.item_description,
+        location_name: params.location_name,
+        quantity: params.quantity,
+        unit_of_measure: params.unit_of_measure,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      return {
+        text: `Stock receive failed: ${err.error || res.statusText}`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Stock receive failed' },
+      };
+    }
+
+    const result = await res.json();
+    const d = result.data;
+
+    return {
+      text: `${d.item_created ? 'Created' : 'Found'} item "${d.item_name}" and added ${d.quantity_added} units at ${d.location_name}. Previous qty: ${d.previous_qty}, new qty: ${d.new_qty}.`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Stock Received',
+        value: `+${d.quantity_added}`,
+        unit: d.unit_of_measure || 'units',
+        secondaryMetrics: [
+          { label: 'Item', value: d.item_name },
+          { label: 'Location', value: d.location_name },
+          { label: 'Previous Qty', value: formatNumber(d.previous_qty) },
+          { label: 'New Qty', value: formatNumber(d.new_qty) },
+        ],
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Stock receive failed: ${err.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Stock receive failed' },
     };
   }
 }

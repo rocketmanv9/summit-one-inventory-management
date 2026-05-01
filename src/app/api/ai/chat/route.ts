@@ -35,7 +35,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
 
   try {
     const body = await req.json();
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = body.messages || [];
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; imageUrl?: string }> = body.messages || [];
 
     if (messages.length === 0) {
       return fallbackResponse();
@@ -44,13 +44,25 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
     // Trim to last N messages
     const trimmed = messages.slice(-MAX_MESSAGES);
 
-    // Build OpenAI messages
+    // Build OpenAI messages — convert user messages with images to multimodal content
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: buildSystemPrompt() },
-      ...trimmed.map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
+      ...trimmed.map((m) => {
+        // User message with an image → multimodal content array
+        if (m.role === 'user' && m.imageUrl) {
+          return {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: m.content || 'What is this item?' },
+              { type: 'image_url' as const, image_url: { url: m.imageUrl, detail: 'low' as const } },
+            ],
+          };
+        }
+        return {
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        };
+      }),
     ];
 
     const openai = new OpenAI({ apiKey });

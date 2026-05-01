@@ -1100,6 +1100,283 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         },
       };
 
+    // ── Create Reservation ──────────────────────────────────────
+    case 'create_reservation': {
+      const resItemOpts = await loadItemOptions();
+      const resLocOpts = await loadLocationOptions();
+      return {
+        intent: 'create_reservation' as IntentType,
+        description: 'Create a stock reservation',
+        steps: [
+          {
+            field: 'catalog_item_id',
+            prompt: 'Which item do you want to reserve?',
+            type: 'select',
+            required: true,
+            options: resItemOpts,
+          },
+          {
+            field: 'location_id',
+            prompt: 'At which location?',
+            type: 'select',
+            required: true,
+            options: resLocOpts,
+          },
+          {
+            field: 'quantity',
+            prompt: 'How many units to reserve?',
+            type: 'number',
+            required: true,
+            validate: (v) => {
+              const n = Number(v);
+              if (isNaN(n) || n <= 0) return 'Please enter a positive number';
+              return null;
+            },
+          },
+          {
+            field: 'allocation_type',
+            prompt: 'What is this reservation for?',
+            type: 'select',
+            required: true,
+            options: [
+              { label: 'Job', value: 'job' },
+              { label: 'Truck', value: 'truck' },
+              { label: 'Person', value: 'person' },
+              { label: 'Transfer', value: 'transfer' },
+              { label: 'Other', value: 'other' },
+            ],
+          },
+          {
+            field: 'job_ref',
+            prompt: 'Reference (job number, truck ID, etc.)? (optional, press Enter to skip)',
+            type: 'text',
+            required: false,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const result = await InventoryRPC.reserveFungible({
+            catalog_item_id: params.catalog_item_id,
+            location_id: params.location_id,
+            qty: Number(params.quantity),
+            allocation_type: params.allocation_type || null,
+            job_ref: params.job_ref || null,
+            last_event_id: crypto.randomUUID(),
+          });
+          return {
+            success: true,
+            message: `Reserved ${params.quantity} unit(s) successfully! (Reservation ID: ${result?.slice(0, 8)}...)`,
+            data: { reservation_id: result },
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+    }
+
+    // ── Release Reservation ──────────────────────────────────────
+    case 'release_reservation': {
+      let reservationOptions: Array<{ label: string; value: string }> = [];
+      try {
+        const reservations = await InventoryRPC.getReservations({ status: 'active' });
+        reservationOptions = reservations.map((r: any) => ({
+          label: `${r.catalog_items?.name || 'Unknown'} - ${r.qty} @ ${r.locations?.name || 'Unknown'}${r.job_ref ? ` (${typeof r.job_ref === 'string' ? r.job_ref : JSON.stringify(r.job_ref)})` : ''}`,
+          value: r.id,
+        }));
+      } catch {
+        // ignore
+      }
+      return {
+        intent: 'release_reservation' as IntentType,
+        description: 'Release a reservation',
+        steps: [
+          {
+            field: 'reservation_id',
+            prompt: reservationOptions.length > 0 ? 'Which reservation do you want to release?' : 'No active reservations found.',
+            type: 'select',
+            required: true,
+            options: reservationOptions,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const reservations = await InventoryRPC.getReservations({ status: 'active' });
+          const reservation = reservations.find((r: any) => r.id === params.reservation_id);
+          if (!reservation) throw AppError.notFound('Reservation not found');
+
+          await InventoryRPC.releaseReservation(
+            params.reservation_id,
+            reservation.last_event_id || crypto.randomUUID()
+          );
+          return {
+            success: true,
+            message: 'Reservation released successfully!',
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+    }
+
+    // ── List Reservations ──────────────────────────────────────────
+    case 'list_reservations':
+      return {
+        intent: 'list_reservations' as IntentType,
+        description: 'List reservations',
+        steps: [],
+        execute: async () => {
+          const reservations = await InventoryRPC.getReservations();
+          if (!reservations || reservations.length === 0) {
+            return { success: true, message: 'No reservations found. Say "reserve stock" to create one!' };
+          }
+          const list = reservations
+            .slice(0, 15)
+            .map((r: any) => {
+              const itemName = r.catalog_items?.name || 'Unknown';
+              const loc = r.locations?.name || 'Unknown';
+              return `  ${itemName} - ${r.qty} @ ${loc} [${r.status}]${r.job_ref ? ` (${typeof r.job_ref === 'string' ? r.job_ref : ''})` : ''}`;
+            })
+            .join('\n');
+          const suffix = reservations.length > 15 ? `\n\n...and ${reservations.length - 15} more.` : '';
+          return {
+            success: true,
+            message: `Found ${reservations.length} reservation(s):\n\n${list}${suffix}`,
+            data: reservations,
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+
+    // ── Receive PO ────────────────────────────────────────────────
+    case 'receive_po':
+      return {
+        intent: 'receive_po' as IntentType,
+        description: 'Receive a purchase order',
+        steps: [],
+        execute: async () => {
+          return {
+            success: true,
+            message: "I'll take you to the Purchasing page where you can record receipts against your POs.",
+            navigateTo: '/inventory/purchasing',
+          };
+        },
+      };
+
+    // ── List Categories ──────────────────────────────────────────
+    case 'list_categories':
+      return {
+        intent: 'list_categories' as IntentType,
+        description: 'List item categories',
+        steps: [],
+        execute: async () => {
+          const categories = await InventoryRPC.getItemCategories();
+          if (!categories || categories.length === 0) {
+            return { success: true, message: 'No categories found. Say "add a category" to create one!' };
+          }
+          const list = categories
+            .map((c) => `  ${c.name}`)
+            .join('\n');
+          return {
+            success: true,
+            message: `Found ${categories.length} category(ies):\n\n${list}`,
+            data: categories,
+            navigateTo: '/inventory/categories',
+          };
+        },
+      };
+
+    // ── Add Category ─────────────────────────────────────────────
+    case 'add_category':
+      return {
+        intent: 'add_category' as IntentType,
+        description: 'Add an item category',
+        steps: [
+          {
+            field: 'name',
+            prompt: 'What should the category be called?',
+            type: 'text',
+            required: true,
+            validate: (v) => (v.trim().length < 2 ? 'Name must be at least 2 characters' : null),
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const result = await InventoryRPC.createItemCategory({
+            name: params.name,
+          });
+          return {
+            success: true,
+            message: `Category "${params.name}" created successfully!`,
+            data: result,
+            navigateTo: '/inventory/categories',
+          };
+        },
+      };
+
+    // ── Global Search ────────────────────────────────────────────
+    case 'global_search':
+      return {
+        intent: 'global_search' as IntentType,
+        description: 'Search across all entities',
+        steps: [
+          {
+            field: 'query',
+            prompt: 'What do you want to search for?',
+            type: 'text',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const results = await InventoryRPC.globalSearch(params.query);
+          const sections: string[] = [];
+
+          if (results.items.length > 0) {
+            sections.push('Items:\n' + results.items.map((i) => `  [${i.sku}] ${i.name}`).join('\n'));
+          }
+          if (results.assets.length > 0) {
+            sections.push('Assets:\n' + results.assets.map((a) => `  [${a.tag}] ${a.serial_number || '-'} (${a.status})`).join('\n'));
+          }
+          if (results.locations.length > 0) {
+            sections.push('Locations:\n' + results.locations.map((l) => `  ${l.name}`).join('\n'));
+          }
+          if (results.vendors.length > 0) {
+            sections.push('Vendors:\n' + results.vendors.map((v) => `  ${v.code ? `[${v.code}] ` : ''}${v.name}`).join('\n'));
+          }
+          if (results.purchase_orders.length > 0) {
+            sections.push('Purchase Orders:\n' + results.purchase_orders.map((po) => `  ${po.po_number} - ${po.vendor_name || 'Unknown'} [${po.status}]`).join('\n'));
+          }
+          if (results.reservations.length > 0) {
+            sections.push('Reservations:\n' + results.reservations.map((r) => `  ${r.ref || r.id.slice(0, 8)} - ${r.qty} [${r.status}]`).join('\n'));
+          }
+
+          if (sections.length === 0) {
+            return {
+              success: true,
+              message: `No results found for "${params.query}".`,
+            };
+          }
+
+          return {
+            success: true,
+            message: `Search results for "${params.query}":\n\n${sections.join('\n\n')}`,
+            data: results,
+          };
+        },
+      };
+
     // ── Navigate ────────────────────────────────────────────────────
     case 'navigate':
       return {
@@ -1156,8 +1433,21 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
               '  "Create an asset" - Register new equipment/tool',
               '  "List assets" - See registered assets',
               '',
+              'Reservations:',
+              '  "Reserve stock" - Create a stock reservation',
+              '  "List reservations" - See active reservations',
+              '  "Release reservation" - Cancel a reservation',
+              '',
+              'Categories:',
+              '  "List categories" - See item categories',
+              '  "Add a category" - Create a new category',
+              '',
+              'Search:',
+              '  "Search for [term]" - Search across all entities',
+              '',
               'Other:',
               '  "List receipts" - See recent receipts',
+              '  "Receive a PO" - Record receipt against a purchase order',
               '  "Inventory summary" - Overview of your inventory',
             ].join('\n'),
           };

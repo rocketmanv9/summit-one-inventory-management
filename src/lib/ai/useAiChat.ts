@@ -67,6 +67,11 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
   update_item: {
     name: { actionField: 'catalog_item_id', entityType: 'item' },
   },
+  create_reservation: {
+    item:     { actionField: 'catalog_item_id', entityType: 'item' },
+    location: { actionField: 'location_id', entityType: 'location' },
+    quantity: { actionField: 'quantity' },
+  },
 };
 
 function fuzzyMatch(
@@ -175,6 +180,7 @@ export function useAiChat(options?: AiChatOptions) {
   const [actions, setActions] = useState<ChatAction[]>([]);
 
   const [isThinking, setIsThinking] = useState(false);
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
 
   // Vendor modal state
   const [vendorModalOpen, setVendorModalOpen] = useState(false);
@@ -558,7 +564,7 @@ export function useAiChat(options?: AiChatOptions) {
       setVendorModalOpen(false);
       addMessage('assistant', `Vendor "${vendorName}" created successfully!`, {
         status: 'success',
-        navigateTo: '/purchasing/vendors',
+        navigateTo: '/inventory/vendors',
       });
     },
     [addMessage]
@@ -604,15 +610,33 @@ export function useAiChat(options?: AiChatOptions) {
   // ── Main send handler ──────────────────────────────────────────────
 
   const sendMessage = useCallback(
-    async (overrideText?: string) => {
+    async (overrideText?: string, imageBase64?: string) => {
       const text = (overrideText ?? input).trim();
-      if (!text || isLoading) return;
+      const imageUrl = imageBase64 || pendingImage || undefined;
 
-      addMessage('user', text);
+      // Allow sending if there's text OR an image
+      if ((!text && !imageUrl) || isLoading) return;
+
+      // Clear pending image
+      if (pendingImage) setPendingImage(null);
+
+      const displayText = text || '(image attached)';
+      addMessage('user', displayText, imageUrl ? { imageUrl } : undefined);
       if (!overrideText) setInput('');
 
-      // If we're in a flow, handle as flow input
-      if (activeFlow) {
+      // Check for cancel/abort FIRST (works both in and out of flows)
+      if (text && ['cancel', 'abort', 'stop', 'nevermind', 'never mind'].includes(text.toLowerCase())) {
+        if (activeFlow) {
+          setActiveFlow(null);
+          addMessage('assistant', 'Cancelled. What else can I help with?');
+        } else {
+          addMessage('assistant', "Nothing to cancel. What would you like to do?");
+        }
+        return;
+      }
+
+      // If we're in a flow and user typed text (not just image), handle as flow input
+      if (activeFlow && text) {
         await handleFlowInput(text, activeFlow);
         return;
       }
@@ -621,19 +645,12 @@ export function useAiChat(options?: AiChatOptions) {
       setIsThinking(true);
 
       try {
-        // Check for cancel/abort
-        if (['cancel', 'abort', 'stop', 'nevermind', 'never mind'].includes(text.toLowerCase())) {
-          if (activeFlow) {
-            setActiveFlow(null);
-            addMessage('assistant', 'Cancelled. What else can I help with?');
-          } else {
-            addMessage('assistant', "Nothing to cancel. What would you like to do?");
-          }
-          return;
-        }
 
-        // Track conversation for AI
-        conversationHistory.current.push({ role: 'user', content: text });
+        // Track conversation for AI (include image if present)
+        const apiContent = text || 'What is this item?';
+        const historyEntry: ChatMessage = { role: 'user', content: apiContent };
+        if (imageUrl) historyEntry.imageUrl = imageUrl;
+        conversationHistory.current.push(historyEntry);
         if (conversationHistory.current.length > 60) {
           conversationHistory.current = conversationHistory.current.slice(-50);
         }
@@ -734,7 +751,7 @@ export function useAiChat(options?: AiChatOptions) {
         setIsThinking(false);
       }
     },
-    [input, isLoading, activeFlow, aiAvailable, addMessage, handleFlowInput, options]
+    [input, isLoading, activeFlow, aiAvailable, pendingImage, addMessage, handleFlowInput, options]
   );
 
   // ── Return ─────────────────────────────────────────────────────────
@@ -749,6 +766,8 @@ export function useAiChat(options?: AiChatOptions) {
     activeFlow,
     aiAvailable,
     actions,
+    pendingImage,
+    setPendingImage,
 
     // Methods
     sendMessage,

@@ -321,6 +321,104 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  // ── Reservation operations ───────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'create_reservation',
+      description: 'Reserve stock at a location for a job, truck, or other purpose',
+      parameters: {
+        type: 'object',
+        properties: {
+          item: { type: 'string', description: 'Item name or SKU to reserve' },
+          location: { type: 'string', description: 'Location to reserve stock at' },
+          quantity: { type: 'number', description: 'Quantity to reserve' },
+          job_ref: { type: 'string', description: 'Job reference or purpose for the reservation' },
+          allocation_type: { type: 'string', description: 'Type of allocation', enum: ['job', 'truck', 'person', 'transfer', 'other'] },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'release_reservation',
+      description: 'Release/cancel an active reservation',
+      parameters: {
+        type: 'object',
+        properties: {
+          reservation_id: { type: 'string', description: 'ID of the reservation to release' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_reservations',
+      description: 'List active stock reservations',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  // ── Receive PO ────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'receive_po',
+      description: 'Record receipt of materials against a purchase order. This navigates to the receiving page for the complex receiving workflow.',
+      parameters: {
+        type: 'object',
+        properties: {
+          po_number: { type: 'string', description: 'PO number to receive against' },
+        },
+        required: [],
+      },
+    },
+  },
+
+  // ── Category operations ──────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'list_categories',
+      description: 'List item categories',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_category',
+      description: 'Create a new item category',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Category name' },
+        },
+        required: [],
+      },
+    },
+  },
+
+  // ── Global Search ────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'global_search',
+      description: 'Search across all entities (items, assets, locations, vendors, POs, reservations). Use for broad searches like "find cement" or "search for truck 5".',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+
   // ── Summary / help / navigation ────────────────────────────────────
   {
     type: 'function',
@@ -495,6 +593,26 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           },
         },
         required: [],
+      },
+    },
+  },
+
+  // ── Smart Stock Receive (vision + inventory) ───────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'smart_stock_receive',
+      description: 'Add stock of an item at a location. Finds or creates the catalog item, finds the location, and adds quantity to current stock. Use when a user sends a photo of a material and says "add N of these to [location]", or when they describe an item to receive into inventory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_name: { type: 'string', description: 'Identified item name (e.g. "Portland Cement Type I/II 94lb")' },
+          item_description: { type: 'string', description: 'Additional specs, brand, size, or material details' },
+          location_name: { type: 'string', description: 'Destination location name (warehouse, yard, job site)' },
+          quantity: { type: 'number', description: 'Number of units to add' },
+          unit_of_measure: { type: 'string', description: 'Unit of measure (default: "each")' },
+        },
+        required: ['item_name', 'location_name', 'quantity'],
       },
     },
   },

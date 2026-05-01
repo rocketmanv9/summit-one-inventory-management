@@ -39,6 +39,10 @@ const VALID_INTENTS: Set<string> = new Set([
   'create_transfer', 'list_transfers',
   'create_asset', 'list_assets',
   'list_receipts',
+  'create_reservation', 'release_reservation', 'list_reservations',
+  'receive_po',
+  'list_categories', 'add_category',
+  'global_search',
   'inventory_summary', 'navigate', 'help',
   // Server-side analytics tools
   'query_inventory_summary', 'query_stock_valuation', 'query_low_stock_report',
@@ -47,6 +51,7 @@ const VALID_INTENTS: Set<string> = new Set([
   'query_po_status',
   // Dashboard & workflow tools
   'create_dashboard', 'workflow_auto_reorder', 'workflow_stock_rebalance',
+  'smart_stock_receive',
 ]);
 
 /**

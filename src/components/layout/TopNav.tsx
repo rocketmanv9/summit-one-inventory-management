@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -12,16 +12,39 @@ export function TopNav() {
   const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMac, setIsMac] = useState(false);
+  const [session, setSession] = useState<{ name: string; email: string; tenantId: string; role: string } | null>(null);
   const aiPanel = useAiPanel();
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setIsMac(navigator.platform.toUpperCase().indexOf('MAC') >= 0);
   }, []);
 
-  // TODO: Get from auth context
-  const tenantName = 'Acme Asphalt & Concrete';
-  const userName = 'Admin User';
-  const userRole = 'Administrator';
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated) {
+          setSession({ name: data.name, email: data.email, tenantId: data.tenantId, role: data.role });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const userName = session?.name ?? 'Loading...';
+  const userRole = session?.role ?? 'Loading...';
+  const tenantName = session?.name ?? 'Loading...';
+  const tenantId = session?.tenantId ? session.tenantId.substring(0, 8) : '...';
 
   const handleLogout = async () => {
     try {
@@ -80,10 +103,6 @@ export function TopNav() {
             aria-label="Notifications"
           >
             <Bell className="h-5 w-5" />
-            <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive" />
-            </span>
           </button>
 
           {/* Divider */}
@@ -93,12 +112,12 @@ export function TopNav() {
           <div className="hidden text-right lg:block">
             <p className="text-sm font-medium">{tenantName}</p>
             <p className="text-xs text-muted-foreground">
-              Tenant ID: ae837809
+              Tenant ID: {tenantId}
             </p>
           </div>
 
           {/* User Menu */}
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center gap-2 rounded-lg p-2 hover:bg-muted"

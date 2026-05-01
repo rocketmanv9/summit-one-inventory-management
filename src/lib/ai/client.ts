@@ -6,6 +6,7 @@
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  imageUrl?: string;
 }
 
 export interface AIResponse {

@@ -20,6 +20,9 @@ const READ_INTENTS: Set<IntentType> = new Set([
   'list_transfers',
   'list_assets',
   'list_receipts',
+  'list_reservations',
+  'list_categories',
+  'global_search',
   'inventory_summary',
   'help',
   'navigate',
@@ -44,6 +47,7 @@ const WORKFLOW_INTENTS = new Set([
   'workflow_auto_reorder',
   'workflow_stock_rebalance',
   'create_dashboard',
+  'smart_stock_receive',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {
@@ -126,6 +130,8 @@ export interface Message {
   action?: ChatAction;
   /** When a server-side query returns structured data, the message carries it for rich rendering */
   dataDisplay?: AiDataDisplay;
+  /** Base64 data URL of an attached image */
+  imageUrl?: string;
 }
 
 // ─── Active Flow ──────────────────────────────────────────────────────
@@ -175,6 +181,8 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
     { label: 'Add item', message: 'Add a catalog item' },
     { label: 'List items', message: 'List items' },
     { label: 'Velocity', message: 'Show item velocity analysis' },
+    { label: 'Categories', message: 'List categories' },
+    { label: 'Add category', message: 'Add a category' },
   ],
   '/inventory/purchasing': [
     { label: 'Create PO', message: 'Create a purchase order' },
@@ -195,6 +203,15 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/inventory/assets': [
     { label: 'New asset', message: 'Create an asset' },
     { label: 'List assets', message: 'List assets' },
+  ],
+  '/inventory/reservations': [
+    { label: 'Reserve stock', message: 'Create a reservation' },
+    { label: 'List reservations', message: 'Show reservations' },
+    { label: 'Release reservation', message: 'Release a reservation' },
+  ],
+  '/inventory/categories': [
+    { label: 'List categories', message: 'List categories' },
+    { label: 'Add category', message: 'Add a category' },
   ],
   '/dashboard': [
     { label: 'KPIs', message: 'Show me inventory KPIs' },
