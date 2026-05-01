@@ -682,14 +682,9 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          // location_type (text label) is required alongside location_type_id
-          const locTypes = await InventoryRPC.getLocationTypes();
-          const locType = locTypes.find((t) => t.id === params.location_type_id);
-
           await InventoryRPC.createLocation({
             name: params.name,
             location_type_id: params.location_type_id,
-            location_type: locType?.name || 'warehouse',
           });
           return {
             success: true,
