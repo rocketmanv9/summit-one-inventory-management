@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar';
 import { TopNav } from './TopNav';
 import { AiPanelProvider, useAiPanel } from '@/lib/ai/panel-store';
 import { AiSidePanel } from '@/components/ai/AiSidePanel';
+import { TenantBrandingProvider } from '@/lib/tenant-branding';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -42,7 +43,9 @@ function AppShellInner({ children }: AppShellProps) {
 export function AppShell({ children }: AppShellProps) {
   return (
     <AiPanelProvider>
-      <AppShellInner>{children}</AppShellInner>
+      <TenantBrandingProvider>
+        <AppShellInner>{children}</AppShellInner>
+      </TenantBrandingProvider>
     </AiPanelProvider>
   );
 }

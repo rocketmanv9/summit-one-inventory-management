@@ -124,7 +124,11 @@
   transform: rotate(45deg);
 }
 
-/* ===== DESIGN SYSTEM ===== */
+/* ===== DESIGN SYSTEM =====
+ * These CSS custom properties serve as fallback defaults.
+ * At runtime, the TenantBrandingProvider (src/lib/tenant-branding.tsx)
+ * overrides them with tenant-specific colors fetched from the Core project.
+ */
 :root {
   /* Colors */
   --card: 0 0% 100%;
