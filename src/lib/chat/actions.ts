@@ -682,9 +682,11 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          const locType = locTypeOpts.find((o) => o.value === params.location_type_id);
           await InventoryRPC.createLocation({
             name: params.name,
             location_type_id: params.location_type_id,
+            location_type: locType?.label || 'warehouse',
           });
           return {
             success: true,
