@@ -11,135 +11,125 @@ import {
 import { getAuthToken, getTenantIdFromToken } from '@/lib/auth-token';
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — matches Core's get_public_branding RPC response
 // ---------------------------------------------------------------------------
 
+type TenantGradient = {
+  start: string;
+  end: string;
+  angle_degrees: number;
+};
+
 export interface TenantBranding {
+  tenant_id: string;
+  display_name: string;
+  logo_asset_id: string | null;
+
   // Core palette
   primary_color: string;
-  primary_foreground: string;
   secondary_color: string;
-  secondary_foreground: string;
+  tertiary_color: string;
   accent_color: string;
-  accent_foreground: string;
-  muted_color: string;
-  muted_foreground: string;
-  destructive_color: string;
-  destructive_foreground: string;
-  success_color: string;
-  success_foreground: string;
-  warning_color: string;
-  warning_foreground: string;
-
-  // Surface
+  text_color: string;
   background_color: string;
-  foreground_color: string;
-  card_color: string;
-  card_foreground: string;
-  popover_color: string;
-  popover_foreground: string;
 
-  // Borders & inputs
-  border_color: string;
-  input_color: string;
-  ring_color: string;
+  // Extended palette
+  button_color?: string;
+  button_text_color?: string;
+  button_hover_color?: string;
+  button_active_color?: string;
+  surface_color?: string;
+  surface_alt_color?: string;
+  border_color?: string;
+  border_subtle_color?: string;
+  border_focus_color?: string;
+  overlay_color?: string;
+  shadow_color_rgb?: string;
+  text_muted_color?: string;
+  text_disabled_color?: string;
+  text_on_primary_color?: string;
+  text_on_surface_color?: string;
+  primary_hover_color?: string;
+  primary_active_color?: string;
+  primary_disabled_color?: string;
+  primary_focus_color?: string;
+  secondary_hover_color?: string;
+  call_to_action_color?: string;
+  call_to_action_hover_color?: string;
+  disabled_color?: string;
+  disabled_text_color?: string;
 
-  // Sidebar
-  sidebar_background: string;
-  sidebar_foreground: string;
-  sidebar_border: string;
-  sidebar_accent: string;
-  sidebar_accent_foreground: string;
-
-  // Charts
-  chart_1: string;
-  chart_2: string;
-  chart_3: string;
-  chart_4: string;
-  chart_5: string;
+  // Status colors
+  info_color?: string;
+  info_hover_color?: string;
+  success_color?: string;
+  success_hover_color?: string;
+  warning_color?: string;
+  warning_hover_color?: string;
+  error_color?: string;
+  error_hover_color?: string;
 
   // Fonts
-  font_family_title: string;
-  font_family_body: string;
+  font_family_title?: string;
+  font_weight_title?: string;
+  font_family_header?: string;
+  font_weight_header?: string;
+  font_family_subtitle?: string;
+  font_weight_subtitle?: string;
+  font_family_paragraph?: string;
+  font_weight_paragraph?: string;
 
   // Gradients
-  gradient_start: string;
-  gradient_end: string;
-  gradient_angle: string;
+  gradient_hero?: TenantGradient;
+  gradient_accent?: TenantGradient;
+  gradient_button?: TenantGradient;
+  gradient_primary?: TenantGradient;
+  gradient_success?: TenantGradient;
 
-  // Logo
-  logo_url: string;
-  logo_mark_url: string;
+  // Raw theme_config passthrough
+  theme_config?: Record<string, unknown>;
 
-  // Misc
-  radius: string;
+  updated_at?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Fallback branding (matches globals.css defaults)
+// Fallback branding
 // ---------------------------------------------------------------------------
 
 const fallbackBranding: TenantBranding = {
-  primary_color: '#3b82f6',
-  primary_foreground: '#f8fafc',
-  secondary_color: '#f1f5f9',
-  secondary_foreground: '#1e293b',
-  accent_color: '#8b5cf6',
-  accent_foreground: '#f8fafc',
-  muted_color: '#f1f5f9',
-  muted_foreground: '#64748b',
-  destructive_color: '#ef4444',
-  destructive_foreground: '#f8fafc',
-  success_color: '#16a34a',
-  success_foreground: '#f8fafc',
-  warning_color: '#f59e0b',
-  warning_foreground: '#f8fafc',
-
-  background_color: '#ffffff',
-  foreground_color: '#0f172a',
-  card_color: '#ffffff',
-  card_foreground: '#0f172a',
-  popover_color: '#ffffff',
-  popover_foreground: '#0f172a',
-
-  border_color: '#e2e8f0',
-  input_color: '#e2e8f0',
-  ring_color: '#3b82f6',
-
-  sidebar_background: '#1e1b2e',
-  sidebar_foreground: '#f1f5f9',
-  sidebar_border: '#2d2a3e',
-  sidebar_accent: '#2d2a3e',
-  sidebar_accent_foreground: '#f1f5f9',
-
-  chart_1: '#3b82f6',
-  chart_2: '#8b5cf6',
-  chart_3: '#16a34a',
-  chart_4: '#f59e0b',
-  chart_5: '#ef4444',
-
-  font_family_title: '',
-  font_family_body: '',
-
-  gradient_start: '#3b82f6',
-  gradient_end: '#8b5cf6',
-  gradient_angle: '135',
-
-  logo_url: '',
-  logo_mark_url: '',
-
-  radius: '0.5rem',
+  tenant_id: '',
+  display_name: 'Summit One',
+  logo_asset_id: null,
+  primary_color: '#1e40af',
+  secondary_color: '#475569',
+  accent_color: '#3b82f6',
+  tertiary_color: '#64748b',
+  text_color: '#111827',
+  background_color: '#f8fafc',
 };
 
 // ---------------------------------------------------------------------------
-// Hex → HSL conversion
+// Color utilities
 // ---------------------------------------------------------------------------
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : null;
+}
+
 function hexToHsl(hex: string): string {
-  const cleaned = hex.replace('#', '');
-  const r = parseInt(cleaned.substring(0, 2), 16) / 255;
-  const g = parseInt(cleaned.substring(2, 4), 16) / 255;
-  const b = parseInt(cleaned.substring(4, 6), 16) / 255;
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '0 0% 0%';
+
+  const r = rgb.r / 255;
+  const g = rgb.g / 255;
+  const b = rgb.b / 255;
 
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -160,82 +150,317 @@ function hexToHsl(hex: string): string {
   return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
 }
 
-function isValidHex(value: string): boolean {
-  return /^#[0-9a-fA-F]{6}$/.test(value);
+function isValidHex(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+/** Darken a hex color by the given factor (0–1). */
+function darkenHex(hex: string, factor: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const r = Math.round(rgb.r * (1 - factor));
+  const g = Math.round(rgb.g * (1 - factor));
+  const b = Math.round(rgb.b * (1 - factor));
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+/** Compute contrast foreground (white or dark) for a given hex background. */
+function contrastForeground(hex: string): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#ffffff';
+  const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+  return brightness > 128 ? '#111827' : '#ffffff';
 }
 
 // ---------------------------------------------------------------------------
-// CSS variable application
+// Response parsing — mirrors Portal's parseBrandingPayload
 // ---------------------------------------------------------------------------
 
-const CSS_VAR_MAP: Record<string, keyof TenantBranding> = {
-  '--primary': 'primary_color',
-  '--primary-foreground': 'primary_foreground',
-  '--secondary': 'secondary_color',
-  '--secondary-foreground': 'secondary_foreground',
-  '--accent': 'accent_color',
-  '--accent-foreground': 'accent_foreground',
-  '--muted': 'muted_color',
-  '--muted-foreground': 'muted_foreground',
-  '--destructive': 'destructive_color',
-  '--destructive-foreground': 'destructive_foreground',
-  '--success': 'success_color',
-  '--success-foreground': 'success_foreground',
-  '--warning': 'warning_color',
-  '--warning-foreground': 'warning_foreground',
-  '--background': 'background_color',
-  '--foreground': 'foreground_color',
-  '--card': 'card_color',
-  '--card-foreground': 'card_foreground',
-  '--popover': 'popover_color',
-  '--popover-foreground': 'popover_foreground',
-  '--border': 'border_color',
-  '--input': 'input_color',
-  '--ring': 'ring_color',
-  '--sidebar-background': 'sidebar_background',
-  '--sidebar-foreground': 'sidebar_foreground',
-  '--sidebar-border': 'sidebar_border',
-  '--sidebar-accent': 'sidebar_accent',
-  '--sidebar-accent-foreground': 'sidebar_accent_foreground',
-  '--chart-1': 'chart_1',
-  '--chart-2': 'chart_2',
-  '--chart-3': 'chart_3',
-  '--chart-4': 'chart_4',
-  '--chart-5': 'chart_5',
-};
+function str(source: Record<string, unknown>, key: string): string | undefined {
+  const v = source[key];
+  return typeof v === 'string' ? v : undefined;
+}
 
-function applyCssVariables(branding: TenantBranding) {
+function strAny(
+  source: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const value = str(source, key);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function parseGradient(
+  source: Record<string, unknown>,
+  key: string,
+): TenantGradient | undefined {
+  const g = source[key];
+  if (!g || typeof g !== 'object') return undefined;
+  const obj = g as Record<string, unknown>;
+  if (typeof obj.start !== 'string' || typeof obj.end !== 'string') return undefined;
+  return {
+    start: obj.start,
+    end: obj.end,
+    angle_degrees: typeof obj.angle_degrees === 'number' ? obj.angle_degrees : 180,
+  };
+}
+
+function parseBrandingPayload(data: unknown): TenantBranding | null {
+  if (Array.isArray(data) && data.length > 0) {
+    return parseBrandingPayload(data[0]);
+  }
+
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+
+  // Handle nested RPC response shapes
+  const rpcPayload =
+    record.get_public_branding && typeof record.get_public_branding === 'object'
+      ? (record.get_public_branding as Record<string, unknown>)
+      : null;
+  const nestedBranding =
+    record.branding && typeof record.branding === 'object'
+      ? (record.branding as Record<string, unknown>)
+      : null;
+  const source = rpcPayload ?? nestedBranding ?? record;
+
+  const tenantId =
+    (typeof record.tenant_id === 'string' ? record.tenant_id : null) ??
+    (typeof source.tenant_id === 'string' ? source.tenant_id : null);
+
+  if (!tenantId) return null;
+
+  // Nested theme_config provides structured overrides
+  const tc =
+    source.theme_config && typeof source.theme_config === 'object'
+      ? (source.theme_config as Record<string, unknown>)
+      : null;
+  const tcColors =
+    tc?.colors && typeof tc.colors === 'object'
+      ? (tc.colors as Record<string, unknown>)
+      : null;
+  const tcFonts =
+    tc?.fonts && typeof tc.fonts === 'object'
+      ? (tc.fonts as Record<string, unknown>)
+      : null;
+  const tcGradients =
+    tc?.gradients && typeof tc.gradients === 'object'
+      ? (tc.gradients as Record<string, unknown>)
+      : null;
+
+  const color = (key: string) =>
+    strAny(source, [key]) ?? strAny(tcColors, [key]);
+  const font = (key: string, aliases: string[] = []) =>
+    strAny(source, [key, ...aliases]) ?? strAny(tcFonts, [key, ...aliases]);
+  const gradient = (key: string) =>
+    tcGradients ? parseGradient(tcGradients, key) : undefined;
+
+  return {
+    tenant_id: tenantId,
+    display_name:
+      typeof source.display_name === 'string'
+        ? source.display_name
+        : typeof source.name === 'string'
+          ? (source.name as string)
+          : 'Organization',
+    logo_asset_id:
+      typeof source.logo_asset_id === 'string' ? source.logo_asset_id : null,
+
+    // Core palette
+    primary_color: color('primary_color') ?? '#1e40af',
+    secondary_color: color('secondary_color') ?? '#475569',
+    accent_color: color('accent_color') ?? '#3b82f6',
+    tertiary_color: color('tertiary_color') ?? '#64748b',
+    text_color: color('text_color') ?? '#111827',
+    background_color: color('background_color') ?? '#f8fafc',
+
+    // Extended palette
+    button_color: color('button_color'),
+    button_text_color: color('button_text_color'),
+    button_hover_color: color('button_hover_color'),
+    button_active_color: color('button_active_color'),
+    surface_color: color('surface_color'),
+    surface_alt_color: color('surface_alt_color'),
+    border_color: color('border_color'),
+    border_subtle_color: color('border_subtle_color'),
+    border_focus_color: color('border_focus_color'),
+    overlay_color: color('overlay_color'),
+    shadow_color_rgb: color('shadow_color_rgb'),
+    text_muted_color: color('text_muted_color'),
+    text_disabled_color: color('text_disabled_color'),
+    text_on_primary_color: color('text_on_primary_color'),
+    text_on_surface_color: color('text_on_surface_color'),
+    primary_hover_color: color('primary_hover_color'),
+    primary_active_color: color('primary_active_color'),
+    primary_disabled_color: color('primary_disabled_color'),
+    primary_focus_color: color('primary_focus_color'),
+    secondary_hover_color: color('secondary_hover_color'),
+    call_to_action_color: color('call_to_action_color'),
+    call_to_action_hover_color: color('call_to_action_hover_color'),
+    disabled_color: color('disabled_color'),
+    disabled_text_color: color('disabled_text_color'),
+
+    // Status colors
+    info_color: color('info_color'),
+    info_hover_color: color('info_hover_color'),
+    success_color: color('success_color'),
+    success_hover_color: color('success_hover_color'),
+    warning_color: color('warning_color'),
+    warning_hover_color: color('warning_hover_color'),
+    error_color: color('error_color'),
+    error_hover_color: color('error_hover_color'),
+
+    // Fonts
+    font_family_title: font('font_family_title', ['title_font_family']),
+    font_weight_title: font('font_weight_title', ['title_font_weight']),
+    font_family_header: font('font_family_header', ['header_font_family']),
+    font_weight_header: font('font_weight_header', ['header_font_weight']),
+    font_family_subtitle: font('font_family_subtitle', ['subtitle_font_family']),
+    font_weight_subtitle: font('font_weight_subtitle', ['subtitle_font_weight']),
+    font_family_paragraph: font('font_family_paragraph', [
+      'paragraph_font_family', 'body_font_family',
+    ]),
+    font_weight_paragraph: font('font_weight_paragraph', [
+      'paragraph_font_weight', 'body_font_weight',
+    ]),
+
+    // Gradients
+    gradient_hero: gradient('hero_gradient'),
+    gradient_accent: gradient('accent_gradient'),
+    gradient_button: gradient('button_gradient'),
+    gradient_primary: gradient('primary_gradient'),
+    gradient_success: gradient('success_gradient'),
+
+    theme_config: tc ? (tc as Record<string, unknown>) : undefined,
+    updated_at:
+      typeof source.updated_at === 'string' ? source.updated_at : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CSS variable application — maps Core branding → shadcn HSL vars
+// ---------------------------------------------------------------------------
+
+function applyCssVariables(b: TenantBranding) {
   const root = document.documentElement;
 
-  // Apply HSL-converted color vars (for tailwind classes like bg-primary)
-  for (const [cssVar, brandingKey] of Object.entries(CSS_VAR_MAP)) {
-    const value = branding[brandingKey];
-    if (typeof value === 'string' && isValidHex(value)) {
-      root.style.setProperty(cssVar, hexToHsl(value));
-      // Also set raw hex var for components that need it
-      root.style.setProperty(`${cssVar}-hex`, value);
+  const setHsl = (prop: string, hex: string | undefined) => {
+    if (isValidHex(hex)) {
+      root.style.setProperty(prop, hexToHsl(hex));
+      root.style.setProperty(`${prop}-hex`, hex);
     }
+  };
+
+  // --- Primary (from branding primary_color) ---
+  setHsl('--primary', b.primary_color);
+  setHsl('--primary-foreground', b.text_on_primary_color ?? contrastForeground(b.primary_color));
+  setHsl('--ring', b.primary_focus_color ?? b.accent_color);
+
+  // --- Secondary (from branding secondary_color) ---
+  setHsl('--secondary', b.surface_alt_color ?? b.secondary_color);
+  setHsl('--secondary-foreground', b.text_on_surface_color ?? b.text_color);
+
+  // --- Accent (from branding accent_color) ---
+  setHsl('--accent', b.accent_color);
+  setHsl('--accent-foreground', contrastForeground(b.accent_color));
+
+  // --- Muted ---
+  setHsl('--muted', b.surface_alt_color ?? b.background_color);
+  setHsl('--muted-foreground', b.text_muted_color ?? b.tertiary_color);
+
+  // --- Background / foreground ---
+  setHsl('--background', b.background_color);
+  setHsl('--foreground', b.text_color);
+
+  // --- Card / popover (use surface_color or background) ---
+  setHsl('--card', b.surface_color ?? b.background_color);
+  setHsl('--card-foreground', b.text_on_surface_color ?? b.text_color);
+  setHsl('--popover', b.surface_color ?? b.background_color);
+  setHsl('--popover-foreground', b.text_on_surface_color ?? b.text_color);
+
+  // --- Borders & inputs ---
+  setHsl('--border', b.border_color ?? b.border_subtle_color);
+  setHsl('--input', b.border_color ?? b.border_subtle_color);
+
+  // --- Status colors ---
+  if (isValidHex(b.error_color)) {
+    setHsl('--destructive', b.error_color);
+    setHsl('--destructive-foreground', contrastForeground(b.error_color));
+  }
+  if (isValidHex(b.success_color)) {
+    setHsl('--success', b.success_color);
+    setHsl('--success-foreground', contrastForeground(b.success_color));
+  }
+  if (isValidHex(b.warning_color)) {
+    setHsl('--warning', b.warning_color);
+    setHsl('--warning-foreground', contrastForeground(b.warning_color));
   }
 
-  // Fonts
-  if (branding.font_family_title) {
-    root.style.setProperty('--font-family-title', branding.font_family_title);
-  }
-  if (branding.font_family_body) {
-    root.style.setProperty('--font-family-body', branding.font_family_body);
+  // --- Sidebar — derived from primary color ---
+  if (isValidHex(b.primary_color)) {
+    const sidebarBg = darkenHex(b.primary_color, 0.85);
+    const sidebarBorder = darkenHex(b.primary_color, 0.75);
+    const sidebarAccent = darkenHex(b.primary_color, 0.70);
+
+    setHsl('--sidebar-background', sidebarBg);
+    setHsl('--sidebar-foreground', '#f1f5f9');
+    setHsl('--sidebar-border', sidebarBorder);
+    setHsl('--sidebar-accent', sidebarAccent);
+    setHsl('--sidebar-accent-foreground', '#f1f5f9');
   }
 
-  // Gradient
-  if (isValidHex(branding.gradient_start) && isValidHex(branding.gradient_end)) {
-    root.style.setProperty('--gradient-start', branding.gradient_start);
-    root.style.setProperty('--gradient-end', branding.gradient_end);
-    root.style.setProperty('--gradient-angle', `${branding.gradient_angle || '135'}deg`);
+  // --- Charts — derive from palette ---
+  setHsl('--chart-1', b.primary_color);
+  setHsl('--chart-2', b.accent_color);
+  if (isValidHex(b.success_color)) setHsl('--chart-3', b.success_color);
+  if (isValidHex(b.warning_color)) setHsl('--chart-4', b.warning_color);
+  if (isValidHex(b.error_color)) setHsl('--chart-5', b.error_color);
+
+  // --- Fonts ---
+  const setFont = (prop: string, value: string | undefined) => {
+    if (value) root.style.setProperty(prop, value);
+  };
+  setFont('--font-title', b.font_family_title);
+  setFont('--font-title-weight', b.font_weight_title);
+  setFont('--font-header', b.font_family_header);
+  setFont('--font-header-weight', b.font_weight_header);
+  setFont('--font-paragraph', b.font_family_paragraph);
+  setFont('--font-paragraph-weight', b.font_weight_paragraph);
+
+  // Load Google Fonts dynamically
+  const googleFamilies = new Set<string>();
+  const systemFonts = ['Arial', 'Helvetica', 'Georgia', 'Times New Roman', 'Courier New', 'Verdana', 'Inter', 'sans-serif', 'serif', 'monospace'];
+  const addFont = (family: string | undefined, weight: string | undefined) => {
+    if (family && !systemFonts.includes(family)) {
+      googleFamilies.add(`${family.replace(/ /g, '+')}:wght@${weight || '400;700'}`);
+    }
+  };
+  addFont(b.font_family_title, b.font_weight_title);
+  addFont(b.font_family_header, b.font_weight_header);
+  addFont(b.font_family_paragraph, b.font_weight_paragraph);
+
+  if (googleFamilies.size > 0) {
+    const id = 'tenant-google-fonts';
+    let link = document.getElementById(id) as HTMLLinkElement | null;
+    const href = `https://fonts.googleapis.com/css2?${[...googleFamilies].map((f) => `family=${f}`).join('&')}&display=swap`;
+    if (!link) {
+      link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
+    }
+    link.href = href;
   }
 
-  // Radius
-  if (branding.radius) {
-    root.style.setProperty('--radius', branding.radius);
-  }
+  // --- Gradients ---
+  const gradientCSS = (g: TenantGradient) =>
+    `linear-gradient(${g.angle_degrees}deg, ${g.start}, ${g.end})`;
+  if (b.gradient_hero) root.style.setProperty('--gradient-hero', gradientCSS(b.gradient_hero));
+  if (b.gradient_accent) root.style.setProperty('--gradient-accent', gradientCSS(b.gradient_accent));
+  if (b.gradient_primary) root.style.setProperty('--gradient-primary', gradientCSS(b.gradient_primary));
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +493,7 @@ async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding |
     }
 
     const data = await res.json();
-    if (!data || typeof data !== 'object') return null;
-
-    // Merge with fallback so all keys are present
-    return { ...fallbackBranding, ...data } as TenantBranding;
+    return parseBrandingPayload(data);
   } catch (err) {
     console.warn('[Branding] Failed to fetch from Core:', err);
     return null;
@@ -287,11 +509,10 @@ function getCachedBranding(tenantId: string): TenantBranding | null {
     const raw = localStorage.getItem(`branding_${tenantId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Check cache age — expire after 5 minutes (polling will refresh sooner)
     if (parsed._cachedAt && Date.now() - parsed._cachedAt > 5 * 60 * 1000) {
       return null;
     }
-    return { ...fallbackBranding, ...parsed } as TenantBranding;
+    return parseBrandingPayload(parsed);
   } catch {
     return null;
   }
@@ -343,61 +564,61 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    let disposed = false;
+
+    const apply = (b: TenantBranding) => {
+      if (disposed) return;
+      setBranding(b);
+      setIsLoaded(true);
+      applyCssVariables(b);
+    };
 
     async function loadBranding() {
-      // 1. Get tenant ID from JWT
       const token = await getAuthToken();
-      if (!token) return;
+      if (!token || disposed) return;
 
       const tid = getTenantIdFromToken(token);
-      if (!tid) return;
+      if (!tid || disposed) return;
 
-      if (mountedRef.current) setTenantId(tid);
+      setTenantId(tid);
 
-      // 2. Check localStorage cache first (instant paint)
+      // Apply cached branding first for instant paint
       const cached = getCachedBranding(tid);
       if (cached) {
-        if (mountedRef.current) {
-          setBranding(cached);
-          setIsLoaded(true);
-          applyCssVariables(cached);
-          console.log(`[Branding] Applied cached branding for tenant=${tid}`);
-        }
+        apply(cached);
+        console.log(`[Branding] Applied cached branding for tenant=${tid}`);
       }
 
-      // 3. Fetch fresh from Core
+      // Fetch fresh from Core
       const fresh = await fetchBrandingFromCore(tid);
-      if (fresh && mountedRef.current) {
-        setBranding(fresh);
-        setIsLoaded(true);
-        applyCssVariables(fresh);
+      if (fresh && !disposed) {
+        apply(fresh);
         setCachedBranding(tid, fresh);
-        console.log(`[Branding] Applied tenant=${tid} branding from Core`);
-      } else if (!cached && mountedRef.current) {
-        // No cache, no fetch — use fallback
+        console.log(`[Branding] Applied tenant=${tid} branding from Core (updated_at=${fresh.updated_at ?? 'n/a'})`);
+      } else if (!cached && !disposed) {
         setIsLoaded(true);
       }
     }
 
     loadBranding();
 
-    // 4. Poll every 60s for branding updates
+    // Poll every 60s for branding updates
     pollRef.current = setInterval(async () => {
-      if (document.hidden) return; // Skip if tab is in background
+      if (document.hidden || disposed) return;
       const token = await getAuthToken();
       if (!token) return;
       const tid = getTenantIdFromToken(token);
       if (!tid) return;
 
       const fresh = await fetchBrandingFromCore(tid);
-      if (fresh && mountedRef.current) {
-        setBranding(fresh);
-        applyCssVariables(fresh);
+      if (fresh && !disposed) {
+        apply(fresh);
         setCachedBranding(tid, fresh);
       }
     }, POLL_INTERVAL_MS);
 
     return () => {
+      disposed = true;
       mountedRef.current = false;
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -406,14 +627,13 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // 5. Pause polling when tab is hidden, resume when visible
+  // Pause polling when tab is hidden, resume when visible
   useEffect(() => {
     function handleVisibility() {
       if (document.hidden && pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       } else if (!document.hidden && !pollRef.current) {
-        // Immediately fetch on return, then resume polling
         (async () => {
           const token = await getAuthToken();
           if (!token) return;
