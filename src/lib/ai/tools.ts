@@ -78,10 +78,10 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Item name' },
-          unit_of_measure: { type: 'string', description: 'Unit of measure (e.g. each, ton, gallon, bag)' },
+          unit_of_measure: { type: 'string', description: 'Unit of measure (e.g. each, ton, gallon, bag). Default: "each"' },
           tracking_mode: {
             type: 'string',
-            description: 'Tracking mode',
+            description: 'Tracking mode (default: "fungible")',
             enum: ['fungible', 'serialized'],
           },
         },

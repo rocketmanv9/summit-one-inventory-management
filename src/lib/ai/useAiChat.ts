@@ -36,6 +36,7 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
     item:     { actionField: 'catalog_item_id', entityType: 'item' },
     location: { actionField: 'location_id', entityType: 'location' },
     quantity: { actionField: 'new_qty' },
+    reason:   { actionField: 'reason' },
   },
   check_stock: {
     item: { actionField: 'catalog_item_id', entityType: 'item' },
@@ -72,6 +73,26 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
     location: { actionField: 'location_id', entityType: 'location' },
     quantity: { actionField: 'quantity' },
   },
+  add_item: {
+    name:            { actionField: 'name' },
+    unit_of_measure: { actionField: 'unit_of_measure' },
+    tracking_mode:   { actionField: 'tracking_mode' },
+  },
+  add_location: {
+    name: { actionField: 'name' },
+  },
+  add_category: {
+    name: { actionField: 'name' },
+  },
+  create_po: {
+    vendor: { actionField: 'vendor_id', entityType: 'vendor' },
+  },
+};
+
+const SMART_DEFAULTS: Partial<Record<IntentType, Record<string, string>>> = {
+  adjust_stock:    { reason: 'other' },
+  issue_inventory: { issued_to_type: 'other' },
+  add_item:        { tracking_mode: 'fungible' },
 };
 
 function fuzzyMatch(
@@ -416,8 +437,50 @@ export function useAiChat(options?: AiChatOptions) {
       return;
     }
 
-    // For MUTATION intents in workspace mode, show action preview card
+    // ── Auto-execute when all required params are filled ──────────────
     const intentClassification = classifyIntent(intentType);
+    if (intentClassification === 'MUTATION' && actionDef.steps.length > 0 && !MODAL_INTENTS.has(intentType)) {
+      const mergedParams: Record<string, string> = { ...extractedParams };
+
+      // Apply smart defaults for fields AI didn't provide
+      const defaults = SMART_DEFAULTS[intentType];
+      if (defaults) {
+        for (const [field, value] of Object.entries(defaults)) {
+          if (!mergedParams[field]) mergedParams[field] = value;
+        }
+      }
+
+      // Check if all required non-confirm steps have values
+      const allRequiredFilled = actionDef.steps.every(
+        (s) => s.type === 'confirm' || !s.required || !!mergedParams[s.field]
+      );
+
+      if (allRequiredFilled) {
+        // Auto-execute immediately — no preview card, no step flow, no confirm
+        const execMsg = addMessage('assistant', `On it...`, { status: 'executing' });
+        try {
+          const result = await actionDef.execute(mergedParams);
+          setMessages((prev) =>
+            prev.map((m) => m.id === execMsg.id
+              ? { ...m, content: result.message, status: result.success ? 'success' : 'error', navigateTo: result.navigateTo }
+              : m
+            )
+          );
+        } catch (err: any) {
+          setMessages((prev) =>
+            prev.map((m) => m.id === execMsg.id
+              ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
+              : m
+            )
+          );
+        } finally {
+          setIsLoading(false);
+        }
+        return;
+      }
+    }
+
+    // Fallback: For MUTATION intents in workspace mode, show action preview card
     if (mode === 'workspace' && intentClassification === 'MUTATION' && !MODAL_INTENTS.has(intentType)) {
       const preview = buildActionPreview(intentType, extractedParams);
       setActions((prev) => [preview, ...prev]);
@@ -427,7 +490,7 @@ export function useAiChat(options?: AiChatOptions) {
       return;
     }
 
-    // For MUTATION intents in corner mode, show action preview card inline
+    // Fallback: For MUTATION intents in corner mode, show action preview card inline
     if (mode === 'corner' && intentClassification === 'MUTATION' && actionDef.steps.length > 0 && !MODAL_INTENTS.has(intentType)) {
       const preview = buildActionPreview(intentType, extractedParams);
       setActions((prev) => [preview, ...prev]);

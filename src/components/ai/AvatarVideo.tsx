@@ -61,6 +61,9 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         loop
         muted
         playsInline
+        disablePictureInPicture
+        disableRemotePlayback
+        controlsList="nodownload noplaybackrate"
         onError={() => setVideoError(true)}
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'idle' ? 'opacity-100' : 'opacity-0'
@@ -75,6 +78,9 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         loop
         muted
         playsInline
+        disablePictureInPicture
+        disableRemotePlayback
+        controlsList="nodownload noplaybackrate"
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'talking' ? 'opacity-100' : 'opacity-0'
         }`}
@@ -88,6 +94,9 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         loop
         muted
         playsInline
+        disablePictureInPicture
+        disableRemotePlayback
+        controlsList="nodownload noplaybackrate"
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'thinking' ? 'opacity-100' : 'opacity-0'
         }`}

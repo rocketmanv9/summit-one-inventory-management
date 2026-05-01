@@ -78,7 +78,6 @@ function ChatBotInner() {
         onMouseLeave={() => setHovering(false)}
         className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-teal-400 shadow-lg shadow-teal-500/25 hover:scale-110 transition-transform cursor-pointer"
         aria-label="Ask Isabelle"
-        title="Ask Isabelle"
       >
         <AvatarVideo status={status} hovering={hovering} />
       </button>
@@ -95,12 +94,6 @@ function ChatBotInner() {
       >
         &times;
       </button>
-
-      {/* Tooltip */}
-      <div className="absolute bottom-full right-0 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        Ask Isabelle
-        <div className="absolute top-full right-6 w-2 h-2 bg-gray-900 rotate-45 -mt-1" />
-      </div>
     </div>
   );
 }
