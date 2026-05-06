@@ -22,16 +22,18 @@ interface AvatarVideoProps {
   variant?: AvatarVariant;
 }
 
-const VARIANT_STYLES: Record<AvatarVariant, { container: string; fallback: string; objectPosition: string }> = {
+const VARIANT_STYLES: Record<AvatarVariant, { container: string; fallback: string; objectPosition: string; scale: string }> = {
   bubble: {
-    container: 'w-14 h-14 rounded-full',
-    fallback: 'w-14 h-14 rounded-full',
-    objectPosition: 'center 15%',
+    container: 'w-24 h-24 rounded-full',
+    fallback: 'w-24 h-24 rounded-full',
+    objectPosition: 'center 10%',
+    scale: 'scale-[1.4]',
   },
   workspace: {
-    container: 'w-28 h-20 rounded-xl',
-    fallback: 'w-28 h-20 rounded-xl',
-    objectPosition: 'center 15%',
+    container: 'w-full h-full rounded-2xl',
+    fallback: 'w-full h-full rounded-2xl',
+    objectPosition: 'center 10%',
+    scale: 'scale-[1.3]',
   },
 };
 
@@ -84,7 +86,7 @@ export function AvatarVideo({ status, hovering, variant = 'bubble' }: AvatarVide
         disableRemotePlayback
         controlsList="nodownload noplaybackrate"
         onError={() => setVideoError(true)}
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${styles.scale} ${
           status === 'idle' ? 'opacity-100' : 'opacity-0'
         }`}
         style={{ objectPosition: styles.objectPosition }}
@@ -100,7 +102,7 @@ export function AvatarVideo({ status, hovering, variant = 'bubble' }: AvatarVide
         disablePictureInPicture
         disableRemotePlayback
         controlsList="nodownload noplaybackrate"
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${styles.scale} ${
           status === 'talking' ? 'opacity-100' : 'opacity-0'
         }`}
         style={{ objectPosition: styles.objectPosition }}
@@ -116,7 +118,7 @@ export function AvatarVideo({ status, hovering, variant = 'bubble' }: AvatarVide
         disablePictureInPicture
         disableRemotePlayback
         controlsList="nodownload noplaybackrate"
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${styles.scale} ${
           status === 'thinking' ? 'opacity-100' : 'opacity-0'
         }`}
         style={{ objectPosition: styles.objectPosition }}

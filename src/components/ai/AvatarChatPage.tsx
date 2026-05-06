@@ -23,7 +23,6 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
   VolumeX,
   Volume2,
 } from 'lucide-react';
@@ -115,45 +114,53 @@ export function AvatarChatPage() {
         initialName={chat.vendorModal.initialName}
       />
 
-      <div className="flex flex-col h-[calc(100vh-7rem)]">
-        {/* ── Main Section: Chat + Actions ────────────────────── */}
-        <div className="flex flex-1 min-h-0 gap-4 p-4">
-          {/* ── Chat Column ──────────────────────────────── */}
-          <div className="flex flex-col flex-[3] min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* ── Avatar Header ──────────────────────────── */}
-            <div className="flex items-center gap-4 px-5 py-3 bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700">
-              <div
-                onMouseEnter={() => setHovering(true)}
-                onMouseLeave={() => setHovering(false)}
-                className="cursor-pointer"
-              >
-                <AvatarVideo status={status} hovering={hovering} variant="workspace" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-white text-sm font-semibold">Isabelle Martinez</div>
-                <div className={`text-xs ${
-                  status === 'talking' ? 'text-teal-300' :
-                  status === 'thinking' ? 'text-amber-300' :
-                  'text-gray-300'
-                }`}>
-                  {statusLabel}
+      <div className="flex h-[calc(100vh-7rem)] gap-4 p-4">
+        {/* ── Left: Isabelle Video (dominant) ───────────────── */}
+        <div className="flex flex-col flex-[3] min-w-0">
+          {/* Video area — fills most of the column */}
+          <div
+            onMouseEnter={() => setHovering(true)}
+            onMouseLeave={() => setHovering(false)}
+            className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-slate-900 shadow-lg cursor-pointer"
+          >
+            <AvatarVideo status={status} hovering={hovering} variant="workspace" />
+
+            {/* Name + status overlay (bottom of video) */}
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-white text-base font-semibold">Isabelle Martinez</div>
+                  <div className={`text-sm ${
+                    status === 'talking' ? 'text-teal-300' :
+                    status === 'thinking' ? 'text-amber-300' :
+                    'text-gray-300'
+                  }`}>
+                    {statusLabel}
+                  </div>
                 </div>
+                <button
+                  onClick={toggleMute}
+                  className="rounded-lg px-3 py-2 text-white bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-colors flex items-center gap-2"
+                  aria-label={ttsMuted ? 'Unmute' : 'Mute'}
+                >
+                  {ttsMuted ? (
+                    <VolumeX className="w-4 h-4 text-red-400" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-teal-300" />
+                  )}
+                  <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
+                </button>
               </div>
-              <button
-                onClick={toggleMute}
-                className="rounded-lg px-3 py-2 text-white hover:bg-white/10 transition-colors flex items-center gap-2"
-                aria-label={ttsMuted ? 'Unmute' : 'Mute'}
-              >
-                {ttsMuted ? (
-                  <VolumeX className="w-4 h-4 text-red-400" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-teal-300" />
-                )}
-                <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
-              </button>
             </div>
+          </div>
+        </div>
+
+        {/* ── Right: Chat + Actions ──────────────────────────── */}
+        <div className="flex flex-col flex-[2] min-w-[360px] max-w-[500px] gap-4 min-h-0">
+          {/* ── Chat Column ──────────────────────────────── */}
+          <div className="flex flex-col flex-1 min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
               {chat.messages.map((message) => (
                 <div key={message.id}>
                   <ChatMessageBubble
@@ -162,7 +169,7 @@ export function AvatarChatPage() {
                   />
 
                   {message.dataDisplay && (
-                    <div className="max-w-[75%]">
+                    <div className="max-w-full">
                       <AiDataRenderer data={message.dataDisplay} />
                     </div>
                   )}
@@ -207,7 +214,7 @@ export function AvatarChatPage() {
 
             {/* Active flow indicator */}
             {chat.activeFlow && (
-              <div className="px-6 py-2 bg-blue-50 border-t border-blue-100 flex items-center justify-between">
+              <div className="px-5 py-2 bg-blue-50 border-t border-blue-100 flex items-center justify-between">
                 <span className="text-sm text-blue-600">
                   {chat.activeFlow.action.description} — step{' '}
                   {Math.min(
@@ -226,8 +233,8 @@ export function AvatarChatPage() {
             )}
 
             {/* Input */}
-            <div className="p-4 border-t">
-              <div className="flex gap-3">
+            <div className="p-3 border-t">
+              <div className="flex gap-2">
                 <input
                   ref={inputRef}
                   type="text"
@@ -237,101 +244,79 @@ export function AvatarChatPage() {
                   placeholder={
                     chat.activeFlow
                       ? 'Type your answer...'
-                      : 'Ask Isabelle anything about your inventory...'
+                      : 'Ask Isabelle anything...'
                   }
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+                  className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
                   disabled={chat.isLoading}
                 />
                 <button
                   onClick={() => chat.sendMessage()}
                   disabled={!chat.input.trim() || chat.isLoading}
-                  className="px-4 py-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Send message"
                 >
-                  <Send className="w-5 h-5" />
+                  <Send className="w-4 h-4" />
                 </button>
               </div>
             </div>
           </div>
 
-          {/* ── Actions Panel ────────────────────────────── */}
-          <div className="flex flex-col flex-[2] min-w-[320px] max-w-[440px] gap-4">
-            {/* Proposed Actions */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-shrink-0">
-              <div className="px-4 py-3 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-blue-500" />
-                  Proposed Actions ({proposedActions.length})
-                </h2>
-              </div>
-              <div className="p-3 max-h-[280px] overflow-y-auto">
-                {proposedActions.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    No proposed actions
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {proposedActions.length > 1 && (
-                      <button
-                        onClick={() =>
-                          proposedActions.forEach((a) =>
-                            chat.confirmAction(a.id)
-                          )
-                        }
-                        className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors mb-1"
-                      >
-                        Confirm All
-                      </button>
-                    )}
-                    {proposedActions.map((action) => (
-                      <ProposedActionCard
-                        key={action.id}
-                        action={action}
-                        onConfirm={() => chat.confirmAction(action.id)}
-                        onCancel={() => chat.cancelAction(action.id)}
-                      />
-                    ))}
+          {/* ── Actions (collapsible within right column) ──── */}
+          {(proposedActions.length > 0 || actionHistory.length > 0) && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-shrink-0 max-h-[240px]">
+              {proposedActions.length > 0 && (
+                <>
+                  <div className="px-4 py-2 border-b bg-gray-50">
+                    <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-blue-500" />
+                      Proposed Actions ({proposedActions.length})
+                    </h2>
                   </div>
-                )}
-              </div>
-            </div>
-
-            {/* Action History */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-1 min-h-0">
-              <div className="px-4 py-3 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-green-500" />
-                  Action History
-                </h2>
-              </div>
-              <div className="p-3 overflow-y-auto h-full">
-                {actionHistory.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    No action history yet
-                  </p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {actionHistory.map((action) => (
-                      <HistoryActionRow key={action.id} action={action} />
-                    ))}
+                  <div className="p-2 max-h-[120px] overflow-y-auto">
+                    <div className="space-y-1.5">
+                      {proposedActions.length > 1 && (
+                        <button
+                          onClick={() =>
+                            proposedActions.forEach((a) =>
+                              chat.confirmAction(a.id)
+                            )
+                          }
+                          className="w-full px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors mb-1"
+                        >
+                          Confirm All
+                        </button>
+                      )}
+                      {proposedActions.map((action) => (
+                        <ProposedActionCard
+                          key={action.id}
+                          action={action}
+                          onConfirm={() => chat.confirmAction(action.id)}
+                          onCancel={() => chat.cancelAction(action.id)}
+                        />
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
+                </>
+              )}
+              {actionHistory.length > 0 && (
+                <>
+                  <div className="px-4 py-2 border-b bg-gray-50">
+                    <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                      History
+                    </h2>
+                  </div>
+                  <div className="p-2 max-h-[100px] overflow-y-auto">
+                    <div className="space-y-1">
+                      {actionHistory.map((action) => (
+                        <HistoryActionRow key={action.id} action={action} />
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-
-            {/* Saved Prompts */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-shrink-0">
-              <div className="px-4 py-3 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  Saved Prompts
-                </h2>
-              </div>
-              <div className="p-4">
-                <p className="text-sm text-gray-400 text-center">Coming soon</p>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </>
