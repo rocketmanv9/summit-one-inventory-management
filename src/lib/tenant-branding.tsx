@@ -464,8 +464,36 @@ function applyCssVariables(b: TenantBranding) {
 }
 
 // ---------------------------------------------------------------------------
-// Branding fetch — local DB first, then Core fallback
+// Branding fetch — Core first (production data), local DB fallback (dev)
 // ---------------------------------------------------------------------------
+
+// Core Supabase project (public anon key — safe for client-side)
+const CORE_SUPABASE_URL =
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://hoizrypzbzmtorhknkxq.supabase.co';
+const CORE_SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhvaXpyeXB6YnptdG9yaGtua3hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwMDA1NzIsImV4cCI6MjA2OTU3NjU3Mn0.tu61oZkJ-0YMQWPm1aYsgUIGOuyG2EsoLwlimB127hk';
+
+async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
+  try {
+    const res = await fetch(`${CORE_SUPABASE_URL}/rest/v1/rpc/get_public_branding`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: CORE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${CORE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ target_tenant_id: tenantId }),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return parseBrandingPayload(data);
+  } catch {
+    return null;
+  }
+}
 
 async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -494,39 +522,13 @@ async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding 
   }
 }
 
-async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
-  const coreUrl = process.env.NEXT_PUBLIC_CORE_SUPABASE_URL;
-  const coreKey = process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY;
-
-  if (!coreUrl || !coreKey) return null;
-
-  try {
-    const res = await fetch(`${coreUrl}/rest/v1/rpc/get_public_branding`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: coreKey,
-        Authorization: `Bearer ${coreKey}`,
-      },
-      body: JSON.stringify({ target_tenant_id: tenantId }),
-    });
-
-    if (!res.ok) return null;
-
-    const data = await res.json();
-    return parseBrandingPayload(data);
-  } catch {
-    return null;
-  }
-}
-
 async function fetchBranding(tenantId: string): Promise<TenantBranding | null> {
-  // Try local DB first (our own tenant_branding table)
-  const local = await fetchBrandingFromLocal(tenantId);
-  if (local) return local;
+  // Try Core first (production branding data)
+  const core = await fetchBrandingFromCore(tenantId);
+  if (core) return core;
 
-  // Fall back to Core's get_public_branding RPC
-  return fetchBrandingFromCore(tenantId);
+  // Fall back to local DB (dev/stage seed data)
+  return fetchBrandingFromLocal(tenantId);
 }
 
 // ---------------------------------------------------------------------------
