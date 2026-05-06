@@ -467,9 +467,12 @@ function applyCssVariables(b: TenantBranding) {
 // Branding fetch — Core first (production data), local DB fallback (dev)
 // ---------------------------------------------------------------------------
 
-// Core Supabase project — must be set per environment (dev/stage/prod branches)
-const CORE_SUPABASE_URL = process.env.NEXT_PUBLIC_CORE_SUPABASE_URL;
-const CORE_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY;
+// Core Supabase stage branch
+const CORE_SUPABASE_URL =
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://ycszguaqawbxjwehhhqx.supabase.co';
+const CORE_SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljc3pndWFxYXdieGp3ZWhoaHF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjUzMDksImV4cCI6MjA5MTI0MTMwOX0.gwTth23_dGqrnnhnfdZ4KB9KRBxmwBZSemwewBzopMg';
 
 async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
   if (!CORE_SUPABASE_URL || !CORE_SUPABASE_ANON_KEY) {
