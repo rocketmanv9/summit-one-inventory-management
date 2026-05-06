@@ -114,53 +114,50 @@ export function AvatarChatPage() {
         initialName={chat.vendorModal.initialName}
       />
 
-      <div className="flex h-[calc(100vh-7rem)] gap-4 p-4">
-        {/* ── Left: Isabelle Video (dominant) ───────────────── */}
-        <div className="flex flex-col flex-[3] min-w-0">
-          {/* Video area — fills most of the column */}
-          <div
-            onMouseEnter={() => setHovering(true)}
-            onMouseLeave={() => setHovering(false)}
-            className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-slate-900 shadow-lg cursor-pointer"
-          >
-            <AvatarVideo status={status} hovering={hovering} variant="workspace" />
+      <div className="flex flex-col h-[calc(100vh-7rem)] p-4 gap-3">
+        {/* ── Top: Isabelle Video (dominant) ────────────────── */}
+        <div
+          onMouseEnter={() => setHovering(true)}
+          onMouseLeave={() => setHovering(false)}
+          className="relative flex-[3] min-h-0 rounded-2xl overflow-hidden bg-slate-900 shadow-lg cursor-pointer"
+        >
+          <AvatarVideo status={status} hovering={hovering} variant="workspace" />
 
-            {/* Name + status overlay (bottom of video) */}
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-5 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-white text-base font-semibold">Isabelle Martinez</div>
-                  <div className={`text-sm ${
-                    status === 'talking' ? 'text-teal-300' :
-                    status === 'thinking' ? 'text-amber-300' :
-                    'text-gray-300'
-                  }`}>
-                    {statusLabel}
-                  </div>
+          {/* Name + status overlay (bottom of video) */}
+          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-5 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-white text-base font-semibold">Isabelle Martinez</div>
+                <div className={`text-sm ${
+                  status === 'talking' ? 'text-teal-300' :
+                  status === 'thinking' ? 'text-amber-300' :
+                  'text-gray-300'
+                }`}>
+                  {statusLabel}
                 </div>
-                <button
-                  onClick={toggleMute}
-                  className="rounded-lg px-3 py-2 text-white bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-colors flex items-center gap-2"
-                  aria-label={ttsMuted ? 'Unmute' : 'Mute'}
-                >
-                  {ttsMuted ? (
-                    <VolumeX className="w-4 h-4 text-red-400" />
-                  ) : (
-                    <Volume2 className="w-4 h-4 text-teal-300" />
-                  )}
-                  <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
-                </button>
               </div>
+              <button
+                onClick={toggleMute}
+                className="rounded-lg px-3 py-2 text-white bg-white/10 hover:bg-white/20 backdrop-blur-sm transition-colors flex items-center gap-2"
+                aria-label={ttsMuted ? 'Unmute' : 'Mute'}
+              >
+                {ttsMuted ? (
+                  <VolumeX className="w-4 h-4 text-red-400" />
+                ) : (
+                  <Volume2 className="w-4 h-4 text-teal-300" />
+                )}
+                <span className="text-xs">{ttsMuted ? 'Muted' : 'Audio on'}</span>
+              </button>
             </div>
           </div>
         </div>
 
-        {/* ── Right: Chat + Actions ──────────────────────────── */}
-        <div className="flex flex-col flex-[2] min-w-[360px] max-w-[500px] gap-4 min-h-0">
+        {/* ── Bottom: Chat + Actions ─────────────────────────── */}
+        <div className="flex flex-[2] min-h-0 gap-3">
           {/* ── Chat Column ──────────────────────────────── */}
-          <div className="flex flex-col flex-1 min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex flex-col flex-1 min-w-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
               {chat.messages.map((message) => (
                 <div key={message.id}>
                   <ChatMessageBubble
