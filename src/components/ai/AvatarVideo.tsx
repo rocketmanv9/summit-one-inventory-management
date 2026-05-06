@@ -13,12 +13,29 @@
 import { useState, useRef, useEffect } from 'react';
 import type { AvatarStatus } from '@/lib/ai/avatar-store';
 
+type AvatarVariant = 'bubble' | 'workspace';
+
 interface AvatarVideoProps {
   status: AvatarStatus;
   hovering: boolean;
+  /** 'bubble' = small circle (corner chat), 'workspace' = large rectangle (/ai page) */
+  variant?: AvatarVariant;
 }
 
-export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
+const VARIANT_STYLES: Record<AvatarVariant, { container: string; fallback: string; objectPosition: string }> = {
+  bubble: {
+    container: 'w-14 h-14 rounded-full',
+    fallback: 'w-14 h-14 rounded-full',
+    objectPosition: 'center 15%',
+  },
+  workspace: {
+    container: 'w-28 h-20 rounded-xl',
+    fallback: 'w-28 h-20 rounded-xl',
+    objectPosition: 'center 15%',
+  },
+};
+
+export function AvatarVideo({ status, hovering, variant = 'bubble' }: AvatarVideoProps) {
   const [videoError, setVideoError] = useState(false);
   const idleRef = useRef<HTMLVideoElement>(null);
   const talkingRef = useRef<HTMLVideoElement>(null);
@@ -40,9 +57,11 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
     });
   }, [shouldPlay]);
 
+  const styles = VARIANT_STYLES[variant];
+
   if (videoError) {
     return (
-      <div className="w-20 h-20 rounded-full overflow-hidden bg-gradient-to-b from-slate-800 to-slate-900 flex items-center justify-center flex-shrink-0">
+      <div className={`${styles.fallback} overflow-hidden bg-gradient-to-b from-slate-800 to-slate-900 flex items-center justify-center flex-shrink-0`}>
         <img
           src="/avatar/avatar.svg"
           alt="Isabelle Martinez"
@@ -53,7 +72,7 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
   }
 
   return (
-    <div className="relative w-20 h-20 rounded-full overflow-hidden bg-black flex-shrink-0">
+    <div className={`relative ${styles.container} overflow-hidden bg-black flex-shrink-0`}>
       {/* Idle video (base layer — confident nod) */}
       <video
         ref={idleRef}
@@ -68,7 +87,7 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'idle' ? 'opacity-100' : 'opacity-0'
         }`}
-        style={{ objectPosition: 'center 20%' }}
+        style={{ objectPosition: styles.objectPosition }}
       />
 
       {/* Talking video (approving nod + thumbs up) */}
@@ -84,7 +103,7 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'talking' ? 'opacity-100' : 'opacity-0'
         }`}
-        style={{ objectPosition: 'center 20%' }}
+        style={{ objectPosition: styles.objectPosition }}
       />
 
       {/* Thinking video (concerned, checking inventory) */}
@@ -100,7 +119,7 @@ export function AvatarVideo({ status, hovering }: AvatarVideoProps) {
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-200 ${
           status === 'thinking' ? 'opacity-100' : 'opacity-0'
         }`}
-        style={{ objectPosition: 'center 20%' }}
+        style={{ objectPosition: styles.objectPosition }}
       />
     </div>
   );

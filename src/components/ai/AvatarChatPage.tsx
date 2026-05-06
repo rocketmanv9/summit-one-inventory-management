@@ -127,7 +127,7 @@ export function AvatarChatPage() {
                 onMouseLeave={() => setHovering(false)}
                 className="cursor-pointer"
               >
-                <AvatarVideo status={status} hovering={hovering} />
+                <AvatarVideo status={status} hovering={hovering} variant="workspace" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-white text-sm font-semibold">Isabelle Martinez</div>

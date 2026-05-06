@@ -76,7 +76,7 @@ function ChatBotInner() {
         onClick={() => setIsOpen(true)}
         onMouseEnter={() => setHovering(true)}
         onMouseLeave={() => setHovering(false)}
-        className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-teal-400 shadow-lg shadow-teal-500/25 hover:scale-110 transition-transform cursor-pointer"
+        className="relative w-14 h-14 rounded-full overflow-hidden border-2 border-teal-400 shadow-lg shadow-teal-500/25 hover:scale-110 transition-transform cursor-pointer"
         aria-label="Ask Isabelle"
       >
         <AvatarVideo status={status} hovering={hovering} />

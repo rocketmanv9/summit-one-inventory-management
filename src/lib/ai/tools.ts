@@ -444,15 +444,6 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'help',
-      description: 'Show available commands and capabilities',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-
   // ── Analytics / KPI queries (server-side) ────────────────────────────
   {
     type: 'function',
