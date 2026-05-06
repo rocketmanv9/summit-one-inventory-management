@@ -73,11 +73,13 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'add_item',
-      description: 'Create a new catalog item (material, product, supply)',
+      description: 'Create a new catalog item (material, product, supply). Category is auto-matched or created — just pass a name like "Fasteners" or "Concrete".',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Item name' },
+          category: { type: 'string', description: 'Category name in plain text (e.g. "Fasteners", "Concrete", "Safety Equipment"). Auto-matched to existing categories or created if new.' },
+          description: { type: 'string', description: 'Item description' },
           unit_of_measure: { type: 'string', description: 'Unit of measure (e.g. each, ton, gallon, bag). Default: "each"' },
           tracking_mode: {
             type: 'string',
@@ -115,7 +117,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           field_to_update: {
             type: 'string',
             description: 'Which field to change',
-            enum: ['name', 'unit_of_measure', 'reorder_point', 'description'],
+            enum: ['name', 'unit_of_measure', 'reorder_point', 'description', 'category'],
           },
           new_value: { type: 'string', description: 'The new value for the field' },
         },
