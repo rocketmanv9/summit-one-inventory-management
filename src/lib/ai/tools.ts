@@ -561,6 +561,85 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  // ── Dashboard management (server-side) ──────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'list_dashboards',
+      description: 'List all dashboards for the current tenant, showing name, widget count, and whether each is the default. Also shows which widgets are on each dashboard.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_available_widgets',
+      description: 'List all available widgets from the widget registry that can be added to dashboards. Shows widget name, key, domain, and default size. Use this to see what widgets exist before suggesting them to the user.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_dashboard_widget',
+      description: 'Add a widget to an existing dashboard. Matches the dashboard by name and the widget from the widget registry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dashboard: { type: 'string', description: 'Name (or partial name) of the dashboard to add the widget to' },
+          widget: { type: 'string', description: 'Widget name or key to add (e.g. "low stock alerts", "dead stock", "inventory health score")' },
+        },
+        required: ['dashboard', 'widget'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_dashboard_widget',
+      description: 'Remove a widget from a dashboard by matching the widget title or key.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dashboard: { type: 'string', description: 'Name (or partial name) of the dashboard' },
+          widget: { type: 'string', description: 'Widget title or key to remove' },
+        },
+        required: ['dashboard', 'widget'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_dashboard',
+      description: 'Update a dashboard — rename it, change its description, or set/unset it as the default dashboard.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dashboard: { type: 'string', description: 'Name (or partial name) of the dashboard to update' },
+          name: { type: 'string', description: 'New name for the dashboard' },
+          description: { type: 'string', description: 'New description for the dashboard' },
+          is_default: { type: 'boolean', description: 'Set to true to make this the default dashboard, false to unset' },
+        },
+        required: ['dashboard'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_dashboard',
+      description: 'Delete a dashboard (soft-delete). This removes it from view but does not permanently destroy it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dashboard: { type: 'string', description: 'Name (or partial name) of the dashboard to delete' },
+        },
+        required: ['dashboard'],
+      },
+    },
+  },
+
   // ── Workflow automation (server-side) ─────────────────────────────────
   {
     type: 'function',
@@ -613,6 +692,80 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           unit_of_measure: { type: 'string', description: 'Unit of measure (default: "each")' },
         },
         required: ['item_name', 'location_name', 'quantity'],
+      },
+    },
+  },
+
+  // ── Smart Location Creation ────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'smart_add_location',
+      description: 'Create a new location with address validation and automatic location type matching. Just provide a name and optional address — the system will validate the address via web search and match the location type automatically. Use for "Add our Portland yard at 1234 NE Industrial Way" or "Create a job site called Riverside Project".',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Location name (e.g. "Portland Yard", "Main Warehouse")' },
+          address: { type: 'string', description: 'Street address to validate and standardize (e.g. "1234 NE Industrial Way, Portland, OR")' },
+          location_type: { type: 'string', description: 'Type of location in plain English (e.g. "warehouse", "yard", "job site", "office")' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+
+  // ── Smart Asset Registration ───────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'smart_register_asset',
+      description: 'Register a new asset using natural language. Just describe what it is — the system will find or create the catalog item, match the location, and generate an asset tag. Use for "we got a new CAT 320 excavator" or "register this paver at the Portland yard".',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'What the asset is (e.g. "CAT 320 excavator", "Bomag BW 120 paver")' },
+          description: { type: 'string', description: 'Additional details about the asset' },
+          location: { type: 'string', description: 'Where the asset is located (e.g. "Portland yard", "main warehouse")' },
+          serial_number: { type: 'string', description: 'Manufacturer serial number' },
+          asset_tag: { type: 'string', description: 'Custom asset tag (auto-generated if not provided)' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+
+  // ── Vendor Search Online ───────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'search_vendors_online',
+      description: 'Search the web for vendors/suppliers of a specific product or service in a given area. Returns 3-5 vendor suggestions with contact details. Use when users need to find new suppliers — "I need a vendor for wheel stops near Portland" or "find me a rebar supplier in Oregon".',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Product, service, or material to search for (e.g. "wheel stops", "ready-mix concrete", "rebar supplier")' },
+          location: { type: 'string', description: 'Geographic area to search in (e.g. "Portland, OR", "Pacific Northwest")' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+
+  // ── Preferred Vendor Management ────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'set_preferred_vendor',
+      description: 'Set a vendor as the preferred supplier for a catalog item. Links the vendor to the item with optional pricing and lead time. Use for "make ACME our preferred vendor for rebar" or "set up pricing for cement from Riverside".',
+      parameters: {
+        type: 'object',
+        properties: {
+          vendor: { type: 'string', description: 'Vendor name (fuzzy-matched)' },
+          item: { type: 'string', description: 'Catalog item name (fuzzy-matched)' },
+          unit_cost: { type: 'number', description: 'Cost per unit from this vendor' },
+          lead_time_days: { type: 'number', description: 'Typical lead time in days' },
+        },
+        required: ['vendor', 'item'],
       },
     },
   },

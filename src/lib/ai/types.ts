@@ -47,7 +47,17 @@ const WORKFLOW_INTENTS = new Set([
   'workflow_auto_reorder',
   'workflow_stock_rebalance',
   'create_dashboard',
+  'list_dashboards',
+  'list_available_widgets',
+  'add_dashboard_widget',
+  'remove_dashboard_widget',
+  'update_dashboard',
+  'delete_dashboard',
   'smart_stock_receive',
+  'smart_add_location',
+  'smart_register_asset',
+  'search_vendors_online',
+  'set_preferred_vendor',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {
