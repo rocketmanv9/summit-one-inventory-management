@@ -1007,11 +1007,13 @@ async function workflowAutoReorder(
   const dryRun = params.dry_run !== false && params.dry_run !== 'false';
 
   try {
+    const idempotencyKey = `ai-auto-reorder-${ctx.tenantId}-${Date.now()}`;
     const res = await fetch(`${ctx.baseUrl}/api/ai/workflows`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({ workflow: 'auto_reorder', dry_run: dryRun }),
     });
@@ -1075,11 +1077,13 @@ async function workflowStockRebalance(
   const dryRun = params.dry_run !== false && params.dry_run !== 'false';
 
   try {
+    const idempotencyKey = `ai-stock-rebalance-${ctx.tenantId}-${Date.now()}`;
     const res = await fetch(`${ctx.baseUrl}/api/ai/workflows`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({ workflow: 'stock_rebalance', dry_run: dryRun }),
     });
@@ -1143,11 +1147,13 @@ async function smartStockReceive(
   ctx: ServerToolContext
 ): Promise<ServerToolResult> {
   try {
+    const idempotencyKey = `ai-stock-receive-${ctx.tenantId}-${Date.now()}`;
     const res = await fetch(`${ctx.baseUrl}/api/ai/stock-receive`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({
         item_name: params.item_name,
