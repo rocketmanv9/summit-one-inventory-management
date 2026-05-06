@@ -467,14 +467,16 @@ function applyCssVariables(b: TenantBranding) {
 // Branding fetch — Core first (production data), local DB fallback (dev)
 // ---------------------------------------------------------------------------
 
-// Core Supabase project (public anon key — safe for client-side)
-const CORE_SUPABASE_URL =
-  process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://hoizrypzbzmtorhknkxq.supabase.co';
-const CORE_SUPABASE_ANON_KEY =
-  process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhvaXpyeXB6YnptdG9yaGtua3hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwMDA1NzIsImV4cCI6MjA2OTU3NjU3Mn0.tu61oZkJ-0YMQWPm1aYsgUIGOuyG2EsoLwlimB127hk';
+// Core Supabase project — must be set per environment (dev/stage/prod branches)
+const CORE_SUPABASE_URL = process.env.NEXT_PUBLIC_CORE_SUPABASE_URL;
+const CORE_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY;
 
 async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
+  if (!CORE_SUPABASE_URL || !CORE_SUPABASE_ANON_KEY) {
+    console.warn('[Branding] NEXT_PUBLIC_CORE_SUPABASE_URL or NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY not set — skipping Core fetch');
+    return null;
+  }
+
   try {
     const res = await fetch(`${CORE_SUPABASE_URL}/rest/v1/rpc/get_public_branding`, {
       method: 'POST',
