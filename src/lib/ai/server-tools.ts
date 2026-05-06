@@ -517,11 +517,13 @@ async function createDashboard(
   const name = params.name || undefined;
 
   try {
+    const idempotencyKey = `ai-dashboard-${template}-${ctx.tenantId}-${Date.now()}`;
     const res = await fetch(`${ctx.baseUrl}/api/ai/create-dashboard`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({ template, name }),
     });
