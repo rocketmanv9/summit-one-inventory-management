@@ -464,17 +464,41 @@ function applyCssVariables(b: TenantBranding) {
 }
 
 // ---------------------------------------------------------------------------
-// Core RPC fetch (PostgREST REST endpoint — avoids @supabase/supabase-js import)
+// Branding fetch — local DB first, then Core fallback
 // ---------------------------------------------------------------------------
+
+async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) return null;
+
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/tenant_branding?tenant_id=eq.${tenantId}&select=*&limit=1`,
+      {
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+        },
+      }
+    );
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return parseBrandingPayload(data[0]);
+  } catch {
+    return null;
+  }
+}
 
 async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
   const coreUrl = process.env.NEXT_PUBLIC_CORE_SUPABASE_URL;
   const coreKey = process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY;
 
-  if (!coreUrl || !coreKey) {
-    console.warn('[Branding] Missing NEXT_PUBLIC_CORE_SUPABASE_URL or NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY');
-    return null;
-  }
+  if (!coreUrl || !coreKey) return null;
 
   try {
     const res = await fetch(`${coreUrl}/rest/v1/rpc/get_public_branding`, {
@@ -487,17 +511,22 @@ async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding |
       body: JSON.stringify({ target_tenant_id: tenantId }),
     });
 
-    if (!res.ok) {
-      console.warn(`[Branding] Core RPC returned ${res.status}`);
-      return null;
-    }
+    if (!res.ok) return null;
 
     const data = await res.json();
     return parseBrandingPayload(data);
-  } catch (err) {
-    console.warn('[Branding] Failed to fetch from Core:', err);
+  } catch {
     return null;
   }
+}
+
+async function fetchBranding(tenantId: string): Promise<TenantBranding | null> {
+  // Try local DB first (our own tenant_branding table)
+  const local = await fetchBrandingFromLocal(tenantId);
+  if (local) return local;
+
+  // Fall back to Core's get_public_branding RPC
+  return fetchBrandingFromCore(tenantId);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,12 +618,12 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
         console.log(`[Branding] Applied cached branding for tenant=${tid}`);
       }
 
-      // Fetch fresh from Core
-      const fresh = await fetchBrandingFromCore(tid);
+      // Fetch fresh (local DB first, then Core fallback)
+      const fresh = await fetchBranding(tid);
       if (fresh && !disposed) {
         apply(fresh);
         setCachedBranding(tid, fresh);
-        console.log(`[Branding] Applied tenant=${tid} branding from Core (updated_at=${fresh.updated_at ?? 'n/a'})`);
+        console.log(`[Branding] Applied tenant=${tid} branding (updated_at=${fresh.updated_at ?? 'n/a'})`);
       } else if (!cached && !disposed) {
         setIsLoaded(true);
       }
@@ -610,7 +639,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
       const tid = getTenantIdFromToken(token);
       if (!tid) return;
 
-      const fresh = await fetchBrandingFromCore(tid);
+      const fresh = await fetchBranding(tid);
       if (fresh && !disposed) {
         apply(fresh);
         setCachedBranding(tid, fresh);
@@ -639,7 +668,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
           if (!token) return;
           const tid = getTenantIdFromToken(token);
           if (!tid) return;
-          const fresh = await fetchBrandingFromCore(tid);
+          const fresh = await fetchBranding(tid);
           if (fresh && mountedRef.current) {
             setBranding(fresh);
             applyCssVariables(fresh);
@@ -653,7 +682,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
           if (!token) return;
           const tid = getTenantIdFromToken(token);
           if (!tid) return;
-          const fresh = await fetchBrandingFromCore(tid);
+          const fresh = await fetchBranding(tid);
           if (fresh && mountedRef.current) {
             setBranding(fresh);
             applyCssVariables(fresh);
