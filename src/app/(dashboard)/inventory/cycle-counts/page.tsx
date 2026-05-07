@@ -3,6 +3,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
+import { MobileSessionQRDialog } from '@/components/cycle-counts/MobileSessionQRDialog';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -333,6 +334,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 }) {
   const [countLines, setCountLines] = useState<any[]>([]);
   const [loadingLines, setLoadingLines] = useState(true);
+  const [showMobileDialog, setShowMobileDialog] = useState(false);
 
   useEffect(() => {
     if (cycleCount.status === 'in_progress' || cycleCount.status === 'under_review') {
@@ -839,6 +841,21 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                 Once complete, submit the count for review.
               </div>
             </div>
+            <button
+              onClick={() => setShowMobileDialog(true)}
+              className="w-full px-4 py-3 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 font-medium flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+              Mobile Count (QR Code)
+            </button>
+            <MobileSessionQRDialog
+              isOpen={showMobileDialog}
+              onClose={() => setShowMobileDialog(false)}
+              cycleCountId={cycleCount.id}
+              cycleCountNumber={cycleCount.count_number}
+            />
             <button
               onClick={async () => {
                 if (!confirm('Submit this cycle count for review?')) return;

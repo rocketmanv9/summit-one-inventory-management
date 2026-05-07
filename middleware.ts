@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_API_PATHS = new Set(['/api/health']);
-const PUBLIC_API_PREFIXES = ['/api/auth', '/api/mock', '/api/debug'];
+const PUBLIC_API_PREFIXES = ['/api/auth', '/api/mock', '/api/debug', '/api/m'];
 
 function isPublicApiRoute(pathname: string) {
   if (PUBLIC_API_PATHS.has(pathname)) {
