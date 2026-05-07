@@ -1882,6 +1882,49 @@ export const InventoryRPC = {
   },
 
   /**
+   * Get inventory events
+   * Table: inventory.inventory_events
+   */
+  async getInventoryEvents(filters?: {
+    event_type?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<Array<{
+    id: string;
+    tenant_id: string;
+    event_type: string;
+    occurred_at: string;
+    actor_user_id: string | null;
+    source_system: string | null;
+    payload: any;
+    created_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('inventory_events')
+      .select('id, tenant_id, event_type, occurred_at, actor_user_id, source_system, payload, created_at')
+      .order('occurred_at', { ascending: false })
+      .limit(200);
+
+    if (filters?.event_type) {
+      query = query.eq('event_type', filters.event_type);
+    }
+    if (filters?.start_date) {
+      query = query.gte('occurred_at', filters.start_date);
+    }
+    if (filters?.end_date) {
+      query = query.lte('occurred_at', filters.end_date);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw AppError.internal(`Failed to fetch inventory events: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
    * Reverse stock movement via RPC
    */
   async reverseStockMovement(movementId: string, reason: string) {
