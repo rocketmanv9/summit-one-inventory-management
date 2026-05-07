@@ -762,4 +762,113 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+
+  // ── Enrichment tools ──────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'enrich_vendor',
+      description: 'Enrich an existing vendor with web-sourced data. Searches online for the vendor and shows a diff of current vs suggested fields (phone, email, address, website, etc.) with confidence scores. Does NOT apply changes — shows suggestions for user approval. Use for "enrich vendor ACME" or "update vendor info for Riverside".',
+      parameters: {
+        type: 'object',
+        properties: {
+          vendor_name: { type: 'string', description: 'Name of the existing vendor to enrich (fuzzy-matched)' },
+        },
+        required: ['vendor_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'enrich_item',
+      description: 'Suggest normalized fields for an existing catalog item using AI reasoning. Suggests category, unit of measure, description, and reorder point based on the item name and industry standards. Does NOT apply changes — shows suggestions for user approval. Use for "enrich our rebar item" or "suggest fields for cement".',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_name: { type: 'string', description: 'Name of the existing item to enrich (fuzzy-matched)' },
+          barcode: { type: 'string', description: 'Optional barcode/UPC to help identify the item' },
+        },
+        required: ['item_name'],
+      },
+    },
+  },
+
+  // ── Smart reservation queries ─────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'query_reservations',
+      description: 'Query reservations with smart filtering by date, item, person, asset, or status. Supports natural language dates like "tomorrow", "next week", "June 15-20". Use for "what\'s reserved tomorrow?", "who has the melter?", "when is the excavator available?", or "show reservations for Job 123".',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_name: { type: 'string', description: 'Filter by item name (fuzzy-matched)' },
+          date_range: { type: 'string', description: 'Date filter — supports "today", "tomorrow", "this week", "next week", "June 15", "2026-06-15 to 2026-06-20", ISO dates' },
+          person: { type: 'string', description: 'Filter by person/job reference name' },
+          asset_tag: { type: 'string', description: 'Filter by asset tag' },
+          status: { type: 'string', description: 'Filter by status (active, released, expired)', enum: ['active', 'released', 'expired'] },
+        },
+        required: [],
+      },
+    },
+  },
+
+  // ── Asset value query ─────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'query_asset_value',
+      description: 'Calculate total asset value and breakdown by category, location, or status. Shows total fleet value, count of assets with and without purchase cost recorded. Use for "what are my assets worth?", "fleet value", or "equipment value by location".',
+      parameters: {
+        type: 'object',
+        properties: {
+          group_by: {
+            type: 'string',
+            description: 'How to group the breakdown',
+            enum: ['category', 'location', 'status'],
+          },
+        },
+        required: [],
+      },
+    },
+  },
+
+  // ── Draft purchase request ────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'draft_purchase_request',
+      description: 'Generate a draft RFQ/purchase request email for a vendor. Looks up vendor contact info, items to order (from params or reorder suggestions), and generates a professional email body. Does NOT send — returns the draft for review. Use for "draft a purchase request for ACME" or "write an email to order from Riverside".',
+      parameters: {
+        type: 'object',
+        properties: {
+          vendor_name: { type: 'string', description: 'Vendor name to address the request to (fuzzy-matched)' },
+          items: { type: 'string', description: 'Comma-separated list of items to include (optional — pulls from reorder suggestions if omitted)' },
+          notes: { type: 'string', description: 'Additional notes or special instructions for the email' },
+        },
+        required: ['vendor_name'],
+      },
+    },
+  },
+
+  // ── Document extraction ───────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'extract_document',
+      description: 'Extract structured data from a document image (invoice, receipt, packing slip, quote, SDS). Uses the image already in the conversation to extract vendor, line items, quantities, prices, and totals. Fuzzy-matches vendor and items to existing records. Does NOT write to the database — returns extracted data for review. Use when the user sends a photo of an invoice, receipt, or packing slip (NOT a product photo — use smart_stock_receive for those).',
+      parameters: {
+        type: 'object',
+        properties: {
+          document_type: {
+            type: 'string',
+            description: 'Type of document (auto-detected if omitted)',
+            enum: ['invoice', 'receipt', 'packing_slip', 'quote', 'sds'],
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];

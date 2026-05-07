@@ -58,6 +58,12 @@ const WORKFLOW_INTENTS = new Set([
   'smart_register_asset',
   'search_vendors_online',
   'set_preferred_vendor',
+  'enrich_vendor',
+  'enrich_item',
+  'query_reservations',
+  'query_asset_value',
+  'draft_purchase_request',
+  'extract_document',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {

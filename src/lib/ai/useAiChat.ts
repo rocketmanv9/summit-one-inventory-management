@@ -210,6 +210,7 @@ export function useAiChat(options?: AiChatOptions) {
   // Refs
   const aiFailCount = useRef(0);
   const conversationHistory = useRef<ChatMessage[]>([]);
+  const activeActionId = useRef<string | null>(null);
 
   // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -280,12 +281,39 @@ export function useAiChat(options?: AiChatOptions) {
           const result = await action.execute(collectedParams);
           setActiveFlow(null);
 
+          // Update tracked action status if this was a confirmed proposed action
+          if (activeActionId.current) {
+            const aid = activeActionId.current;
+            activeActionId.current = null;
+            setActions((prev) =>
+              prev.map((a) =>
+                a.id === aid
+                  ? { ...a, status: (result.success ? 'completed' : 'failed') as any, result }
+                  : a
+              )
+            );
+          }
+
           addMessage('assistant', result.message, {
             status: result.success ? 'success' : 'error',
             navigateTo: result.navigateTo,
           });
         } catch (err: any) {
           setActiveFlow(null);
+
+          // Update tracked action status on error
+          if (activeActionId.current) {
+            const aid = activeActionId.current;
+            activeActionId.current = null;
+            setActions((prev) =>
+              prev.map((a) =>
+                a.id === aid
+                  ? { ...a, status: 'failed' as const, result: { success: false, message: err.message || 'Unknown error' } }
+                  : a
+              )
+            );
+          }
+
           addMessage(
             'assistant',
             `Something went wrong: ${err.message || 'Unknown error'}`,
@@ -563,7 +591,7 @@ export function useAiChat(options?: AiChatOptions) {
         prev.map((a) => (a.id === actionId ? { ...a, status: 'executing' as const } : a))
       );
 
-      // Start the step flow with pre-filled params
+      // Get the action definition
       const actionDef = await getActionDefinition(action.intent);
       if (!actionDef) {
         setActions((prev) =>
@@ -576,8 +604,61 @@ export function useAiChat(options?: AiChatOptions) {
         return;
       }
 
-      // Start the step-by-step flow with pre-filled params
       const collectedParams = { ...action.params };
+
+      // Apply smart defaults
+      const defaults = SMART_DEFAULTS[action.intent];
+      if (defaults) {
+        for (const [field, value] of Object.entries(defaults)) {
+          if (!collectedParams[field]) collectedParams[field] = value;
+        }
+      }
+
+      // Check if all required non-confirm steps have values
+      const allRequiredFilled = actionDef.steps.every(
+        (s) => s.type === 'confirm' || !s.required || !!collectedParams[s.field]
+      );
+
+      if (allRequiredFilled) {
+        // Execute directly — no step flow needed
+        const execMsg = addMessage('assistant', 'On it...', { status: 'executing' });
+        try {
+          const result = await actionDef.execute(collectedParams);
+          setActions((prev) =>
+            prev.map((a) =>
+              a.id === actionId
+                ? { ...a, status: (result.success ? 'completed' : 'failed') as any, result }
+                : a
+            )
+          );
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === execMsg.id
+                ? { ...m, content: result.message, status: result.success ? 'success' : 'error', navigateTo: result.navigateTo }
+                : m
+            )
+          );
+        } catch (err: any) {
+          setActions((prev) =>
+            prev.map((a) =>
+              a.id === actionId
+                ? { ...a, status: 'failed' as const, result: { success: false, message: err.message || 'Unknown error' } }
+                : a
+            )
+          );
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === execMsg.id
+                ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
+                : m
+            )
+          );
+        }
+        return;
+      }
+
+      // Missing params — start step flow and track action ID for status updates
+      activeActionId.current = actionId;
 
       let startStep = actionDef.steps.length;
       for (let i = 0; i < actionDef.steps.length; i++) {
@@ -666,6 +747,18 @@ export function useAiChat(options?: AiChatOptions) {
   // ── Cancel active flow ─────────────────────────────────────────────
 
   const cancelFlow = useCallback(() => {
+    // If cancelling a flow that was started from a proposed action, revert it
+    if (activeActionId.current) {
+      const aid = activeActionId.current;
+      activeActionId.current = null;
+      setActions((prev) =>
+        prev.map((a) =>
+          a.id === aid && a.status === 'confirmed'
+            ? { ...a, status: 'proposed' as const }
+            : a
+        )
+      );
+    }
     setActiveFlow(null);
     addMessage('assistant', 'Cancelled. What else can I help with?');
   }, [addMessage]);
@@ -690,6 +783,18 @@ export function useAiChat(options?: AiChatOptions) {
       // Check for cancel/abort FIRST (works both in and out of flows)
       if (text && ['cancel', 'abort', 'stop', 'nevermind', 'never mind'].includes(text.toLowerCase())) {
         if (activeFlow) {
+          // Revert tracked action to proposed
+          if (activeActionId.current) {
+            const aid = activeActionId.current;
+            activeActionId.current = null;
+            setActions((prev) =>
+              prev.map((a) =>
+                a.id === aid && a.status === 'confirmed'
+                  ? { ...a, status: 'proposed' as const }
+                  : a
+              )
+            );
+          }
           setActiveFlow(null);
           addMessage('assistant', 'Cancelled. What else can I help with?');
         } else {

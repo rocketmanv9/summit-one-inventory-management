@@ -59,6 +59,12 @@ const SERVER_TOOLS = new Set([
   'smart_register_asset',
   'search_vendors_online',
   'set_preferred_vendor',
+  'enrich_vendor',
+  'enrich_item',
+  'query_reservations',
+  'query_asset_value',
+  'draft_purchase_request',
+  'extract_document',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -121,6 +127,18 @@ export async function executeServerTool(
       return searchVendorsOnline(params, ctx);
     case 'set_preferred_vendor':
       return setPreferredVendor(params, ctx);
+    case 'enrich_vendor':
+      return enrichVendor(params, ctx);
+    case 'enrich_item':
+      return enrichItem(params, ctx);
+    case 'query_reservations':
+      return queryReservations(params, ctx);
+    case 'query_asset_value':
+      return queryAssetValue(params, ctx);
+    case 'draft_purchase_request':
+      return draftPurchaseRequest(params, ctx);
+    case 'extract_document':
+      return extractDocument(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -1719,6 +1737,915 @@ async function setPreferredVendor(
       label: 'Preferred Vendor Set',
       value: vendor.name,
       secondaryMetrics: details,
+    },
+  };
+}
+
+// ─── Fuzzy Find Helper ──────────────────────────────────────────────
+
+function fuzzyFind<T extends { name: string }>(items: T[], query: string): T | null {
+  const q = query.toLowerCase();
+  return (
+    items.find((i) => i.name.toLowerCase() === q) ||
+    items.find((i) => i.name.toLowerCase().includes(q)) ||
+    items.find((i) => q.includes(i.name.toLowerCase())) ||
+    null
+  );
+}
+
+// ─── Enrich Vendor ──────────────────────────────────────────────────
+
+async function enrichVendor(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const vendorHint = typeof params.vendor_name === 'string' ? params.vendor_name.trim() : '';
+  if (!vendorHint) {
+    return {
+      text: 'Please specify a vendor name to enrich.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing vendor name' },
+    };
+  }
+
+  // 1. Find existing vendor
+  const { data: vendors } = await supplyChainSchema(ctx.supabase)
+    .from('vendors')
+    .select('id, name, code, contact_name, contact_email, contact_phone, address, website, payment_terms, notes')
+    .or(`name.ilike.%${vendorHint}%`)
+    .limit(10);
+
+  if (!vendors?.length) {
+    return {
+      text: `Vendor "${vendorHint}" not found. Add them first with "add vendor ${vendorHint}".`,
+      dataDisplay: { displayType: 'metric', label: 'Not Found', value: vendorHint },
+    };
+  }
+
+  const vendor = fuzzyFind(vendors, vendorHint) || vendors[0];
+
+  // 2. Search web for vendor info
+  const { getSearchProvider } = await import('./search-provider');
+  const provider = getSearchProvider();
+
+  if (!provider) {
+    return {
+      text: 'Enrichment is not available — no search provider configured (needs OPENAI_API_KEY).',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No search provider' },
+    };
+  }
+
+  // Use OpenAI directly for structured vendor research
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return {
+      text: 'Enrichment is not available — OPENAI_API_KEY not configured.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No API key' },
+    };
+  }
+
+  const suggestedFields: Record<string, { current: string; suggested: string; confidence: number; source?: string }> = {};
+
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey });
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      web_search_options: { search_context_size: 'medium' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a company research assistant for a construction materials inventory system.',
+            `Research the company "${vendor.name}" and return updated contact details.`,
+            'Return ONLY a valid JSON object with these fields (include all you can find):',
+            '  contact_name   — key contact person (CEO, sales manager, account rep)',
+            '  contact_email  — main contact or sales email',
+            '  contact_phone  — main phone number',
+            '  address        — full business address',
+            '  website        — company website URL',
+            '  payment_terms  — standard payment terms if known (e.g. "Net 30")',
+            '  confidence     — overall confidence score 0.0-1.0 that this is the right company',
+            '  source_url     — the main source URL for this information',
+            'Do NOT wrap the JSON in markdown code fences.',
+          ].join('\n'),
+        },
+        { role: 'user', content: `Look up: "${vendor.name}"` },
+      ],
+      temperature: 0.2,
+      max_tokens: 600,
+    } as any);
+
+    const content = completion.choices?.[0]?.message?.content;
+    if (content) {
+      let jsonStr = content.trim();
+      const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+      const parsed = JSON.parse(jsonStr);
+      const sourceUrl = parsed.source_url || '';
+
+      const enrichableFields = ['contact_name', 'contact_email', 'contact_phone', 'address', 'website', 'payment_terms'] as const;
+
+      for (const field of enrichableFields) {
+        const suggested = parsed[field];
+        const current = (vendor as any)[field] || '';
+        if (typeof suggested === 'string' && suggested.trim() && suggested.trim() !== current.trim()) {
+          suggestedFields[field] = {
+            current: current || '(empty)',
+            suggested: suggested.trim(),
+            confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
+            source: sourceUrl,
+          };
+        }
+      }
+    }
+  } catch {
+    return {
+      text: `Failed to search for vendor "${vendor.name}" online. Try again later.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Search failed' },
+    };
+  }
+
+  // 3. Log to enrichment_log
+  if (Object.keys(suggestedFields).length > 0) {
+    try {
+      await inventorySchema(ctx.supabase)
+        .from('enrichment_log')
+        .upsert({
+          tenant_id: ctx.tenantId,
+          entity_type: 'vendor',
+          entity_id: vendor.id,
+          provider: 'openai',
+          source_url: Object.values(suggestedFields)[0]?.source || null,
+          fields_suggested: suggestedFields,
+          status: 'suggested',
+          confidence: Math.min(...Object.values(suggestedFields).map((f) => f.confidence)),
+          requested_by: ctx.userId,
+        }, { onConflict: 'id' });
+    } catch {
+      // Non-fatal — enrichment log insert failed but we still have the suggestions
+    }
+  }
+
+  // 4. Return diff table
+  if (Object.keys(suggestedFields).length === 0) {
+    return {
+      text: `No new information found for "${vendor.name}". Current records appear up-to-date.`,
+      dataDisplay: { displayType: 'metric', label: 'Up to Date', value: vendor.name },
+    };
+  }
+
+  const fieldLabels: Record<string, string> = {
+    contact_name: 'Contact Name',
+    contact_email: 'Contact Email',
+    contact_phone: 'Contact Phone',
+    address: 'Address',
+    website: 'Website',
+    payment_terms: 'Payment Terms',
+  };
+
+  const rows = Object.entries(suggestedFields).map(([field, info]) => ({
+    field: fieldLabels[field] || field,
+    current: info.current,
+    suggested: info.suggested,
+    confidence: `${Math.round(info.confidence * 100)}%`,
+  }));
+
+  return {
+    text: `Found ${rows.length} potential update${rows.length === 1 ? '' : 's'} for "${vendor.name}". Review the suggestions below — say "apply those" to update, or pick specific fields.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'field', label: 'Field' },
+        { key: 'current', label: 'Current' },
+        { key: 'suggested', label: 'Suggested' },
+        { key: 'confidence', label: 'Confidence' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Enrich Item ────────────────────────────────────────────────────
+
+async function enrichItem(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const itemHint = typeof params.item_name === 'string' ? params.item_name.trim() : '';
+  if (!itemHint) {
+    return {
+      text: 'Please specify an item name to enrich.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing item name' },
+    };
+  }
+
+  // 1. Find existing item
+  const { data: items } = await inventorySchema(ctx.supabase)
+    .from('catalog_items')
+    .select('id, name, sku, description, unit_of_measure, reorder_point, category_id, tracking_mode')
+    .or(`name.ilike.%${itemHint}%,sku.ilike.%${itemHint}%`)
+    .limit(10);
+
+  if (!items?.length) {
+    return {
+      text: `Item "${itemHint}" not found in catalog.`,
+      dataDisplay: { displayType: 'metric', label: 'Not Found', value: itemHint },
+    };
+  }
+
+  const item = fuzzyFind(items, itemHint) || items[0];
+
+  // 2. Get current category name if category_id exists
+  let currentCategory = '';
+  if (item.category_id) {
+    const { data: cat } = await inventorySchema(ctx.supabase)
+      .from('categories')
+      .select('name')
+      .eq('id', item.category_id)
+      .limit(1)
+      .single();
+    if (cat) currentCategory = cat.name;
+  }
+
+  // 3. Use OpenAI reasoning to suggest fields
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return {
+      text: 'Enrichment is not available — OPENAI_API_KEY not configured.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No API key' },
+    };
+  }
+
+  const suggestedFields: Record<string, { current: string; suggested: string; confidence: number }> = {};
+
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey });
+
+    const barcodeContext = params.barcode ? `\nBarcode/UPC: ${params.barcode}` : '';
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a construction materials inventory specialist.',
+            'Given an item name, suggest standardized field values based on industry conventions.',
+            'Return ONLY a valid JSON object with these fields (omit any where you have low confidence):',
+            '  category       — industry-standard category (e.g. "Concrete", "Steel", "Fasteners", "Safety Equipment", "Lumber")',
+            '  unit_of_measure — standard UOM (e.g. "each", "ton", "bag", "gallon", "lb", "ft", "yd")',
+            '  description    — concise professional description (1-2 sentences)',
+            '  reorder_point  — suggested reorder point for a mid-size construction company (number)',
+            '  confidence     — overall confidence 0.0-1.0',
+            'Consider the barcode/UPC if provided to identify the exact product.',
+            'Do NOT wrap the JSON in markdown code fences.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `Item name: "${item.name}"${barcodeContext}\nCurrent description: "${item.description || ''}"`,
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 400,
+    });
+
+    const content = completion.choices?.[0]?.message?.content;
+    if (content) {
+      let jsonStr = content.trim();
+      const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+      const parsed = JSON.parse(jsonStr);
+      const overallConfidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.7;
+
+      if (parsed.category && parsed.category !== currentCategory) {
+        suggestedFields['category'] = {
+          current: currentCategory || '(none)',
+          suggested: parsed.category,
+          confidence: overallConfidence,
+        };
+      }
+      if (parsed.unit_of_measure && parsed.unit_of_measure !== item.unit_of_measure) {
+        suggestedFields['unit_of_measure'] = {
+          current: item.unit_of_measure || '(none)',
+          suggested: parsed.unit_of_measure,
+          confidence: overallConfidence,
+        };
+      }
+      if (parsed.description && parsed.description !== item.description) {
+        suggestedFields['description'] = {
+          current: item.description || '(none)',
+          suggested: parsed.description,
+          confidence: overallConfidence,
+        };
+      }
+      if (parsed.reorder_point != null && parsed.reorder_point !== item.reorder_point) {
+        suggestedFields['reorder_point'] = {
+          current: item.reorder_point != null ? String(item.reorder_point) : '(not set)',
+          suggested: String(parsed.reorder_point),
+          confidence: overallConfidence,
+        };
+      }
+    }
+  } catch {
+    return {
+      text: `Failed to generate suggestions for "${item.name}". Try again later.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'AI failed' },
+    };
+  }
+
+  // 4. Log to enrichment_log
+  if (Object.keys(suggestedFields).length > 0) {
+    try {
+      await inventorySchema(ctx.supabase)
+        .from('enrichment_log')
+        .upsert({
+          tenant_id: ctx.tenantId,
+          entity_type: 'item',
+          entity_id: item.id,
+          provider: 'openai',
+          fields_suggested: suggestedFields,
+          status: 'suggested',
+          confidence: Math.min(...Object.values(suggestedFields).map((f) => f.confidence)),
+          requested_by: ctx.userId,
+        }, { onConflict: 'id' });
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  // 5. Return suggestions
+  if (Object.keys(suggestedFields).length === 0) {
+    return {
+      text: `No improvements suggested for "${item.name}" (${item.sku}). Current data looks good.`,
+      dataDisplay: { displayType: 'metric', label: 'Up to Date', value: item.name },
+    };
+  }
+
+  const fieldLabels: Record<string, string> = {
+    category: 'Category',
+    unit_of_measure: 'Unit of Measure',
+    description: 'Description',
+    reorder_point: 'Reorder Point',
+  };
+
+  const rows = Object.entries(suggestedFields).map(([field, info]) => ({
+    field: fieldLabels[field] || field,
+    current: info.current,
+    suggested: info.suggested,
+    confidence: `${Math.round(info.confidence * 100)}%`,
+  }));
+
+  return {
+    text: `Found ${rows.length} suggestion${rows.length === 1 ? '' : 's'} for "${item.name}" (${item.sku}). Review below — say "apply those" to update, or pick specific fields.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'field', label: 'Field' },
+        { key: 'current', label: 'Current' },
+        { key: 'suggested', label: 'Suggested' },
+        { key: 'confidence', label: 'Confidence' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Reservations ─────────────────────────────────────────────
+
+function parseDateRange(input: string): { start: Date; end: Date } | null {
+  const now = new Date();
+  const lower = input.toLowerCase().trim();
+
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+  if (lower === 'today') {
+    return { start: startOfDay(now), end: endOfDay(now) };
+  }
+  if (lower === 'tomorrow') {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return { start: startOfDay(tomorrow), end: endOfDay(tomorrow) };
+  }
+  if (lower === 'yesterday') {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return { start: startOfDay(yesterday), end: endOfDay(yesterday) };
+  }
+  if (lower === 'this week') {
+    const dayOfWeek = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: startOfDay(monday), end: endOfDay(sunday) };
+  }
+  if (lower === 'next week') {
+    const dayOfWeek = now.getDay();
+    const nextMonday = new Date(now);
+    nextMonday.setDate(now.getDate() + (dayOfWeek === 0 ? 1 : 8 - dayOfWeek));
+    const nextSunday = new Date(nextMonday);
+    nextSunday.setDate(nextMonday.getDate() + 6);
+    return { start: startOfDay(nextMonday), end: endOfDay(nextSunday) };
+  }
+
+  // Try "YYYY-MM-DD to YYYY-MM-DD" or "YYYY-MM-DD - YYYY-MM-DD"
+  const rangeMatch = lower.match(/(\d{4}-\d{2}-\d{2})\s*(?:to|-)\s*(\d{4}-\d{2}-\d{2})/);
+  if (rangeMatch) {
+    return { start: startOfDay(new Date(rangeMatch[1])), end: endOfDay(new Date(rangeMatch[2])) };
+  }
+
+  // Try single ISO date
+  const isoMatch = lower.match(/^(\d{4}-\d{2}-\d{2})$/);
+  if (isoMatch) {
+    const d = new Date(isoMatch[1]);
+    return { start: startOfDay(d), end: endOfDay(d) };
+  }
+
+  // Try "Month Day" or "Month Day-Day"
+  const monthDayMatch = lower.match(/^([a-z]+)\s+(\d{1,2})(?:\s*-\s*(\d{1,2}))?$/);
+  if (monthDayMatch) {
+    const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+    const monthIdx = months.findIndex((m) => m.startsWith(monthDayMatch[1]));
+    if (monthIdx >= 0) {
+      const year = now.getFullYear();
+      const startDate = new Date(year, monthIdx, parseInt(monthDayMatch[2]));
+      const endDate = monthDayMatch[3]
+        ? new Date(year, monthIdx, parseInt(monthDayMatch[3]))
+        : startDate;
+      return { start: startOfDay(startDate), end: endOfDay(endDate) };
+    }
+  }
+
+  return null;
+}
+
+async function queryReservations(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  let query = inventorySchema(ctx.supabase)
+    .from('reservations')
+    .select('id, catalog_item_id, location_id, quantity, allocation_type, job_ref, status, reserved_from, reserved_until, asset_tag, created_at');
+
+  // Default to active if no status specified
+  const statusFilter = typeof params.status === 'string' ? params.status : 'active';
+  if (statusFilter !== 'all') {
+    query = query.eq('status', statusFilter);
+  }
+
+  // Date range filter
+  if (params.date_range) {
+    const range = parseDateRange(params.date_range);
+    if (range) {
+      query = query
+        .or(`reserved_from.lte.${range.end.toISOString()},reserved_from.is.null`)
+        .or(`reserved_until.gte.${range.start.toISOString()},reserved_until.is.null`);
+    }
+  }
+
+  // Asset tag filter
+  if (params.asset_tag) {
+    query = query.ilike('asset_tag', `%${params.asset_tag}%`);
+  }
+
+  // Person/job filter
+  if (params.person) {
+    query = query.ilike('job_ref', `%${params.person}%`);
+  }
+
+  const { data: reservations, error } = await query.order('created_at', { ascending: false }).limit(50);
+
+  if (error || !reservations) {
+    return {
+      text: 'Failed to query reservations.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' },
+    };
+  }
+
+  // Resolve item names
+  const itemIds = [...new Set(reservations.map((r: any) => r.catalog_item_id).filter(Boolean))];
+  let itemMap: Record<string, string> = {};
+  if (itemIds.length > 0) {
+    const { data: itemData } = await inventorySchema(ctx.supabase)
+      .from('catalog_items')
+      .select('id, name')
+      .in('id', itemIds)
+      .limit(200);
+    if (itemData) {
+      itemMap = Object.fromEntries(itemData.map((i: any) => [i.id, i.name]));
+    }
+  }
+
+  // Resolve location names
+  const locIds = [...new Set(reservations.map((r: any) => r.location_id).filter(Boolean))];
+  let locMap: Record<string, string> = {};
+  if (locIds.length > 0) {
+    const { data: locData } = await ctx.supabase
+      .from('locations')
+      .select('id, name')
+      .in('id', locIds)
+      .limit(200);
+    if (locData) {
+      locMap = Object.fromEntries(locData.map((l: any) => [l.id, l.name]));
+    }
+  }
+
+  // Filter by item name if specified (post-query fuzzy filter)
+  let filtered = reservations as any[];
+  if (params.item_name) {
+    const itemQ = params.item_name.toLowerCase();
+    filtered = filtered.filter((r: any) => {
+      const name = itemMap[r.catalog_item_id] || '';
+      return name.toLowerCase().includes(itemQ);
+    });
+  }
+
+  if (filtered.length === 0) {
+    const filterDesc = [
+      params.item_name && `item "${params.item_name}"`,
+      params.date_range && `date "${params.date_range}"`,
+      params.person && `person/job "${params.person}"`,
+      params.asset_tag && `asset "${params.asset_tag}"`,
+    ].filter(Boolean).join(', ');
+
+    return {
+      text: `No ${statusFilter} reservations found${filterDesc ? ` matching ${filterDesc}` : ''}.`,
+      dataDisplay: { displayType: 'metric', label: 'Reservations', value: '0' },
+    };
+  }
+
+  const rows = filtered.map((r: any) => ({
+    item: itemMap[r.catalog_item_id] || '(unknown)',
+    qty_or_asset: r.asset_tag || formatNumber(r.quantity || 0),
+    reserved_from: r.reserved_from ? new Date(r.reserved_from).toLocaleDateString() : '—',
+    reserved_until: r.reserved_until ? new Date(r.reserved_until).toLocaleDateString() : 'Open',
+    job_person: r.job_ref || '—',
+    location: locMap[r.location_id] || '—',
+    status: r.status,
+  }));
+
+  return {
+    text: `Found ${rows.length} reservation${rows.length === 1 ? '' : 's'}. ${rows.slice(0, 3).map((r) => `${r.item}: ${r.qty_or_asset} for ${r.job_person} (${r.reserved_from} → ${r.reserved_until})`).join('; ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'item', label: 'Item' },
+        { key: 'qty_or_asset', label: 'Qty/Asset' },
+        { key: 'reserved_from', label: 'From' },
+        { key: 'reserved_until', label: 'Until' },
+        { key: 'job_person', label: 'Job/Person' },
+        { key: 'location', label: 'Location' },
+        { key: 'status', label: 'Status' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Asset Value ──────────────────────────────────────────────
+
+async function queryAssetValue(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const groupBy = typeof params.group_by === 'string' ? params.group_by : 'category';
+
+  // Fetch assets with related data
+  const { data: assets, error } = await inventorySchema(ctx.supabase)
+    .from('assets')
+    .select('id, asset_tag, status, purchase_cost, catalog_item_id, location_id')
+    .limit(1000);
+
+  if (error || !assets) {
+    return {
+      text: 'Failed to query assets.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' },
+    };
+  }
+
+  if (assets.length === 0) {
+    return {
+      text: 'No assets registered. Register assets with "register a new [equipment name]".',
+      dataDisplay: { displayType: 'metric', label: 'Assets', value: '0' },
+    };
+  }
+
+  // Resolve item names and categories
+  const itemIds = [...new Set(assets.map((a: any) => a.catalog_item_id).filter(Boolean))];
+  let itemMap: Record<string, { name: string; category_id?: string }> = {};
+  if (itemIds.length > 0) {
+    const { data: itemData } = await inventorySchema(ctx.supabase)
+      .from('catalog_items')
+      .select('id, name, category_id')
+      .in('id', itemIds)
+      .limit(1000);
+    if (itemData) {
+      itemMap = Object.fromEntries(itemData.map((i: any) => [i.id, { name: i.name, category_id: i.category_id }]));
+    }
+  }
+
+  // Resolve categories
+  const catIds = [...new Set(Object.values(itemMap).map((i) => i.category_id).filter(Boolean))];
+  let catMap: Record<string, string> = {};
+  if (catIds.length > 0) {
+    const { data: catData } = await inventorySchema(ctx.supabase)
+      .from('categories')
+      .select('id, name')
+      .in('id', catIds as string[])
+      .limit(200);
+    if (catData) {
+      catMap = Object.fromEntries(catData.map((c: any) => [c.id, c.name]));
+    }
+  }
+
+  // Resolve locations
+  const locIds = [...new Set(assets.map((a: any) => a.location_id).filter(Boolean))];
+  let locMap: Record<string, string> = {};
+  if (locIds.length > 0) {
+    const { data: locData } = await ctx.supabase
+      .from('locations')
+      .select('id, name')
+      .in('id', locIds)
+      .limit(200);
+    if (locData) {
+      locMap = Object.fromEntries(locData.map((l: any) => [l.id, l.name]));
+    }
+  }
+
+  // Calculate totals
+  let totalValue = 0;
+  let knownCount = 0;
+  let unknownCount = 0;
+
+  const groups: Record<string, { count: number; value: number; unknownCount: number }> = {};
+
+  for (const asset of assets as any[]) {
+    const cost = Number(asset.purchase_cost) || 0;
+    if (cost > 0) {
+      totalValue += cost;
+      knownCount++;
+    } else {
+      unknownCount++;
+    }
+
+    let groupKey = 'Unknown';
+    if (groupBy === 'category') {
+      const itemInfo = itemMap[asset.catalog_item_id];
+      groupKey = (itemInfo?.category_id ? catMap[itemInfo.category_id] : null) || 'Uncategorized';
+    } else if (groupBy === 'location') {
+      groupKey = locMap[asset.location_id] || 'Unassigned';
+    } else if (groupBy === 'status') {
+      groupKey = asset.status || 'unknown';
+    }
+
+    if (!groups[groupKey]) groups[groupKey] = { count: 0, value: 0, unknownCount: 0 };
+    groups[groupKey].count++;
+    if (cost > 0) {
+      groups[groupKey].value += cost;
+    } else {
+      groups[groupKey].unknownCount++;
+    }
+  }
+
+  const rows = Object.entries(groups)
+    .sort((a, b) => b[1].value - a[1].value)
+    .map(([group, info]) => ({
+      group,
+      count: info.count,
+      value: formatCurrency(info.value),
+      unknown_cost: info.unknownCount > 0 ? `${info.unknownCount} unknown` : '—',
+    }));
+
+  const groupLabel = groupBy === 'category' ? 'Category' : groupBy === 'location' ? 'Location' : 'Status';
+
+  return {
+    text: `Total asset value: ${formatCurrency(totalValue)} across ${assets.length} assets. ${knownCount} assets have purchase costs recorded${unknownCount > 0 ? `, ${unknownCount} assets have no purchase cost recorded` : ''}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'group', label: groupLabel },
+        { key: 'count', label: 'Assets' },
+        { key: 'value', label: 'Total Value' },
+        { key: 'unknown_cost', label: 'Missing Cost' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Draft Purchase Request ─────────────────────────────────────────
+
+async function draftPurchaseRequest(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const vendorHint = typeof params.vendor_name === 'string' ? params.vendor_name.trim() : '';
+  if (!vendorHint) {
+    return {
+      text: 'Please specify a vendor name for the purchase request.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing vendor' },
+    };
+  }
+
+  // 1. Find vendor
+  const { data: vendors } = await supplyChainSchema(ctx.supabase)
+    .from('vendors')
+    .select('id, name, contact_name, contact_email, contact_phone, address, payment_terms')
+    .or(`name.ilike.%${vendorHint}%`)
+    .limit(10);
+
+  if (!vendors?.length) {
+    return {
+      text: `Vendor "${vendorHint}" not found. Add them first with "add vendor ${vendorHint}".`,
+      dataDisplay: { displayType: 'metric', label: 'Not Found', value: vendorHint },
+    };
+  }
+
+  const vendor = fuzzyFind(vendors, vendorHint) || vendors[0];
+
+  // 2. Get items to order
+  let orderItems: Array<{ name: string; qty: number; unit?: string }> = [];
+
+  if (params.items) {
+    // User specified items
+    const itemNames = String(params.items).split(',').map((s: string) => s.trim()).filter(Boolean);
+    for (const itemName of itemNames) {
+      orderItems.push({ name: itemName, qty: 0 });
+    }
+  } else {
+    // Pull from reorder suggestions for this vendor
+    const { data: reorderData } = await inventorySchema(ctx.supabase)
+      .rpc('rpc_report_reorder_suggestions');
+
+    if (reorderData?.length) {
+      const vendorItems = (reorderData as any[]).filter(
+        (r: any) => r.preferred_vendor?.toLowerCase().includes(vendor.name.toLowerCase())
+      );
+      orderItems = vendorItems.slice(0, 10).map((r: any) => ({
+        name: r.item_name || r.sku,
+        qty: Number(r.suggested_order_qty) || 0,
+        unit: r.unit_of_measure,
+      }));
+    }
+  }
+
+  // 3. Generate the email using OpenAI
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return {
+      text: 'Email drafting is not available — OPENAI_API_KEY not configured.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No API key' },
+    };
+  }
+
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey });
+
+    const itemList = orderItems.length > 0
+      ? orderItems.map((i) => `- ${i.name}${i.qty ? `: ${i.qty} ${i.unit || 'units'}` : ''}`).join('\n')
+      : '(No specific items — general inquiry)';
+
+    const vendorInfo = [
+      `Company: ${vendor.name}`,
+      vendor.contact_name && `Contact: ${vendor.contact_name}`,
+      vendor.contact_email && `Email: ${vendor.contact_email}`,
+      vendor.payment_terms && `Terms: ${vendor.payment_terms}`,
+    ].filter(Boolean).join('\n');
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a professional procurement assistant for a construction company.',
+            'Draft a purchase request/RFQ email. Be concise and professional.',
+            'Return ONLY a valid JSON object with:',
+            '  subject — email subject line',
+            '  body    — complete email body (include greeting, items, request for pricing/availability, closing)',
+            'Do NOT wrap in markdown code fences.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `Draft a purchase request for:\n\nVendor:\n${vendorInfo}\n\nItems:\n${itemList}${params.notes ? `\n\nAdditional notes: ${params.notes}` : ''}`,
+        },
+      ],
+      temperature: 0.4,
+      max_tokens: 800,
+    });
+
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) {
+      return {
+        text: 'Failed to generate email draft.',
+        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Draft failed' },
+      };
+    }
+
+    let jsonStr = content.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+
+    const parsed = JSON.parse(jsonStr);
+
+    const emailTo = vendor.contact_email || '(no email on file)';
+    const draftText = [
+      `**To:** ${emailTo}`,
+      `**Subject:** ${parsed.subject || 'Purchase Request'}`,
+      '',
+      parsed.body || 'Email body could not be generated.',
+    ].join('\n');
+
+    return {
+      text: `Draft purchase request for ${vendor.name}:\n\n${draftText}\n\n---\nThis is a draft — copy and send when ready. Email is NOT sent automatically.`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Draft Ready',
+        value: vendor.name,
+        secondaryMetrics: [
+          { label: 'To', value: emailTo },
+          { label: 'Items', value: orderItems.length > 0 ? String(orderItems.length) : 'General inquiry' },
+        ],
+      },
+    };
+  } catch {
+    return {
+      text: 'Failed to generate email draft. Try again.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Draft failed' },
+    };
+  }
+}
+
+// ─── Extract Document ───────────────────────────────────────────────
+
+async function extractDocument(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const docType = typeof params.document_type === 'string' ? params.document_type : 'auto';
+
+  // This tool relies on the image being in the OpenAI conversation context.
+  // The chat route passes images via multimodal content. This tool returns
+  // instructions + context (existing vendors/items) for the AI to use when
+  // extracting data from the image in the next conversation turn.
+  // No direct OpenAI call needed here — the chat loop handles it.
+  // The tool returns instructions for the AI to extract data from the image
+  // that's already in the multimodal conversation context.
+  // The AI model in the chat loop will see the image and this tool result,
+  // then generate a structured extraction.
+
+  // Load existing vendors and items for fuzzy matching
+  const { data: vendors } = await supplyChainSchema(ctx.supabase)
+    .from('vendors')
+    .select('id, name')
+    .limit(200);
+
+  const { data: items } = await inventorySchema(ctx.supabase)
+    .from('catalog_items')
+    .select('id, name, sku')
+    .limit(500);
+
+  const vendorNames = (vendors || []).map((v: any) => v.name).join(', ');
+  const itemNames = (items || []).map((i: any) => `${i.name} (${i.sku})`).slice(0, 50).join(', ');
+
+  return {
+    text: [
+      `DOCUMENT EXTRACTION MODE — Analyze the image in this conversation as a ${docType !== 'auto' ? docType : 'document (auto-detect type)'}.`,
+      '',
+      'Extract and return the following in your response:',
+      '1. Document type (invoice, receipt, packing slip, quote, SDS)',
+      '2. Vendor/company name — try to match to existing vendors: ' + (vendorNames || 'none on file'),
+      '3. Document number/reference',
+      '4. Date',
+      '5. Line items as a table with columns: Item, Qty, Unit Price, Total',
+      '6. For each line item, note if it matches an existing catalog item: ' + (itemNames || 'none on file'),
+      '7. Subtotal, tax, and total',
+      '',
+      'Present the extracted data clearly. After showing the extraction, offer to:',
+      '- "Add these items to inventory" (smart_stock_receive for each line)',
+      '- "Create a PO from this" (create_po)',
+      '- "Add vendor" if the vendor is not in the system',
+    ].join('\n'),
+    dataDisplay: {
+      displayType: 'metric',
+      label: 'Document Extraction',
+      value: docType !== 'auto' ? docType : 'Auto-detect',
+      secondaryMetrics: [
+        { label: 'Known Vendors', value: (vendors || []).length },
+        { label: 'Known Items', value: (items || []).length },
+      ],
     },
   };
 }
