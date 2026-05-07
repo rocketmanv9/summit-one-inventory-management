@@ -88,9 +88,8 @@ function parseApiUrl(url: string) {
   };
 }
 
-function isShimRoute(url: string): boolean {
-  const { namespace } = parseApiUrl(url);
-  return namespace === 'inventory' || namespace === 'supply-chain';
+function isShimRoute(_url: string): boolean {
+  return false;
 }
 
 function getSchema(namespace?: string) {
