@@ -109,7 +109,6 @@ function getTableName(resource?: string) {
     'vendor-items': 'vendor_items',
     'location-types': 'location_types',
     'assignment-types': 'assignment_types',
-    'cycle-counts': 'cycle_counts',
     purchasing: 'purchase_orders',
   };
 
