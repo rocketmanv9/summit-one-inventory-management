@@ -88,8 +88,12 @@ function parseApiUrl(url: string) {
   };
 }
 
-function isShimRoute(_url: string): boolean {
-  return false;
+const SHIM_BYPASS = new Set(['cycle-counts']);
+
+function isShimRoute(url: string): boolean {
+  const { namespace, resource } = parseApiUrl(url);
+  if (resource && SHIM_BYPASS.has(resource)) return false;
+  return namespace === 'inventory' || namespace === 'supply-chain';
 }
 
 function getSchema(namespace?: string) {
