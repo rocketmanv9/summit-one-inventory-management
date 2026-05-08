@@ -467,26 +467,29 @@ function applyCssVariables(b: TenantBranding) {
 // Branding fetch — Core first (production data), local DB fallback (dev)
 // ---------------------------------------------------------------------------
 
-// Core Supabase stage branch
+// Core Supabase — configured instance (may be dev, stage, or prod)
 const CORE_SUPABASE_URL =
-  process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://ycszguaqawbxjwehhhqx.supabase.co';
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || '';
 const CORE_SUPABASE_ANON_KEY =
-  process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY || '';
+
+// Core Supabase stage — branding data lives here; used as fallback
+const CORE_STAGE_URL = 'https://ycszguaqawbxjwehhhqx.supabase.co';
+const CORE_STAGE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljc3pndWFxYXdieGp3ZWhoaHF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjUzMDksImV4cCI6MjA5MTI0MTMwOX0.gwTth23_dGqrnnhnfdZ4KB9KRBxmwBZSemwewBzopMg';
 
-async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
-  if (!CORE_SUPABASE_URL || !CORE_SUPABASE_ANON_KEY) {
-    console.warn('[Branding] NEXT_PUBLIC_CORE_SUPABASE_URL or NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY not set — skipping Core fetch');
-    return null;
-  }
-
+async function fetchBrandingFromCoreInstance(
+  url: string,
+  key: string,
+  tenantId: string,
+): Promise<TenantBranding | null> {
   try {
-    const res = await fetch(`${CORE_SUPABASE_URL}/rest/v1/rpc/get_public_branding`, {
+    const res = await fetch(`${url}/rest/v1/rpc/get_public_branding`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: CORE_SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${CORE_SUPABASE_ANON_KEY}`,
+        apikey: key,
+        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({ target_tenant_id: tenantId }),
     });
@@ -498,6 +501,30 @@ async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding |
   } catch {
     return null;
   }
+}
+
+async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding | null> {
+  // Try the configured Core instance first (env-based)
+  if (CORE_SUPABASE_URL && CORE_SUPABASE_ANON_KEY) {
+    const result = await fetchBrandingFromCoreInstance(
+      CORE_SUPABASE_URL,
+      CORE_SUPABASE_ANON_KEY,
+      tenantId,
+    );
+    if (result) return result;
+  }
+
+  // Fall back to Core stage (where branding data lives)
+  if (CORE_SUPABASE_URL !== CORE_STAGE_URL) {
+    const result = await fetchBrandingFromCoreInstance(
+      CORE_STAGE_URL,
+      CORE_STAGE_KEY,
+      tenantId,
+    );
+    if (result) return result;
+  }
+
+  return null;
 }
 
 async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding | null> {
