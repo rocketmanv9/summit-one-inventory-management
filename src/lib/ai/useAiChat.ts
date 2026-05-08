@@ -5,7 +5,7 @@
  * Extracted from the original ChatBot.tsx monolith.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { parseIntent } from '@/lib/chat/intents';
 import type { IntentType } from '@/lib/chat/intents';
@@ -14,7 +14,7 @@ import {
   resolveNavigation,
   type ActionDefinition,
 } from '@/lib/chat/actions';
-import { sendToAI, type ChatMessage } from '@/lib/ai/client';
+import { sendToAI, streamAiChat, getConversation, type ChatMessage } from '@/lib/ai/client';
 import { parseAIResponse } from '@/lib/ai/parse-response';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -203,6 +203,9 @@ export function useAiChat(options?: AiChatOptions) {
   const [isThinking, setIsThinking] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
 
+  // Persistent conversation ID
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
   // Vendor modal state
   const [vendorModalOpen, setVendorModalOpen] = useState(false);
   const [vendorModalInitialName, setVendorModalInitialName] = useState<string | undefined>();
@@ -211,6 +214,62 @@ export function useAiChat(options?: AiChatOptions) {
   const aiFailCount = useRef(0);
   const conversationHistory = useRef<ChatMessage[]>([]);
   const activeActionId = useRef<string | null>(null);
+  const streamingMsgId = useRef<string | null>(null);
+
+  // ── Load conversation from localStorage on mount ──────────────────
+  useEffect(() => {
+    const storedId = localStorage.getItem(`ai-conversation-${mode}`);
+    if (storedId) {
+      setConversationId(storedId);
+      // Load history from API
+      getConversation(storedId).then((conv) => {
+        if (!conv || !conv.messages || conv.messages.length === 0) return;
+        const restored: Message[] = [WELCOME_MESSAGE];
+        const historyForApi: ChatMessage[] = [];
+        for (const m of conv.messages) {
+          if (m.role === 'user' || m.role === 'assistant') {
+            restored.push({
+              id: m.id,
+              role: m.role,
+              content: m.content || '',
+              timestamp: new Date(m.created_at),
+              dataDisplay: m.data_display || undefined,
+              imageUrl: m.image_url || undefined,
+            });
+            historyForApi.push({
+              role: m.role as 'user' | 'assistant',
+              content: m.content || '',
+              imageUrl: m.image_url || undefined,
+            });
+          }
+        }
+        setMessages(restored);
+        conversationHistory.current = historyForApi;
+      }).catch(() => {
+        // If load fails, clear stale ID
+        localStorage.removeItem(`ai-conversation-${mode}`);
+        setConversationId(null);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist conversationId to localStorage
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem(`ai-conversation-${mode}`, conversationId);
+    }
+  }, [conversationId, mode]);
+
+  // ── Start new conversation ────────────────────────────────────────
+  const startNewConversation = useCallback(() => {
+    setConversationId(null);
+    localStorage.removeItem(`ai-conversation-${mode}`);
+    setMessages([WELCOME_MESSAGE]);
+    conversationHistory.current = [];
+    setActiveFlow(null);
+    setActions([]);
+  }, [mode]);
 
   // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -823,10 +882,71 @@ export function useAiChat(options?: AiChatOptions) {
           conversationHistory.current = conversationHistory.current.slice(-50);
         }
 
-        // ── Try AI mode first ──
+        // ── Try AI mode first (streaming) ──
         if (aiAvailable) {
           try {
-            const aiResponse = await sendToAI(conversationHistory.current);
+            // Create a placeholder message for streaming
+            const placeholderId = Date.now().toString() + Math.random().toString(36).slice(2);
+            streamingMsgId.current = placeholderId;
+            setMessages((prev) => [...prev, {
+              id: placeholderId,
+              role: 'assistant' as const,
+              content: '',
+              timestamp: new Date(),
+            }]);
+            setIsThinking(false); // Switch from thinking to streaming
+
+            let streamedContent = '';
+            let streamedDataDisplay: import('./types').AiDataDisplay | undefined;
+            let streamedToolCall: { intent: string; params: Record<string, string> } | undefined;
+
+            const aiResponse = await streamAiChat(
+              conversationHistory.current,
+              {
+                onDelta: (content) => {
+                  streamedContent += content;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === placeholderId
+                        ? { ...m, content: streamedContent }
+                        : m
+                    )
+                  );
+                },
+                onToolCall: (data) => {
+                  streamedToolCall = { intent: data.intent, params: data.params || {} };
+                },
+                onDataResult: (data) => {
+                  streamedDataDisplay = data.dataDisplay;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === placeholderId
+                        ? { ...m, dataDisplay: data.dataDisplay, status: 'success' as const }
+                        : m
+                    )
+                  );
+                },
+                onDone: (data) => {
+                  // Update conversation ID from server
+                  if (data.conversation_id && !conversationId) {
+                    setConversationId(data.conversation_id);
+                  }
+                  streamingMsgId.current = null;
+                },
+                onError: (message) => {
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === placeholderId
+                        ? { ...m, content: message || 'Something went wrong.', status: 'error' as const }
+                        : m
+                    )
+                  );
+                  streamingMsgId.current = null;
+                },
+              },
+              { conversationId: conversationId || undefined, surface: mode }
+            );
+
             const parsed = parseAIResponse(aiResponse);
 
             if (parsed) {
@@ -837,15 +957,14 @@ export function useAiChat(options?: AiChatOptions) {
                   role: 'assistant',
                   content: parsed.content,
                 });
-                addMessage('assistant', parsed.content, {
-                  status: 'success',
-                  dataDisplay: parsed.dataDisplay,
-                });
+                // Message already updated via onDelta + onDataResult
                 options?.onAssistantMessage?.(parsed.content);
                 return;
               }
 
               if (parsed.type === 'tool_use') {
+                // Remove the streaming placeholder for tool_use (action flow will add its own messages)
+                setMessages((prev) => prev.filter((m) => m.id !== placeholderId));
                 const resolvedParams = await resolveAIParams(parsed.intent, parsed.params);
                 conversationHistory.current.push({
                   role: 'assistant',
@@ -860,13 +979,31 @@ export function useAiChat(options?: AiChatOptions) {
                   role: 'assistant',
                   content: parsed.content,
                 });
-                addMessage('assistant', parsed.content);
+                // Message already updated via onDelta
                 options?.onAssistantMessage?.(parsed.content);
                 return;
               }
             }
+
+            // If we got content via streaming but parseAIResponse returned null (e.g., fallback)
+            if (streamedContent) {
+              conversationHistory.current.push({
+                role: 'assistant',
+                content: streamedContent,
+              });
+              options?.onAssistantMessage?.(streamedContent);
+              return;
+            }
+
+            // No useful response — remove placeholder
+            setMessages((prev) => prev.filter((m) => m.id !== placeholderId));
           } catch (err) {
             console.warn('[useAiChat] AI request failed, falling back to keyword:', err);
+            // Remove streaming placeholder on error
+            if (streamingMsgId.current) {
+              setMessages((prev) => prev.filter((m) => m.id !== streamingMsgId.current));
+              streamingMsgId.current = null;
+            }
             aiFailCount.current += 1;
             if (aiFailCount.current >= 3) {
               setAiAvailable(false);
@@ -936,6 +1073,7 @@ export function useAiChat(options?: AiChatOptions) {
     actions,
     pendingImage,
     setPendingImage,
+    conversationId,
 
     // Methods
     sendMessage,
@@ -944,6 +1082,7 @@ export function useAiChat(options?: AiChatOptions) {
     cancelFlow,
     confirmAction,
     cancelAction,
+    startNewConversation,
 
     // Vendor modal
     vendorModal: {

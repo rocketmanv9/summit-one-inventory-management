@@ -901,6 +901,23 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  // ── Semantic search ──────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'semantic_search',
+      description: 'Search items using natural language. Finds items by meaning, not just exact keyword match. Use this when the user describes an item by its properties, use case, or appearance rather than its exact name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Natural language description of what to search for' },
+          limit: { type: 'number', description: 'Max results (default 10)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+
   // ── Document extraction ───────────────────────────────────────────────
   {
     type: 'function',
@@ -914,6 +931,24 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
             type: 'string',
             description: 'Type of document (auto-detected if omitted)',
             enum: ['invoice', 'receipt', 'packing_slip', 'quote', 'sds'],
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  // ── Purchasing assistant (composite workflow) ───────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'purchasing_assistant',
+      description: 'Full purchasing workflow: detect items below reorder point, find preferred vendors, and group into draft purchase orders. Use when user asks about reordering, shortages, or wants to create POs for low stock.',
+      parameters: {
+        type: 'object',
+        properties: {
+          include_unassigned: {
+            type: 'boolean',
+            description: 'Include items without a preferred vendor (default true)',
           },
         },
         required: [],

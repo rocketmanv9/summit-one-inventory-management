@@ -51,7 +51,7 @@ const VALID_INTENTS: Set<string> = new Set([
   'query_po_status',
   // Dashboard & workflow tools
   'create_dashboard', 'workflow_auto_reorder', 'workflow_stock_rebalance',
-  'smart_stock_receive',
+  'smart_stock_receive', 'semantic_search', 'purchasing_assistant',
 ]);
 
 /**

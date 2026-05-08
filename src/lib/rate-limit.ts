@@ -57,6 +57,19 @@ export const readRateLimit = redis
   : null;
 
 /**
+ * AI chat rate limiter — protects OpenAI spend
+ * - 20 requests per minute per IP (sliding window)
+ */
+export const aiRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(20, '1 m'),
+      analytics: true,
+      prefix: 'ratelimit:ai',
+    })
+  : null;
+
+/**
  * Helper function to get client identifier (IP address)
  */
 export function getClientIdentifier(request: Request): string {

@@ -68,6 +68,8 @@ const SERVER_TOOLS = new Set([
   'list_pending_apparel_orders',
   'approve_apparel_order',
   'reject_apparel_order',
+  'semantic_search',
+  'purchasing_assistant',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -148,6 +150,10 @@ export async function executeServerTool(
       return approveApparelOrder(params, ctx);
     case 'reject_apparel_order':
       return rejectApparelOrder(params, ctx);
+    case 'semantic_search':
+      return semanticSearchItems(params, ctx);
+    case 'purchasing_assistant':
+      return purchasingAssistant(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -2871,6 +2877,174 @@ async function rejectApparelOrder(
       label: 'Order Rejected',
       value: resolvedId.slice(0, 8),
       secondaryMetrics: reason ? [{ label: 'Reason', value: reason }] : [],
+    },
+  };
+}
+
+// ─── Semantic Search ──────────────────────────────────────────────────
+
+async function semanticSearchItems(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const query = typeof params.query === 'string' ? params.query.trim() : '';
+  if (!query) {
+    return {
+      text: 'Please provide a search query.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No query provided' },
+    };
+  }
+
+  const limit = typeof params.limit === 'number' ? Math.min(params.limit, 50) : 10;
+
+  // Dynamically import to avoid top-level side effects
+  const { generateEmbedding } = await import('./embeddings');
+
+  const embedding = await generateEmbedding(query);
+  if (!embedding.length) {
+    return {
+      text: 'Failed to generate search embedding. Please try again.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Embedding generation failed' },
+    };
+  }
+
+  // Call the RPC for vector similarity search
+  const { data, error } = await inventorySchema(ctx.supabase)
+    .rpc('rpc_semantic_search_items', {
+      query_embedding: JSON.stringify(embedding),
+      match_tenant_id: ctx.tenantId,
+      match_count: limit,
+    });
+
+  if (error || !data) {
+    return {
+      text: `Semantic search failed: ${error?.message || 'No results'}`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Search failed' },
+    };
+  }
+
+  const rows = data as any[];
+  if (rows.length === 0) {
+    return {
+      text: `No items found matching "${query}". Items may not have embeddings generated yet.`,
+      dataDisplay: { displayType: 'metric', label: 'Semantic Search', value: '0 results' },
+    };
+  }
+
+  const formattedRows = rows.map((r: any) => ({
+    ...r,
+    similarity: `${(Number(r.similarity) * 100).toFixed(1)}%`,
+  }));
+
+  return {
+    text: `Found ${rows.length} item(s) matching "${query}": ${rows.slice(0, 5).map((r: any) => `${r.name} (${(Number(r.similarity) * 100).toFixed(1)}%)`).join(', ')}${rows.length > 5 ? '...' : ''}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'name', label: 'Item' },
+        { key: 'sku', label: 'SKU' },
+        { key: 'category_name', label: 'Category' },
+        { key: 'similarity', label: 'Match' },
+      ],
+      rows: formattedRows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Purchasing Assistant (composite workflow) ─────────────────────────
+
+async function purchasingAssistant(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const inv = inventorySchema(ctx.supabase);
+  const sc = supplyChainSchema(ctx.supabase);
+
+  // Step 1: Get reorder suggestions (items below reorder point)
+  const { data: reorderItems } = await inv.rpc('rpc_reorder_suggestions').limit(50);
+  const shortages = reorderItems || [];
+
+  if (shortages.length === 0) {
+    return {
+      text: 'No items currently need reordering. All stock levels are above their reorder points.',
+      dataDisplay: { displayType: 'metric', label: 'Reorder Status', value: 'All stocked' },
+    };
+  }
+
+  // Step 2: Get preferred vendors for short items
+  const { data: vendors } = await sc
+    .from('vendors')
+    .select('id, name, code, is_preferred')
+    .eq('status', 'active')
+    .limit(100);
+
+  const vendorMap = new Map<string, string>();
+  for (const v of (vendors || [])) {
+    vendorMap.set(v.id, v.name);
+  }
+
+  // Step 3: Group shortages by vendor for PO drafting
+  const poGroups: Record<string, Array<{ item_name: string; sku: string; qty_needed: number; current_qty: number; reorder_point: number }>> = {};
+  const unassigned: Array<{ item_name: string; sku: string; qty_needed: number }> = [];
+
+  for (const item of shortages) {
+    const vendorId = item.preferred_vendor_id;
+    const entry = {
+      item_name: item.item_name || item.name || 'Unknown',
+      sku: item.sku || '',
+      qty_needed: Math.max(1, (item.reorder_qty || item.reorder_point || 10) - (item.current_qty || 0)),
+      current_qty: item.current_qty || 0,
+      reorder_point: item.reorder_point || 0,
+    };
+
+    if (vendorId && vendorMap.has(vendorId)) {
+      const vendorName = vendorMap.get(vendorId)!;
+      if (!poGroups[vendorName]) poGroups[vendorName] = [];
+      poGroups[vendorName].push(entry);
+    } else {
+      unassigned.push(entry);
+    }
+  }
+
+  // Build summary text
+  const lines: string[] = [
+    `Found ${shortages.length} item(s) below reorder point.\n`,
+  ];
+
+  const rows: Record<string, any>[] = [];
+
+  for (const [vendorName, items] of Object.entries(poGroups)) {
+    lines.push(`**${vendorName}** — ${items.length} item(s):`);
+    for (const it of items) {
+      lines.push(`  • ${it.item_name} (${it.sku}): need ${it.qty_needed} units (current: ${it.current_qty})`);
+      rows.push({ vendor: vendorName, item: it.item_name, sku: it.sku, qty_needed: it.qty_needed, current_qty: it.current_qty });
+    }
+  }
+
+  if (unassigned.length > 0) {
+    lines.push(`\n**No preferred vendor** — ${unassigned.length} item(s):`);
+    for (const it of unassigned) {
+      lines.push(`  • ${it.item_name} (${it.sku}): need ${it.qty_needed} units`);
+      rows.push({ vendor: '(none)', item: it.item_name, sku: it.sku, qty_needed: it.qty_needed, current_qty: 0 });
+    }
+  }
+
+  lines.push(`\nI can draft purchase orders for the vendor-assigned items. Would you like me to proceed?`);
+
+  return {
+    text: lines.join('\n'),
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'vendor', label: 'Vendor' },
+        { key: 'item', label: 'Item' },
+        { key: 'sku', label: 'SKU' },
+        { key: 'qty_needed', label: 'Qty Needed' },
+        { key: 'current_qty', label: 'Current Qty' },
+      ],
+      rows,
+      totalRows: rows.length,
     },
   };
 }

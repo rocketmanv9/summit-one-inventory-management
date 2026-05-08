@@ -67,6 +67,8 @@ const WORKFLOW_INTENTS = new Set([
   'list_pending_apparel_orders',
   'approve_apparel_order',
   'reject_apparel_order',
+  'semantic_search',
+  'purchasing_assistant',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {
@@ -151,6 +153,8 @@ export interface Message {
   dataDisplay?: AiDataDisplay;
   /** Base64 data URL of an attached image */
   imageUrl?: string;
+  /** Confidence score (0–1) estimated from response content and tool results */
+  confidence?: number;
 }
 
 // ─── Active Flow ──────────────────────────────────────────────────────
