@@ -218,8 +218,8 @@ function parseBrandingPayload(data: unknown): TenantBranding | null {
 
   // Handle nested RPC response shapes
   const rpcPayload =
-    record.get_tenant_branding && typeof record.get_tenant_branding === 'object'
-      ? (record.get_tenant_branding as Record<string, unknown>)
+    record.get_public_branding && typeof record.get_public_branding === 'object'
+      ? (record.get_public_branding as Record<string, unknown>)
       : null;
   const nestedBranding =
     record.branding && typeof record.branding === 'object'
@@ -481,7 +481,7 @@ async function fetchBrandingFromCore(tenantId: string): Promise<TenantBranding |
   }
 
   try {
-    const res = await fetch(`${CORE_SUPABASE_URL}/rest/v1/rpc/get_tenant_branding`, {
+    const res = await fetch(`${CORE_SUPABASE_URL}/rest/v1/rpc/get_public_branding`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

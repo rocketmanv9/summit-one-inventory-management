@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
 import { useAiPanel } from '@/lib/ai/panel-store';
+import { useTenantBranding } from '@/lib/tenant-branding';
 
 export function TopNav() {
   const router = useRouter();
@@ -14,6 +15,7 @@ export function TopNav() {
   const [isMac, setIsMac] = useState(false);
   const [session, setSession] = useState<{ name: string; email: string; tenantId: string; role: string } | null>(null);
   const aiPanel = useAiPanel();
+  const { branding } = useTenantBranding();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,7 +45,7 @@ export function TopNav() {
 
   const userName = session?.name ?? 'Loading...';
   const userRole = session?.role ?? 'Loading...';
-  const tenantName = session?.name ?? 'Loading...';
+  const tenantName = branding.display_name || session?.name || 'Loading...';
   const tenantId = session?.tenantId ? session.tenantId.substring(0, 8) : '...';
 
   const handleLogout = async () => {
@@ -85,7 +87,7 @@ export function TopNav() {
             onClick={aiPanel.toggle}
             className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               aiPanel.isOpen
-                ? 'bg-blue-100 text-blue-700'
+                ? 'bg-primary/10 text-primary'
                 : 'hover:bg-muted text-muted-foreground hover:text-foreground'
             }`}
             aria-label="Toggle AI assistant"

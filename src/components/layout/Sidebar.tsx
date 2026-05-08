@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
+import { useTenantBranding } from '@/lib/tenant-branding';
 
 interface NavItem {
   title: string;
@@ -150,18 +151,31 @@ export function Sidebar() {
   const pathname = usePathname();
   const { session } = useSession();
   const isDeveloper = session?.isDeveloper === true;
+  const { branding } = useTenantBranding();
+
+  const logoUrl = branding.logo_asset_id
+    ? `${process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://hoizrypzbzmtorhknkxq.supabase.co'}/storage/v1/object/public/branding/${branding.logo_asset_id}`
+    : null;
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">
       {/* Logo */}
       <div className="flex h-16 items-center border-b border-sidebar-border px-6">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Package className="h-5 w-5 text-primary-foreground" />
-          </div>
+          {logoUrl ? (
+            <img
+              src={logoUrl}
+              alt={branding.display_name}
+              className="h-8 w-8 rounded-lg object-contain"
+            />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+              <Package className="h-5 w-5 text-primary-foreground" />
+            </div>
+          )}
           <div>
             <h1 className="text-sm font-semibold text-sidebar-foreground">
-              Summit One
+              {branding.display_name}
             </h1>
             <p className="text-xs text-muted-foreground">Inventory</p>
           </div>
