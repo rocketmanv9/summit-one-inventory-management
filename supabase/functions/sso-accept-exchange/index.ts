@@ -96,10 +96,26 @@ serve(async (req) => {
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .sign(secret);
 
+    // Generate a distinct refresh token with longer expiry
+    const refreshPayload = {
+      sub: user_id,
+      email,
+      tenant_id,
+      aud: "authenticated",
+      role: "authenticated",
+      type: "refresh",
+      session_id: crypto.randomUUID(),
+      iat: now,
+      exp: now + 60 * 60 * 24 * 30, // 30 days
+    };
+    const refresh_token = await new jose.SignJWT(refreshPayload)
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .sign(secret);
+
     return new Response(
       JSON.stringify({
         access_token,
-        refresh_token: access_token,
+        refresh_token,
         user: {
           id: user_id,
           email,

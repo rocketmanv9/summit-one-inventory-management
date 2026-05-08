@@ -64,6 +64,9 @@ const WORKFLOW_INTENTS = new Set([
   'query_asset_value',
   'draft_purchase_request',
   'extract_document',
+  'list_pending_apparel_orders',
+  'approve_apparel_order',
+  'reject_apparel_order',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {

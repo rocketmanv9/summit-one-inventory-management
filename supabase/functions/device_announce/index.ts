@@ -28,9 +28,27 @@ const CLAIM_TTL_SECONDS = 120
 const CLAIM_CODE_LENGTH = 8
 const CLAIM_CODE_GROUP = 4
 
+/**
+ * Shared endpoint secret — must be set in Edge Function secrets.
+ * Devices include this in the X-Device-Announce-Key header.
+ * This prevents unauthenticated registration from the open internet.
+ */
+const ANNOUNCE_SECRET = Deno.env.get('DEVICE_ANNOUNCE_SECRET')
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 })
+  }
+
+  // Endpoint-level auth: reject requests without the shared announce key
+  if (ANNOUNCE_SECRET) {
+    const provided = req.headers.get('x-device-announce-key')
+    if (provided !== ANNOUNCE_SECRET) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid or missing X-Device-Announce-Key header' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')

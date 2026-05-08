@@ -852,6 +852,55 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  // ── Apparel / uniform management ──────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'list_pending_apparel_orders',
+      description: 'List pending apparel/uniform orders awaiting approval. Shows sizes, quantities, estimated cost, and trigger event. Use when managers ask about shirt orders, uniform orders, or pending approvals.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            description: 'Filter by status (default: pending_approval)',
+            enum: ['pending_approval', 'approved', 'rejected', 'ordered', 'in_production', 'shipped', 'fulfilled', 'failed', 'canceled'],
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'approve_apparel_order',
+      description: 'Approve a pending apparel/uniform order and place it with Printful. This creates and confirms the print order. Use when a manager says "approve" for a pending shirt order.',
+      parameters: {
+        type: 'object',
+        properties: {
+          order_id: { type: 'string', description: 'ID of the apparel order to approve' },
+        },
+        required: ['order_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'reject_apparel_order',
+      description: 'Reject a pending apparel/uniform order with an optional reason. Use when a manager declines a shirt order.',
+      parameters: {
+        type: 'object',
+        properties: {
+          order_id: { type: 'string', description: 'ID of the apparel order to reject' },
+          reason: { type: 'string', description: 'Reason for rejection' },
+        },
+        required: ['order_id'],
+      },
+    },
+  },
+
   // ── Document extraction ───────────────────────────────────────────────
   {
     type: 'function',

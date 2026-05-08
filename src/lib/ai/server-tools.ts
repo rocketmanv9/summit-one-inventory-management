@@ -65,6 +65,9 @@ const SERVER_TOOLS = new Set([
   'query_asset_value',
   'draft_purchase_request',
   'extract_document',
+  'list_pending_apparel_orders',
+  'approve_apparel_order',
+  'reject_apparel_order',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -139,6 +142,12 @@ export async function executeServerTool(
       return draftPurchaseRequest(params, ctx);
     case 'extract_document':
       return extractDocument(params, ctx);
+    case 'list_pending_apparel_orders':
+      return listPendingApparelOrders(params, ctx);
+    case 'approve_apparel_order':
+      return approveApparelOrder(params, ctx);
+    case 'reject_apparel_order':
+      return rejectApparelOrder(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -2649,3 +2658,220 @@ async function extractDocument(
     },
   };
 }
+
+// ─── List Pending Apparel Orders ────────────────────────────────────
+
+async function listPendingApparelOrders(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const status = typeof params.status === 'string' ? params.status : 'pending_approval';
+
+  const { data: orders, error } = await inventorySchema(ctx.supabase)
+    .from('apparel_orders')
+    .select('id, status, trigger_event, items, total_estimated_cost, notes, created_at')
+    .eq('status', status)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    return {
+      text: `Failed to query apparel orders: ${error.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' },
+    };
+  }
+
+  if (!orders?.length) {
+    return {
+      text: `No apparel orders with status "${status}".`,
+      dataDisplay: { displayType: 'metric', label: 'Apparel Orders', value: '0' },
+    };
+  }
+
+  const rows = orders.map((o: any) => {
+    const items = (o.items || []) as any[];
+    const sizes = items.map((i: any) => `${i.size}×${i.quantity}`).join(', ');
+    return {
+      id: o.id.slice(0, 8),
+      full_id: o.id,
+      status: o.status,
+      sizes,
+      est_cost: o.total_estimated_cost ? formatCurrency(o.total_estimated_cost) : 'TBD',
+      trigger: o.trigger_event || 'manual',
+      created: new Date(o.created_at).toLocaleDateString(),
+    };
+  });
+
+  return {
+    text: `Found ${rows.length} apparel order${rows.length === 1 ? '' : 's'} with status "${status}". ${rows.map((r: any) => `${r.id}: ${r.sizes} (${r.est_cost})`).join('; ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'id', label: 'Order' },
+        { key: 'sizes', label: 'Sizes & Qty' },
+        { key: 'est_cost', label: 'Est. Cost' },
+        { key: 'trigger', label: 'Trigger' },
+        { key: 'created', label: 'Created' },
+        { key: 'status', label: 'Status' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Approve Apparel Order ──────────────────────────────────────────
+
+async function approveApparelOrder(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const orderId = typeof params.order_id === 'string' ? params.order_id.trim() : '';
+  if (!orderId) {
+    return {
+      text: 'Please specify the order ID to approve.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing order_id' },
+    };
+  }
+
+  // Resolve short IDs by prefix match
+  let resolvedId = orderId;
+  if (orderId.length < 36) {
+    const { data: matches } = await inventorySchema(ctx.supabase)
+      .from('apparel_orders')
+      .select('id')
+      .eq('status', 'pending_approval')
+      .limit(20);
+    const match = (matches || []).find((m: any) => m.id.startsWith(orderId));
+    if (match) resolvedId = match.id;
+  }
+
+  // Mark as approved
+  const { data: order, error: approveErr } = await inventorySchema(ctx.supabase)
+    .from('apparel_orders')
+    .update({
+      status: 'approved',
+      approved_by: ctx.userId,
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', resolvedId)
+    .eq('status', 'pending_approval')
+    .select()
+    .single();
+
+  if (approveErr || !order) {
+    return {
+      text: `Could not approve order "${orderId}". It may not exist or is not pending approval.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Approve failed' },
+    };
+  }
+
+  // Place the Printful order via the internal route
+  try {
+    const idempotencyKey = `apparel-approve-${resolvedId}-${Date.now()}`;
+    const res = await fetch(`${ctx.baseUrl}/api/integrations/printful/order`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({ apparel_order_id: resolvedId }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+      return {
+        text: `Order approved but Printful placement failed: ${err.error || res.statusText}. The order is marked approved — retry later.`,
+        dataDisplay: { displayType: 'metric', label: 'Partially Approved', value: resolvedId.slice(0, 8) },
+      };
+    }
+
+    const result = await res.json();
+    const d = result.data;
+
+    const items = (order.items || []) as any[];
+    const sizes = items.map((i: any) => `${i.size}×${i.quantity}`).join(', ');
+
+    return {
+      text: `Order approved and placed with Printful! Printful order #${d.printful_order_id}, status: ${d.printful_status}. Sizes: ${sizes}. Estimated cost: ${d.estimated_cost || 'TBD'}. I'll update you when it ships.`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Order Placed',
+        value: `Printful #${d.printful_order_id}`,
+        secondaryMetrics: [
+          { label: 'Sizes', value: sizes },
+          { label: 'Est. Cost', value: d.estimated_cost || 'TBD' },
+          { label: 'Status', value: d.printful_status },
+        ],
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Order approved but Printful placement failed: ${err.message}. The order is marked approved — retry later.`,
+      dataDisplay: { displayType: 'metric', label: 'Partially Approved', value: resolvedId.slice(0, 8) },
+    };
+  }
+}
+
+// ─── Reject Apparel Order ───────────────────────────────────────────
+
+async function rejectApparelOrder(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const orderId = typeof params.order_id === 'string' ? params.order_id.trim() : '';
+  if (!orderId) {
+    return {
+      text: 'Please specify the order ID to reject.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing order_id' },
+    };
+  }
+
+  const reason = typeof params.reason === 'string' ? params.reason.trim() : '';
+
+  // Resolve short IDs
+  let resolvedId = orderId;
+  if (orderId.length < 36) {
+    const { data: matches } = await inventorySchema(ctx.supabase)
+      .from('apparel_orders')
+      .select('id')
+      .eq('status', 'pending_approval')
+      .limit(20);
+    const match = (matches || []).find((m: any) => m.id.startsWith(orderId));
+    if (match) resolvedId = match.id;
+  }
+
+  const { data: order, error } = await inventorySchema(ctx.supabase)
+    .from('apparel_orders')
+    .update({
+      status: 'rejected',
+      rejected_by: ctx.userId,
+      rejected_at: new Date().toISOString(),
+      rejection_reason: reason || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', resolvedId)
+    .eq('status', 'pending_approval')
+    .select()
+    .single();
+
+  if (error || !order) {
+    return {
+      text: `Could not reject order "${orderId}". It may not exist or is not pending approval.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Reject failed' },
+    };
+  }
+
+  return {
+    text: `Apparel order ${resolvedId.slice(0, 8)} rejected${reason ? `: "${reason}"` : ''}.`,
+    dataDisplay: {
+      displayType: 'metric',
+      label: 'Order Rejected',
+      value: resolvedId.slice(0, 8),
+      secondaryMetrics: reason ? [{ label: 'Reason', value: reason }] : [],
+    },
+  };
+}
+
