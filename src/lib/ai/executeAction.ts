@@ -21,6 +21,7 @@ function intentToTitle(intent: IntentType): string {
     update_item: 'Update Catalog Item',
     delete_item: 'Delete Catalog Item',
     adjust_stock: 'Adjust Stock Balance',
+    adjust_stock_delta: 'Adjust Stock (Add/Remove)',
     update_stock: 'Adjust Stock Balance',
     issue_inventory: 'Issue Inventory',
     create_po: 'Create Purchase Order',

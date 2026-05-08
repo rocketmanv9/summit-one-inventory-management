@@ -21,6 +21,17 @@ import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import type { Message, ActiveFlow, ChatAction, AiChatOptions } from './types';
 import { classifyIntent } from './types';
 import { buildActionPreview, executeAction } from './executeAction';
+import { isFuzzyConfirm, isFuzzyCancel } from './fuzzy-confirm';
+import { TOOL_GOVERNANCE } from './tool-governance';
+import { detectCorrection } from './correction-detect';
+import {
+  startFlowMetric,
+  recordQuestion,
+  recordAutoFill,
+  recordCorrection,
+  completeMetric,
+  type FlowMetric,
+} from './friction-metrics';
 
 // ─── AI param → action field resolution ────────────────────────────────
 
@@ -37,6 +48,13 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
     location: { actionField: 'location_id', entityType: 'location' },
     quantity: { actionField: 'new_qty' },
     reason:   { actionField: 'reason' },
+  },
+  adjust_stock_delta: {
+    item:     { actionField: 'catalog_item_id', entityType: 'item' },
+    location: { actionField: 'location_id', entityType: 'location' },
+    delta:    { actionField: 'delta' },
+    reason:   { actionField: 'reason' },
+    notes:    { actionField: 'notes' },
   },
   check_stock: {
     item: { actionField: 'catalog_item_id', entityType: 'item' },
@@ -90,9 +108,11 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
 };
 
 const SMART_DEFAULTS: Partial<Record<IntentType, Record<string, string>>> = {
-  adjust_stock:    { reason: 'other' },
-  issue_inventory: { issued_to_type: 'other' },
-  add_item:        { tracking_mode: 'fungible' },
+  adjust_stock:       { reason: 'other' },
+  adjust_stock_delta: { reason: 'other' },
+  issue_inventory:    { issued_to_type: 'other' },
+  add_item:           { tracking_mode: 'fungible', unit_of_measure: 'each' },
+  create_reservation: { allocation_type: 'other' },
 };
 
 function fuzzyMatch(
@@ -119,9 +139,19 @@ function fuzzyMatch(
   return undefined;
 }
 
+function inferReasonCode(text: string): string {
+  const t = text.toLowerCase();
+  if (/\b(lost|missing|gone|can'?t find|disappeared)\b/.test(t)) return 'theft';
+  if (/\b(damag\w*|broke\w*|ruined|defective)\b/.test(t)) return 'damage';
+  if (/\b(expir\w*|past date|shelf life|stale)\b/.test(t)) return 'expiration';
+  if (/\b(count\b|physical count|cycle count|actual\b|shows)\b/.test(t)) return 'count_variance';
+  return 'other';
+}
+
 async function resolveAIParams(
   intent: IntentType,
-  aiParams: Record<string, string>
+  aiParams: Record<string, string>,
+  originalText?: string
 ): Promise<Record<string, string>> {
   const mapping = AI_PARAM_MAP[intent];
   if (!mapping) return { ...aiParams };
@@ -171,6 +201,15 @@ async function resolveAIParams(
     }
   }
 
+  // Infer reason code from the user's original message when not explicitly provided
+  if (
+    (intent === 'adjust_stock' || intent === 'adjust_stock_delta') &&
+    !resolved.reason &&
+    originalText
+  ) {
+    resolved.reason = inferReasonCode(originalText);
+  }
+
   return resolved;
 }
 
@@ -215,6 +254,9 @@ export function useAiChat(options?: AiChatOptions) {
   const conversationHistory = useRef<ChatMessage[]>([]);
   const activeActionId = useRef<string | null>(null);
   const streamingMsgId = useRef<string | null>(null);
+  const lastCancelledFlow = useRef<ActiveFlow | null>(null);
+  const lastFlowParams = useRef<{ intent: IntentType; params: Record<string, string> } | null>(null);
+  const flowMetric = useRef<FlowMetric | null>(null);
 
   // ── Load conversation from localStorage on mount ──────────────────
   useEffect(() => {
@@ -323,7 +365,11 @@ export function useAiChat(options?: AiChatOptions) {
       while (currentStepIndex < action.steps.length) {
         const step = action.steps[currentStepIndex];
         if (step.type === 'confirm') break;
-        if (!collectedParams[step.field]) break;
+        if (!collectedParams[step.field]) {
+          if (step.required) break;       // required field missing — stop and ask
+          currentStepIndex++;             // optional field — auto-skip
+          continue;
+        }
         currentStepIndex++;
       }
 
@@ -339,6 +385,15 @@ export function useAiChat(options?: AiChatOptions) {
         try {
           const result = await action.execute(collectedParams);
           setActiveFlow(null);
+
+          // Sprint 5: Store last successful flow params for carry-forward
+          lastFlowParams.current = { intent: action.intent, params: { ...collectedParams } };
+
+          // Sprint 6: Complete metric on success
+          if (flowMetric.current) {
+            completeMetric(flowMetric.current, 'completed');
+            flowMetric.current = null;
+          }
 
           // Update tracked action status if this was a confirmed proposed action
           if (activeActionId.current) {
@@ -358,7 +413,38 @@ export function useAiChat(options?: AiChatOptions) {
             navigateTo: result.navigateTo,
           });
         } catch (err: any) {
+          const errorMsg = err.message || 'Unknown error';
+
+          // Sprint 4: Check for recoverable "not found" errors
+          const notFoundMatch = errorMsg.match(/(?:Item|Location|Vendor)\s+"([^"]+)"\s+not found/i);
+          if (notFoundMatch) {
+            const badValue = notFoundMatch[1].toLowerCase();
+            for (let i = 0; i < flow.currentStepIndex; i++) {
+              const step = flow.action.steps[i];
+              const collected = flow.collectedParams[step.field]?.toLowerCase();
+              if (collected && (collected.includes(badValue) || badValue.includes(collected))) {
+                const retryFlow: ActiveFlow = {
+                  ...flow,
+                  currentStepIndex: i,
+                  collectedParams: { ...flow.collectedParams },
+                };
+                delete retryFlow.collectedParams[step.field];
+                setActiveFlow(retryFlow);
+                addMessage('assistant', `${errorMsg}. Let's try again — ${step.prompt}`, { status: 'error' });
+                setIsLoading(false);
+                return;
+              }
+            }
+          }
+
+          // Non-recoverable: clear flow and report
           setActiveFlow(null);
+
+          // Sprint 6: Complete metric on failure
+          if (flowMetric.current) {
+            completeMetric(flowMetric.current, 'failed');
+            flowMetric.current = null;
+          }
 
           // Update tracked action status on error
           if (activeActionId.current) {
@@ -367,7 +453,7 @@ export function useAiChat(options?: AiChatOptions) {
             setActions((prev) =>
               prev.map((a) =>
                 a.id === aid
-                  ? { ...a, status: 'failed' as const, result: { success: false, message: err.message || 'Unknown error' } }
+                  ? { ...a, status: 'failed' as const, result: { success: false, message: errorMsg } }
                   : a
               )
             );
@@ -375,7 +461,7 @@ export function useAiChat(options?: AiChatOptions) {
 
           addMessage(
             'assistant',
-            `Something went wrong: ${err.message || 'Unknown error'}`,
+            `Something went wrong: ${errorMsg}`,
             { status: 'error' }
           );
         } finally {
@@ -392,6 +478,9 @@ export function useAiChat(options?: AiChatOptions) {
         return;
       }
 
+      // Sprint 6: Record question asked
+      if (flowMetric.current) recordQuestion(flowMetric.current);
+
       addMessage('assistant', step.prompt, {
         selectOptions:
           step.type === 'select' && step.options ? step.options : undefined,
@@ -404,11 +493,26 @@ export function useAiChat(options?: AiChatOptions) {
 
   const handleFlowInput = useCallback(
     async (userInput: string, flow: ActiveFlow) => {
+      // Sprint 3: Detect mid-flow corrections ("actually make it 90", "I meant Portland")
+      const correction = detectCorrection(userInput, flow);
+      if (correction) {
+        if (flowMetric.current) recordCorrection(flowMetric.current);
+        const updatedFlow: ActiveFlow = {
+          ...flow,
+          collectedParams: { ...flow.collectedParams, [correction.field]: correction.value },
+        };
+        setActiveFlow(updatedFlow);
+        addMessage(
+          'assistant',
+          `Updated ${correction.fieldLabel} to "${correction.value}". ${flow.action.steps[flow.currentStepIndex].prompt}`
+        );
+        return;
+      }
+
       const step = flow.action.steps[flow.currentStepIndex];
 
       if (step.type === 'confirm') {
-        const lower = userInput.toLowerCase().trim();
-        if (lower === 'yes' || lower === 'y' || lower === 'confirm') {
+        if (isFuzzyConfirm(userInput)) {
           const nextFlow: ActiveFlow = {
             ...flow,
             currentStepIndex: flow.currentStepIndex + 1,
@@ -416,9 +520,14 @@ export function useAiChat(options?: AiChatOptions) {
           setActiveFlow(nextFlow);
           await advanceFlow(nextFlow);
           return;
-        } else {
+        } else if (isFuzzyCancel(userInput)) {
+          lastCancelledFlow.current = flow;
           setActiveFlow(null);
+          if (flowMetric.current) { completeMetric(flowMetric.current, 'cancelled'); flowMetric.current = null; }
           addMessage('assistant', 'Cancelled. What else can I help with?');
+          return;
+        } else {
+          addMessage('assistant', 'I didn\'t catch that — type "yes" to confirm or "no" to cancel.');
           return;
         }
       }
@@ -470,6 +579,7 @@ export function useAiChat(options?: AiChatOptions) {
     extractedParams: Record<string, string>,
     text: string
   ) => {
+    lastCancelledFlow.current = null;
     // Handle navigation
     if (intentType === 'navigate') {
       const path = resolveNavigation(text);
@@ -537,33 +647,65 @@ export function useAiChat(options?: AiChatOptions) {
         }
       }
 
+      // Sprint 5: Carry forward contextual fields from last successful same-intent flow
+      const CARRY_FORWARD_FIELDS: Record<string, string[]> = {
+        adjust_stock:       ['location_id', 'reason'],
+        adjust_stock_delta: ['location_id', 'reason'],
+        issue_inventory:    ['location_id', 'issued_to_type', 'issued_to_ref'],
+        create_transfer:    ['from_location_id', 'to_location_id'],
+      };
+
+      if (lastFlowParams.current?.intent === intentType) {
+        const carryFields = CARRY_FORWARD_FIELDS[intentType];
+        if (carryFields) {
+          for (const field of carryFields) {
+            if (!mergedParams[field] && lastFlowParams.current.params[field]) {
+              mergedParams[field] = lastFlowParams.current.params[field];
+            }
+          }
+        }
+      }
+
       // Check if all required non-confirm steps have values
       const allRequiredFilled = actionDef.steps.every(
         (s) => s.type === 'confirm' || !s.required || !!mergedParams[s.field]
       );
 
       if (allRequiredFilled) {
-        // Auto-execute immediately — no preview card, no step flow, no confirm
-        const execMsg = addMessage('assistant', `On it...`, { status: 'executing' });
-        try {
-          const result = await actionDef.execute(mergedParams);
-          setMessages((prev) =>
-            prev.map((m) => m.id === execMsg.id
-              ? { ...m, content: result.message, status: result.success ? 'success' : 'error', navigateTo: result.navigateTo }
-              : m
-            )
-          );
-        } catch (err: any) {
-          setMessages((prev) =>
-            prev.map((m) => m.id === execMsg.id
-              ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
-              : m
-            )
-          );
-        } finally {
-          setIsLoading(false);
+        // Check governance: high-risk tools always go through confirmation flow
+        const governance = TOOL_GOVERNANCE[intentType];
+        if (governance?.requiresConfirmation) {
+          // Fall through to step flow (confirmation will be shown)
+        } else {
+          // Auto-execute immediately — no preview card, no step flow, no confirm
+          // Sprint 6: Track auto-executed flow
+          const metric = startFlowMetric(intentType, actionDef.steps.length);
+          metric.wasAutoExecuted = true;
+
+          const execMsg = addMessage('assistant', `On it...`, { status: 'executing' });
+          try {
+            const result = await actionDef.execute(mergedParams);
+            lastFlowParams.current = { intent: intentType, params: { ...mergedParams } };
+            completeMetric(metric, 'completed');
+            setMessages((prev) =>
+              prev.map((m) => m.id === execMsg.id
+                ? { ...m, content: result.message, status: result.success ? 'success' : 'error', navigateTo: result.navigateTo }
+                : m
+              )
+            );
+          } catch (err: any) {
+            completeMetric(metric, 'failed');
+            setMessages((prev) =>
+              prev.map((m) => m.id === execMsg.id
+                ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
+                : m
+              )
+            );
+          } finally {
+            setIsLoading(false);
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -614,6 +756,24 @@ export function useAiChat(options?: AiChatOptions) {
     // Multi-step flow: start it
     const collectedParams: Record<string, string> = { ...extractedParams };
 
+    // Sprint 5: Carry forward for step-flow path too
+    if (lastFlowParams.current?.intent === intentType) {
+      const carryFields: Record<string, string[]> = {
+        adjust_stock:       ['location_id', 'reason'],
+        adjust_stock_delta: ['location_id', 'reason'],
+        issue_inventory:    ['location_id', 'issued_to_type', 'issued_to_ref'],
+        create_transfer:    ['from_location_id', 'to_location_id'],
+      };
+      const fields = carryFields[intentType];
+      if (fields) {
+        for (const field of fields) {
+          if (!collectedParams[field] && lastFlowParams.current.params[field]) {
+            collectedParams[field] = lastFlowParams.current.params[field];
+          }
+        }
+      }
+    }
+
     let startStep = actionDef.steps.length;
     for (let i = 0; i < actionDef.steps.length; i++) {
       const step = actionDef.steps[i];
@@ -622,10 +782,17 @@ export function useAiChat(options?: AiChatOptions) {
         break;
       }
       if (!collectedParams[step.field]) {
-        startStep = i;
-        break;
+        if (step.required) {
+          startStep = i;
+          break;
+        }
+        // Optional field without value — skip it
+        continue;
       }
     }
+
+    // Sprint 6: Start flow metric
+    flowMetric.current = startFlowMetric(intentType, actionDef.steps.length);
 
     const flow: ActiveFlow = {
       action: actionDef,
@@ -819,6 +986,7 @@ export function useAiChat(options?: AiChatOptions) {
       );
     }
     setActiveFlow(null);
+    if (flowMetric.current) { completeMetric(flowMetric.current, 'cancelled'); flowMetric.current = null; }
     addMessage('assistant', 'Cancelled. What else can I help with?');
   }, [addMessage]);
 
@@ -855,10 +1023,23 @@ export function useAiChat(options?: AiChatOptions) {
             );
           }
           setActiveFlow(null);
+          if (flowMetric.current) { completeMetric(flowMetric.current, 'cancelled'); flowMetric.current = null; }
           addMessage('assistant', 'Cancelled. What else can I help with?');
         } else {
           addMessage('assistant', "Nothing to cancel. What would you like to do?");
         }
+        return;
+      }
+
+      // Check for "I meant yes" restoration of cancelled flows
+      const RESTORE_RE = /^(i meant (yes|confirm)|actually (yes|confirm|do it)|wait,?\s*yes|oops,?\s*yes)/i;
+      if (text && RESTORE_RE.test(text.trim()) && lastCancelledFlow.current) {
+        const restored = lastCancelledFlow.current;
+        lastCancelledFlow.current = null;
+        const nextFlow = { ...restored, currentStepIndex: restored.currentStepIndex + 1 };
+        setActiveFlow(nextFlow);
+        addMessage('assistant', 'Got it — restoring the previous action.');
+        await advanceFlow(nextFlow);
         return;
       }
 
@@ -965,7 +1146,7 @@ export function useAiChat(options?: AiChatOptions) {
               if (parsed.type === 'tool_use') {
                 // Remove the streaming placeholder for tool_use (action flow will add its own messages)
                 setMessages((prev) => prev.filter((m) => m.id !== placeholderId));
-                const resolvedParams = await resolveAIParams(parsed.intent, parsed.params);
+                const resolvedParams = await resolveAIParams(parsed.intent, parsed.params, text);
                 conversationHistory.current.push({
                   role: 'assistant',
                   content: `[Action: ${parsed.intent}]`,

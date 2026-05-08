@@ -36,7 +36,16 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
   const loadSummary = async () => {
     try {
       const data = await InventoryRPC.getInventorySummary();
-      setSummary(data);
+      // Map materialized view fields to widget-expected fields
+      setSummary({
+        total_items: Number(data.total_items) || 0,
+        total_qty_on_hand: Number(data.total_qty_on_hand) || 0,
+        total_qty_reserved: Number(data.total_qty_reserved) || 0,
+        total_qty_available: Number(data.total_qty_available) || 0,
+        low_stock_count: Number(data.low_stock_count ?? data.negative_balance_count) || 0,
+        out_of_stock_count: Number(data.out_of_stock_count ?? data.zero_balance_count) || 0,
+        total_locations: Number(data.total_locations) || 0,
+      });
       setError('');
     } catch (err: any) {
       setError(err.message);

@@ -344,9 +344,17 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             }
           }
 
+          // Auto-generate SKU if not provided
+          let sku = params.sku || '';
+          if (!sku) {
+            const prefix = params.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
+            const suffix = Date.now().toString(36).slice(-4).toUpperCase();
+            sku = `${prefix}-${suffix}`;
+          }
+
           const result = await InventoryRPC.createCatalogItem({
             name: params.name,
-            sku: '',
+            sku,
             description: params.description || null,
             category_id: categoryId,
             unit_of_measure: params.unit_of_measure || null,
@@ -539,6 +547,109 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           return {
             success: true,
             message: `Stock adjusted for "${item.name}" at ${loc.name}! Old: ${result.current_qty} → New: ${result.new_qty} (delta: ${delta > 0 ? '+' : ''}${delta})`,
+            data: result,
+          };
+        },
+      };
+    }
+
+    // ── Adjust Stock Delta ─────────────────────────────────────────
+    case 'adjust_stock_delta': {
+      const deltaItemOpts = await loadItemOptions();
+      const deltaLocOpts = await loadLocationOptions();
+      return {
+        intent: 'adjust_stock_delta',
+        description: 'Adjust stock by adding or removing quantity',
+        steps: [
+          {
+            field: 'catalog_item_id',
+            prompt: 'Which item?',
+            type: 'select',
+            required: true,
+            options: deltaItemOpts,
+          },
+          {
+            field: 'location_id',
+            prompt: 'At which location?',
+            type: 'select',
+            required: true,
+            options: deltaLocOpts,
+          },
+          {
+            field: 'delta',
+            prompt: 'How many to add or remove? (use negative for removal, e.g. -10)',
+            type: 'number',
+            required: true,
+            validate: (v) => {
+              const n = Number(v);
+              if (isNaN(n) || n === 0) return 'Please enter a non-zero number (positive to add, negative to subtract)';
+              return null;
+            },
+          },
+          {
+            field: 'reason',
+            prompt: 'Reason for the adjustment?',
+            type: 'select',
+            required: true,
+            options: [
+              { label: 'Count Variance', value: 'count_variance' },
+              { label: 'Damage', value: 'damage' },
+              { label: 'Theft', value: 'theft' },
+              { label: 'Expiration', value: 'expiration' },
+              { label: 'Other', value: 'other' },
+            ],
+          },
+          {
+            field: 'notes',
+            prompt: 'Any notes? (optional, press Enter to skip)',
+            type: 'text',
+            required: false,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const item = await resolveItemId(params.catalog_item_id);
+          const loc = await resolveLocationId(params.location_id);
+          const delta = Number(params.delta);
+          const reason = resolveEnum(params.reason, ['count_variance', 'damage', 'theft', 'expiration', 'other'], 'other') as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other';
+
+          // Fetch current balance
+          const balances = await InventoryRPC.getStockBalances({
+            catalog_item_id: item.id,
+            location_id: loc.id,
+          });
+          const currentQty = balances?.[0]?.qty_on_hand ?? 0;
+          const newQty = currentQty + delta;
+
+          if (newQty < 0) {
+            return {
+              success: false,
+              message: `Cannot adjust: ${item.name} at ${loc.name} has ${currentQty} on hand. Removing ${Math.abs(delta)} would result in ${newQty} (negative).`,
+            };
+          }
+
+          const result = await InventoryRPC.adjustInventory({
+            location_id: loc.id,
+            catalog_item_id: item.id,
+            new_qty: newQty,
+            reason,
+            notes: params.notes || `Delta adjustment (${delta > 0 ? '+' : ''}${delta}) via chat assistant`,
+          });
+
+          if (!result.success && result.error) {
+            return { success: false, message: result.error.message, data: result.error };
+          }
+
+          const sign = delta > 0 ? '+' : '\u2212';
+          const absDelta = Math.abs(delta);
+          return {
+            success: true,
+            message: `${item.name} at ${loc.name}: ${currentQty} ${sign} ${absDelta} = ${newQty} \u2713`,
             data: result,
           };
         },

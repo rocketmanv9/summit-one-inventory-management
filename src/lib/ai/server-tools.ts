@@ -807,8 +807,16 @@ async function addDashboardWidget(
     };
   }
 
+  // Read-after-write: verify widget was added
+  const { data: verifyWidgets } = await ctx.supabase
+    .from('dashboard_widgets')
+    .select('id')
+    .eq('dashboard_id', dashboard.id)
+    .is('deleted_at', null);
+  const widgetCount = verifyWidgets?.length || 0;
+
   return {
-    text: `Added "${widget.name}" widget to dashboard "${dashboard.name}".`,
+    text: `Added "${widget.name}" widget to dashboard "${dashboard.name}" (now ${widgetCount} widget${widgetCount !== 1 ? 's' : ''}).`,
     dataDisplay: {
       displayType: 'dashboard_link',
       dashboardId: dashboard.id,
@@ -887,8 +895,16 @@ async function removeDashboardWidget(
     };
   }
 
+  // Read-after-write: verify widget was removed
+  const { data: remainingWidgets } = await ctx.supabase
+    .from('dashboard_widgets')
+    .select('id')
+    .eq('dashboard_id', dashboard.id)
+    .is('deleted_at', null);
+  const remainingCount = remainingWidgets?.length || 0;
+
   return {
-    text: `Removed "${match.title || match.widget_key}" from dashboard "${dashboard.name}".`,
+    text: `Removed "${match.title || match.widget_key}" from dashboard "${dashboard.name}" (${remainingCount} widget${remainingCount !== 1 ? 's' : ''} remaining).`,
     dataDisplay: {
       displayType: 'dashboard_link',
       dashboardId: dashboard.id,
@@ -1359,9 +1375,12 @@ async function smartAddLocation(
     .single();
 
   if (error) {
+    const userMsg = error.code === '23505'
+      ? `A location named "${params.name}" already exists.`
+      : `Failed to create location: ${error.message}`;
     return {
-      text: `Failed to create location: ${error.message}`,
-      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
+      text: userMsg,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: error.code === '23505' ? 'Already exists' : error.message },
     };
   }
 
@@ -1399,7 +1418,8 @@ async function smartRegisterAsset(
   const description = typeof params.description === 'string' ? params.description.trim() : '';
   const locationHint = typeof params.location === 'string' ? params.location.trim() : '';
   const serialNumber = typeof params.serial_number === 'string' ? params.serial_number.trim() : '';
-  let assetTag = typeof params.asset_tag === 'string' ? params.asset_tag.trim() : '';
+  const assetTag = typeof params.asset_tag === 'string' ? params.asset_tag.trim() : '';
+  const quantity = Math.min(Math.max(Number(params.quantity) || 1, 1), 20);
 
   // 1. Find or create catalog item with tracking_mode='serialized'
   const nameLower = name.toLowerCase();
@@ -1481,48 +1501,62 @@ async function smartRegisterAsset(
     }
   }
 
-  // 3. Auto-generate asset tag if not provided
-  if (!assetTag) {
-    const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
-    assetTag = `AST-${rand}`;
-  }
+  // 3. Create asset(s)
+  const createdAssets: Array<{ tag: string; serial?: string }> = [];
 
-  // 4. Create the asset record
-  const assetData: Record<string, any> = {
-    asset_tag: assetTag,
-    catalog_item_id: catalogItemId,
-    tenant_id: ctx.tenantId,
-    status: 'available',
-  };
-  if (locationId) assetData.location_id = locationId;
-  if (serialNumber) assetData.serial_number = serialNumber;
+  for (let i = 0; i < quantity; i++) {
+    const tag = assetTag && quantity === 1
+      ? assetTag
+      : `AST-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  const { data: asset, error: assetError } = await inventorySchema(ctx.supabase)
-    .from('assets')
-    .upsert(assetData, { onConflict: 'tenant_id,asset_tag' })
-    .select('id, asset_tag, serial_number')
-    .single();
-
-  if (assetError) {
-    return {
-      text: `Failed to register asset: ${assetError.message}`,
-      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Asset creation failed' },
+    const assetData: Record<string, any> = {
+      asset_tag: tag,
+      catalog_item_id: catalogItemId,
+      tenant_id: ctx.tenantId,
+      status: 'available',
     };
+    if (locationId) assetData.location_id = locationId;
+    if (serialNumber && quantity === 1) assetData.serial_number = serialNumber;
+
+    const { data: asset, error: assetError } = await inventorySchema(ctx.supabase)
+      .from('assets')
+      .upsert(assetData, { onConflict: 'tenant_id,asset_tag' })
+      .select('id, asset_tag, serial_number')
+      .single();
+
+    if (assetError) {
+      return {
+        text: `Failed to register asset ${i + 1} of ${quantity}: ${assetError.message}`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: `Asset ${i + 1} failed: ${assetError.code === '23505' ? 'Duplicate asset tag' : assetError.message}` },
+      };
+    }
+
+    createdAssets.push({ tag: asset.asset_tag, serial: asset.serial_number || undefined });
   }
 
-  const details: Array<{ label: string; value: string | number }> = [
-    { label: 'Asset Tag', value: asset.asset_tag },
-    { label: 'Catalog Item', value: `${catalogItemName}${itemCreated ? ' (new)' : ''}` },
-  ];
+  const tagList = createdAssets.map((a) => a.tag).join(', ');
+
+  const details: Array<{ label: string; value: string | number }> = [];
+  if (quantity > 1) {
+    details.push({ label: 'Count', value: quantity });
+    details.push({ label: 'Asset Tags', value: tagList });
+  } else {
+    details.push({ label: 'Asset Tag', value: createdAssets[0].tag });
+  }
+  details.push({ label: 'Catalog Item', value: `${catalogItemName}${itemCreated ? ' (new)' : ''}` });
   if (locationName) details.push({ label: 'Location', value: locationName });
-  if (serialNumber) details.push({ label: 'Serial #', value: serialNumber });
+  if (serialNumber && quantity === 1) details.push({ label: 'Serial #', value: serialNumber });
+
+  const summary = quantity > 1
+    ? `Registered ${quantity} "${catalogItemName}" assets: ${tagList}${locationName ? ` at ${locationName}` : ''}${itemCreated ? ' (created new catalog item with serialized tracking)' : ''}.`
+    : `Registered asset "${catalogItemName}" with tag ${createdAssets[0].tag}${locationName ? ` at ${locationName}` : ''}${itemCreated ? ' (created new catalog item with serialized tracking)' : ''}.`;
 
   return {
-    text: `Registered asset "${catalogItemName}" with tag ${asset.asset_tag}${locationName ? ` at ${locationName}` : ''}${itemCreated ? ' (created new catalog item with serialized tracking)' : ''}.`,
+    text: summary,
     dataDisplay: {
       displayType: 'metric',
-      label: 'Asset Registered',
-      value: asset.asset_tag,
+      label: quantity > 1 ? `${quantity} Assets Registered` : 'Asset Registered',
+      value: quantity > 1 ? tagList : createdAssets[0].tag,
       secondaryMetrics: details,
     },
   };

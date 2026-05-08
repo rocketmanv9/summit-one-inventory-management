@@ -14,6 +14,7 @@ export type IntentType =
   | 'list_items'
   | 'update_stock'
   | 'adjust_stock'
+  | 'adjust_stock_delta'
   | 'check_stock'
   | 'low_stock'
   | 'issue_inventory'

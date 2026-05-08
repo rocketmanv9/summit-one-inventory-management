@@ -32,7 +32,7 @@ const VALID_INTENTS: Set<string> = new Set([
   // Client-side CRUD/list tools
   'add_vendor', 'update_vendor', 'delete_vendor', 'list_vendors',
   'add_item', 'update_item', 'delete_item', 'list_items',
-  'adjust_stock', 'update_stock', 'check_stock', 'low_stock',
+  'adjust_stock', 'adjust_stock_delta', 'update_stock', 'check_stock', 'low_stock',
   'issue_inventory',
   'create_po', 'list_pos', 'late_orders',
   'list_locations', 'add_location',

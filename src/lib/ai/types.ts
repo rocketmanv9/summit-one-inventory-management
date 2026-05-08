@@ -120,6 +120,27 @@ export interface AiDashboardLinkDisplay {
   dashboardName: string;
 }
 
+// ─── Tool Error Contract ─────────────────────────────────────────────
+
+export interface ToolError {
+  code: 'missing_param' | 'not_found' | 'validation' | 'conflict' | 'upstream' | 'internal';
+  message: string;
+  missingFields?: string[];
+  suggestions?: string[];
+}
+
+// ─── Tool Governance ─────────────────────────────────────────────────
+
+export interface ToolGovernance {
+  name: string;
+  riskLevel: 'low' | 'medium' | 'high';
+  requiresConfirmation: boolean;
+  requiresIdempotency: boolean;
+  readAfterWrite: boolean;
+  auditEventType?: string;
+  permissionsRequired?: string[];
+}
+
 // ─── Chat Action (proposal → execution lifecycle) ─────────────────────
 
 export type ChatActionStatus = 'proposed' | 'confirmed' | 'executing' | 'completed' | 'failed';

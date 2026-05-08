@@ -139,7 +139,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'adjust_stock',
-      description: 'Adjust/correct stock balance for an item at a location',
+      description: 'Set stock to an exact quantity (physical count). Use when user says "count shows 90", "should be 200", "set to 100".',
       parameters: {
         type: 'object',
         properties: {
@@ -148,9 +148,31 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           quantity: { type: 'number', description: 'New on-hand quantity' },
           reason: {
             type: 'string',
-            description: 'Reason for adjustment',
+            description: 'Reason for adjustment. INFER from language: "lost/missing" → theft, "damaged/broke" → damage, "expired" → expiration, "count shows" → count_variance. Default: other.',
             enum: ['count_variance', 'damage', 'theft', 'expiration', 'other'],
           },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'adjust_stock_delta',
+      description: 'Add or subtract a quantity from current stock balance. Use when user says "add 50 more", "remove 10", "subtract 40", "lost 5". Positive = add, negative = subtract.',
+      parameters: {
+        type: 'object',
+        properties: {
+          item: { type: 'string', description: 'Item name or SKU' },
+          location: { type: 'string', description: 'Location name' },
+          delta: { type: 'number', description: 'Quantity to add (positive) or subtract (negative)' },
+          reason: {
+            type: 'string',
+            description: 'Reason for adjustment. INFER from language: "lost/missing" → theft, "damaged/broke" → damage, "expired" → expiration, "count shows" → count_variance. Default: other.',
+            enum: ['count_variance', 'damage', 'theft', 'expiration', 'other'],
+          },
+          notes: { type: 'string', description: 'Additional notes' },
         },
         required: [],
       },
@@ -721,6 +743,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           location: { type: 'string', description: 'Where the asset is located (e.g. "Portland yard", "main warehouse")' },
           serial_number: { type: 'string', description: 'Manufacturer serial number' },
           asset_tag: { type: 'string', description: 'Custom asset tag (auto-generated if not provided)' },
+          quantity: { type: 'number', description: 'Number of assets to register (default: 1, max: 20)' },
         },
         required: ['name'],
       },
