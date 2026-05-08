@@ -52,7 +52,7 @@ export function filterToolsForRole(
   role: UserRole
 ): ChatCompletionTool[] {
   if (role === 'admin') return tools;
-  return tools.filter((t) => !ADMIN_ONLY_TOOLS.has(t.function.name));
+  return tools.filter((t) => !('function' in t && ADMIN_ONLY_TOOLS.has(t.function.name)));
 }
 
 /**
@@ -62,3 +62,58 @@ export function canExecuteTool(toolName: string, role: UserRole): boolean {
   if (role === 'admin') return true;
   return !ADMIN_ONLY_TOOLS.has(toolName);
 }
+
+// ─── Governance Metadata Registry ─────────────────────────────────────
+
+import type { ToolGovernance } from './types';
+
+export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
+  // High-risk mutations
+  adjust_stock: { name: 'adjust_stock', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: true, auditEventType: 'stock.adjusted' },
+  adjust_stock_delta: { name: 'adjust_stock_delta', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: true, auditEventType: 'stock.adjusted' },
+  delete_vendor: { name: 'delete_vendor', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'vendor.deleted' },
+  delete_item: { name: 'delete_item', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'item.deleted' },
+  approve_apparel_order: { name: 'approve_apparel_order', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'apparel.approved' },
+  reject_apparel_order: { name: 'reject_apparel_order', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'apparel.rejected' },
+  workflow_auto_reorder: { name: 'workflow_auto_reorder', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'workflow.auto_reorder' },
+  workflow_stock_rebalance: { name: 'workflow_stock_rebalance', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'workflow.rebalance' },
+  delete_dashboard: { name: 'delete_dashboard', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'dashboard.deleted' },
+
+  // Medium-risk mutations
+  add_vendor: { name: 'add_vendor', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'vendor.created' },
+  add_item: { name: 'add_item', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'item.created' },
+  update_vendor: { name: 'update_vendor', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'vendor.updated' },
+  update_item: { name: 'update_item', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'item.updated' },
+  create_po: { name: 'create_po', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'po.created' },
+  create_transfer: { name: 'create_transfer', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'transfer.created' },
+  create_asset: { name: 'create_asset', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'asset.created' },
+  issue_inventory: { name: 'issue_inventory', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'inventory.issued' },
+  create_reservation: { name: 'create_reservation', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'reservation.created' },
+  release_reservation: { name: 'release_reservation', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'reservation.released' },
+  create_dashboard: { name: 'create_dashboard', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: true, auditEventType: 'dashboard.created' },
+  add_dashboard_widget: { name: 'add_dashboard_widget', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: true },
+  remove_dashboard_widget: { name: 'remove_dashboard_widget', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: true },
+  update_dashboard: { name: 'update_dashboard', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'dashboard.updated' },
+  add_location: { name: 'add_location', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'location.created' },
+  add_category: { name: 'add_category', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'category.created' },
+  set_preferred_vendor: { name: 'set_preferred_vendor', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false },
+
+  // Low-risk reads/queries
+  list_vendors: { name: 'list_vendors', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_items: { name: 'list_items', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  check_stock: { name: 'check_stock', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  low_stock: { name: 'low_stock', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_pos: { name: 'list_pos', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_locations: { name: 'list_locations', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_transfers: { name: 'list_transfers', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_assets: { name: 'list_assets', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_receipts: { name: 'list_receipts', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_reservations: { name: 'list_reservations', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_categories: { name: 'list_categories', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_dashboards: { name: 'list_dashboards', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  list_available_widgets: { name: 'list_available_widgets', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  global_search: { name: 'global_search', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  inventory_summary: { name: 'inventory_summary', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  navigate: { name: 'navigate', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  help: { name: 'help', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+};

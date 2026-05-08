@@ -54,15 +54,15 @@ const CreateConversationSchema = z.object({
   model: z.string().default('gpt-4.1'),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, session, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = CreateConversationSchema.parse(await req.json());
 
   const inv = (supabase as any).schema('inventory');
   const { data, error } = await inv
     .from('ai_conversations')
     .upsert({
-      tenant_id: session.tenantId,
-      user_id: session.userId,
+      tenant_id: ctx.tenantId,
+      user_id: ctx.userId,
       title: body.title || null,
       surface: body.surface,
       model: body.model,

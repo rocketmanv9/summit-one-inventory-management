@@ -66,7 +66,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
 // ── DELETE — Delete conversation (cascade deletes messages) ──────────────────
 
-export const DELETE = createSessionWriteRoute(async ({ req, session, log, supabase, idempotencyKey }) => {
+export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const id = extractId(req);
   const inv = (supabase as any).schema('inventory');
 
@@ -75,7 +75,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, session, log, supaba
     .from('ai_conversations')
     .select('id')
     .eq('id', id)
-    .eq('user_id', session.userId)
+    .eq('user_id', ctx.userId)
     .single();
 
   if (checkErr || !existing) {
