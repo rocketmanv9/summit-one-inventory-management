@@ -7,17 +7,23 @@
 
 import { z } from 'zod';
 import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 // ── GET — List conversations ─────────────────────────────────────────────────
 
-export const GET = createSessionReadRoute(async ({ req, session, log, supabase }) => {
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const url = new URL(req.url);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
   const surface = url.searchParams.get('surface');
 
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId,
+  });
   const inv = (supabase as any).schema('inventory');
   let query = inv
     .from('ai_conversations')

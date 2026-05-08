@@ -9,11 +9,12 @@
  */
 
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-export const GET = createSessionReadRoute(async ({ req, session, log, supabase }) => {
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const url = new URL(req.url);
   const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '7', 10), 1), 90);
   const groupBy = url.searchParams.get('group_by') || 'day';
@@ -22,6 +23,11 @@ export const GET = createSessionReadRoute(async ({ req, session, log, supabase }
     throw AppError.badRequest('group_by must be one of: day, user, tool');
   }
 
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId,
+  });
   const inv = (supabase as any).schema('inventory');
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 

@@ -5,6 +5,7 @@
  */
 
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -19,12 +20,17 @@ function extractConversationId(req: Request): string {
   return id;
 }
 
-export const GET = createSessionReadRoute(async ({ req, session, log, supabase }) => {
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const conversationId = extractConversationId(req);
   const url = new URL(req.url);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 500);
   const offset = parseInt(url.searchParams.get('offset') || '0', 10);
 
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId,
+  });
   const inv = (supabase as any).schema('inventory');
 
   // Verify user owns the conversation
