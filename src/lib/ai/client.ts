@@ -144,7 +144,7 @@ export async function streamAiChat(
   let fullContent = '';
   let lastDataDisplay: import('./types').AiDataDisplay | undefined;
   let lastToolCall: { intent: string; params: Record<string, string> } | undefined;
-  let doneData: any = {};
+
 
   while (true) {
     const { done, value } = await reader.read();
@@ -183,7 +183,6 @@ export async function streamAiChat(
               }
               break;
             case 'done':
-              doneData = data;
               callbacks.onDone?.(data);
               break;
             case 'error':
@@ -226,13 +225,10 @@ export async function streamAiChat(
  * Consume an SSE response into a single AIResponse (for sendToAI fallback).
  */
 async function consumeStream(res: Response): Promise<AIResponse> {
-  let result: AIResponse = { fallbackToKeyword: true };
-  await streamAiChat([], {
-    // We won't actually call this — we just re-use the parsing logic
-  });
-  // Actually, just parse the response body directly
+  const fallback: AIResponse = { fallbackToKeyword: true };
+  // Parse the SSE response body directly
   const reader = res.body?.getReader();
-  if (!reader) return result;
+  if (!reader) return fallback;
 
   const decoder = new TextDecoder();
   let buffer = '';
@@ -267,7 +263,7 @@ async function consumeStream(res: Response): Promise<AIResponse> {
   if (lastToolCall) return { type: 'tool_use', intent: lastToolCall.intent, params: lastToolCall.params };
   if (lastDataDisplay && fullContent) return { type: 'data_result', content: fullContent, dataDisplay: lastDataDisplay };
   if (fullContent) return { type: 'text', content: fullContent };
-  return result;
+  return fallback;
 }
 
 // ── Conversation API helpers ───────────────────────────────────────────────
