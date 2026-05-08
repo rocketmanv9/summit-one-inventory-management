@@ -31,7 +31,7 @@
 }
 
 .react-grid-item.react-grid-placeholder {
-  background: rgb(59, 130, 246);
+  background: hsl(var(--primary));
   opacity: 0.2;
   transition-duration: 100ms;
   z-index: 2;
@@ -210,6 +210,34 @@ body {
     --radius: 0.5rem;
     --sidebar-width: 16rem;
     --header-height: 4rem;
+
+    /* Brandable blue scale — defaults match Tailwind blue.
+       TenantBrandingProvider overrides these at runtime. */
+    --blue-50:  214 100% 97%;
+    --blue-100: 214 95% 93%;
+    --blue-200: 214 93% 87%;
+    --blue-300: 213 94% 78%;
+    --blue-400: 213 94% 68%;
+    --blue-500: 217 91% 60%;
+    --blue-600: 221 83% 53%;
+    --blue-700: 224 76% 48%;
+    --blue-800: 226 71% 40%;
+    --blue-900: 224 64% 33%;
+    --blue-950: 226 57% 21%;
+
+    /* Brandable teal scale — defaults match Tailwind teal.
+       TenantBrandingProvider overrides these at runtime. */
+    --teal-50:  166 76% 97%;
+    --teal-100: 167 85% 89%;
+    --teal-200: 168 84% 78%;
+    --teal-300: 171 77% 64%;
+    --teal-400: 172 66% 50%;
+    --teal-500: 173 80% 40%;
+    --teal-600: 175 84% 32%;
+    --teal-700: 175 77% 26%;
+    --teal-800: 176 69% 22%;
+    --teal-900: 176 61% 19%;
+    --teal-950: 176 79% 10%;
   }
   .dark {
     --background: 222.2 84% 4.9%;
@@ -245,6 +273,32 @@ body {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+
+    /* Dark-mode brandable blue scale */
+    --blue-50:  214 100% 97%;
+    --blue-100: 214 95% 93%;
+    --blue-200: 214 93% 87%;
+    --blue-300: 213 94% 78%;
+    --blue-400: 213 94% 68%;
+    --blue-500: 217 91% 60%;
+    --blue-600: 221 83% 53%;
+    --blue-700: 224 76% 48%;
+    --blue-800: 226 71% 40%;
+    --blue-900: 224 64% 33%;
+    --blue-950: 226 57% 21%;
+
+    /* Dark-mode brandable teal scale */
+    --teal-50:  166 76% 97%;
+    --teal-100: 167 85% 89%;
+    --teal-200: 168 84% 78%;
+    --teal-300: 171 77% 64%;
+    --teal-400: 172 66% 50%;
+    --teal-500: 173 80% 40%;
+    --teal-600: 175 84% 32%;
+    --teal-700: 175 77% 26%;
+    --teal-800: 176 69% 22%;
+    --teal-900: 176 61% 19%;
+    --teal-950: 176 79% 10%;
   }
 }
 

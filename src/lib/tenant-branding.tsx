@@ -172,6 +172,75 @@ function contrastForeground(hex: string): string {
   return brightness > 128 ? '#111827' : '#ffffff';
 }
 
+/** Convert hex to {h, s, l} where h is 0-360, s/l are 0-1. */
+function hexToHslRaw(hex: string): { h: number; s: number; l: number } | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+
+  const r = rgb.r / 255;
+  const g = rgb.g / 255;
+  const b = rgb.b / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+
+  if (max === min) return { h: 0, s: 0, l };
+
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+
+  return { h: h * 360, s, l };
+}
+
+/**
+ * Generate a full Tailwind-style color scale (50–950) from a single hex
+ * seed color. Returns an object keyed by shade number → HSL string
+ * (space-separated, no hsl() wrapper) suitable for CSS custom properties.
+ *
+ * The lightness ramp mirrors Tailwind's default scale shape:
+ *   50=97%  100=93%  200=87%  300=78%  400=68%  500=60%
+ *   600=53% 700=48%  800=40%  900=33%  950=21%
+ *
+ * Saturation tapers slightly at the extremes so very light and very dark
+ * shades don't look neon.
+ */
+function generateColorScale(hex: string): Record<string, string> {
+  const hsl = hexToHslRaw(hex);
+  if (!hsl) return {};
+
+  const h = Math.round(hsl.h);
+  const baseSat = hsl.s;
+
+  // Lightness targets for each shade (percentage, 0-100)
+  const shades: [string, number, number][] = [
+    // [shade, lightness%, saturation multiplier]
+    ['50',  97, 1.0],
+    ['100', 93, 0.95],
+    ['200', 87, 0.93],
+    ['300', 78, 0.90],
+    ['400', 68, 0.90],
+    ['500', 60, 1.0],
+    ['600', 53, 1.0],
+    ['700', 48, 0.95],
+    ['800', 40, 0.90],
+    ['900', 33, 0.85],
+    ['950', 21, 0.80],
+  ];
+
+  const result: Record<string, string> = {};
+  for (const [shade, lightness, satMul] of shades) {
+    const s = Math.round(Math.min(100, baseSat * satMul * 100));
+    result[shade] = `${h} ${s}% ${lightness}%`;
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Response parsing — mirrors Portal's parseBrandingPayload
 // ---------------------------------------------------------------------------
@@ -418,6 +487,19 @@ function applyCssVariables(b: TenantBranding) {
   if (isValidHex(b.success_color)) setHsl('--chart-3', b.success_color);
   if (isValidHex(b.warning_color)) setHsl('--chart-4', b.warning_color);
   if (isValidHex(b.error_color)) setHsl('--chart-5', b.error_color);
+
+  // --- Brandable blue & teal scales ---
+  // Generate a full 50–950 color ramp from the primary color and apply it
+  // to both the --blue-* and --teal-* CSS variables. This means every
+  // existing `bg-blue-600`, `text-blue-700`, `border-teal-400`, etc. class
+  // automatically reflects the tenant's branding without any class renames.
+  if (isValidHex(b.primary_color)) {
+    const scale = generateColorScale(b.primary_color);
+    for (const [shade, hsl] of Object.entries(scale)) {
+      root.style.setProperty(`--blue-${shade}`, hsl);
+      root.style.setProperty(`--teal-${shade}`, hsl);
+    }
+  }
 
   // --- Fonts ---
   const setFont = (prop: string, value: string | undefined) => {
