@@ -27,6 +27,8 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       tenant_id: ctx.tenantId,
       name: dashboardName,
       description: template.description,
+      scope: 'user',
+      owner_user_id: ctx.userId,
       is_default: false,
       last_event_id: `${idempotencyKey}_dashboard`,
     })
