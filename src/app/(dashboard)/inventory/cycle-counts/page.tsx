@@ -219,7 +219,7 @@ export default function CycleCountsPage() {
 
       if (!res.ok) {
         const data = await res.json();
-        throw AppError.internal(data.error || 'Failed to start count');
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to start count');
       }
 
       fetchCycleCounts();
@@ -418,7 +418,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw AppError.internal(data.error || 'Failed to record decision');
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to record decision');
       }
       fetchCountLines();
     } catch (error: any) {
@@ -817,7 +817,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   });
                   if (!res.ok) {
                     const data = await res.json();
-                    throw AppError.internal(data.error || 'Failed to start count');
+                    throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to start count');
                   }
                   onClose();
                   onUpdate();
@@ -865,7 +865,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   });
                   if (!res.ok) {
                     const data = await res.json();
-                    throw AppError.internal(data.error || 'Failed to submit');
+                    throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to submit');
                   }
                   onUpdate();
                   onClose();
@@ -1022,7 +1022,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                   
                   if (!res.ok) {
                     const data = await res.json();
-                    throw AppError.internal(data.error || 'Failed to approve');
+                    throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to approve');
                   }
 
                   const result = await res.json();
@@ -1123,12 +1123,13 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
 
       if (!res.ok) {
         const data = await res.json();
-        throw AppError.internal(data.error || 'Failed to start cycle count');
+        const msg = typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to start cycle count';
+        throw AppError.internal(msg);
       }
 
       onCreated();
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || String(err));
     } finally {
       setSaving(false);
     }

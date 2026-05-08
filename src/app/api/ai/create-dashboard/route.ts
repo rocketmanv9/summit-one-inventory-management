@@ -24,6 +24,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const { data: dashboard, error: dashError } = await supabase
     .from('dashboards')
     .upsert({
+      tenant_id: ctx.tenantId,
       name: dashboardName,
       description: template.description,
       is_default: false,
