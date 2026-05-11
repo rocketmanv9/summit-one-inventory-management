@@ -84,17 +84,31 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
   }, [jwt, token]);
 
   const validateToken = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+
     try {
       setState('loading');
       const res = await fetch(withBypass(`/api/m/count/sessions/${token}/validate`, bypassSecret), {
         method: 'POST',
         credentials: 'include',
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': crypto.randomUUID(),
           ...bypassHeaders(bypassSecret),
         },
       });
+
+      clearTimeout(timeout);
+
+      // Vercel protection may return HTML instead of JSON — detect that
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          `Unexpected response (${res.status}). The request may be blocked by deployment protection.`
+        );
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -108,7 +122,11 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
       setLines(data.lines || []);
       setState('counting');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to validate session');
+      clearTimeout(timeout);
+      const message = err.name === 'AbortError'
+        ? 'Request timed out — check your connection and try again'
+        : err.message || 'Failed to validate session';
+      setErrorMessage(message);
       setState('error');
     }
   };
@@ -283,6 +301,34 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
   }
 
   if (state === 'error') {
+    const isRetryable = errorMessage.includes('timed out') ||
+      errorMessage.includes('deployment protection') ||
+      errorMessage.includes('Failed to fetch') ||
+      errorMessage.includes('NetworkError') ||
+      errorMessage.includes('network');
+
+    if (isRetryable) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+          <div className="max-w-sm w-full text-center space-y-4">
+            <div className="w-16 h-16 mx-auto bg-yellow-100 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h1 className="text-xl font-semibold text-gray-900">Connection Issue</h1>
+            <p className="text-gray-600 text-sm">{errorMessage}</p>
+            <button
+              onClick={() => validateToken()}
+              className="mt-4 px-6 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium text-sm"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return <MobileSessionExpired message={errorMessage} />;
   }
 

@@ -46,17 +46,13 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
   return {
     data: { jwt, expires_at: session.expires_at },
     status: 200,
-    events: [{
-      event_name: 'mobile_count_session.refreshed',
-      payload: { session_id: session.id },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
 }, {
   serviceName: SERVICE_NAME,
   scope: 'POST /api/m/count/sessions/:token/refresh',
   authenticate: async () => {
     const supabase = getAdminClient();
-    return { tenantId: 'system', userId: 'system', supabase };
+    return { tenantId: '00000000-0000-0000-0000-000000000000', userId: '00000000-0000-0000-0000-000000000000', supabase };
   },
 });
