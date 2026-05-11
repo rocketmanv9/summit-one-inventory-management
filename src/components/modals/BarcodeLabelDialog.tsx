@@ -89,8 +89,10 @@ function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType
       }
     }
 
-    // Render QR code
-    QRCode.toDataURL(item.code, {
+    // Render QR code — encode a mobile-friendly URL so phones open the lookup page
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const scanUrl = `${origin}/m/scan?code=${encodeURIComponent(item.code)}`;
+    QRCode.toDataURL(scanUrl, {
       width: 100,
       margin: 1,
       errorCorrectionLevel: 'M',
