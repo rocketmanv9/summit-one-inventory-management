@@ -39,6 +39,13 @@ interface CountLine {
 
 type PageState = 'loading' | 'error' | 'counting';
 
+function getBypassHeaders(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  const params = new URLSearchParams(window.location.search);
+  const bypass = params.get('x-vercel-protection-bypass');
+  return bypass ? { 'x-vercel-protection-bypass': bypass } : {};
+}
+
 export default function MobileCountPage() {
   const params = useParams();
   const token = params.token as string;
@@ -78,9 +85,11 @@ export default function MobileCountPage() {
       setState('loading');
       const res = await fetch(`/api/m/count/sessions/${token}/validate`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': crypto.randomUUID(),
+          ...getBypassHeaders(),
         },
       });
 
@@ -105,9 +114,11 @@ export default function MobileCountPage() {
     try {
       const res = await fetch(`/api/m/count/sessions/${token}/refresh`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': crypto.randomUUID(),
+          ...getBypassHeaders(),
         },
       });
 
@@ -128,6 +139,7 @@ export default function MobileCountPage() {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${jwt}`,
     'Idempotency-Key': crypto.randomUUID(),
+    ...getBypassHeaders(),
   }), [jwt]);
 
   const handleRecordCount = useCallback(async (catalogItemId: string, qty: number) => {
@@ -205,21 +217,25 @@ export default function MobileCountPage() {
       params.set('barcode', decodedText);
 
       const res = await fetch(`/api/m/count/lookup?${params}`, {
+        credentials: 'include',
         headers: {
           'Authorization': `Bearer ${jwt}`,
+          ...getBypassHeaders(),
         },
       });
 
       if (!res.ok) {
         // Try as SKU
         const skuRes = await fetch(`/api/m/count/lookup?sku=${encodeURIComponent(decodedText)}`, {
-          headers: { 'Authorization': `Bearer ${jwt}` },
+          credentials: 'include',
+          headers: { 'Authorization': `Bearer ${jwt}`, ...getBypassHeaders() },
         });
 
         if (!skuRes.ok) {
           // Try as asset tag
           const tagRes = await fetch(`/api/m/count/lookup?asset_tag=${encodeURIComponent(decodedText)}`, {
-            headers: { 'Authorization': `Bearer ${jwt}` },
+            credentials: 'include',
+            headers: { 'Authorization': `Bearer ${jwt}`, ...getBypassHeaders() },
           });
 
           if (!tagRes.ok) {
