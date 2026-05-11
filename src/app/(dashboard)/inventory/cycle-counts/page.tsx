@@ -149,6 +149,12 @@ export default function CycleCountsPage() {
         if (row.status === 'posted' || row.status === 'closed') {
           return <span className="text-sm text-green-600 font-medium">✓ Complete</span>;
         }
+        if (row.status === 'approved') {
+          return <span className="text-sm text-green-600 font-medium">Approved</span>;
+        }
+        if (row.status === 'under_review') {
+          return <span className="text-sm text-purple-600 font-medium">Under Review</span>;
+        }
         if (row.snapshot_captured_at) {
           return <span className="text-sm text-blue-600">Snapshot captured</span>;
         }
