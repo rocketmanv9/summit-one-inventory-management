@@ -39,11 +39,23 @@ interface CountLine {
 
 type PageState = 'loading' | 'error' | 'counting';
 
-function getBypassHeaders(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
+function getBypassSecret(): string | null {
+  if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
-  const bypass = params.get('x-vercel-protection-bypass');
+  return params.get('x-vercel-protection-bypass');
+}
+
+function getBypassHeaders(): Record<string, string> {
+  const bypass = getBypassSecret();
   return bypass ? { 'x-vercel-protection-bypass': bypass } : {};
+}
+
+/** Append bypass query param to API URLs so Vercel lets them through on mobile */
+function withBypass(url: string): string {
+  const bypass = getBypassSecret();
+  if (!bypass) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}x-vercel-protection-bypass=${encodeURIComponent(bypass)}`;
 }
 
 export default function MobileCountPage() {
@@ -83,7 +95,7 @@ export default function MobileCountPage() {
   const validateToken = async () => {
     try {
       setState('loading');
-      const res = await fetch(`/api/m/count/sessions/${token}/validate`, {
+      const res = await fetch(withBypass(`/api/m/count/sessions/${token}/validate`), {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -112,7 +124,7 @@ export default function MobileCountPage() {
 
   const refreshJwt = async () => {
     try {
-      const res = await fetch(`/api/m/count/sessions/${token}/refresh`, {
+      const res = await fetch(withBypass(`/api/m/count/sessions/${token}/refresh`), {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -144,7 +156,7 @@ export default function MobileCountPage() {
 
   const handleRecordCount = useCallback(async (catalogItemId: string, qty: number) => {
     try {
-      const res = await fetch('/api/m/count/record', {
+      const res = await fetch(withBypass('/api/m/count/record'), {
         method: 'POST',
         headers: mobileHeaders(),
         body: JSON.stringify({ catalog_item_id: catalogItemId, counted_qty: qty }),
@@ -175,7 +187,7 @@ export default function MobileCountPage() {
 
   const handleRecordAssets = useCallback(async (lineId: string, assetIds: string[]) => {
     try {
-      const res = await fetch('/api/m/count/record-asset', {
+      const res = await fetch(withBypass('/api/m/count/record-asset'), {
         method: 'POST',
         headers: mobileHeaders(),
         body: JSON.stringify({ line_id: lineId, asset_ids: assetIds }),
@@ -216,7 +228,7 @@ export default function MobileCountPage() {
       // Try as barcode first, then as SKU, then as asset tag
       params.set('barcode', decodedText);
 
-      const res = await fetch(`/api/m/count/lookup?${params}`, {
+      const res = await fetch(withBypass(`/api/m/count/lookup?${params}`), {
         credentials: 'include',
         headers: {
           'Authorization': `Bearer ${jwt}`,
@@ -226,14 +238,14 @@ export default function MobileCountPage() {
 
       if (!res.ok) {
         // Try as SKU
-        const skuRes = await fetch(`/api/m/count/lookup?sku=${encodeURIComponent(decodedText)}`, {
+        const skuRes = await fetch(withBypass(`/api/m/count/lookup?sku=${encodeURIComponent(decodedText)}`), {
           credentials: 'include',
           headers: { 'Authorization': `Bearer ${jwt}`, ...getBypassHeaders() },
         });
 
         if (!skuRes.ok) {
           // Try as asset tag
-          const tagRes = await fetch(`/api/m/count/lookup?asset_tag=${encodeURIComponent(decodedText)}`, {
+          const tagRes = await fetch(withBypass(`/api/m/count/lookup?asset_tag=${encodeURIComponent(decodedText)}`), {
             credentials: 'include',
             headers: { 'Authorization': `Bearer ${jwt}`, ...getBypassHeaders() },
           });
