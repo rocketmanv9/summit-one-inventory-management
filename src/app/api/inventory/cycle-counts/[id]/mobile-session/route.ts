@@ -65,7 +65,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     data: {
       session_id: data.id,
       token: data.token,
-      url: `/m/count/${data.token}`,
+      url: `/m/count/${data.token}${process.env.VERCEL_AUTOMATION_BYPASS_SECRET ? `?x-vercel-protection-bypass=${process.env.VERCEL_AUTOMATION_BYPASS_SECRET}` : ''}`,
       expires_at: data.expires_at,
     },
     status: 201,
