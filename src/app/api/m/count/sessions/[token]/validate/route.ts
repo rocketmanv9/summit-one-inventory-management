@@ -155,6 +155,6 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
   scope: 'POST /api/m/count/sessions/:token/validate',
   authenticate: async () => {
     const supabase = getAdminClient();
-    return { tenantId: 'system', userId: 'system', supabase };
+    return { tenantId: '00000000-0000-0000-0000-000000000000', userId: '00000000-0000-0000-0000-000000000000', supabase };
   },
 });
