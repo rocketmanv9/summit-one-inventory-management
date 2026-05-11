@@ -105,7 +105,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
   let countedAssets: any[] = [];
   const { data: assetLines } = await inv
     .from('cycle_count_asset_lines')
-    .select('id, cycle_count_line_id, asset_id, found')
+    .select('id, line_number, asset_id, counted_present')
     .eq('cycle_count_id', session.cycle_count_id)
     .eq('tenant_id', session.tenant_id)
     .limit(500);
@@ -118,7 +118,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     const lineAssets = assetDetails
       .filter((a: any) => a.catalog_item_id === line.catalog_item_id);
     const lineCounted = countedAssets
-      .filter((ca: any) => ca.cycle_count_line_id === line.id && ca.found);
+      .filter((ca: any) => ca.line_number === line.line_number && ca.counted_present);
     return {
       ...line,
       catalog_item: item || null,
