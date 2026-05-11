@@ -1,6 +1,5 @@
 import { createWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
-import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { getAdminClient } from '@/utils/supabase/admin';
 import { mintMobileJwt } from '@/lib/mobile-auth';
 
@@ -52,14 +51,8 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     .eq('id', session.cycle_count_id)
     .single();
 
-  // Fetch location name
-  const tenantClient = await createTenantServiceClient({
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    tenantId: session.tenant_id,
-  });
-
-  const { data: location } = await tenantClient
+  // Fetch location name (locations are in inventory schema)
+  const { data: location } = await inv
     .from('locations')
     .select('id, name')
     .eq('id', cc?.location_id)
@@ -73,11 +66,11 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     .eq('tenant_id', session.tenant_id)
     .limit(500);
 
-  // Fetch catalog items for all lines
+  // Fetch catalog items for all lines (catalog_items are in inventory schema)
   let items: any[] = [];
   if (lines && lines.length > 0) {
     const itemIds = [...new Set(lines.map((l: any) => l.catalog_item_id))];
-    const { data: catalogItems } = await tenantClient
+    const { data: catalogItems } = await inv
       .from('catalog_items')
       .select('id, name, sku, barcode, tracking_mode, unit_of_measure')
       .in('id', itemIds);
@@ -97,11 +90,11 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     assetSnapshots = snapshots || [];
   }
 
-  // Fetch actual asset details
+  // Fetch actual asset details (assets are in inventory schema)
   let assetDetails: any[] = [];
   if (assetSnapshots.length > 0) {
     const assetIds = assetSnapshots.map((s: any) => s.asset_id);
-    const { data: assets } = await tenantClient
+    const { data: assets } = await inv
       .from('assets')
       .select('id, asset_tag, serial_number, status, catalog_item_id')
       .in('id', assetIds);
