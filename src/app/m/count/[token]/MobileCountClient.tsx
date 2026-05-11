@@ -95,7 +95,7 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID(),
+          'X-Idempotency-Key': crypto.randomUUID(),
           ...bypassHeaders(bypassSecret),
         },
       });
@@ -138,7 +138,7 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID(),
+          'X-Idempotency-Key': crypto.randomUUID(),
           ...bypassHeaders(bypassSecret),
         },
       });
@@ -159,7 +159,7 @@ export function MobileCountClient({ bypassSecret }: { bypassSecret: string }) {
   const mobileHeaders = useCallback(() => ({
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${jwt}`,
-    'Idempotency-Key': crypto.randomUUID(),
+    'X-Idempotency-Key': crypto.randomUUID(),
     ...bypassHeaders(bypassSecret),
   }), [jwt, bypassSecret]);
 
