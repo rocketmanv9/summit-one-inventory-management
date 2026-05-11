@@ -20,6 +20,7 @@ import {
   History,
   Wrench,
   HardHat,
+  ScanBarcode,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -51,6 +52,11 @@ const navigation: NavSection[] = [
         title: 'Isabelle',
         href: '/ai',
         icon: Bot,
+      },
+      {
+        title: 'Scan',
+        href: '/scan',
+        icon: ScanBarcode,
       },
       {
         title: 'Debug',

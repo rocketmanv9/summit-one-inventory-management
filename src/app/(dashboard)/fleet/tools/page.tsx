@@ -7,6 +7,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
+import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -50,6 +52,7 @@ export default function FleetToolsPage() {
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [notesTool, setNotesTool] = useState<Tool | null>(null);
+  const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
 
   /* ---- Fetching ---- */
 
@@ -195,6 +198,18 @@ export default function FleetToolsPage() {
       render: (row: Tool) => (
         <div className="flex gap-2">
           <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setBarcodeItems([{
+                code: row.id,
+                label: row.name,
+              }]);
+            }}
+            className="px-2 py-1 text-xs bg-purple-50 text-purple-700 rounded hover:bg-purple-100"
+          >
+            Barcode
+          </button>
+          <button
             onClick={(e) => { e.stopPropagation(); setNotesTool(row); }}
             className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
           >
@@ -335,6 +350,15 @@ export default function FleetToolsPage() {
               </div>
             )}
           </>
+        )}
+
+        {/* Barcode Modal */}
+        {barcodeItems && (
+          <BarcodeLabelDialog
+            items={barcodeItems}
+            entityType="tool"
+            onClose={() => setBarcodeItems(null)}
+          />
         )}
 
         {/* Add Custom Tool Modal */}

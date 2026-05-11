@@ -9,6 +9,8 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
+import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -55,6 +57,7 @@ export default function AssetsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
+  const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
 
   useEffect(() => {
     fetchAssets();
@@ -179,6 +182,18 @@ export default function AssetsPage() {
           <button
             onClick={(e) => {
               e.stopPropagation();
+              setBarcodeItems([{
+                code: row.asset_tag,
+                label: `${row.asset_tag}${row.catalog_item?.name ? ` - ${row.catalog_item.name}` : ''}`,
+              }]);
+            }}
+            className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"
+          >
+            Barcode
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
               setSelectedAsset(row);
               setShowEditModal(true);
             }}
@@ -248,12 +263,27 @@ export default function AssetsPage() {
           title="Assets"
           description="Track serialized assets and their assignments. Example: Manage equipment like Paver #1 (VIN: ABC123), Roller #3 (Serial: XYZ789), or GPS units assigned to specific trucks and operators, tracking who has what and when it's returned."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Add Asset
-            </button>
+            <div className="flex gap-2">
+              {filteredAssets.length > 0 && (
+                <button
+                  onClick={() => {
+                    setBarcodeItems(filteredAssets.map(a => ({
+                      code: a.asset_tag,
+                      label: `${a.asset_tag}${a.catalog_item?.name ? ` - ${a.catalog_item.name}` : ''}`,
+                    })));
+                  }}
+                  className="px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Print Barcodes ({filteredAssets.length})
+                </button>
+              )}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Add Asset
+              </button>
+            </div>
           }
         />
 
@@ -322,6 +352,14 @@ export default function AssetsPage() {
               setSelectedAsset(null);
               fetchAssets();
             }}
+          />
+        )}
+
+        {barcodeItems && (
+          <BarcodeLabelDialog
+            items={barcodeItems}
+            entityType="asset"
+            onClose={() => setBarcodeItems(null)}
           />
         )}
 

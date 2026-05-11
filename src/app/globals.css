@@ -312,3 +312,30 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* ===== BARCODE PRINT STYLES ===== */
+@media print {
+  /* Hide everything except the barcode print area */
+  body * {
+    visibility: hidden;
+  }
+  .barcode-print-area,
+  .barcode-print-area * {
+    visibility: visible;
+  }
+  .barcode-print-area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
+  /* Label sizing for standard 2" x 1" label stock */
+  .barcode-print-area > div > div {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    padding: 0.15in 0.2in;
+    max-width: 2in;
+    max-height: 1in;
+  }
+}
