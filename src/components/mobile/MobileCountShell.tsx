@@ -8,7 +8,10 @@ interface MobileCountShellProps {
   expiresAt: string;
   itemsCounted: number;
   itemsTotal: number;
+  isSubmitted: boolean;
+  isSubmitting: boolean;
   onScanClick: () => void;
+  onSubmitClick: () => void;
   children: React.ReactNode;
 }
 
@@ -18,7 +21,10 @@ export function MobileCountShell({
   expiresAt,
   itemsCounted,
   itemsTotal,
+  isSubmitted,
+  isSubmitting,
   onScanClick,
+  onSubmitClick,
   children,
 }: MobileCountShellProps) {
   const [timeLeft, setTimeLeft] = useState('');
@@ -150,25 +156,50 @@ export function MobileCountShell({
       backdropFilter: 'blur(8px)',
       WebkitBackdropFilter: 'blur(8px)',
       borderTop: '1px solid #e5e7eb',
-      padding: '16px 20px',
-      paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)',
+      padding: '12px 20px',
+      paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)',
+      display: 'flex',
+      gap: '10px',
     },
     scanButton: {
-      width: '100%',
-      padding: '16px',
+      flex: 1,
+      padding: '14px',
       background: '#2563eb',
       color: '#fff',
-      borderRadius: '16px',
+      borderRadius: '14px',
       fontWeight: 600,
-      fontSize: '16px',
+      fontSize: '15px',
       border: 'none',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: '10px',
+      gap: '8px',
       cursor: 'pointer',
       boxShadow: '0 4px 14px rgba(37,99,235,0.25)',
       WebkitTapHighlightColor: 'transparent',
+    },
+    submitButton: {
+      flex: 1,
+      padding: '14px',
+      background: isSubmitting ? '#9ca3af' : '#16a34a',
+      color: '#fff',
+      borderRadius: '14px',
+      fontWeight: 600,
+      fontSize: '15px',
+      border: 'none',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '8px',
+      cursor: isSubmitting ? 'default' : 'pointer',
+      boxShadow: isSubmitting ? 'none' : '0 4px 14px rgba(22,163,74,0.25)',
+      WebkitTapHighlightColor: 'transparent',
+    },
+    submittedBanner: {
+      padding: '20px',
+      textAlign: 'center',
+      background: '#f0fdf4',
+      borderTop: '1px solid #bbf7d0',
     },
   };
 
@@ -209,15 +240,55 @@ export function MobileCountShell({
         {children}
       </div>
 
-      {/* Scan button */}
-      <div style={s.footer}>
-        <button className="m-btn" onClick={onScanClick} style={s.scanButton}>
-          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-          </svg>
-          Scan Barcode
-        </button>
-      </div>
+      {/* Footer */}
+      {isSubmitted ? (
+        <div style={s.submittedBanner}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <svg width="20" height="20" fill="none" stroke="#16a34a" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+            <span style={{ fontWeight: 600, fontSize: '16px', color: '#15803d' }}>
+              Submitted for Review
+            </span>
+          </div>
+          <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px', marginBottom: 0 }}>
+            You can close this page. Review happens on desktop.
+          </p>
+        </div>
+      ) : (
+        <div style={s.footer}>
+          <button className="m-btn" onClick={onScanClick} style={s.scanButton}>
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+            </svg>
+            Scan
+          </button>
+          <button
+            className="m-btn"
+            onClick={onSubmitClick}
+            disabled={isSubmitting}
+            style={s.submitButton}
+          >
+            {isSubmitting ? (
+              <>
+                <div style={{
+                  width: '18px', height: '18px',
+                  border: '2.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff',
+                  borderRadius: '50%', animation: 'm-spin 1s linear infinite',
+                }} />
+                Submitting...
+              </>
+            ) : (
+              <>
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Submit
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

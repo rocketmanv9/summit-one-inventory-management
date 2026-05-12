@@ -76,6 +76,8 @@ export function MobileCountClient({
   const [lines, setLines] = useState<CountLine[]>(initialData?.lines || []);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
@@ -321,6 +323,47 @@ export function MobileCountClient({
     [jwt, bypassSecret]
   );
 
+  const handleSubmit = useCallback(async () => {
+    if (isSubmitting || isSubmitted) return;
+
+    const uncountedCount = lines.filter((l) => l.qty_counted === null).length;
+    if (uncountedCount > 0) {
+      const proceed = confirm(
+        `${uncountedCount} item(s) haven't been counted yet. Submit anyway?`
+      );
+      if (!proceed) return;
+    } else {
+      const proceed = confirm('Submit this count for review?');
+      if (!proceed) return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(withBypass('/api/m/count/submit', bypassSecret), {
+        method: 'POST',
+        headers: mobileHeaders(),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          setState('error');
+          setErrorMessage('Session expired');
+          return;
+        }
+        alert(data.error || 'Failed to submit count');
+        return;
+      }
+
+      setIsSubmitted(true);
+    } catch (err: any) {
+      console.error('Submit error:', err);
+      alert('Failed to submit. Check your connection and try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [isSubmitting, isSubmitted, lines, bypassSecret, mobileHeaders]);
+
   if (state === 'loading') {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' }}>
@@ -384,7 +427,10 @@ export function MobileCountClient({
         expiresAt={expiresAt}
         itemsCounted={itemsCounted}
         itemsTotal={lines.length}
+        isSubmitted={isSubmitted}
+        isSubmitting={isSubmitting}
         onScanClick={() => setScannerOpen(true)}
+        onSubmitClick={handleSubmit}
       >
         <MobileCountItemList
           lines={lines}
