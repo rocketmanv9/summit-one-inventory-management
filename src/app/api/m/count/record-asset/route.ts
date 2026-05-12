@@ -57,7 +57,7 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
     .from('cycle_count_lines')
     .update({
       qty_counted: body.asset_ids.length,
-      variance: body.asset_ids.length - (line.qty_expected || 0),
+      counted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', body.line_id);

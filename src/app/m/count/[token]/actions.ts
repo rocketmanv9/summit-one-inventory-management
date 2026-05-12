@@ -62,7 +62,7 @@ export async function recordCount(formData: FormData) {
       .from('cycle_count_lines')
       .update({
         qty_counted: qty,
-        variance: qty - line.qty_expected,
+        counted_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', line.id);
