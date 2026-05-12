@@ -323,10 +323,15 @@ export function MobileCountClient({
 
   if (state === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-gray-600">Validating session...</p>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: '32px', height: '32px',
+            border: '4px solid #2563eb', borderTopColor: 'transparent',
+            borderRadius: '50%', margin: '0 auto',
+            animation: 'm-spin 1s linear infinite',
+          }} />
+          <p style={{ fontSize: '14px', color: '#4b5563', marginTop: '12px' }}>Validating session...</p>
         </div>
       </div>
     );
@@ -342,28 +347,22 @@ export function MobileCountClient({
 
     if (isRetryable) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
-          <div className="max-w-sm w-full text-center space-y-4">
-            <div className="w-16 h-16 mx-auto bg-yellow-100 rounded-full flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-yellow-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-                />
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb', padding: '24px' }}>
+          <div style={{ maxWidth: '384px', width: '100%', textAlign: 'center' }}>
+            <div style={{ width: '64px', height: '64px', margin: '0 auto', background: '#fef9c3', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="32" height="32" fill="none" stroke="#ca8a04" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
-            <h1 className="text-xl font-semibold text-gray-900">Connection Issue</h1>
-            <p className="text-gray-600 text-sm">{errorMessage}</p>
+            <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827', marginTop: '16px' }}>Connection Issue</h1>
+            <p style={{ color: '#4b5563', fontSize: '14px', marginTop: '8px' }}>{errorMessage}</p>
             <button
               onClick={() => validateToken()}
-              className="mt-4 px-6 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium text-sm"
+              style={{
+                marginTop: '16px', padding: '10px 24px',
+                background: '#2563eb', color: '#fff', borderRadius: '8px',
+                fontWeight: 500, fontSize: '14px', border: 'none', cursor: 'pointer',
+              }}
             >
               Try Again
             </button>

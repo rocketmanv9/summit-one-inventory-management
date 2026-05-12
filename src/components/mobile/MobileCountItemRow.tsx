@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, type CSSProperties } from 'react';
 
 interface CountLine {
   id: string;
@@ -57,38 +57,118 @@ export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCount
     }
   };
 
+  const cardStyle: CSSProperties = {
+    padding: '16px',
+    borderRadius: '16px',
+    border: isCounted ? '1px solid #bbf7d0' : '1px solid #e5e7eb',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    background: isCounted ? '#f0fdf4' : '#fff',
+    transition: 'background 0.2s, border-color 0.2s',
+  };
+
+  const headerRow: CSSProperties = {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: '12px',
+  };
+
+  const itemName: CSSProperties = {
+    fontWeight: 600,
+    fontSize: '15px',
+    color: '#111827',
+    lineHeight: 1.3,
+    margin: 0,
+  };
+
+  const skuStyle: CSSProperties = {
+    fontSize: '12px',
+    color: '#6b7280',
+    marginTop: '2px',
+    fontFamily: 'ui-monospace, monospace',
+  };
+
+  const checkCircle: CSSProperties = {
+    marginLeft: '12px',
+    width: '24px',
+    height: '24px',
+    background: '#22c55e',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+  };
+
+  const inputRow: CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  };
+
+  const expectedBadge: CSSProperties = {
+    fontSize: '12px',
+    color: '#6b7280',
+    background: '#f3f4f6',
+    padding: '6px 10px',
+    borderRadius: '8px',
+    whiteSpace: 'nowrap',
+  };
+
+  const expectedValue: CSSProperties = {
+    fontWeight: 600,
+    color: '#374151',
+  };
+
+  const inputStyle: CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    fontSize: '20px',
+    fontWeight: 700,
+    border: saving
+      ? '2px solid #60a5fa'
+      : isCounted
+      ? '2px solid #86efac'
+      : '2px solid #d1d5db',
+    borderRadius: '12px',
+    textAlign: 'center',
+    background: saving ? '#eff6ff' : '#fff',
+    color: saving ? '#1d4ed8' : isCounted ? '#15803d' : '#111827',
+    WebkitAppearance: 'none',
+    MozAppearance: 'textfield' as any,
+    appearance: 'none' as any,
+    transition: 'border-color 0.2s, background 0.2s',
+  };
+
   return (
-    <div className={`p-4 rounded-2xl border shadow-sm transition-colors ${
-      isCounted
-        ? 'bg-green-50 border-green-200'
-        : 'bg-white border-gray-200'
-    }`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-[15px] text-gray-900 leading-tight">
+    <div style={cardStyle}>
+      <div style={headerRow}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={itemName}>
             {line.catalog_item?.name || 'Unknown Item'}
           </div>
           {line.catalog_item?.sku && (
-            <div className="text-xs text-gray-500 mt-0.5 font-mono">{line.catalog_item.sku}</div>
+            <div style={skuStyle}>{line.catalog_item.sku}</div>
           )}
         </div>
         {isCounted && (
-          <div className="ml-3 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm">
-            <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div style={checkCircle}>
+            <svg width="14" height="14" fill="none" stroke="#fff" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
             </svg>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-3">
+      <div style={inputRow}>
         {!isBlind && (
-          <div className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1.5 rounded-lg whitespace-nowrap">
-            Exp: <span className="font-semibold text-gray-700">{line.qty_expected}</span>
+          <div style={expectedBadge}>
+            Exp: <span style={expectedValue}>{line.qty_expected}</span>
             {line.catalog_item?.unit_of_measure ? ` ${line.catalog_item.unit_of_measure}` : ''}
           </div>
         )}
-        <div className="flex-1">
+        <div style={{ flex: 1 }}>
           <input
             type="number"
             inputMode="decimal"
@@ -98,13 +178,8 @@ export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCount
             placeholder="0"
             step="0.01"
             min="0"
-            className={`w-full px-4 py-3.5 text-xl font-bold border-2 rounded-xl text-center focus:outline-none focus:ring-0 transition-colors ${
-              saving
-                ? 'bg-blue-50 border-blue-400 text-blue-700'
-                : isCounted
-                ? 'bg-white border-green-300 text-green-700'
-                : 'bg-white border-gray-300 text-gray-900 focus:border-blue-500'
-            }`}
+            className={`m-input ${isCounted ? 'm-input-counted' : ''}`}
+            style={inputStyle}
           />
         </div>
       </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 
 interface MobileCountShellProps {
   countNumber: string;
@@ -57,59 +57,162 @@ export function MobileCountShell({
   const progress = itemsTotal > 0 ? (itemsCounted / itemsTotal) * 100 : 0;
   const allDone = itemsCounted === itemsTotal && itemsTotal > 0;
 
+  const s: Record<string, CSSProperties> = {
+    wrapper: {
+      minHeight: '100dvh',
+      background: '#f3f4f6',
+      display: 'flex',
+      flexDirection: 'column',
+    },
+    header: {
+      background: '#fff',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      position: 'sticky',
+      top: 0,
+      zIndex: 10,
+      paddingTop: 'env(safe-area-inset-top, 0px)',
+    },
+    headerInner: {
+      padding: '16px 20px',
+    },
+    headerRow: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    title: {
+      fontSize: '18px',
+      fontWeight: 700,
+      color: '#111827',
+      margin: 0,
+      letterSpacing: '-0.01em',
+    },
+    locationRow: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      marginTop: '2px',
+    },
+    locationText: {
+      fontSize: '14px',
+      color: '#6b7280',
+    },
+    timerBadge: {
+      fontSize: '13px',
+      fontFamily: 'ui-monospace, monospace',
+      fontWeight: 600,
+      padding: '6px 12px',
+      borderRadius: '9999px',
+      background: isUrgent ? '#fee2e2' : '#f3f4f6',
+      color: isUrgent ? '#b91c1c' : '#4b5563',
+    },
+    progressSection: {
+      marginTop: '16px',
+    },
+    progressRow: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: '6px',
+    },
+    progressLabel: {
+      fontSize: '12px',
+      fontWeight: 500,
+      color: '#374151',
+    },
+    progressPercent: {
+      fontSize: '12px',
+      fontWeight: 600,
+      color: allDone ? '#16a34a' : '#2563eb',
+    },
+    progressTrack: {
+      width: '100%',
+      background: '#e5e7eb',
+      borderRadius: '9999px',
+      height: '10px',
+      overflow: 'hidden',
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: '9999px',
+      background: allDone ? '#22c55e' : '#2563eb',
+      width: `${progress}%`,
+      transition: 'width 0.5s ease-out',
+    },
+    content: {
+      flex: 1,
+      overflowY: 'auto' as const,
+    },
+    footer: {
+      position: 'sticky' as const,
+      bottom: 0,
+      background: 'rgba(255,255,255,0.95)',
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
+      borderTop: '1px solid #e5e7eb',
+      padding: '16px 20px',
+      paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)',
+    },
+    scanButton: {
+      width: '100%',
+      padding: '16px',
+      background: '#2563eb',
+      color: '#fff',
+      borderRadius: '16px',
+      fontWeight: 600,
+      fontSize: '16px',
+      border: 'none',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '10px',
+      cursor: 'pointer',
+      boxShadow: '0 4px 14px rgba(37,99,235,0.25)',
+      WebkitTapHighlightColor: 'transparent',
+    },
+  };
+
   return (
-    <div className="min-h-[100dvh] bg-gray-100 flex flex-col">
+    <div style={s.wrapper}>
       {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-10" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
-        <div className="px-5 py-4">
-          <div className="flex items-center justify-between">
+      <div style={s.header}>
+        <div style={s.headerInner}>
+          <div style={s.headerRow}>
             <div>
-              <h1 className="text-lg font-bold text-gray-900 tracking-tight">{countNumber}</h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <h1 style={s.title}>{countNumber}</h1>
+              <div style={s.locationRow}>
+                <svg width="14" height="14" fill="none" stroke="#9ca3af" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
-                <span className="text-sm text-gray-500">{locationName}</span>
+                <span style={s.locationText}>{locationName}</span>
               </div>
             </div>
-            <div className={`text-sm font-mono font-semibold px-3 py-1.5 rounded-full ${
-              isUrgent ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-            }`}>
-              {timeLeft}
-            </div>
+            <div style={s.timerBadge}>{timeLeft}</div>
           </div>
 
           {/* Progress */}
-          <div className="mt-4">
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="font-medium text-gray-700">{itemsCounted} of {itemsTotal} counted</span>
-              <span className={`font-semibold ${allDone ? 'text-green-600' : 'text-blue-600'}`}>
-                {Math.round(progress)}%
-              </span>
+          <div style={s.progressSection}>
+            <div style={s.progressRow}>
+              <span style={s.progressLabel}>{itemsCounted} of {itemsTotal} counted</span>
+              <span style={s.progressPercent}>{Math.round(progress)}%</span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${allDone ? 'bg-green-500' : 'bg-blue-600'}`}
-                style={{ width: `${progress}%` }}
-              />
+            <div style={s.progressTrack}>
+              <div style={s.progressFill} />
             </div>
           </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div style={s.content}>
         {children}
       </div>
 
       {/* Scan button */}
-      <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm border-t border-gray-200 px-5 py-4" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 16px)' }}>
-        <button
-          onClick={onScanClick}
-          className="w-full py-4 bg-blue-600 text-white rounded-2xl font-semibold text-base flex items-center justify-center gap-2.5 active:bg-blue-700 active:scale-[0.98] transition-transform shadow-lg shadow-blue-600/25"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div style={s.footer}>
+        <button className="m-btn" onClick={onScanClick} style={s.scanButton}>
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
           </svg>
           Scan Barcode

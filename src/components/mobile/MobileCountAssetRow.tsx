@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 interface Asset {
   id: string;
@@ -48,67 +48,150 @@ export function MobileCountAssetRow({ line, onRecordAssets }: MobileCountAssetRo
     }
   };
 
+  const cardStyle: CSSProperties = {
+    borderRadius: '16px',
+    border: allFound ? '1px solid #bbf7d0' : '1px solid #e5e7eb',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    overflow: 'hidden',
+    transition: 'border-color 0.2s',
+  };
+
+  const headerStyle: CSSProperties = {
+    padding: '12px 16px',
+    background: allFound ? '#f0fdf4' : '#fff',
+  };
+
+  const headerRow: CSSProperties = {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  };
+
+  const itemName: CSSProperties = {
+    fontWeight: 600,
+    fontSize: '15px',
+    color: '#111827',
+    lineHeight: 1.3,
+    margin: 0,
+  };
+
+  const skuStyle: CSSProperties = {
+    fontSize: '12px',
+    color: '#6b7280',
+    marginTop: '2px',
+    fontFamily: 'ui-monospace, monospace',
+  };
+
+  const countBadge: CSSProperties = {
+    fontSize: '12px',
+    fontWeight: 600,
+    padding: '4px 10px',
+    borderRadius: '9999px',
+    marginLeft: '12px',
+    background: allFound ? '#dcfce7' : '#f3f4f6',
+    color: allFound ? '#15803d' : '#4b5563',
+    whiteSpace: 'nowrap',
+  };
+
+  const assetListStyle: CSSProperties = {
+    padding: '4px 12px 12px',
+    background: '#f9fafb',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  };
+
+  const emptyStyle: CSSProperties = {
+    fontSize: '12px',
+    color: '#9ca3af',
+    textAlign: 'center',
+    padding: '16px 0',
+  };
+
   return (
-    <div className={`rounded-2xl border shadow-sm overflow-hidden transition-colors ${
-      allFound ? 'border-green-200' : 'border-gray-200'
-    }`}>
+    <div style={cardStyle}>
       {/* Header */}
-      <div className={`px-4 py-3 ${allFound ? 'bg-green-50' : 'bg-white'}`}>
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold text-[15px] text-gray-900 leading-tight">
+      <div style={headerStyle}>
+        <div style={headerRow}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={itemName}>
               {line.catalog_item?.name || 'Unknown Item'}
             </div>
             {line.catalog_item?.sku && (
-              <div className="text-xs text-gray-500 mt-0.5 font-mono">{line.catalog_item.sku}</div>
+              <div style={skuStyle}>{line.catalog_item.sku}</div>
             )}
           </div>
-          <div className={`text-xs font-semibold px-2.5 py-1 rounded-full ml-3 ${
-            allFound
-              ? 'bg-green-100 text-green-700'
-              : 'bg-gray-100 text-gray-600'
-          }`}>
+          <div style={countBadge}>
             {foundCount}/{assets.length}
           </div>
         </div>
       </div>
 
       {/* Asset list */}
-      <div className="px-3 pb-3 pt-1 space-y-1.5 bg-gray-50">
+      <div style={assetListStyle}>
         {assets.map((asset) => {
           const isChecked = countedIds.has(asset.id);
+
+          const btnStyle: CSSProperties = {
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '14px',
+            borderRadius: '12px',
+            textAlign: 'left',
+            border: isChecked ? '1px solid #86efac' : '1px solid #e5e7eb',
+            background: isChecked ? '#f0fdf4' : '#fff',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+            cursor: 'pointer',
+            WebkitTapHighlightColor: 'transparent',
+            transition: 'background 0.15s, border-color 0.15s',
+            opacity: saving ? 0.7 : 1,
+            fontSize: '14px',
+          };
+
+          const checkboxStyle: CSSProperties = {
+            width: '28px',
+            height: '28px',
+            borderRadius: '8px',
+            border: isChecked ? '2px solid #22c55e' : '2px solid #d1d5db',
+            background: isChecked ? '#22c55e' : '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            transition: 'background 0.15s, border-color 0.15s',
+          };
+
           return (
             <button
               key={asset.id}
               onClick={() => toggleAsset(asset.id)}
               disabled={saving}
-              className={`w-full flex items-center gap-3 p-3.5 rounded-xl text-left transition-all active:scale-[0.98] ${
-                isChecked
-                  ? 'bg-green-50 border border-green-300 shadow-sm'
-                  : 'bg-white border border-gray-200 shadow-sm'
-              }`}
+              className="m-asset-btn"
+              style={btnStyle}
             >
-              <div className={`w-7 h-7 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                isChecked ? 'bg-green-500 border-green-500' : 'border-gray-300 bg-white'
-              }`}>
+              <div style={checkboxStyle}>
                 {isChecked && (
-                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg width="16" height="16" fill="none" stroke="#fff" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                   </svg>
                 )}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-gray-900 truncate">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {asset.asset_tag || asset.serial_number || 'Unnamed Asset'}
                 </div>
-                <div className="text-xs text-gray-500 capitalize">{asset.status}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', textTransform: 'capitalize', marginTop: '1px' }}>
+                  {asset.status}
+                </div>
               </div>
             </button>
           );
         })}
 
         {assets.length === 0 && (
-          <div className="text-xs text-gray-400 text-center py-4">
+          <div style={emptyStyle}>
             No assets expected at this location
           </div>
         )}
