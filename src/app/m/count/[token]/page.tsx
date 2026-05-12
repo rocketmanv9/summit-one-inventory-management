@@ -209,23 +209,27 @@ export default async function MobileCountPage({
       {/* ── Search bar ── */}
       <div style={{
         padding: '12px 20px', background: 'rgba(255,255,255,0.95)',
+        backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
         position: 'sticky', top: 0, zIndex: 5, borderBottom: `1px solid ${colors.gray200}`,
       }}>
         <form method="GET" action={`/m/count/${token}`} style={{ display: 'flex', gap: '8px' }}>
           <input type="hidden" name="x-vercel-protection-bypass" value={bypass} />
           <input
+            className="m-search-input"
             type="search"
             name="q"
             defaultValue={searchQuery}
             placeholder="Search items..."
             style={{
               flex: 1, padding: '10px 14px', background: colors.gray100, borderRadius: '10px',
-              fontSize: '14px', border: 'none', WebkitAppearance: 'none',
+              fontSize: '16px', border: '1.5px solid transparent',
+              transition: 'box-shadow 0.15s, background 0.15s',
             }}
           />
-          <button type="submit" style={{
-            padding: '10px 16px', background: colors.blue600, color: colors.white,
-            borderRadius: '10px', fontWeight: 600, fontSize: '13px', border: 'none', cursor: 'pointer',
+          <button className="m-btn" type="submit" style={{
+            padding: '10px 20px', background: colors.blue600, color: colors.white,
+            borderRadius: '10px', fontWeight: 600, fontSize: '14px', border: 'none',
+            cursor: 'pointer', transition: 'transform 0.1s, opacity 0.1s',
           }}>
             Search
           </button>
@@ -262,8 +266,9 @@ export default async function MobileCountPage({
       {/* ── Footer ── */}
       <div style={{
         position: 'sticky', bottom: 0, background: 'rgba(255,255,255,0.95)',
-        borderTop: `1px solid ${colors.gray200}`, padding: '12px 20px',
-        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)',
+        backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+        borderTop: `1px solid ${colors.gray200}`, padding: '14px 20px',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 14px)',
         display: 'flex', flexDirection: 'column', gap: '10px',
       }}>
         {/* Lookup form */}
@@ -271,18 +276,22 @@ export default async function MobileCountPage({
           <input type="hidden" name="token" value={token} />
           <input type="hidden" name="_bypass" value={bypass} />
           <input
+            className="m-lookup-input"
             type="text"
             name="code"
             placeholder="Type barcode or SKU..."
             style={{
-              flex: 1, padding: '12px 14px', fontSize: '15px', borderRadius: '12px',
+              flex: 1, padding: '12px 14px', fontSize: '16px', borderRadius: '12px',
               border: `1.5px solid ${colors.gray300}`, background: colors.white,
+              transition: 'border-color 0.15s, box-shadow 0.15s',
             }}
           />
-          <button type="submit" style={{
-            padding: '12px 18px', background: colors.blue600, color: colors.white,
-            borderRadius: '12px', fontWeight: 600, fontSize: '14px', border: 'none',
+          <button className="m-btn" type="submit" style={{
+            padding: '12px 20px', background: colors.blue600, color: colors.white,
+            borderRadius: '12px', fontWeight: 700, fontSize: '15px', border: 'none',
             cursor: 'pointer', whiteSpace: 'nowrap',
+            boxShadow: '0 2px 8px rgba(37,99,235,0.2)',
+            transition: 'transform 0.1s, opacity 0.1s',
           }}>
             Look Up
           </button>
@@ -291,29 +300,31 @@ export default async function MobileCountPage({
         {/* Submit */}
         {isSubmitted ? (
           <div style={{
-            padding: '14px', borderRadius: '14px', background: colors.green50,
-            border: `1px solid ${colors.green300}`, textAlign: 'center',
+            padding: '16px', borderRadius: '14px', background: colors.green50,
+            border: `1.5px solid ${colors.green300}`, textAlign: 'center',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              <svg width="18" height="18" fill="none" stroke={colors.green600} viewBox="0 0 24 24">
+              <svg width="20" height="20" fill="none" stroke={colors.green600} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
-              <span style={{ fontWeight: 600, fontSize: '15px', color: colors.green700 }}>Submitted for Review</span>
+              <span style={{ fontWeight: 700, fontSize: '16px', color: colors.green700 }}>Submitted for Review</span>
             </div>
-            <p style={{ fontSize: '12px', color: colors.gray500, margin: '4px 0 0' }}>Review and approval happens on desktop.</p>
+            <p style={{ fontSize: '13px', color: colors.gray500, margin: '6px 0 0' }}>Review and approval happens on desktop.</p>
           </div>
         ) : (
           <form action={submitCount}>
             <input type="hidden" name="token" value={token} />
             <input type="hidden" name="_bypass" value={bypass} />
-            <button type="submit" style={{
-              width: '100%', padding: '16px', background: colors.green600, color: colors.white,
-              borderRadius: '14px', fontWeight: 600, fontSize: '16px', border: 'none',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              boxShadow: '0 4px 14px rgba(22,163,74,0.25)',
+            <button className="m-btn-submit" type="submit" style={{
+              width: '100%', padding: '16px 20px', background: colors.green600, color: colors.white,
+              borderRadius: '14px', fontWeight: 700, fontSize: '16px', border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+              boxShadow: '0 4px 14px rgba(22,163,74,0.3)',
+              letterSpacing: '-0.01em',
+              transition: 'transform 0.1s, opacity 0.1s',
             }}>
               <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
               Submit for Review
             </button>
@@ -362,7 +373,7 @@ function ItemCard({ line, token, bypass, isBlind, isSubmitted }: {
         </div>
 
         {/* Count form */}
-        <form action={recordCount} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <form action={recordCount} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <input type="hidden" name="token" value={token} />
           <input type="hidden" name="_bypass" value={bypass} />
           <input type="hidden" name="catalog_item_id" value={line.catalog_item_id} />
@@ -370,14 +381,16 @@ function ItemCard({ line, token, bypass, isBlind, isSubmitted }: {
           {!isBlind && (
             <div style={{
               fontSize: '12px', color: colors.gray500, background: colors.gray100,
-              padding: '6px 10px', borderRadius: '8px', whiteSpace: 'nowrap',
+              padding: '8px 10px', borderRadius: '8px', whiteSpace: 'nowrap',
+              lineHeight: 1,
             }}>
-              Exp: <span style={{ fontWeight: 600, color: colors.gray700 }}>{line.qty_expected}</span>
+              Exp: <span style={{ fontWeight: 700, color: colors.gray700 }}>{line.qty_expected}</span>
               {line.catalog_item?.unit_of_measure ? ` ${line.catalog_item.unit_of_measure}` : ''}
             </div>
           )}
 
           <input
+            className={isCounted ? 'm-input-qty-done' : 'm-input-qty'}
             type="number"
             name="qty"
             defaultValue={line.qty_counted ?? ''}
@@ -387,18 +400,22 @@ function ItemCard({ line, token, bypass, isBlind, isSubmitted }: {
             inputMode="decimal"
             readOnly={isSubmitted}
             style={{
-              flex: 1, padding: '12px 14px', fontSize: '18px', fontWeight: 700, textAlign: 'center',
-              borderRadius: '12px', border: `2px solid ${isCounted ? colors.green300 : colors.gray300}`,
-              background: colors.white, color: isCounted ? colors.green700 : colors.gray900,
-              WebkitAppearance: 'none', MozAppearance: 'textfield' as any,
+              flex: 1, minWidth: 0, padding: '12px 8px', fontSize: '20px', fontWeight: 700,
+              textAlign: 'center', borderRadius: '12px',
+              border: `2px solid ${isCounted ? colors.green300 : colors.gray300}`,
+              background: isCounted ? '#f7fef9' : colors.white,
+              color: isCounted ? colors.green700 : colors.gray900,
+              transition: 'border-color 0.15s, box-shadow 0.15s',
             }}
           />
 
           {!isSubmitted && (
-            <button type="submit" style={{
-              padding: '12px 16px', background: colors.blue600, color: colors.white,
-              borderRadius: '12px', fontWeight: 600, fontSize: '14px', border: 'none',
-              cursor: 'pointer', whiteSpace: 'nowrap',
+            <button className="m-btn-save" type="submit" style={{
+              padding: '12px 18px', background: colors.blue600, color: colors.white,
+              borderRadius: '12px', fontWeight: 700, fontSize: '15px', border: 'none',
+              cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              boxShadow: '0 2px 8px rgba(37,99,235,0.2)',
+              transition: 'transform 0.1s, opacity 0.1s',
             }}>
               Save
             </button>
@@ -458,22 +475,25 @@ function AssetCard({ line, token, bypass, isSubmitted }: {
               <input type="hidden" name="line_id" value={line.id} />
               <input type="hidden" name="currently_checked" value={String(isChecked)} />
               <button
+                className="m-asset-btn"
                 type="submit"
                 disabled={isSubmitted}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: '12px',
-                  padding: '14px', borderRadius: '12px', textAlign: 'left',
-                  border: `1px solid ${isChecked ? colors.green300 : colors.gray200}`,
+                  padding: '14px 16px', borderRadius: '12px', textAlign: 'left',
+                  border: `1.5px solid ${isChecked ? colors.green300 : colors.gray200}`,
                   background: isChecked ? colors.green50 : colors.white,
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)', cursor: isSubmitted ? 'default' : 'pointer',
-                  fontSize: '14px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                  cursor: isSubmitted ? 'default' : 'pointer',
+                  transition: 'transform 0.1s, opacity 0.1s, border-color 0.15s',
                 }}
               >
                 <div style={{
                   width: '28px', height: '28px', borderRadius: '8px', flexShrink: 0,
-                  border: `2px solid ${isChecked ? colors.green500 : colors.gray300}`,
+                  border: `2.5px solid ${isChecked ? colors.green500 : colors.gray300}`,
                   background: isChecked ? colors.green500 : colors.white,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.15s, border-color 0.15s',
                 }}>
                   {isChecked && (
                     <svg width="16" height="16" fill="none" stroke="#fff" viewBox="0 0 24 24">
@@ -482,13 +502,18 @@ function AssetCard({ line, token, bypass, isSubmitted }: {
                   )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: colors.gray900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: colors.gray900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {asset.asset_tag || asset.serial_number || 'Unnamed Asset'}
                   </div>
-                  <div style={{ fontSize: '12px', color: colors.gray500, textTransform: 'capitalize', marginTop: '1px' }}>
+                  <div style={{ fontSize: '12px', color: colors.gray500, textTransform: 'capitalize' as const, marginTop: '2px' }}>
                     {asset.status}
                   </div>
                 </div>
+                {isChecked && (
+                  <svg width="18" height="18" fill="none" stroke={colors.green500} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
               </button>
             </form>
           );
