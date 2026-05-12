@@ -67,11 +67,11 @@ export function MobileCountItemList({
     },
     searchBar: {
       padding: '12px 20px',
-      background: 'rgba(255,255,255,0.9)',
+      background: 'rgba(255,255,255,0.95)',
       backdropFilter: 'blur(8px)',
       WebkitBackdropFilter: 'blur(8px)',
       position: 'sticky',
-      top: '116px',
+      top: 0,
       zIndex: 5,
       borderBottom: '1px solid #e5e7eb',
     },
