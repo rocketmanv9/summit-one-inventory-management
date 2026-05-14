@@ -1,6 +1,5 @@
 import { getAdminClient } from '@/utils/supabase/admin';
 import { recordCount, toggleAsset, submitCount, lookupBarcode } from './actions';
-import { MobileScanButton } from './MobileScanButton';
 import type { CSSProperties } from 'react';
 
 export const dynamic = 'force-dynamic';
