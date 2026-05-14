@@ -9,32 +9,37 @@ interface BarcodeScannerOverlayProps {
 }
 
 export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScannerOverlayProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<any>(null);
-  const scanningRef = useRef(false);
+  const scannerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [manualCode, setManualCode] = useState('');
   const [cameraError, setCameraError] = useState('');
   const [showManual, setShowManual] = useState(false);
+  const hasScannedRef = useRef(false);
 
-  const stopCamera = useCallback(() => {
-    scanningRef.current = false;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
+  const cleanup = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        const state = scannerRef.current.getState?.();
+        // State 2 = SCANNING, 3 = PAUSED
+        if (state === 2 || state === 3) {
+          await scannerRef.current.stop();
+        }
+        scannerRef.current.clear();
+      } catch {
+        // Ignore cleanup errors
+      }
+      scannerRef.current = null;
     }
   }, []);
 
   const handleClose = useCallback(() => {
-    stopCamera();
+    cleanup();
     setManualCode('');
     setCameraError('');
     setShowManual(false);
+    hasScannedRef.current = false;
     onClose();
-  }, [stopCamera, onClose]);
+  }, [cleanup, onClose]);
 
   const handleManualSubmit = useCallback(() => {
     const code = manualCode.trim();
@@ -45,55 +50,53 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
 
   useEffect(() => {
     if (!isOpen) {
-      stopCamera();
+      cleanup();
       return;
     }
 
+    hasScannedRef.current = false;
     let cancelled = false;
 
-    const startCamera = async () => {
-      // Check if BarcodeDetector is available (Safari 16.4+, Chrome 83+)
-      const hasBarcodeDetector = typeof (window as any).BarcodeDetector !== 'undefined';
+    const startScanner = async () => {
+      // Dynamic import to avoid SSR issues
+      const { Html5Qrcode } = await import('html5-qrcode');
 
-      if (!hasBarcodeDetector) {
-        setCameraError('Barcode scanning is not supported on this device. Use manual entry below.');
-        setShowManual(true);
-        return;
+      if (cancelled || !containerRef.current) return;
+
+      const scannerId = 'barcode-scanner-region';
+      // Ensure the container div exists
+      if (!document.getElementById(scannerId)) {
+        const div = document.createElement('div');
+        div.id = scannerId;
+        containerRef.current.appendChild(div);
       }
 
       try {
-        detectorRef.current = new (window as any).BarcodeDetector({
-          formats: ['qr_code', 'code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e'],
-        });
-      } catch {
-        setCameraError('Could not initialize barcode detector. Use manual entry below.');
-        setShowManual(true);
-        return;
-      }
+        const scanner = new Html5Qrcode(scannerId);
+        scannerRef.current = scanner;
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          scanningRef.current = true;
-          scanLoop();
-        }
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: { width: 260, height: 160 },
+            aspectRatio: 1.777,
+          },
+          (decodedText: string) => {
+            if (hasScannedRef.current) return;
+            hasScannedRef.current = true;
+            cleanup();
+            onScan(decodedText);
+            onClose();
+          },
+          () => {
+            // Ignore scan failures (no barcode in frame)
+          }
+        );
       } catch (err: any) {
         if (cancelled) return;
         const msg =
-          err.name === 'NotAllowedError'
+          err?.message?.includes('NotAllowed') || err?.name === 'NotAllowedError'
             ? 'Camera access denied. Please allow camera access or use manual entry.'
             : 'Could not access camera. Use manual entry below.';
         setCameraError(msg);
@@ -101,36 +104,13 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
       }
     };
 
-    const scanLoop = async () => {
-      if (!scanningRef.current || !videoRef.current || !detectorRef.current) return;
-
-      try {
-        const barcodes = await detectorRef.current.detect(videoRef.current);
-        if (barcodes && barcodes.length > 0) {
-          const code = barcodes[0].rawValue;
-          if (code) {
-            stopCamera();
-            onScan(code);
-            onClose();
-            return;
-          }
-        }
-      } catch {
-        // Detection errors are normal, keep scanning
-      }
-
-      if (scanningRef.current) {
-        requestAnimationFrame(scanLoop);
-      }
-    };
-
-    startCamera();
+    startScanner();
 
     return () => {
       cancelled = true;
-      stopCamera();
+      cleanup();
     };
-  }, [isOpen, onScan, onClose, stopCamera]);
+  }, [isOpen, onScan, onClose, cleanup]);
 
   if (!isOpen) return null;
 
@@ -179,23 +159,6 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
       justifyContent: 'center',
       overflow: 'hidden',
       position: 'relative',
-    },
-    video: {
-      width: '100%',
-      height: '100%',
-      objectFit: 'cover' as const,
-    },
-    scanGuide: {
-      position: 'absolute',
-      width: '260px',
-      height: '160px',
-      border: '3px solid rgba(255,255,255,0.6)',
-      borderRadius: '12px',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-      pointerEvents: 'none',
-      boxShadow: '0 0 0 9999px rgba(0,0,0,0.4)',
     },
     bottomArea: {
       padding: '16px 20px',
@@ -267,11 +230,9 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
         </button>
       </div>
 
-      <div style={s.videoArea}>
-        <video ref={videoRef} playsInline muted style={s.video} />
-        {!cameraError && <div style={s.scanGuide} />}
-        {cameraError && !showManual && (
-          <div style={{ position: 'absolute', padding: '24px', textAlign: 'center' }}>
+      <div style={s.videoArea} ref={containerRef}>
+        {cameraError && (
+          <div style={{ position: 'absolute', padding: '24px', textAlign: 'center', zIndex: 5 }}>
             <p style={{ color: '#fca5a5', fontSize: '15px', margin: 0 }}>{cameraError}</p>
           </div>
         )}
