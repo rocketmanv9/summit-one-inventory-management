@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { scanLookup, scanRecord } from '../actions';
 
 /**
  * Dedicated mobile scan page — uses native getUserMedia + BarcodeDetector.
- * No external libraries needed. Works on iOS Safari 17.2+ and Chrome 88+.
+ * No external libraries. Camera starts on user tap (required by iOS Safari).
  * Falls back to manual entry if BarcodeDetector is unavailable.
  */
 export default function MobileScanPage() {
@@ -19,19 +19,13 @@ export default function MobileScanPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const detectingRef = useRef(false);
   const cooldownRef = useRef(false);
+  const frameIdRef = useRef<number>(0);
 
-  const [status, setStatus] = useState<'loading' | 'scanning' | 'no-detector' | 'error'>('loading');
+  const [status, setStatus] = useState<'idle' | 'starting' | 'scanning' | 'no-detector' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [feedback, setFeedback] = useState<{ text: string; isError: boolean } | null>(null);
   const [scanCount, setScanCount] = useState(0);
   const [manualCode, setManualCode] = useState('');
-
-  // Set bypass cookie on load
-  useEffect(() => {
-    if (bypass) {
-      document.cookie = `x-vercel-protection-bypass=${bypass};path=/;secure;samesite=lax;max-age=86400`;
-    }
-  }, [bypass]);
 
   const showFeedback = useCallback((text: string, isError: boolean) => {
     setFeedback({ text, isError });
@@ -70,52 +64,67 @@ export default function MobileScanPage() {
     setTimeout(() => { cooldownRef.current = false; }, 2000);
   }, [token, showFeedback]);
 
-  // Start camera + barcode detection
-  useEffect(() => {
-    let cancelled = false;
-    let animFrameId: number;
+  // Start camera — called from button tap (user gesture required on iOS)
+  const startCamera = useCallback(async () => {
+    setStatus('starting');
+    setErrorMsg('');
 
-    async function start() {
-      // 1. Get camera
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
-        streamRef.current = stream;
+    // Set bypass cookie for any subsequent server action fetches
+    if (bypass) {
+      document.cookie = `x-vercel-protection-bypass=${bypass};path=/;secure;samesite=lax;max-age=86400`;
+    }
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch (err: any) {
-        if (cancelled) return;
-        const msg = err?.name === 'NotAllowedError'
-          ? 'Camera access denied. Please allow camera access in your browser settings.'
-          : `Camera error: ${err?.message || 'unknown'}`;
-        setErrorMsg(msg);
-        setStatus('error');
-        return;
-      }
+    // 1. Get camera stream
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+    } catch (err: any) {
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Camera access denied. Tap the lock icon in your address bar to allow camera access, then try again.'
+        : err?.name === 'NotFoundError'
+          ? 'No camera found on this device.'
+          : `Camera error: ${err?.message || err?.name || 'unknown'}`;
+      setErrorMsg(msg);
+      setStatus('error');
+      return;
+    }
 
-      // 2. Check for BarcodeDetector
-      if (!('BarcodeDetector' in window)) {
-        if (!cancelled) setStatus('no-detector');
-        return;
-      }
+    streamRef.current = stream;
 
-      // 3. Start detection loop
+    // 2. Attach stream to video element
+    const video = videoRef.current;
+    if (!video) {
+      setErrorMsg('Video element not found. Please reload the page.');
+      setStatus('error');
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    video.srcObject = stream;
+    try {
+      await video.play();
+    } catch (err: any) {
+      setErrorMsg(`Video playback failed: ${err?.message || 'unknown'}. Try reloading.`);
+      setStatus('error');
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    // 3. Start barcode detection if available
+    if ('BarcodeDetector' in window) {
       try {
         const detector = new (window as any).BarcodeDetector({
           formats: ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf', 'data_matrix'],
         });
 
-        if (!cancelled) setStatus('scanning');
+        setStatus('scanning');
 
         const detect = async () => {
-          if (cancelled || !videoRef.current || videoRef.current.readyState < 2) {
-            if (!cancelled) animFrameId = requestAnimationFrame(detect);
+          if (!videoRef.current || videoRef.current.readyState < 2) {
+            frameIdRef.current = requestAnimationFrame(detect);
             return;
           }
           if (!detectingRef.current && !cooldownRef.current) {
@@ -130,30 +139,24 @@ export default function MobileScanPage() {
             }
             detectingRef.current = false;
           }
-          if (!cancelled) animFrameId = requestAnimationFrame(detect);
+          frameIdRef.current = requestAnimationFrame(detect);
         };
 
-        animFrameId = requestAnimationFrame(detect);
+        frameIdRef.current = requestAnimationFrame(detect);
       } catch {
-        if (!cancelled) setStatus('no-detector');
+        setStatus('no-detector');
       }
+    } else {
+      setStatus('no-detector');
     }
-
-    start();
-
-    return () => {
-      cancelled = true;
-      if (animFrameId) cancelAnimationFrame(animFrameId);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
-      }
-    };
-  }, [handleDetectedCode]);
+  }, [bypass, handleDetectedCode]);
 
   const goBack = () => {
+    // Stop camera and detection
+    if (frameIdRef.current) cancelAnimationFrame(frameIdRef.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
     }
     const countUrl = `/m/count/${token}${bypass ? `?x-vercel-protection-bypass=${bypass}` : ''}`;
     window.location.href = countUrl;
@@ -165,6 +168,8 @@ export default function MobileScanPage() {
     setManualCode('');
     handleDetectedCode(code);
   };
+
+  const cameraActive = status === 'scanning' || status === 'no-detector';
 
   return (
     <div style={{
@@ -208,14 +213,14 @@ export default function MobileScanPage() {
 
       {/* Camera view */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+        {/* Video element — always in DOM so ref is ready */}
         <video
           ref={videoRef}
           playsInline
           muted
-          autoPlay
           style={{
             width: '100%', height: '100%', objectFit: 'cover',
-            display: status === 'error' ? 'none' : 'block',
+            display: cameraActive ? 'block' : 'none',
           }}
         />
 
@@ -231,8 +236,33 @@ export default function MobileScanPage() {
           }} />
         )}
 
-        {/* Loading state */}
-        {status === 'loading' && (
+        {/* Idle state — tap to start */}
+        {status === 'idle' && (
+          <div style={{ position: 'absolute', textAlign: 'center', padding: '24px' }}>
+            <button
+              onClick={startCamera}
+              style={{
+                padding: '20px 40px', background: '#2563eb', color: '#fff',
+                borderRadius: '16px', fontWeight: 700, fontSize: '18px', border: 'none',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
+                boxShadow: '0 4px 14px rgba(37,99,235,0.4)',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Start Camera
+            </button>
+            <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', marginTop: '16px' }}>
+              Tap to open camera and scan barcodes
+            </p>
+          </div>
+        )}
+
+        {/* Starting state */}
+        {status === 'starting' && (
           <div style={{ position: 'absolute', color: 'rgba(255,255,255,0.7)', fontSize: '15px', textAlign: 'center', padding: '24px' }}>
             Starting camera...
           </div>
@@ -240,19 +270,29 @@ export default function MobileScanPage() {
 
         {/* Error state */}
         {status === 'error' && (
-          <div style={{ position: 'absolute', color: '#fca5a5', fontSize: '15px', textAlign: 'center', padding: '24px' }}>
-            {errorMsg}
+          <div style={{ position: 'absolute', textAlign: 'center', padding: '24px' }}>
+            <p style={{ color: '#fca5a5', fontSize: '15px', margin: '0 0 16px 0' }}>{errorMsg}</p>
+            <button
+              onClick={startCamera}
+              style={{
+                padding: '12px 24px', background: 'rgba(255,255,255,0.2)', color: '#fff',
+                borderRadius: '10px', fontWeight: 600, fontSize: '14px', border: 'none',
+                cursor: 'pointer', WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              Try Again
+            </button>
           </div>
         )}
 
-        {/* No detector - camera works but can't auto-detect */}
+        {/* No detector — camera works but no auto-detect */}
         {status === 'no-detector' && (
           <div style={{
             position: 'absolute', bottom: '16px', left: '16px', right: '16px',
             background: 'rgba(0,0,0,0.7)', borderRadius: '10px', padding: '12px',
             color: 'rgba(255,255,255,0.8)', fontSize: '13px', textAlign: 'center',
           }}>
-            Auto-detect not supported. Use manual entry below.
+            Auto-detect not available on this browser. Type codes below.
           </div>
         )}
       </div>
@@ -269,7 +309,7 @@ export default function MobileScanPage() {
           </p>
         )}
 
-        {/* Manual entry - always visible */}
+        {/* Manual entry — always visible */}
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="text"
