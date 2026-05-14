@@ -50,7 +50,6 @@ DECLARE
   v_category_id      uuid;
   v_vendor_id        uuid;
   v_location_id      uuid;
-  v_item_result      record;
   v_item_id          uuid;
   v_item_sku         text;
   v_event_id         text;
@@ -74,8 +73,8 @@ BEGIN
 
   -- Idempotency check
   IF p_idempotency_key IS NOT NULL AND trim(p_idempotency_key) <> '' THEN
-    SELECT ci.id, ci.sku, ci.last_event_id
-    INTO v_item_result
+    SELECT ci.id, ci.sku
+    INTO v_item_id, v_item_sku
     FROM inventory.catalog_items ci
     WHERE ci.tenant_id = v_tenant_id
       AND ci.last_event_id = p_idempotency_key;
@@ -84,8 +83,8 @@ BEGIN
       RETURN jsonb_build_object(
         'success', true,
         'idempotent_hit', true,
-        'item_id', v_item_result.id,
-        'item_sku', v_item_result.sku,
+        'item_id', v_item_id,
+        'item_sku', v_item_sku,
         'created_entities', '[]'::jsonb
       );
     END IF;
@@ -206,7 +205,8 @@ BEGIN
   END IF;
 
   -- 4. Create CATALOG ITEM
-  SELECT * INTO v_item_result
+  SELECT ci.id, ci.sku
+  INTO v_item_id, v_item_sku
   FROM inventory.rpc_create_catalog_item(
     p_name            := p_name,
     p_description     := p_description,
@@ -217,10 +217,7 @@ BEGIN
     p_base_sku        := p_base_sku,
     p_sku             := p_sku,
     p_last_event_id   := p_idempotency_key
-  );
-
-  v_item_id  := v_item_result.id;
-  v_item_sku := v_item_result.sku;
+  ) ci;
 
   -- Set preferred_vendor_id on the item if vendor resolved
   IF v_vendor_id IS NOT NULL THEN

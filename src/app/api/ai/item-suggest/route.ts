@@ -165,6 +165,21 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
     });
   } catch (err: any) {
     log.error(`[AI Item Suggest] Failed: ${err.message}`);
+
+    // Surface specific OpenAI errors to the user
+    if (err.status === 429 || err.code === 'insufficient_quota') {
+      return Response.json(
+        { error: 'AI quota exceeded — please check OpenAI billing or try again later.' },
+        { status: 503 }
+      );
+    }
+    if (err.status === 401) {
+      return Response.json(
+        { error: 'AI service authentication failed — check OPENAI_API_KEY.' },
+        { status: 503 }
+      );
+    }
+
     return Response.json({ error: 'Failed to generate suggestions. Try again.' }, { status: 500 });
   }
 }, { serviceName: SERVICE_NAME });
