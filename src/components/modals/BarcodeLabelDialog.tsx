@@ -74,12 +74,13 @@ function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType
       try {
         JsBarcode(barcodeSvgRef.current, item.code, {
           format: 'CODE128',
-          width: 2,
-          height: 50,
+          width: 1.5,
+          height: 40,
           displayValue: true,
-          fontSize: 12,
-          margin: 5,
+          fontSize: 11,
+          margin: 2,
           font: 'monospace',
+          textMargin: 2,
         });
       } catch {
         // If code can't be encoded in Code128, show a fallback
@@ -100,17 +101,17 @@ function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType
   }, [item.code]);
 
   return (
-    <div className="border rounded-lg p-4 flex flex-col items-center gap-2 print:border print:rounded print:p-3 print:break-inside-avoid">
-      <div className="text-xs text-muted-foreground uppercase tracking-wide print:text-[9px]">
+    <div className="barcode-label-card border rounded-lg p-3 flex flex-col items-center gap-1.5 overflow-hidden">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wide print:text-[8px]">
         {entityType === 'asset' ? 'Asset' : entityType === 'item' ? 'Item' : 'Tool'}
       </div>
-      <div className="text-sm font-medium text-center truncate max-w-full print:text-xs">
+      <div className="text-xs font-medium text-center truncate max-w-full print:text-[10px]">
         {item.label}
       </div>
-      <div className="flex items-center gap-4">
-        <svg ref={barcodeSvgRef} className="max-w-[200px]" />
+      <div className="flex items-center gap-3 w-full justify-center min-w-0">
+        <svg ref={barcodeSvgRef} className="shrink min-w-0 max-w-[180px] h-auto" />
         {qrDataUrl && (
-          <img src={qrDataUrl} alt={`QR: ${item.code}`} className="w-[80px] h-[80px] print:w-[60px] print:h-[60px]" />
+          <img src={qrDataUrl} alt={`QR: ${item.code}`} className="w-[60px] h-[60px] shrink-0 print:w-[50px] print:h-[50px]" />
         )}
       </div>
     </div>

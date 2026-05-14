@@ -330,12 +330,20 @@ body {
     width: 100%;
   }
 
-  /* Label sizing for standard 2" x 1" label stock */
-  .barcode-print-area > div > div {
+  /* Each label card — fits 2-up on standard letter paper */
+  .barcode-label-card {
     page-break-inside: avoid;
     break-inside: avoid;
+    width: 3.5in;
     padding: 0.15in 0.2in;
-    max-width: 2in;
-    max-height: 1in;
+    border: 1px dashed #ccc;
+    overflow: hidden;
+  }
+
+  /* Force barcode SVG to scale within its container */
+  .barcode-label-card svg {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 0.6in;
   }
 }
