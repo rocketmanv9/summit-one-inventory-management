@@ -2878,11 +2878,13 @@ export const InventoryRPC = {
       id: string;
       name: string;
       sku: string;
+      barcode: string | null;
       unit_of_measure: string | null;
       tracking_mode: string;
       reorder_point: number | null;
       category_name: string | null;
       active: boolean;
+      last_event_id: string | null;
     };
     on_hand: number;
     reserved: number;

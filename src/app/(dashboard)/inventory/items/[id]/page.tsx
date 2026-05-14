@@ -12,11 +12,16 @@ import {
   MapPin,
   Clock,
   AlertTriangle,
+  ScanBarcode,
+  Printer,
+  Tag,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
+import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
 type StockSnapshot = Awaited<ReturnType<typeof InventoryRPC.getItemStockSnapshot>>;
@@ -74,6 +79,14 @@ export default function ItemDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Identifiers state
+  const [barcode, setBarcode] = useState('');
+  const [barcodeDirty, setBarcodeDirty] = useState(false);
+  const [barcodeSaving, setBarcodeSaving] = useState(false);
+  const [barcodeMsg, setBarcodeMsg] = useState('');
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [showLabelDialog, setShowLabelDialog] = useState(false);
+
   useEffect(() => {
     if (!params.id) return;
 
@@ -93,6 +106,56 @@ export default function ItemDetailPage() {
 
     load();
   }, [params.id]);
+
+  // Sync barcode from snapshot
+  useEffect(() => {
+    if (snapshot?.item?.barcode) {
+      setBarcode(snapshot.item.barcode);
+    }
+  }, [snapshot]);
+
+  const handleSaveBarcode = async () => {
+    if (!snapshot?.item) return;
+    const lastEventId = snapshot.item.last_event_id;
+    if (!lastEventId) {
+      setBarcodeMsg('Cannot save — missing event ID. Refresh and try again.');
+      return;
+    }
+    setBarcodeSaving(true);
+    setBarcodeMsg('');
+    try {
+      await InventoryRPC.updateCatalogItem(
+        snapshot.item.id,
+        { barcode: barcode.trim() || null } as any,
+        lastEventId
+      );
+      setBarcodeDirty(false);
+      setBarcodeMsg('Saved');
+      // Reload snapshot to get fresh last_event_id
+      const fresh = await InventoryRPC.getItemStockSnapshot(params.id);
+      setSnapshot(fresh);
+      setTimeout(() => setBarcodeMsg(''), 2000);
+    } catch (err: any) {
+      setBarcodeMsg(`Error: ${err.message}`);
+    } finally {
+      setBarcodeSaving(false);
+    }
+  };
+
+  const handleScanBarcode = (decodedText: string) => {
+    // Extract code from URL if QR code encodes a URL
+    let code = decodedText;
+    try {
+      const url = new URL(decodedText);
+      const codeParam = url.searchParams.get('code');
+      if (codeParam) code = codeParam;
+    } catch {
+      // Not a URL, use as-is
+    }
+    setBarcode(code);
+    setBarcodeDirty(true);
+    setScannerOpen(false);
+  };
 
   if (loading) {
     return (
@@ -269,6 +332,80 @@ export default function ItemDetailPage() {
             Create PO
           </button>
         </div>
+
+        {/* Identifiers & Labels */}
+        <div className="rounded-xl border bg-background p-5">
+          <h3 className="mb-4 flex items-center gap-2 text-base font-semibold">
+            <Tag className="h-4 w-4" />
+            Identifiers &amp; Labels
+          </h3>
+
+          <div className="space-y-4">
+            {/* Barcode */}
+            <div>
+              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Barcode</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={barcode}
+                  onChange={(e) => { setBarcode(e.target.value); setBarcodeDirty(true); }}
+                  placeholder="Scan or type barcode..."
+                  className="flex-1 px-3 py-2 border rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <button
+                  onClick={() => setScannerOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-md text-sm font-medium hover:bg-muted transition-colors"
+                  title="Scan barcode with camera"
+                >
+                  <ScanBarcode className="h-4 w-4" />
+                  Scan
+                </button>
+                <button
+                  onClick={handleSaveBarcode}
+                  disabled={!barcodeDirty || barcodeSaving}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                >
+                  {barcodeSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+              {barcodeMsg && (
+                <p className={`mt-1.5 text-xs font-medium ${barcodeMsg.startsWith('Error') ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {barcodeMsg}
+                </p>
+              )}
+            </div>
+
+            {/* Print Label */}
+            <div className="flex items-center gap-3 pt-2 border-t">
+              <button
+                onClick={() => setShowLabelDialog(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 border rounded-md text-sm font-medium hover:bg-muted transition-colors"
+              >
+                <Printer className="h-4 w-4" />
+                Print Label
+              </button>
+              <span className="text-xs text-muted-foreground">
+                Prints barcode (CODE128) + QR code using {barcode || item.sku}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Scanner overlay */}
+        <BarcodeScannerOverlay
+          isOpen={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onScan={handleScanBarcode}
+        />
+
+        {/* Label print dialog */}
+        {showLabelDialog && (
+          <BarcodeLabelDialog
+            items={[{ code: barcode || item.sku, label: item.name }]}
+            entityType="item"
+            onClose={() => setShowLabelDialog(false)}
+          />
+        )}
 
         {/* Timestamps */}
         <div className="flex flex-wrap gap-6 text-sm text-muted-foreground">
