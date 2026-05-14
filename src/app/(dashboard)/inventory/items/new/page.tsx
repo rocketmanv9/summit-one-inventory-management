@@ -27,6 +27,7 @@ import {
   ShoppingCart,
   ArrowLeftRight,
   CalendarCheck,
+  Sparkles,
 } from 'lucide-react';
 import type { Database } from 'types/supabase';
 
@@ -129,6 +130,10 @@ export default function NewItemWizardPage() {
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
 
+  // AI suggestion state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiFilled, setAiFilled] = useState(false);
+
   // Success state
   const [result, setResult] = useState<{
     item_id: string;
@@ -169,6 +174,61 @@ export default function NewItemWizardPage() {
       console.error('Error loading locations:', err);
     }
   };
+
+  // ── AI Suggest ──────────────────────────────────────────────────────
+  const handleAiSuggest = useCallback(async () => {
+    const trimmedName = form.name.trim();
+    if (!trimmedName || aiLoading) return;
+
+    setAiLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/ai/item-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmedName,
+          existing_categories: categories.map(c => ({
+            id: c.id,
+            name: c.name,
+            sku_prefix: c.sku_prefix,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'AI suggestion failed' }));
+        setError(err.error || 'AI suggestion failed');
+        return;
+      }
+
+      const { suggestion } = await res.json();
+
+      setForm(prev => ({
+        ...prev,
+        description: suggestion.description || prev.description,
+        unit_of_measure: suggestion.unit_of_measure || prev.unit_of_measure,
+        tracking_mode: suggestion.tracking_mode || prev.tracking_mode,
+        reorder_point: suggestion.reorder_point != null ? String(suggestion.reorder_point) : prev.reorder_point,
+        base_sku: suggestion.sku_prefix || prev.base_sku,
+        category_id: suggestion.category_id || prev.category_id,
+      }));
+
+      // If AI suggests a new category, open the category modal pre-seeded
+      if (suggestion.new_category_name && !suggestion.category_id) {
+        setAiSuggestedCategory(suggestion.new_category_name);
+      }
+
+      setAiFilled(true);
+    } catch {
+      setError('Failed to get AI suggestions. Try again.');
+    } finally {
+      setAiLoading(false);
+    }
+  }, [form.name, aiLoading, categories]);
+
+  const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
 
   // ── SKU Preview ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -363,6 +423,11 @@ export default function NewItemWizardPage() {
             skuPreview={skuPreview}
             updateForm={updateForm}
             onAddCategory={() => setShowCategoryModal(true)}
+            onAiSuggest={handleAiSuggest}
+            aiLoading={aiLoading}
+            aiFilled={aiFilled}
+            aiSuggestedCategory={aiSuggestedCategory}
+            onDismissSuggestedCategory={() => setAiSuggestedCategory(null)}
           />
         )}
         {step === 1 && (
@@ -455,12 +520,22 @@ function StepBasics({
   skuPreview,
   updateForm,
   onAddCategory,
+  onAiSuggest,
+  aiLoading,
+  aiFilled,
+  aiSuggestedCategory,
+  onDismissSuggestedCategory,
 }: {
   form: WizardState;
   categories: ItemCategoryRow[];
   skuPreview: string;
   updateForm: (field: keyof WizardState, value: string) => void;
   onAddCategory: () => void;
+  onAiSuggest: () => void;
+  aiLoading: boolean;
+  aiFilled: boolean;
+  aiSuggestedCategory: string | null;
+  onDismissSuggestedCategory: () => void;
 }) {
   const selectedCategory = categories.find(c => c.id === form.category_id);
   const isAttributeBased = selectedCategory?.sku_mode === 'attribute_based';
@@ -470,19 +545,52 @@ function StepBasics({
       <CardHeader>
         <CardTitle className="text-lg">Item Basics</CardTitle>
         <CardDescription>
-          Define the item name, category, unit of measure, and tracking mode.
+          Type a name, then hit the AI button to auto-fill the rest.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="wiz-name">Item Name *</Label>
-          <Input
-            id="wiz-name"
-            value={form.name}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('name', e.target.value)}
-            placeholder="e.g., Hot Mix Asphalt (HMA), Rebar #4, Diesel Fuel"
-            autoFocus
-          />
+          <div className="flex gap-2">
+            <Input
+              id="wiz-name"
+              value={form.name}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('name', e.target.value)}
+              placeholder="e.g., Hot Mix Asphalt (HMA), Rebar #4, Diesel Fuel"
+              autoFocus
+              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === 'Enter' && form.name.trim()) {
+                  e.preventDefault();
+                  onAiSuggest();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant={aiFilled ? 'outline' : 'default'}
+              size="icon"
+              onClick={onAiSuggest}
+              disabled={!form.name.trim() || aiLoading}
+              title="AI auto-fill from name"
+              className={`shrink-0 ${aiFilled ? 'border-purple-300 text-purple-600 hover:bg-purple-50' : ''}`}
+            >
+              {aiLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          {aiLoading && (
+            <p className="text-xs text-muted-foreground animate-pulse">
+              Analyzing item and suggesting fields...
+            </p>
+          )}
+          {aiFilled && !aiLoading && (
+            <p className="text-xs text-purple-600">
+              Fields auto-filled by AI. Review and adjust as needed.
+            </p>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -523,6 +631,31 @@ function StepBasics({
             <p className="text-xs text-muted-foreground">
               SKU preview: <span className="font-mono font-medium">{skuPreview}</span>
             </p>
+          )}
+          {aiSuggestedCategory && !form.category_id && (
+            <div className="flex items-center gap-2 rounded-md border border-purple-200 bg-purple-50/60 px-3 py-2 text-sm">
+              <Sparkles className="h-3.5 w-3.5 text-purple-500 shrink-0" />
+              <span className="text-purple-900">
+                AI suggests category: <span className="font-medium">{aiSuggestedCategory}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  onAddCategory();
+                  onDismissSuggestedCategory();
+                }}
+                className="ml-auto text-xs font-medium text-purple-700 hover:text-purple-900 underline"
+              >
+                Create it
+              </button>
+              <button
+                type="button"
+                onClick={onDismissSuggestedCategory}
+                className="text-xs text-purple-400 hover:text-purple-600"
+              >
+                Dismiss
+              </button>
+            </div>
           )}
         </div>
 

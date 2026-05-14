@@ -231,16 +231,10 @@ export default function ItemsPage() {
                 Manage Categories
               </button>
               <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                Quick Add
-              </button>
-              <button
                 onClick={() => router.push('/inventory/items/new')}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
-                + New Item Wizard
+                + New Item
               </button>
             </div>
           }
