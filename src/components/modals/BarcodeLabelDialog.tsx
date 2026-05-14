@@ -11,7 +11,7 @@ export interface BarcodeLabelItem {
 
 interface BarcodeLabelDialogProps {
   items: BarcodeLabelItem[];
-  entityType: 'asset' | 'tool';
+  entityType: 'asset' | 'tool' | 'item';
   onClose: () => void;
 }
 
@@ -64,7 +64,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
   );
 }
 
-function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType: 'asset' | 'tool' }) {
+function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType: 'asset' | 'tool' | 'item' }) {
   const barcodeSvgRef = useRef<SVGSVGElement>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
@@ -102,7 +102,7 @@ function BarcodeLabel({ item, entityType }: { item: BarcodeLabelItem; entityType
   return (
     <div className="border rounded-lg p-4 flex flex-col items-center gap-2 print:border print:rounded print:p-3 print:break-inside-avoid">
       <div className="text-xs text-muted-foreground uppercase tracking-wide print:text-[9px]">
-        {entityType === 'asset' ? 'Asset' : 'Tool'}
+        {entityType === 'asset' ? 'Asset' : entityType === 'item' ? 'Item' : 'Tool'}
       </div>
       <div className="text-sm font-medium text-center truncate max-w-full print:text-xs">
         {item.label}

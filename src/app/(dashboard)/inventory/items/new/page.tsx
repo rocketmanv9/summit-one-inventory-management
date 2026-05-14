@@ -11,6 +11,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { AddLocationModal } from '@/components/modals/AddLocationModal';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import {
@@ -28,6 +30,12 @@ import {
   ArrowLeftRight,
   CalendarCheck,
   Sparkles,
+  Barcode,
+  ScanLine,
+  Printer,
+  ChevronDown,
+  ChevronUp,
+  Tags,
 } from 'lucide-react';
 import type { Database } from 'types/supabase';
 
@@ -45,12 +53,19 @@ interface WizardState {
   reorder_point: string;
   base_sku: string;
 
-  // Step 2: Vendor
+  // Step 2: Identifiers
+  catalog_barcode: string;
+  identifier_types: ('barcode' | 'qr')[];
+  create_assets: boolean;
+  asset_tag_prefix: string;
+  asset_qty: string;
+  serial_prefix: string;
+  print_labels_on_success: boolean;
+
+  // Step 3: Supply (merged vendor + stock)
   vendor_id: string;
   vendor_sku: string;
   vendor_unit_cost: string;
-
-  // Step 3: Stock
   location_id: string;
   initial_qty: string;
   initial_cost: string;
@@ -88,8 +103,8 @@ const COMMON_UOMS = [
 
 const STEPS = [
   { key: 'basics', label: 'Basics', icon: Package },
-  { key: 'vendor', label: 'Vendor', icon: Truck },
-  { key: 'stock', label: 'Stock', icon: MapPin },
+  { key: 'identifiers', label: 'Identifiers', icon: Tags },
+  { key: 'supply', label: 'Supply', icon: Truck },
   { key: 'review', label: 'Review', icon: ClipboardList },
 ] as const;
 
@@ -101,6 +116,13 @@ const defaultState: WizardState = {
   tracking_mode: 'stock',
   reorder_point: '',
   base_sku: '',
+  catalog_barcode: '',
+  identifier_types: ['barcode'],
+  create_assets: false,
+  asset_tag_prefix: '',
+  asset_qty: '1',
+  serial_prefix: '',
+  print_labels_on_success: false,
   vendor_id: '',
   vendor_sku: '',
   vendor_unit_cost: '',
@@ -133,11 +155,18 @@ export default function NewItemWizardPage() {
   // AI suggestion state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiFilled, setAiFilled] = useState(false);
+  const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
+  const [aiSuggestedSkuPrefix, setAiSuggestedSkuPrefix] = useState<string | null>(null);
+
+  // Print labels dialog
+  const [showLabelDialog, setShowLabelDialog] = useState(false);
 
   // Success state
   const [result, setResult] = useState<{
     item_id: string;
     item_sku: string;
+    item_barcode?: string;
+    created_asset_tags?: string[];
     created_entities: Array<{ type: string; name?: string }>;
   } | null>(null);
 
@@ -213,11 +242,13 @@ export default function NewItemWizardPage() {
         reorder_point: suggestion.reorder_point != null ? String(suggestion.reorder_point) : prev.reorder_point,
         base_sku: suggestion.sku_prefix || prev.base_sku,
         category_id: suggestion.category_id || prev.category_id,
+        identifier_types: suggestion.suggested_identifier_types || prev.identifier_types,
       }));
 
-      // If AI suggests a new category, open the category modal pre-seeded
+      // If AI suggests a new category, store the name + prefix for pre-seeding
       if (suggestion.new_category_name && !suggestion.category_id) {
         setAiSuggestedCategory(suggestion.new_category_name);
+        setAiSuggestedSkuPrefix(suggestion.sku_prefix || null);
       }
 
       setAiFilled(true);
@@ -227,8 +258,6 @@ export default function NewItemWizardPage() {
       setAiLoading(false);
     }
   }, [form.name, aiLoading, categories]);
-
-  const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
 
   // ── SKU Preview ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -265,12 +294,38 @@ export default function NewItemWizardPage() {
     if (error) setError('');
   }, [error]);
 
+  const updateFormDirect = useCallback(<K extends keyof WizardState>(field: K, value: WizardState[K]) => {
+    setForm(prev => ({ ...prev, [field]: value }));
+    if (error) setError('');
+  }, [error]);
+
   const canProceed = useCallback(() => {
     if (step === 0) {
       return !!form.name.trim();
     }
-    return true; // Steps 2 and 3 are optional
+    return true; // Steps 2, 3 are optional
   }, [step, form.name]);
+
+  // ── Build asset list for creation ──────────────────────────────────
+  const buildAssetList = useCallback(() => {
+    if (!form.create_assets) return null;
+    const qty = Math.min(Math.max(1, parseInt(form.asset_qty) || 1), 100);
+    const prefix = form.asset_tag_prefix || form.base_sku || 'ASSET';
+    const serialPrefix = form.serial_prefix;
+    const assets: Array<{ asset_tag: string; serial_number?: string }> = [];
+
+    for (let i = 1; i <= qty; i++) {
+      const num = String(i).padStart(3, '0');
+      const asset: { asset_tag: string; serial_number?: string } = {
+        asset_tag: `${prefix}-${num}`,
+      };
+      if (serialPrefix) {
+        asset.serial_number = `${serialPrefix}-${num}`;
+      }
+      assets.push(asset);
+    }
+    return assets;
+  }, [form.create_assets, form.asset_qty, form.asset_tag_prefix, form.base_sku, form.serial_prefix]);
 
   // ── Submit ────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
@@ -280,6 +335,7 @@ export default function NewItemWizardPage() {
     try {
       const category = categories.find(c => c.id === form.category_id);
       const isManualSku = category?.sku_mode === 'manual';
+      const assets = buildAssetList();
 
       const res = await InventoryRPC.wizardCreateItem({
         name: form.name.trim(),
@@ -296,15 +352,24 @@ export default function NewItemWizardPage() {
         location_id: form.location_id || null,
         initial_qty: form.initial_qty ? Number(form.initial_qty) : null,
         initial_cost: form.initial_cost ? Number(form.initial_cost) : null,
+        barcode: form.catalog_barcode.trim() || null,
+        create_assets: assets,
         idempotency_key: idempotencyKey,
       });
 
       setResult({
         item_id: res.item_id,
         item_sku: res.item_sku,
+        item_barcode: res.item_barcode || form.catalog_barcode.trim() || undefined,
+        created_asset_tags: res.created_asset_tags || [],
         created_entities: res.created_entities || [],
       });
       setStep(4); // Success step
+
+      // Auto-open print dialog if user requested it
+      if (form.print_labels_on_success) {
+        setTimeout(() => setShowLabelDialog(true), 500);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to create item.');
     } finally {
@@ -356,6 +421,27 @@ export default function NewItemWizardPage() {
     await loadLocations();
     updateForm('location_id', loc.id);
   };
+
+  // ── Build label items for print dialog ────────────────────────────────
+  const buildLabelItems = useCallback((): BarcodeLabelItem[] => {
+    if (!result) return [];
+    const items: BarcodeLabelItem[] = [];
+
+    // Catalog-level barcode label
+    const barcodeCode = result.item_barcode || result.item_sku;
+    if (barcodeCode) {
+      items.push({ code: barcodeCode, label: form.name });
+    }
+
+    // Asset tag labels
+    if (result.created_asset_tags && result.created_asset_tags.length > 0) {
+      for (const tag of result.created_asset_tags) {
+        items.push({ code: tag, label: `${tag} - ${form.name}` });
+      }
+    }
+
+    return items;
+  }, [result, form.name]);
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
@@ -431,18 +517,19 @@ export default function NewItemWizardPage() {
           />
         )}
         {step === 1 && (
-          <StepVendor
+          <StepIdentifiers
             form={form}
-            vendors={vendors}
             updateForm={updateForm}
-            onAddVendor={() => setShowVendorModal(true)}
+            updateFormDirect={updateFormDirect}
           />
         )}
         {step === 2 && (
-          <StepStock
+          <StepSupply
             form={form}
+            vendors={vendors}
             locations={locations}
             updateForm={updateForm}
+            onAddVendor={() => setShowVendorModal(true)}
             onAddLocation={() => setShowLocationModal(true)}
           />
         )}
@@ -452,11 +539,13 @@ export default function NewItemWizardPage() {
             categories={categories}
             vendors={vendors}
             locations={locations}
+            buildAssetList={buildAssetList}
           />
         )}
         {step === 4 && result && (
           <StepSuccess
             result={result}
+            itemName={form.name}
             onGoToItems={() => router.push('/inventory/items')}
             onCreateAnother={() => {
               setForm(defaultState);
@@ -467,6 +556,7 @@ export default function NewItemWizardPage() {
             onTransfer={() => router.push(`/inventory/transfers?item_id=${result.item_id}`)}
             onReserve={() => router.push(`/inventory/reservations?item_id=${result.item_id}`)}
             onAdjustStock={() => router.push(`/inventory/stock?item_id=${result.item_id}`)}
+            onPrintLabels={() => setShowLabelDialog(true)}
           />
         )}
 
@@ -496,6 +586,8 @@ export default function NewItemWizardPage() {
           open={showCategoryModal}
           onClose={() => setShowCategoryModal(false)}
           onSuccess={handleCategoryCreated}
+          defaultName={aiSuggestedCategory || undefined}
+          defaultSkuPrefix={aiSuggestedSkuPrefix || undefined}
         />
         <AddVendorModal
           open={showVendorModal}
@@ -507,6 +599,15 @@ export default function NewItemWizardPage() {
           onClose={() => setShowLocationModal(false)}
           onSuccess={handleLocationCreated}
         />
+
+        {/* Print labels dialog */}
+        {showLabelDialog && result && (
+          <BarcodeLabelDialog
+            items={buildLabelItems()}
+            entityType="item"
+            onClose={() => setShowLabelDialog(false)}
+          />
+        )}
       </div>
     </AppShell>
   );
@@ -721,186 +822,395 @@ function StepBasics({
   );
 }
 
-// ── Step 2: Vendor ──────────────────────────────────────────────────────
+// ── Step 2: Identifiers ──────────────────────────────────────────────────
 
-function StepVendor({
+function StepIdentifiers({
   form,
-  vendors,
   updateForm,
-  onAddVendor,
+  updateFormDirect,
 }: {
   form: WizardState;
-  vendors: Vendor[];
   updateForm: (field: keyof WizardState, value: string) => void;
-  onAddVendor: () => void;
+  updateFormDirect: <K extends keyof WizardState>(field: K, value: WizardState[K]) => void;
 }) {
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const showAssets = form.tracking_mode === 'serialized' || form.tracking_mode === 'both';
+
+  const toggleIdentifierType = (type: 'barcode' | 'qr') => {
+    const current = form.identifier_types;
+    if (current.includes(type)) {
+      updateFormDirect('identifier_types', current.filter(t => t !== type));
+    } else {
+      updateFormDirect('identifier_types', [...current, type]);
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Preferred Vendor</CardTitle>
+        <CardTitle className="text-lg">Identifiers & Labels</CardTitle>
         <CardDescription>
-          Optionally link a vendor to this item. You can skip this step.
+          Set a catalog barcode and configure label printing.
+          {showAssets && ' You can also create initial asset tags.'}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="wiz-vendor">Vendor</Label>
+      <CardContent className="space-y-6">
+        {/* Catalog barcode */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold flex items-center gap-2">
+            <Barcode className="h-4 w-4" /> Catalog Barcode
+          </h4>
+          <div className="flex gap-2">
+            <Input
+              value={form.catalog_barcode}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('catalog_barcode', e.target.value)}
+              placeholder="Scan or type barcode / UPC..."
+              className="font-mono"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setScannerOpen(true)}
+              title="Scan barcode with camera"
+            >
+              <ScanLine className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={onAddVendor}
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+              onClick={() => updateForm('catalog_barcode', form.base_sku || 'SKU')}
+              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
             >
-              <Plus className="h-3 w-3" /> Create New
+              Auto-generate from SKU prefix
             </button>
           </div>
-          <select
-            id="wiz-vendor"
-            value={form.vendor_id}
-            onChange={(e) => updateForm('vendor_id', e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <option value="">-- No Vendor (Skip) --</option>
-            {vendors.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} {v.code ? `(${v.code})` : ''}
-              </option>
-            ))}
-          </select>
         </div>
 
-        {form.vendor_id && (
-          <>
-            <div className="space-y-2">
-              <Label htmlFor="wiz-vendor-sku">Vendor SKU / Part Number</Label>
-              <Input
-                id="wiz-vendor-sku"
-                value={form.vendor_sku}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('vendor_sku', e.target.value)}
-                placeholder="Vendor's part number for this item"
-                className="font-mono"
+        {/* Label types */}
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold">Label Types to Print</h4>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.identifier_types.includes('barcode')}
+                onChange={() => toggleIdentifierType('barcode')}
+                className="rounded border-input"
               />
+              Barcode (Code 128)
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.identifier_types.includes('qr')}
+                onChange={() => toggleIdentifierType('qr')}
+                className="rounded border-input"
+              />
+              QR Code
+            </label>
+          </div>
+        </div>
+
+        {/* Asset batch creation (serialized / both only) */}
+        {showAssets && (
+          <div className="space-y-3 border-t pt-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold flex items-center gap-2">
+                <Tags className="h-4 w-4" /> Initial Assets
+              </h4>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.create_assets}
+                  onChange={(e) => updateFormDirect('create_assets', e.target.checked)}
+                  className="rounded border-input"
+                />
+                Create assets now
+              </label>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="wiz-vendor-cost">Vendor Unit Cost ($)</Label>
-              <Input
-                id="wiz-vendor-cost"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.vendor_unit_cost}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('vendor_unit_cost', e.target.value)}
-                placeholder="Cost per unit from this vendor"
-              />
-            </div>
-          </>
-        )}
+            {form.create_assets && (
+              <div className="space-y-3 rounded-md border p-4 bg-muted/30">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-tag-prefix">Asset Tag Prefix</Label>
+                    <Input
+                      id="wiz-tag-prefix"
+                      value={form.asset_tag_prefix}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('asset_tag_prefix', e.target.value.toUpperCase())}
+                      placeholder={form.base_sku || 'e.g., HMA'}
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-asset-qty">Quantity (1-100)</Label>
+                    <Input
+                      id="wiz-asset-qty"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={form.asset_qty}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('asset_qty', e.target.value)}
+                    />
+                  </div>
+                </div>
 
-        {!form.vendor_id && (
-          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground text-center">
-            No vendor selected. You can add one later from the item details or vendor catalog.
+                <div className="space-y-2">
+                  <Label htmlFor="wiz-serial-prefix">Serial Number Prefix (optional)</Label>
+                  <Input
+                    id="wiz-serial-prefix"
+                    value={form.serial_prefix}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('serial_prefix', e.target.value)}
+                    placeholder="e.g., SN"
+                    className="font-mono"
+                  />
+                </div>
+
+                {/* Preview */}
+                <div className="rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Asset Preview</div>
+                  <div className="mt-1 font-mono text-xs text-blue-900 space-y-0.5">
+                    {(() => {
+                      const prefix = form.asset_tag_prefix || form.base_sku || 'ASSET';
+                      const qty = Math.min(Math.max(1, parseInt(form.asset_qty) || 1), 100);
+                      const show = Math.min(qty, 3);
+                      const lines = [];
+                      for (let i = 1; i <= show; i++) {
+                        const num = String(i).padStart(3, '0');
+                        let line = `${prefix}-${num}`;
+                        if (form.serial_prefix) line += ` (S/N: ${form.serial_prefix}-${num})`;
+                        lines.push(line);
+                      }
+                      if (qty > 3) lines.push(`... and ${qty - 3} more`);
+                      return lines.map((l, i) => <div key={i}>{l}</div>);
+                    })()}
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.print_labels_on_success}
+                    onChange={(e) => updateFormDirect('print_labels_on_success', e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  <Printer className="h-3.5 w-3.5" />
+                  Print labels after creation
+                </label>
+              </div>
+            )}
+
+            {!form.create_assets && (
+              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground text-center">
+                No assets will be created. You can add individual assets later from the item details page.
+              </div>
+            )}
           </div>
         )}
+
+        {/* Scanner overlay */}
+        <BarcodeScannerOverlay
+          isOpen={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onScan={(code) => {
+            updateForm('catalog_barcode', code);
+            setScannerOpen(false);
+          }}
+        />
       </CardContent>
     </Card>
   );
 }
 
-// ── Step 3: Starting Stock ──────────────────────────────────────────────
+// ── Step 3: Supply (Vendor + Stock merged) ──────────────────────────────
 
-function StepStock({
+function StepSupply({
   form,
+  vendors,
   locations,
   updateForm,
+  onAddVendor,
   onAddLocation,
 }: {
   form: WizardState;
+  vendors: Vendor[];
   locations: Location[];
   updateForm: (field: keyof WizardState, value: string) => void;
+  onAddVendor: () => void;
   onAddLocation: () => void;
 }) {
+  const [vendorOpen, setVendorOpen] = useState(!!form.vendor_id);
+  const [stockOpen, setStockOpen] = useState(!!form.location_id);
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Starting Stock</CardTitle>
+        <CardTitle className="text-lg">Supply Chain</CardTitle>
         <CardDescription>
-          Optionally set initial inventory at a location. This creates a ledger adjustment entry.
+          Optionally link a vendor and set starting stock. Both sections are skippable.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="wiz-location">Location</Label>
-            <button
-              type="button"
-              onClick={onAddLocation}
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-            >
-              <Plus className="h-3 w-3" /> Create New
-            </button>
-          </div>
-          <select
-            id="wiz-location"
-            value={form.location_id}
-            onChange={(e) => updateForm('location_id', e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        {/* Vendor section */}
+        <div className="rounded-md border">
+          <button
+            type="button"
+            onClick={() => setVendorOpen(!vendorOpen)}
+            className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
           >
-            <option value="">-- No Starting Stock (Skip) --</option>
-            {locations.map((loc) => (
-              <option key={loc.id} value={loc.id}>{loc.name}</option>
-            ))}
-          </select>
+            <span className="flex items-center gap-2">
+              <Truck className="h-4 w-4" />
+              Preferred Vendor
+              {form.vendor_id && <Check className="h-3 w-3 text-green-600" />}
+            </span>
+            {vendorOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {vendorOpen && (
+            <div className="px-4 pb-4 space-y-4 border-t">
+              <div className="space-y-2 pt-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="wiz-vendor">Vendor</Label>
+                  <button
+                    type="button"
+                    onClick={onAddVendor}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" /> Create New
+                  </button>
+                </div>
+                <select
+                  id="wiz-vendor"
+                  value={form.vendor_id}
+                  onChange={(e) => updateForm('vendor_id', e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">-- No Vendor (Skip) --</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} {v.code ? `(${v.code})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {form.vendor_id && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-vendor-sku">Vendor SKU / Part Number</Label>
+                    <Input
+                      id="wiz-vendor-sku"
+                      value={form.vendor_sku}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('vendor_sku', e.target.value)}
+                      placeholder="Vendor's part number for this item"
+                      className="font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-vendor-cost">Vendor Unit Cost ($)</Label>
+                    <Input
+                      id="wiz-vendor-cost"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.vendor_unit_cost}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('vendor_unit_cost', e.target.value)}
+                      placeholder="Cost per unit from this vendor"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        {form.location_id && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="wiz-qty">Quantity *</Label>
-              <Input
-                id="wiz-qty"
-                type="number"
-                min="0"
-                value={form.initial_qty}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_qty', e.target.value)}
-                placeholder="Initial stock quantity"
-              />
+        {/* Stock section */}
+        <div className="rounded-md border">
+          <button
+            type="button"
+            onClick={() => setStockOpen(!stockOpen)}
+            className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <MapPin className="h-4 w-4" />
+              Starting Stock
+              {form.location_id && form.initial_qty && <Check className="h-3 w-3 text-green-600" />}
+            </span>
+            {stockOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {stockOpen && (
+            <div className="px-4 pb-4 space-y-4 border-t">
+              <div className="space-y-2 pt-3">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="wiz-location">Location</Label>
+                  <button
+                    type="button"
+                    onClick={onAddLocation}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" /> Create New
+                  </button>
+                </div>
+                <select
+                  id="wiz-location"
+                  value={form.location_id}
+                  onChange={(e) => updateForm('location_id', e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">-- No Starting Stock (Skip) --</option>
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {form.location_id && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-qty">Quantity *</Label>
+                    <Input
+                      id="wiz-qty"
+                      type="number"
+                      min="0"
+                      value={form.initial_qty}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_qty', e.target.value)}
+                      placeholder="Initial stock quantity"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="wiz-cost">Unit Cost ($)</Label>
+                    <Input
+                      id="wiz-cost"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.initial_cost}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_cost', e.target.value)}
+                      placeholder="Cost per unit"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {form.location_id && form.initial_qty && (
+                <div className="rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Ledger Preview</div>
+                  <p className="mt-1 text-blue-900">
+                    This will create an <span className="font-medium">initial stock adjustment</span> of{' '}
+                    <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
+                    {form.initial_cost && (
+                      <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
+                    )}{' '}
+                    at the selected location.
+                  </p>
+                </div>
+              )}
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="wiz-cost">Unit Cost ($)</Label>
-              <Input
-                id="wiz-cost"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.initial_cost}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_cost', e.target.value)}
-                placeholder="Cost per unit"
-              />
-            </div>
-          </div>
-        )}
-
-        {form.location_id && form.initial_qty && (
-          <div className="rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Ledger Preview</div>
-            <p className="mt-1 text-blue-900">
-              This will create an <span className="font-medium">initial stock adjustment</span> of{' '}
-              <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
-              {form.initial_cost && (
-                <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
-              )}{' '}
-              at the selected location.
-            </p>
-          </div>
-        )}
-
-        {!form.location_id && (
-          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground text-center">
-            No starting stock. You can adjust stock later from the Stock page.
-          </div>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -913,15 +1223,18 @@ function StepReview({
   categories,
   vendors,
   locations,
+  buildAssetList,
 }: {
   form: WizardState;
   categories: ItemCategoryRow[];
   vendors: Vendor[];
   locations: Location[];
+  buildAssetList: () => Array<{ asset_tag: string; serial_number?: string }> | null;
 }) {
   const category = categories.find(c => c.id === form.category_id);
   const vendor = vendors.find(v => v.id === form.vendor_id);
   const location = locations.find(l => l.id === form.location_id);
+  const assets = buildAssetList();
 
   return (
     <Card>
@@ -960,6 +1273,31 @@ function StepReview({
             )}
           </div>
         </div>
+
+        {/* Identifiers */}
+        {(form.catalog_barcode || (assets && assets.length > 0)) && (
+          <div className="rounded-md border p-4 space-y-2">
+            <h4 className="text-sm font-semibold flex items-center gap-2">
+              <Barcode className="h-4 w-4" /> Identifiers
+            </h4>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              {form.catalog_barcode && (
+                <>
+                  <span className="text-muted-foreground">Barcode</span>
+                  <span className="font-mono">{form.catalog_barcode}</span>
+                </>
+              )}
+              <span className="text-muted-foreground">Label Types</span>
+              <span>{form.identifier_types.join(', ') || 'None'}</span>
+              {assets && assets.length > 0 && (
+                <>
+                  <span className="text-muted-foreground">Assets to Create</span>
+                  <span>{assets.length} asset{assets.length !== 1 ? 's' : ''}</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Vendor */}
         {vendor && (
@@ -1007,9 +1345,9 @@ function StepReview({
           </div>
         )}
 
-        {!vendor && !location && (
+        {!vendor && !location && !form.catalog_barcode && (
           <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground text-center">
-            No vendor or starting stock configured. These can be added later.
+            No vendor, identifiers, or starting stock configured. These can be added later.
           </div>
         )}
       </CardContent>
@@ -1021,20 +1359,30 @@ function StepReview({
 
 function StepSuccess({
   result,
+  itemName,
   onGoToItems,
   onCreateAnother,
   onCreatePO,
   onTransfer,
   onReserve,
   onAdjustStock,
+  onPrintLabels,
 }: {
-  result: { item_id: string; item_sku: string; created_entities: Array<{ type: string; name?: string }> };
+  result: {
+    item_id: string;
+    item_sku: string;
+    item_barcode?: string;
+    created_asset_tags?: string[];
+    created_entities: Array<{ type: string; name?: string }>;
+  };
+  itemName: string;
   onGoToItems: () => void;
   onCreateAnother: () => void;
   onCreatePO: () => void;
   onTransfer: () => void;
   onReserve: () => void;
   onAdjustStock: () => void;
+  onPrintLabels: () => void;
 }) {
   const entityLabels: Record<string, string> = {
     category: 'Category',
@@ -1043,7 +1391,10 @@ function StepSuccess({
     item: 'Item',
     vendor_item: 'Vendor-Item Link',
     initial_stock: 'Initial Stock',
+    asset: 'Asset',
   };
+
+  const hasLabels = !!(result.item_barcode || result.item_sku || (result.created_asset_tags && result.created_asset_tags.length > 0));
 
   return (
     <div className="space-y-6">
@@ -1056,6 +1407,9 @@ function StepSuccess({
             <h2 className="text-xl font-bold">Item Created Successfully</h2>
             <p className="text-muted-foreground">
               SKU: <span className="font-mono font-bold">{result.item_sku}</span>
+              {result.item_barcode && (
+                <> | Barcode: <span className="font-mono font-bold">{result.item_barcode}</span></>
+              )}
             </p>
           </div>
 
@@ -1071,6 +1425,19 @@ function StepSuccess({
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Print Labels button */}
+          {hasLabels && (
+            <div className="mt-4 pt-4 border-t">
+              <Button onClick={onPrintLabels} variant="outline" className="w-full gap-2">
+                <Printer className="h-4 w-4" />
+                Print Labels ({result.created_asset_tags?.length
+                  ? `${1 + result.created_asset_tags.length} labels`
+                  : '1 label'
+                })
+              </Button>
             </div>
           )}
         </CardContent>

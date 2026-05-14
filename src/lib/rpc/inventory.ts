@@ -2785,15 +2785,19 @@ export const InventoryRPC = {
     } | null;
     initial_qty?: number | null;
     initial_cost?: number | null;
+    barcode?: string | null;
+    create_assets?: Array<{ asset_tag: string; serial_number?: string }> | null;
     idempotency_key: string;
   }): Promise<{
     success: boolean;
     idempotent_hit: boolean;
     item_id: string;
     item_sku: string;
+    item_barcode?: string;
     category_id: string | null;
     vendor_id: string | null;
     location_id: string | null;
+    created_asset_tags?: string[];
     created_entities: Array<{
       type: string;
       id?: string;
@@ -2823,6 +2827,8 @@ export const InventoryRPC = {
       p_create_location: params.create_location ?? null,
       p_initial_qty: params.initial_qty ?? null,
       p_initial_cost: params.initial_cost ?? null,
+      p_barcode: params.barcode ?? null,
+      p_create_assets: params.create_assets ? JSON.stringify(params.create_assets) : null,
       p_idempotency_key: params.idempotency_key,
     });
 

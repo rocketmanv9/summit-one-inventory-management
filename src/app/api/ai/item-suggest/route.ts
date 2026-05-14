@@ -69,6 +69,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
             '  category_match — "existing" if you picked from the list, "new" if suggesting a new category',
             '  unit_of_measure — one of: EA, BOX, CASE, LB, KG, TON, GAL, LTR, FT, M, YD, PALLET, ROLL, BAG, DRUM',
             '  tracking_mode — one of: "stock" (bulk/quantity items), "serialized" (individual tracked assets like equipment), "both" (items that can be either)',
+            '  suggested_identifier_types — array of label types to print: ["barcode"] for stock materials, ["barcode", "qr"] for serialized/high-value items',
             '  reorder_point — suggested default reorder point (integer) for a mid-size company',
             '',
             'EXISTING CATEGORIES:',
@@ -78,6 +79,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
             '- For category: prefer an existing category if it is a reasonable match. Only suggest "new" if nothing fits.',
             '- For unit_of_measure: use industry-standard UOM (cement → BAG or TON, lumber → FT or EA, fuel → GAL, fasteners → EA or BOX).',
             '- For tracking_mode: most materials are "stock". Equipment, tools, and high-value assets are "serialized".',
+            '- For suggested_identifier_types: stock materials get ["barcode"]. Serialized equipment, tools, and high-value items get ["barcode", "qr"].',
             '- Do NOT wrap the JSON in markdown code fences.',
           ].join('\n'),
         },
@@ -142,6 +144,12 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
 
     log.info(`[AI Item Suggest] name="${name}" → category="${suggestion.category}" uom=${uom} tracking=${tracking}`);
 
+    // Validate suggested_identifier_types
+    const VALID_ID_TYPES = ['barcode', 'qr'];
+    const identifierTypes = Array.isArray(suggestion.suggested_identifier_types)
+      ? suggestion.suggested_identifier_types.filter((t: string) => VALID_ID_TYPES.includes(t))
+      : tracking === 'stock' ? ['barcode'] : ['barcode', 'qr'];
+
     return Response.json({
       suggestion: {
         description: suggestion.description || '',
@@ -152,6 +160,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
         unit_of_measure: uom,
         tracking_mode: tracking,
         reorder_point: typeof suggestion.reorder_point === 'number' ? suggestion.reorder_point : null,
+        suggested_identifier_types: identifierTypes,
       },
     });
   } catch (err: any) {

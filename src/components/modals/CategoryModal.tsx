@@ -25,9 +25,11 @@ interface CategoryModalProps {
   onClose: () => void;
   onSuccess: (name: string) => void;
   item?: Category;
+  defaultName?: string;
+  defaultSkuPrefix?: string;
 }
 
-export function CategoryModal({ open, onClose, onSuccess, item }: CategoryModalProps) {
+export function CategoryModal({ open, onClose, onSuccess, item, defaultName, defaultSkuPrefix }: CategoryModalProps) {
   const isEdit = !!item;
   const [name, setName] = useState('');
   const [skuPrefix, setSkuPrefix] = useState('');
@@ -51,8 +53,8 @@ export function CategoryModal({ open, onClose, onSuccess, item }: CategoryModalP
       setSkuMode(item.sku_mode || 'sequential');
       setParentCategoryId(item.parent_category_id || '');
     } else {
-      setName('');
-      setSkuPrefix('');
+      setName(defaultName || '');
+      setSkuPrefix(defaultSkuPrefix || '');
       setSkuMode('sequential');
       setParentCategoryId('');
       setSeparator('-');
