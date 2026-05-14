@@ -150,6 +150,10 @@ export default async function MobileCountPage({
 
   return (
     <div style={{ minHeight: '100dvh', background: colors.bg, display: 'flex', flexDirection: 'column' }}>
+      {/* Set bypass cookie so JS chunks load through deployment protection */}
+      {bypass && (
+        <script dangerouslySetInnerHTML={{ __html: `document.cookie="x-vercel-protection-bypass=${bypass};path=/;secure;samesite=lax;max-age=86400";` }} />
+      )}
       {/* ── Header ── */}
       <div style={{
         background: colors.white, boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
