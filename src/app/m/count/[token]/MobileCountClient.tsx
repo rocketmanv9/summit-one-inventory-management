@@ -76,6 +76,7 @@ export function MobileCountClient({
   const [lines, setLines] = useState<CountLine[]>(initialData?.lines || []);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -278,30 +279,35 @@ export function MobileCountClient({
 
   const handleBarcodeScan = useCallback(
     async (decodedText: string) => {
-      setScannerOpen(false);
-
       try {
         const catalogItemId = await lookupBarcode(decodedText);
 
         if (!catalogItemId) {
-          alert(`No item found for: ${decodedText}`);
+          setScanFeedback(`Not found: ${decodedText}`);
+          setTimeout(() => setScanFeedback(null), 2000);
           return;
         }
 
-        // Find matching line and increment count by 1
         const line = lines.find((l) => l.catalog_item_id === catalogItemId);
         if (!line) {
-          alert(`Item found but not in this count list.`);
+          setScanFeedback(`Not in count list: ${decodedText}`);
+          setTimeout(() => setScanFeedback(null), 2000);
           return;
         }
 
         const newQty = (line.qty_counted ?? 0) + 1;
         await handleRecordCount(catalogItemId, newQty);
 
+        const itemName = line.catalog_item?.name || line.catalog_item?.sku || decodedText;
+        setScanFeedback(`${itemName} → ${newQty}`);
+        setTimeout(() => setScanFeedback(null), 2000);
+
         setHighlightItemId(catalogItemId);
         setTimeout(() => setHighlightItemId(null), 3000);
       } catch (err) {
         console.error('Barcode lookup error:', err);
+        setScanFeedback('Scan error — try again');
+        setTimeout(() => setScanFeedback(null), 2000);
       }
     },
     [lookupBarcode, lines, handleRecordCount]
@@ -427,8 +433,10 @@ export function MobileCountClient({
 
       <BarcodeScannerOverlay
         isOpen={scannerOpen}
-        onClose={() => setScannerOpen(false)}
+        onClose={() => { setScannerOpen(false); setScanFeedback(null); }}
         onScan={handleBarcodeScan}
+        continuous
+        scanFeedback={scanFeedback}
       />
     </>
   );

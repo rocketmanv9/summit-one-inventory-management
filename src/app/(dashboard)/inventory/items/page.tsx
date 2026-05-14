@@ -11,6 +11,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
+import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
@@ -55,6 +56,7 @@ export default function ItemsPage() {
   const [editingItem, setEditingItem] = useState<CatalogItem | undefined>();
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [pendingCategoryId, setPendingCategoryId] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   useEffect(() => {
     fetchItems();
@@ -95,6 +97,28 @@ export default function ItemsPage() {
       fetchItems(); // Refresh the list
     } catch (error: any) {
       alert(`Error: ${error.message}`);
+    }
+  };
+
+  const handleScanResult = (decodedText: string) => {
+    // QR codes encode URLs like /m/scan?code=SKU — extract the code param if present
+    let code = decodedText;
+    try {
+      const url = new URL(decodedText);
+      const codeParam = url.searchParams.get('code');
+      if (codeParam) code = codeParam;
+    } catch {
+      // Not a URL, use as-is
+    }
+
+    const match = items.find(
+      (item) => item.sku.toLowerCase() === code.toLowerCase()
+    );
+    if (match) {
+      setScannerOpen(false);
+      router.push(`/inventory/items/${match.id}`);
+    } else {
+      alert(`No item found matching: ${code}`);
     }
   };
 
@@ -226,6 +250,15 @@ export default function ItemsPage() {
           actions={
             <div className="flex gap-3">
               <button
+                onClick={() => setScannerOpen(true)}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2"
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                </svg>
+                Scan
+              </button>
+              <button
                 onClick={handleManageCategories}
                 className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
               >
@@ -272,6 +305,12 @@ export default function ItemsPage() {
             newCategoryId={pendingCategoryId}
           />
         )}
+
+        <BarcodeScannerOverlay
+          isOpen={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onScan={handleScanResult}
+        />
 
         <CategoryModal
           open={showCategoryModal}

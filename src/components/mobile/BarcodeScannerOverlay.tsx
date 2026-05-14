@@ -6,15 +6,25 @@ interface BarcodeScannerOverlayProps {
   isOpen: boolean;
   onClose: () => void;
   onScan: (decodedText: string) => void;
+  /** Keep scanner open after each scan — fires onScan repeatedly */
+  continuous?: boolean;
+  /** Brief feedback shown in overlay after each scan (e.g. "HMA-001 → 5") */
+  scanFeedback?: string | null;
 }
 
-export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScannerOverlayProps) {
+export function BarcodeScannerOverlay({ isOpen, onClose, onScan, continuous, scanFeedback }: BarcodeScannerOverlayProps) {
   const scannerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [manualCode, setManualCode] = useState('');
   const [cameraError, setCameraError] = useState('');
   const [showManual, setShowManual] = useState(false);
   const hasScannedRef = useRef(false);
+  const onScanRef = useRef(onScan);
+  const onCloseRef = useRef(onClose);
+
+  // Keep refs current without restarting the scanner
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   const cleanup = useCallback(async () => {
     if (scannerRef.current) {
@@ -38,15 +48,20 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
     setCameraError('');
     setShowManual(false);
     hasScannedRef.current = false;
-    onClose();
-  }, [cleanup, onClose]);
+    onCloseRef.current();
+  }, [cleanup]);
 
   const handleManualSubmit = useCallback(() => {
     const code = manualCode.trim();
     if (!code) return;
-    handleClose();
-    onScan(code);
-  }, [manualCode, handleClose, onScan]);
+    if (continuous) {
+      onScanRef.current(code);
+      setManualCode('');
+    } else {
+      handleClose();
+      onScanRef.current(code);
+    }
+  }, [manualCode, handleClose, continuous]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -85,9 +100,14 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
           (decodedText: string) => {
             if (hasScannedRef.current) return;
             hasScannedRef.current = true;
-            cleanup();
-            onScan(decodedText);
-            onClose();
+            if (continuous) {
+              onScanRef.current(decodedText);
+              setTimeout(() => { hasScannedRef.current = false; }, 1500);
+            } else {
+              cleanup();
+              onScanRef.current(decodedText);
+              onCloseRef.current();
+            }
           },
           () => {
             // Ignore scan failures (no barcode in frame)
@@ -110,7 +130,7 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
       cancelled = true;
       cleanup();
     };
-  }, [isOpen, onScan, onClose, cleanup]);
+  }, [isOpen, cleanup, continuous]);
 
   if (!isOpen) return null;
 
@@ -229,6 +249,23 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan }: BarcodeScanne
           </svg>
         </button>
       </div>
+
+      {/* Continuous-mode feedback toast */}
+      {continuous && scanFeedback && (
+        <div style={{
+          padding: '10px 20px',
+          background: scanFeedback.startsWith('Not') || scanFeedback.startsWith('Scan error')
+            ? 'rgba(220, 38, 38, 0.95)'
+            : 'rgba(22, 163, 74, 0.95)',
+          color: '#fff',
+          textAlign: 'center' as const,
+          fontSize: '15px',
+          fontWeight: 600,
+          zIndex: 20,
+        }}>
+          {scanFeedback}
+        </div>
+      )}
 
       <div style={s.videoArea} ref={containerRef}>
         {cameraError && (
