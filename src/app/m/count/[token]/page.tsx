@@ -1,5 +1,6 @@
 import { getAdminClient } from '@/utils/supabase/admin';
 import { recordCount, toggleAsset, submitCount, lookupBarcode } from './actions';
+import { MobileScanButton } from './MobileScanButton';
 import type { CSSProperties } from 'react';
 
 export const dynamic = 'force-dynamic';
@@ -271,6 +272,9 @@ export default async function MobileCountPage({
         paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 14px)',
         display: 'flex', flexDirection: 'column', gap: '10px',
       }}>
+        {/* Scan button (client component — opens camera) */}
+        {!isSubmitted && <MobileScanButton token={token} />}
+
         {/* Lookup form */}
         <form action={lookupBarcode} style={{ display: 'flex', gap: '8px' }}>
           <input type="hidden" name="token" value={token} />

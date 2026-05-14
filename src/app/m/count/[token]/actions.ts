@@ -127,6 +127,92 @@ export async function submitCount(formData: FormData) {
   redirect(buildRedirectUrl(token, bypass, { submitted: '1' }));
 }
 
+/** Called by the client-side scanner — returns data instead of redirecting */
+export async function scanLookup(token: string, code: string): Promise<{ catalogItemId?: string; itemName?: string; currentQty?: number | null; error?: string }> {
+  const session = await getSession(token);
+  if (!session) return { error: 'Session expired' };
+
+  const admin = getAdminClient();
+  const inv = (admin as any).schema('inventory');
+
+  // Extract code from URL if QR
+  let lookupCode = code;
+  try {
+    const url = new URL(code);
+    const codeParam = url.searchParams.get('code');
+    if (codeParam) lookupCode = codeParam;
+  } catch {
+    // Not a URL
+  }
+
+  // Find catalog item by barcode → SKU → asset_tag
+  let catalogItemId: string | null = null;
+  for (const [table, field, idField] of [
+    ['catalog_items', 'barcode', 'id'],
+    ['catalog_items', 'sku', 'id'],
+    ['assets', 'asset_tag', 'catalog_item_id'],
+  ] as const) {
+    const { data } = await inv.from(table).select(idField).eq(field, lookupCode).limit(1);
+    if (data && data.length > 0) {
+      catalogItemId = (data[0] as any)[idField];
+      break;
+    }
+  }
+
+  if (!catalogItemId) return { error: `Not found: ${lookupCode}` };
+
+  // Get the count line
+  const { data: line } = await inv
+    .from('cycle_count_lines')
+    .select('id, qty_counted, catalog_item_id')
+    .eq('cycle_count_id', session.cycle_count_id)
+    .eq('catalog_item_id', catalogItemId)
+    .eq('tenant_id', session.tenant_id)
+    .single();
+
+  if (!line) return { error: `Not in count list: ${lookupCode}` };
+
+  // Get item name
+  const { data: item } = await inv.from('catalog_items').select('name').eq('id', catalogItemId).single();
+
+  return {
+    catalogItemId,
+    itemName: item?.name || lookupCode,
+    currentQty: line.qty_counted,
+  };
+}
+
+/** Called by the client-side scanner to record a count */
+export async function scanRecord(token: string, catalogItemId: string, newQty: number): Promise<{ success?: boolean; error?: string }> {
+  const session = await getSession(token);
+  if (!session) return { error: 'Session expired' };
+
+  const admin = getAdminClient();
+  const inv = (admin as any).schema('inventory');
+
+  const { data: line } = await inv
+    .from('cycle_count_lines')
+    .select('id')
+    .eq('cycle_count_id', session.cycle_count_id)
+    .eq('catalog_item_id', catalogItemId)
+    .eq('tenant_id', session.tenant_id)
+    .single();
+
+  if (!line) return { error: 'Line not found' };
+
+  const { error } = await inv
+    .from('cycle_count_lines')
+    .update({
+      qty_counted: newQty,
+      counted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', line.id);
+
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
 export async function lookupBarcode(formData: FormData) {
   const token = formData.get('token') as string;
   const bypass = formData.get('_bypass') as string;
