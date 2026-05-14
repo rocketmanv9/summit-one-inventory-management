@@ -10,6 +10,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
+import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
@@ -178,7 +179,7 @@ export default function ItemsPage() {
           >
             Delete
           </button>
-          <QuickActionsMenu itemId={row.id} itemName={row.name} />
+          <QuickActionsMenu itemId={row.id} itemName={row.name} itemSku={row.sku} />
         </div>
       ),
     },
@@ -296,9 +297,10 @@ export default function ItemsPage() {
   );
 }
 
-function QuickActionsMenu({ itemId, itemName }: { itemId: string; itemName: string }) {
+function QuickActionsMenu({ itemId, itemName, itemSku }: { itemId: string; itemName: string; itemSku: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [showLabelDialog, setShowLabelDialog] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -312,7 +314,7 @@ function QuickActionsMenu({ itemId, itemName }: { itemId: string; itemName: stri
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const actions = [
+  const navActions = [
     { label: 'Adjust Stock', href: `/inventory/stock?item_id=${itemId}` },
     { label: 'Create PO', href: `/inventory/purchasing/create?item_id=${itemId}` },
     { label: 'Transfer', href: `/inventory/transfers?item_id=${itemId}` },
@@ -320,31 +322,49 @@ function QuickActionsMenu({ itemId, itemName }: { itemId: string; itemName: stri
   ];
 
   return (
-    <div className="relative" ref={menuRef}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="text-gray-400 hover:text-gray-600 px-2 py-1 text-lg font-bold leading-none"
-        title={`Quick actions for ${itemName}`}
-      >
-        &#x22EF;
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-md border bg-white shadow-lg py-1">
-          {actions.map((action) => (
+    <>
+      <div className="relative" ref={menuRef}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-gray-400 hover:text-gray-600 px-2 py-1 text-lg font-bold leading-none"
+          title={`Quick actions for ${itemName}`}
+        >
+          &#x22EF;
+        </button>
+        {open && (
+          <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-md border bg-white shadow-lg py-1">
             <button
-              key={action.label}
               onClick={() => {
                 setOpen(false);
-                router.push(action.href);
+                setShowLabelDialog(true);
               }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
             >
-              {action.label}
+              Print Label
             </button>
-          ))}
-        </div>
+            {navActions.map((action) => (
+              <button
+                key={action.label}
+                onClick={() => {
+                  setOpen(false);
+                  router.push(action.href);
+                }}
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {showLabelDialog && (
+        <BarcodeLabelDialog
+          items={[{ code: itemSku, label: itemName }]}
+          entityType="item"
+          onClose={() => setShowLabelDialog(false)}
+        />
       )}
-    </div>
+    </>
   );
 }
 
