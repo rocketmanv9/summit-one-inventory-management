@@ -253,74 +253,58 @@ export function MobileCountClient({
     [mobileHeaders, bypassSecret]
   );
 
+  const lookupBarcode = useCallback(
+    async (decodedText: string): Promise<string | null> => {
+      const authHeaders = {
+        Authorization: `Bearer ${jwt}`,
+        ...bypassHeaders(bypassSecret),
+      };
+
+      // Try barcode → SKU → asset_tag in order
+      for (const param of ['barcode', 'sku', 'asset_tag']) {
+        const res = await fetch(
+          withBypass(`/api/m/count/lookup?${param}=${encodeURIComponent(decodedText)}`, bypassSecret),
+          { credentials: 'include', headers: authHeaders }
+        );
+        if (res.ok) {
+          const { data } = await res.json();
+          return data.catalog_item?.id || null;
+        }
+      }
+      return null;
+    },
+    [jwt, bypassSecret]
+  );
+
   const handleBarcodeScan = useCallback(
     async (decodedText: string) => {
       setScannerOpen(false);
 
       try {
-        const searchParams = new URLSearchParams();
-        searchParams.set('barcode', decodedText);
+        const catalogItemId = await lookupBarcode(decodedText);
 
-        const res = await fetch(withBypass(`/api/m/count/lookup?${searchParams}`, bypassSecret), {
-          credentials: 'include',
-          headers: {
-            Authorization: `Bearer ${jwt}`,
-            ...bypassHeaders(bypassSecret),
-          },
-        });
-
-        if (!res.ok) {
-          const skuRes = await fetch(
-            withBypass(`/api/m/count/lookup?sku=${encodeURIComponent(decodedText)}`, bypassSecret),
-            {
-              credentials: 'include',
-              headers: { Authorization: `Bearer ${jwt}`, ...bypassHeaders(bypassSecret) },
-            }
-          );
-
-          if (!skuRes.ok) {
-            const tagRes = await fetch(
-              withBypass(
-                `/api/m/count/lookup?asset_tag=${encodeURIComponent(decodedText)}`,
-                bypassSecret
-              ),
-              {
-                credentials: 'include',
-                headers: { Authorization: `Bearer ${jwt}`, ...bypassHeaders(bypassSecret) },
-              }
-            );
-
-            if (!tagRes.ok) {
-              alert(`No item found for: ${decodedText}`);
-              return;
-            }
-
-            const { data } = await tagRes.json();
-            if (data.catalog_item) {
-              setHighlightItemId(data.catalog_item.id);
-              setTimeout(() => setHighlightItemId(null), 3000);
-            }
-            return;
-          }
-
-          const { data } = await skuRes.json();
-          if (data.catalog_item) {
-            setHighlightItemId(data.catalog_item.id);
-            setTimeout(() => setHighlightItemId(null), 3000);
-          }
+        if (!catalogItemId) {
+          alert(`No item found for: ${decodedText}`);
           return;
         }
 
-        const { data } = await res.json();
-        if (data.catalog_item) {
-          setHighlightItemId(data.catalog_item.id);
-          setTimeout(() => setHighlightItemId(null), 3000);
+        // Find matching line and increment count by 1
+        const line = lines.find((l) => l.catalog_item_id === catalogItemId);
+        if (!line) {
+          alert(`Item found but not in this count list.`);
+          return;
         }
+
+        const newQty = (line.qty_counted ?? 0) + 1;
+        await handleRecordCount(catalogItemId, newQty);
+
+        setHighlightItemId(catalogItemId);
+        setTimeout(() => setHighlightItemId(null), 3000);
       } catch (err) {
         console.error('Barcode lookup error:', err);
       }
     },
-    [jwt, bypassSecret]
+    [lookupBarcode, lines, handleRecordCount]
   );
 
   const handleSubmit = useCallback(async () => {
