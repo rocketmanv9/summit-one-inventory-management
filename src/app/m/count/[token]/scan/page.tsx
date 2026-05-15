@@ -27,8 +27,6 @@ export default async function MobileScanPage({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>Scan Items</title>
-        {/* Load html5-qrcode from CDN — bypasses Vercel deployment protection */}
-        <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" />
         <style dangerouslySetInnerHTML={{ __html: `
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
@@ -184,6 +182,20 @@ export default async function MobileScanPage({
   var scanner = null;
   var scanCount = 0;
   var cooldown = false;
+  var libLoaded = false;
+
+  // Dynamically load html5-qrcode from CDN
+  function loadLib(cb) {
+    if (libLoaded) { cb(); return; }
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = function() { libLoaded = true; cb(); };
+    s.onerror = function() {
+      errorMsg.textContent = 'Failed to load scanner library. Check internet connection.';
+      showState('error');
+    };
+    document.head.appendChild(s);
+  }
 
   function showState(name) {
     stateIdle.style.display = name === 'idle' ? '' : 'none';
@@ -239,7 +251,11 @@ export default async function MobileScanPage({
   function startScanner() {
     showState('starting');
 
-    // Check if html5-qrcode loaded from CDN
+    // Load library from CDN then init scanner
+    loadLib(initScanner);
+  }
+
+  function initScanner() {
     if (typeof Html5Qrcode === 'undefined') {
       errorMsg.textContent = 'Scanner library failed to load. Check your internet connection and try again.';
       showState('error');
