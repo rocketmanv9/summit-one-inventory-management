@@ -42,22 +42,23 @@ export const GET = withStandardRateLimit(async (request: Request) => {
 });
 ```
 
-### Method 2: Manual Check
+### Method 2: Manual Check (inside a route factory)
 
 ```typescript
 import { checkRateLimit, strictRateLimit } from '@/lib/rate-limit';
+import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 
-export async function POST(request: Request) {
-  // Check rate limit
-  const rateLimitResult = await checkRateLimit(request, strictRateLimit);
+export const POST = createSessionWriteRoute(async ({ req }) => {
+  const rateLimitResult = await checkRateLimit(req, strictRateLimit);
   if (!rateLimitResult.success) {
     return rateLimitResult.response;
   }
-
   // Your handler logic
-  return Response.json({ success: true });
-}
+  return { data: { success: true }, status: 200, events: [] };
+}, { serviceName: process.env.INTERNAL_JWT_ISSUER || 'inventory' });
 ```
+
+**Note:** Always use chassis route factories (`createSessionWriteRoute`, etc.) - never bare `export async function`. See [CLAUDE.md](../CLAUDE.md) for enforcement rules.
 
 ## Response Headers
 

@@ -71,6 +71,9 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
             '  tracking_mode — one of: "stock" (bulk/quantity items), "serialized" (individual tracked assets like equipment), "both" (items that can be either)',
             '  suggested_identifier_types — array of label types to print: ["barcode"] for stock materials, ["barcode", "qr"] for serialized/high-value items',
             '  reorder_point — suggested default reorder point (integer) for a mid-size company',
+            '  has_variants — boolean: true if this item naturally comes in multiple variants (sizes, colors, styles, grades, lengths, etc.)',
+            '  variant_dimensions — array of dimension names if has_variants is true (e.g. ["size", "color"]). Omit or empty if has_variants is false.',
+            '  variant_options — object mapping each dimension to its common options if has_variants is true (e.g. {"size": ["S", "M", "L", "XL"], "color": ["Red", "Blue", "Black"]}). Omit or empty if has_variants is false.',
             '',
             'EXISTING CATEGORIES:',
             categoryList,
@@ -80,6 +83,9 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
             '- For unit_of_measure: use industry-standard UOM (cement → BAG or TON, lumber → FT or EA, fuel → GAL, fasteners → EA or BOX).',
             '- For tracking_mode: most materials are "stock". Equipment, tools, and high-value assets are "serialized".',
             '- For suggested_identifier_types: stock materials get ["barcode"]. Serialized equipment, tools, and high-value items get ["barcode", "qr"].',
+            '- For has_variants: set true for items that naturally come in multiple sizes, colors, styles, or grades. Examples: t-shirts (size/color), gloves (size), pipe (diameter/length), paint (color/finish), PPE (size). Set false for bulk materials like cement, fuel, or single-form items like specific tools.',
+            '- For variant_dimensions: use lowercase singular names like "size", "color", "style", "grade", "diameter", "length", "finish".',
+            '- For variant_options: provide the most common industry-standard options for each dimension.',
             '- Do NOT wrap the JSON in markdown code fences.',
           ].join('\n'),
         },
@@ -89,7 +95,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
         },
       ],
       temperature: 0.2,
-      max_tokens: 400,
+      max_tokens: 600,
     });
 
     const content = completion.choices?.[0]?.message?.content;
@@ -142,13 +148,33 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
       ? suggestion.tracking_mode
       : 'stock';
 
-    log.info(`[AI Item Suggest] name="${name}" → category="${suggestion.category}" uom=${uom} tracking=${tracking}`);
+    log.info(`[AI Item Suggest] name="${name}" → category="${suggestion.category}" uom=${uom} tracking=${tracking} has_variants=${!!suggestion.has_variants}`);
 
     // Validate suggested_identifier_types
     const VALID_ID_TYPES = ['barcode', 'qr'];
     const identifierTypes = Array.isArray(suggestion.suggested_identifier_types)
       ? suggestion.suggested_identifier_types.filter((t: string) => VALID_ID_TYPES.includes(t))
       : tracking === 'stock' ? ['barcode'] : ['barcode', 'qr'];
+
+    // Validate variant fields
+    const hasVariants = !!suggestion.has_variants;
+    let variantDimensions: string[] = [];
+    let variantOptions: Record<string, string[]> = {};
+
+    if (hasVariants && Array.isArray(suggestion.variant_dimensions)) {
+      variantDimensions = suggestion.variant_dimensions
+        .filter((d: unknown) => typeof d === 'string' && d.trim().length > 0)
+        .map((d: string) => d.trim().toLowerCase());
+
+      if (suggestion.variant_options && typeof suggestion.variant_options === 'object') {
+        for (const dim of variantDimensions) {
+          const opts = suggestion.variant_options[dim];
+          if (Array.isArray(opts)) {
+            variantOptions[dim] = opts.filter((o: unknown) => typeof o === 'string' && o.trim().length > 0);
+          }
+        }
+      }
+    }
 
     return Response.json({
       suggestion: {
@@ -161,6 +187,9 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
         tracking_mode: tracking,
         reorder_point: typeof suggestion.reorder_point === 'number' ? suggestion.reorder_point : null,
         suggested_identifier_types: identifierTypes,
+        has_variants: hasVariants,
+        variant_dimensions: variantDimensions,
+        variant_options: variantOptions,
       },
     });
   } catch (err: any) {

@@ -219,6 +219,18 @@ You can automate multi-step processes:
 - "Rebalance stock across locations" → workflow_stock_rebalance (suggests or creates transfers)
 Both workflows default to dry-run (preview). The user must confirm before actual execution.
 
+VARIANT ITEMS:
+Items can have variants — e.g., t-shirts in sizes S/M/L/XL and colors Red/Blue/Black. Use create_item_with_variants when the user mentions:
+- Sizes (S, M, L, XL, or small/medium/large)
+- Colors (Red, Blue, Black, etc.)
+- Styles or types as variations of a single product
+- Grades, finishes, or other dimensional variations
+Examples:
+- "Add company t-shirts in sizes S M L XL and colors red blue black" → create_item_with_variants(name: "Company T-Shirt", variant_dimensions: ["size", "color"], variant_options: {"size": ["S", "M", "L", "XL"], "color": ["Red", "Blue", "Black"]})
+- "Add safety vests in sizes small, medium, large" → create_item_with_variants(name: "Safety Vest", variant_dimensions: ["size"], variant_options: {"size": ["Small", "Medium", "Large"]})
+- "I need work gloves in S/M/L/XL" → create_item_with_variants(name: "Work Gloves", variant_dimensions: ["size"], variant_options: {"size": ["S", "M", "L", "XL"]})
+Use the regular add_item tool for items WITHOUT variants (bulk materials, single-form items).
+
 CATEGORY HANDLING:
 When adding items, you can pass a category name as plain text — it will be auto-matched to existing categories or created automatically. You do NOT need to create categories separately before adding items.
 - Infer the category from context when the user doesn't specify one: "add rebar" → category: "Steel", "add 94lb cement bags" → category: "Concrete", "add safety vests" → category: "Safety Equipment"

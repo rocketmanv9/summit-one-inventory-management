@@ -134,6 +134,39 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'create_item_with_variants',
+      description: 'Create a parent item with variant children. Use when the user mentions sizes, colors, styles, grades, or other product variations. E.g., "add t-shirts in S/M/L/XL and red/blue" or "add gloves in sizes small, medium, large".',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Parent item name (e.g. "Company T-Shirt", "Work Gloves")' },
+          description: { type: 'string', description: 'Item description' },
+          category: { type: 'string', description: 'Category name in plain text (auto-matched or created)' },
+          unit_of_measure: { type: 'string', description: 'Unit of measure (default: "EA")' },
+          variant_dimensions: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Dimension names (e.g. ["size", "color"])',
+          },
+          variant_options: {
+            type: 'object',
+            additionalProperties: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            description: 'Options per dimension (e.g. {"size": ["S","M","L","XL"], "color": ["Red","Blue"]})',
+          },
+          location_id: { type: 'string', description: 'Location ID for initial stock (optional)' },
+          initial_qty_per_variant: { type: 'number', description: 'Initial stock quantity per variant (optional)' },
+        },
+        required: ['name', 'variant_dimensions', 'variant_options'],
+      },
+    },
+  },
+
   // ── Stock operations ───────────────────────────────────────────────
   {
     type: 'function',

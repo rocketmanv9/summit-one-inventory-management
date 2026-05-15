@@ -1,5 +1,7 @@
 # Development Guide — summit-one-inventory-management
 
+Last verified: 2026-05-14
+
 ## Architecture Overview
 
 This microservice is part of the **Summit One** platform. It follows these principles:

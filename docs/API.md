@@ -1,6 +1,6 @@
 # API
 
-Last verified: 2026-02-13
+Last verified: 2026-05-14
 Source of truth: runtime code
 
 ## Overview
@@ -97,3 +97,10 @@ Recommended patterns:
 - Use `createBrowserAuthedClient()` from [src/supabase/client.ts](src/supabase/client.ts) for direct Supabase queries.
 
 These rely on the access token stored in HttpOnly cookies and cached in memory by [src/lib/auth-token.ts](src/lib/auth-token.ts).
+
+## Shim transition plan
+The API client shim intercepts `/api/inventory/*` and `/api/supply-chain/*` requests and routes them directly to Supabase tables/RPCs. This exists because many API routes were not yet implemented as proper chassis route handlers.
+
+As real API routes are built (using `createSessionReadRoute`/`createSessionWriteRoute` from the chassis), individual resources are bypassed from the shim so requests hit the real route instead. See [HANDOFF.md](../HANDOFF.md) for the current list of routes that still depend on the shim vs those that have been migrated to real routes.
+
+The goal is to eliminate the shim entirely once all inventory and supply-chain API routes are implemented as proper chassis routes.

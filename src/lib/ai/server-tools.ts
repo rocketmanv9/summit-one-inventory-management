@@ -70,6 +70,7 @@ const SERVER_TOOLS = new Set([
   'reject_apparel_order',
   'semantic_search',
   'purchasing_assistant',
+  'create_item_with_variants',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -154,6 +155,8 @@ export async function executeServerTool(
       return semanticSearchItems(params, ctx);
     case 'purchasing_assistant':
       return purchasingAssistant(params, ctx);
+    case 'create_item_with_variants':
+      return createItemWithVariants(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -3081,5 +3084,158 @@ async function purchasingAssistant(
       totalRows: rows.length,
     },
   };
+}
+
+// ─── Create Item With Variants ─────────────────────────────────────
+
+async function createItemWithVariants(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const name = typeof params.name === 'string' ? params.name.trim() : '';
+  if (!name) {
+    return {
+      text: 'Please provide an item name.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing name' },
+    };
+  }
+
+  const variantDimensions = Array.isArray(params.variant_dimensions) ? params.variant_dimensions : [];
+  const variantOptions = params.variant_options && typeof params.variant_options === 'object' ? params.variant_options : {};
+
+  if (variantDimensions.length === 0) {
+    return {
+      text: 'Please provide at least one variant dimension (e.g. "size", "color").',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing dimensions' },
+    };
+  }
+
+  // Validate all dimensions have options
+  for (const dim of variantDimensions) {
+    if (!Array.isArray(variantOptions[dim]) || variantOptions[dim].length === 0) {
+      return {
+        text: `Dimension "${dim}" has no options. Please provide values (e.g. for size: S, M, L, XL).`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: `No options for ${dim}` },
+      };
+    }
+  }
+
+  // Calculate total variants
+  const totalVariants = variantDimensions.reduce(
+    (acc: number, dim: string) => acc * (variantOptions[dim]?.length || 0),
+    1
+  );
+
+  try {
+    // Resolve category if provided
+    let categoryId: string | null = null;
+    if (params.category && typeof params.category === 'string') {
+      const categoryName = params.category.trim();
+      const { data: cats } = await inventorySchema(ctx.supabase)
+        .from('item_categories')
+        .select('id, name')
+        .limit(100);
+
+      if (cats && cats.length > 0) {
+        const lower = categoryName.toLowerCase();
+        const match = cats.find((c: any) => c.name.toLowerCase() === lower) ||
+          cats.find((c: any) => c.name.toLowerCase().includes(lower) || lower.includes(c.name.toLowerCase()));
+        if (match) categoryId = match.id;
+      }
+    }
+
+    // Call the wizard RPC directly via supabase
+    // Skip parent stock — will apply per-variant stock after variant creation
+    const initialQty = typeof params.initial_qty_per_variant === 'number' ? params.initial_qty_per_variant : null;
+    const locationId = params.location_id || null;
+    const idempotencyKey = `ai-variant-item-${ctx.tenantId}-${Date.now()}`;
+    const { data, error } = await inventorySchema(ctx.supabase).rpc('rpc_wizard_create_item', {
+      p_name: name,
+      p_description: params.description || null,
+      p_unit_of_measure: params.unit_of_measure || 'EA',
+      p_tracking_mode: 'stock',
+      p_reorder_point: null,
+      p_base_sku: null,
+      p_sku: null,
+      p_category_id: categoryId,
+      p_create_category: null,
+      p_vendor_id: null,
+      p_create_vendor: null,
+      p_vendor_sku: null,
+      p_vendor_unit_cost: null,
+      p_location_id: locationId,
+      p_create_location: null,
+      p_initial_qty: null,
+      p_initial_cost: null,
+      p_barcode: null,
+      p_create_assets: null,
+      p_has_variants: true,
+      p_variant_dimensions: variantDimensions,
+      p_variant_options: variantOptions,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    if (error) {
+      return {
+        text: `Failed to create item with variants: ${error.message}`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
+      };
+    }
+
+    const d = data as any;
+
+    // Apply per-variant initial stock if location and qty provided
+    if (initialQty && initialQty > 0 && locationId) {
+      const variantsEntity = (d.created_entities || []).find((e: any) => e.type === 'variants');
+      const variantIds: string[] = variantsEntity?.variant_ids || [];
+      const inv = inventorySchema(ctx.supabase);
+
+      for (const variantId of variantIds) {
+        const eventKey = `ai-vstk-${variantId}-${idempotencyKey}`;
+        await inv.from('stock_movements').upsert({
+          catalog_item_id: variantId,
+          location_id: locationId,
+          quantity_delta: initialQty,
+          movement_type: 'adjusted',
+          reason: 'initial_stock',
+          notes: 'Initial stock set via AI assistant (per variant)',
+          occurred_at: new Date().toISOString(),
+          last_event_id: eventKey,
+        }, { onConflict: 'tenant_id,last_event_id' });
+      }
+    }
+
+    // Build a human-readable summary
+    const dimSummary = variantDimensions
+      .map((dim: string) => `${variantOptions[dim].length} ${dim}${variantOptions[dim].length !== 1 ? 's' : ''}`)
+      .join(' x ');
+
+    const stockNote = initialQty && initialQty > 0 && locationId
+      ? ` Initial stock: ${initialQty} per variant (${totalVariants * initialQty} total).`
+      : '';
+
+    return {
+      text: `Created parent item "${name}" with ${totalVariants} variants (${dimSummary}). SKU: ${d.item_sku || 'auto-generated'}.${stockNote}`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Item Created',
+        value: name,
+        secondaryMetrics: [
+          { label: 'SKU', value: d.item_sku || 'auto' },
+          { label: 'Variants', value: String(totalVariants) },
+          { label: 'Dimensions', value: variantDimensions.join(', ') },
+          ...variantDimensions.map((dim: string) => ({
+            label: dim.charAt(0).toUpperCase() + dim.slice(1),
+            value: variantOptions[dim].join(', '),
+          })),
+        ],
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Failed to create item with variants: ${err.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
+    };
+  }
 }
 

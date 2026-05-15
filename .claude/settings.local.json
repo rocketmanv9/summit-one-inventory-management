@@ -35,7 +35,14 @@
       "Bash(npx supabase:*)",
       "Bash(npm ls:*)",
       "Bash(1 --prefix \"C:/Users/grant/summit-one-inventory-management\")",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "mcp__supabase_beta__execute_sql",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase_beta__get_project_url",
+      "mcp__supabase_dev__get_project_url",
+      "mcp__supabase_main__get_project_url",
+      "mcp__supabase_stage__get_project_url",
+      "mcp__supabase__list_branches"
     ]
   }
 }

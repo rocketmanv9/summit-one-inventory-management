@@ -255,6 +255,14 @@ export default function NewItemWizardPage() {
         base_sku: suggestion.sku_prefix || prev.base_sku,
         category_id: suggestion.category_id || prev.category_id,
         identifier_types: suggestion.suggested_identifier_types || prev.identifier_types,
+        // Variant fields from AI
+        has_variants: suggestion.has_variants ?? prev.has_variants,
+        variant_dimensions: suggestion.has_variants && Array.isArray(suggestion.variant_dimensions) && suggestion.variant_dimensions.length > 0
+          ? suggestion.variant_dimensions
+          : prev.variant_dimensions,
+        variant_options: suggestion.has_variants && suggestion.variant_options && Object.keys(suggestion.variant_options).length > 0
+          ? suggestion.variant_options
+          : prev.variant_options,
       }));
 
       // If AI suggests a new category, store the name + prefix for pre-seeding
@@ -349,6 +357,9 @@ export default function NewItemWizardPage() {
       const isManualSku = category?.sku_mode === 'manual';
       const assets = buildAssetList();
 
+      // When variants are enabled, skip initial stock on the parent — it will be applied per variant
+      const skipParentStock = form.has_variants && form.variant_dimensions.length > 0;
+
       const res = await InventoryRPC.wizardCreateItem({
         name: form.name.trim(),
         description: form.description.trim() || null,
@@ -362,8 +373,8 @@ export default function NewItemWizardPage() {
         vendor_sku: form.vendor_sku.trim() || null,
         vendor_unit_cost: form.vendor_unit_cost ? Number(form.vendor_unit_cost) : null,
         location_id: form.location_id || null,
-        initial_qty: form.initial_qty ? Number(form.initial_qty) : null,
-        initial_cost: form.initial_cost ? Number(form.initial_cost) : null,
+        initial_qty: skipParentStock ? null : (form.initial_qty ? Number(form.initial_qty) : null),
+        initial_cost: skipParentStock ? null : (form.initial_cost ? Number(form.initial_cost) : null),
         barcode: form.catalog_barcode.trim() || null,
         create_assets: assets,
         has_variants: form.has_variants,
@@ -371,6 +382,33 @@ export default function NewItemWizardPage() {
         variant_options: form.has_variants && Object.keys(form.variant_options).length > 0 ? form.variant_options : null,
         idempotency_key: idempotencyKey,
       });
+
+      // Apply per-variant initial stock if variants were created and qty was specified
+      if (skipParentStock && form.initial_qty && form.location_id) {
+        const variantsEntity = res.created_entities?.find((e: any) => e.type === 'variants') as any;
+        const variantIds: string[] = variantsEntity?.variant_ids || [];
+        if (variantIds.length > 0) {
+          const { createBrowserAuthedClient } = await import('@/supabase/client');
+          const supa = createBrowserAuthedClient();
+          const inv = (supa as any).schema('inventory');
+
+          for (const variantId of variantIds) {
+            const eventKey = `wiz-vstk-${variantId}-${idempotencyKey}`;
+            // Create stock movement for each variant
+            await inv.from('stock_movements').upsert({
+              catalog_item_id: variantId,
+              location_id: form.location_id,
+              quantity_delta: Number(form.initial_qty),
+              movement_type: 'adjusted',
+              unit_cost: form.initial_cost ? Number(form.initial_cost) : null,
+              reason: 'initial_stock',
+              notes: 'Initial stock set during item wizard creation (per variant)',
+              occurred_at: new Date().toISOString(),
+              last_event_id: eventKey,
+            }, { onConflict: 'tenant_id,last_event_id' });
+          }
+        }
+      }
 
       setResult({
         item_id: res.item_id,
@@ -1390,14 +1428,16 @@ function StepSupply({
               {form.location_id && (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="wiz-qty">Quantity *</Label>
+                    <Label htmlFor="wiz-qty">
+                      {form.has_variants ? 'Qty per Variant *' : 'Quantity *'}
+                    </Label>
                     <Input
                       id="wiz-qty"
                       type="number"
                       min="0"
                       value={form.initial_qty}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_qty', e.target.value)}
-                      placeholder="Initial stock quantity"
+                      placeholder={form.has_variants ? 'Qty for each variant' : 'Initial stock quantity'}
                     />
                   </div>
 
@@ -1419,14 +1459,31 @@ function StepSupply({
               {form.location_id && form.initial_qty && (
                 <div className="rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
                   <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Ledger Preview</div>
-                  <p className="mt-1 text-blue-900">
-                    This will create an <span className="font-medium">initial stock adjustment</span> of{' '}
-                    <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
-                    {form.initial_cost && (
-                      <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
-                    )}{' '}
-                    at the selected location.
-                  </p>
+                  {form.has_variants ? (() => {
+                    const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
+                    const variantTotal = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
+                    const totalUnits = variantTotal * Number(form.initial_qty || 0);
+                    return (
+                      <p className="mt-1 text-blue-900">
+                        <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
+                        {' '}&times; <span className="font-mono font-bold">{variantTotal}</span> variant{variantTotal !== 1 ? 's' : ''}
+                        {' '}= <span className="font-mono font-bold">{totalUnits}</span> total units
+                        {form.initial_cost && (
+                          <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
+                        )}{' '}
+                        at the selected location.
+                      </p>
+                    );
+                  })() : (
+                    <p className="mt-1 text-blue-900">
+                      This will create an <span className="font-medium">initial stock adjustment</span> of{' '}
+                      <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
+                      {form.initial_cost && (
+                        <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
+                      )}{' '}
+                      at the selected location.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -1579,8 +1636,21 @@ function StepReview({
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
               <span className="text-muted-foreground">Location</span>
               <span className="font-medium">{location.name}</span>
-              <span className="text-muted-foreground">Quantity</span>
+              <span className="text-muted-foreground">
+                {form.has_variants ? 'Qty per Variant' : 'Quantity'}
+              </span>
               <span className="font-mono">{form.initial_qty} {form.unit_of_measure}</span>
+              {form.has_variants && form.variant_dimensions.length > 0 && (() => {
+                const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
+                const variantTotal = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
+                const totalUnits = variantTotal * Number(form.initial_qty || 0);
+                return (
+                  <>
+                    <span className="text-muted-foreground">Total Stock</span>
+                    <span className="font-mono">{totalUnits} {form.unit_of_measure} ({variantTotal} variants)</span>
+                  </>
+                );
+              })()}
               {form.initial_cost && (
                 <>
                   <span className="text-muted-foreground">Unit Cost</span>
