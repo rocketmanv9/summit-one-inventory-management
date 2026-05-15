@@ -24,6 +24,7 @@ export interface TenantBranding {
   tenant_id: string;
   display_name: string;
   logo_asset_id: string | null;
+  logo_url: string | null;
 
   // Core palette
   primary_color: string;
@@ -100,6 +101,7 @@ const fallbackBranding: TenantBranding = {
   tenant_id: '',
   display_name: 'Summit One',
   logo_asset_id: null,
+  logo_url: null,
   primary_color: '#1e40af',
   secondary_color: '#475569',
   accent_color: '#3b82f6',
@@ -337,6 +339,8 @@ function parseBrandingPayload(data: unknown): TenantBranding | null {
           : 'Organization',
     logo_asset_id:
       typeof source.logo_asset_id === 'string' ? source.logo_asset_id : null,
+    logo_url:
+      typeof source.logo_url === 'string' ? source.logo_url : null,
 
     // Core palette
     primary_color: color('primary_color') ?? '#1e40af',
@@ -560,6 +564,37 @@ const CORE_STAGE_URL = 'https://ycszguaqawbxjwehhhqx.supabase.co';
 const CORE_STAGE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljc3pndWFxYXdieGp3ZWhoaHF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2NjUzMDksImV4cCI6MjA5MTI0MTMwOX0.gwTth23_dGqrnnhnfdZ4KB9KRBxmwBZSemwewBzopMg';
 
+async function resolveLogoUrl(
+  coreUrl: string,
+  coreKey: string,
+  tenantId: string,
+  logoAssetId: string,
+): Promise<string | null> {
+  try {
+    const prefix = `tenants/${tenantId}/tenant_logo/${logoAssetId}/`;
+    const res = await fetch(`${coreUrl}/storage/v1/object/list/brand-assets`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: coreKey,
+        Authorization: `Bearer ${coreKey}`,
+      },
+      body: JSON.stringify({ prefix, limit: 1 }),
+    });
+    if (!res.ok) return null;
+
+    const files = await res.json();
+    if (!Array.isArray(files) || files.length === 0) return null;
+
+    const fileName = files[0].name;
+    if (typeof fileName !== 'string') return null;
+
+    return `${coreUrl}/storage/v1/object/public/brand-assets/${prefix}${fileName}`;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchBrandingFromCoreInstance(
   url: string,
   key: string,
@@ -579,7 +614,17 @@ async function fetchBrandingFromCoreInstance(
     if (!res.ok) return null;
 
     const data = await res.json();
-    return parseBrandingPayload(data);
+    const branding = parseBrandingPayload(data);
+    if (!branding) return null;
+
+    // Resolve the logo storage path into a full public URL
+    if (branding.logo_asset_id && !branding.logo_url) {
+      branding.logo_url = await resolveLogoUrl(
+        url, key, branding.tenant_id, branding.logo_asset_id,
+      );
+    }
+
+    return branding;
   } catch {
     return null;
   }

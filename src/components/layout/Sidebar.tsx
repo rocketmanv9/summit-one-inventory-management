@@ -153,9 +153,7 @@ export function Sidebar() {
   const isDeveloper = session?.isDeveloper === true;
   const { branding } = useTenantBranding();
 
-  const logoUrl = branding.logo_asset_id
-    ? `${process.env.NEXT_PUBLIC_CORE_SUPABASE_URL || 'https://hoizrypzbzmtorhknkxq.supabase.co'}/storage/v1/object/public/branding/${branding.logo_asset_id}`
-    : null;
+  const logoUrl = branding.logo_url ?? null;
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">

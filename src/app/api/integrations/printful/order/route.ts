@@ -61,7 +61,7 @@ export const POST = createSessionWriteRoute(
     const coreKey = process.env.NEXT_PUBLIC_CORE_SUPABASE_ANON_KEY;
     if (coreUrl && coreKey) {
       try {
-        const brandingRes = await fetch(`${coreUrl}/rest/v1/rpc/get_tenant_branding`, {
+        const brandingRes = await fetch(`${coreUrl}/rest/v1/rpc/get_public_branding`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -74,8 +74,23 @@ export const POST = createSessionWriteRoute(
           const brandingData = await brandingRes.json();
           const parsed = Array.isArray(brandingData) ? brandingData[0] : brandingData;
           if (parsed?.logo_asset_id) {
-            // Resolve Supabase Storage public URL for the logo
-            logoUrl = `${coreUrl}/storage/v1/object/public/branding/${parsed.logo_asset_id}`;
+            // Resolve full storage path from the brand-assets bucket
+            const prefix = `tenants/${tenantId}/tenant_logo/${parsed.logo_asset_id}/`;
+            const listRes = await fetch(`${coreUrl}/storage/v1/object/list/brand-assets`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                apikey: coreKey,
+                Authorization: `Bearer ${coreKey}`,
+              },
+              body: JSON.stringify({ prefix, limit: 1 }),
+            });
+            if (listRes.ok) {
+              const files = await listRes.json();
+              if (Array.isArray(files) && files.length > 0 && files[0].name) {
+                logoUrl = `${coreUrl}/storage/v1/object/public/brand-assets/${prefix}${files[0].name}`;
+              }
+            }
           }
         }
       } catch {
