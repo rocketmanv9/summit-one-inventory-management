@@ -5,9 +5,8 @@ export const metadata: Metadata = { title: 'Scan Items' };
 
 /**
  * Mobile scan page — pure server component with inline script.
- * NO 'use client', NO React hydration, NO external JS chunks.
- * Everything runs from a single inline <script> so Vercel deployment
- * protection can't block it.
+ * NO 'use client', NO React hydration, NO external JS chunks from Vercel.
+ * Loads html5-qrcode from jsDelivr CDN (not blocked by Vercel deploy protection).
  */
 export default async function MobileScanPage({
   params,
@@ -28,24 +27,26 @@ export default async function MobileScanPage({
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>Scan Items</title>
+        {/* Load html5-qrcode from CDN — bypasses Vercel deployment protection */}
+        <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js" />
         <style dangerouslySetInnerHTML={{ __html: `
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #000; color: #fff; overflow: hidden;
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: #000; color: #fff;
           }
-          .wrap { display: flex; flex-direction: column; height: 100dvh; }
+          .wrap { display: flex; flex-direction: column; min-height: 100dvh; }
           .top {
             display: flex; align-items: center; justify-content: space-between;
             padding: 16px; padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
-            z-index: 10; position: relative;
+            z-index: 10; position: relative; background: #000;
           }
           .top-title { color: #fff; font-weight: 600; font-size: 17px; }
           .close-btn {
             width: 40px; height: 40px; background: rgba(255,255,255,0.2);
             border-radius: 50%; display: flex; align-items: center; justify-content: center;
             border: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+            text-decoration: none;
           }
           .toast {
             padding: 12px 20px; color: #fff; text-align: center;
@@ -55,21 +56,13 @@ export default async function MobileScanPage({
           .toast-ok { background: rgba(22, 163, 74, 0.95); }
           .toast-err { background: rgba(220, 38, 38, 0.95); }
           .toast-hide { opacity: 0; height: 0; padding: 0; overflow: hidden; }
-          .cam-area {
+          .scanner-area {
             flex: 1; display: flex; align-items: center; justify-content: center;
-            overflow: hidden; position: relative;
+            overflow: hidden; position: relative; background: #000;
+            min-height: 300px;
           }
-          .cam-video {
-            width: 100%; height: 100%; object-fit: cover; display: none;
-          }
-          .cam-video.active { display: block; }
-          .guide {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 260px; height: 160px; border: 2px solid rgba(255,255,255,0.6);
-            border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.3);
-            display: none;
-          }
-          .guide.active { display: block; }
+          #scanner-region { width: 100%; }
+          #scanner-region video { width: 100% !important; height: auto !important; }
           .center-msg {
             position: absolute; text-align: center; padding: 24px;
             color: rgba(255,255,255,0.7); font-size: 15px;
@@ -126,18 +119,17 @@ export default async function MobileScanPage({
 
           <div id="toast" className="toast toast-hide"></div>
 
-          <div className="cam-area">
-            <video id="video" className="cam-video" playsInline muted />
-            <div id="guide" className="guide"></div>
+          <div className="scanner-area">
+            <div id="scanner-region"></div>
 
-            {/* Idle state */}
+            {/* Idle state — shown before user taps Start */}
             <div id="state-idle" className="center-msg">
               <button id="start-btn" className="start-btn" type="button">
                 <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
-                Start Camera
+                Start Scanner
               </button>
               <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', marginTop: '16px' }}>
                 Tap to open camera and scan barcodes
@@ -153,15 +145,6 @@ export default async function MobileScanPage({
             <div id="state-error" className="center-msg error" style={{ display: 'none' }}>
               <p id="error-msg"></p>
               <button id="retry-btn" className="retry-btn" type="button">Try Again</button>
-            </div>
-
-            {/* No detector */}
-            <div id="state-nodetect" style={{
-              display: 'none', position: 'absolute', bottom: 16, left: 16, right: 16,
-              background: 'rgba(0,0,0,0.7)', borderRadius: 10, padding: 12,
-              color: 'rgba(255,255,255,0.8)', fontSize: 13, textAlign: 'center',
-            }}>
-              Auto-detect not available. Type codes below.
             </div>
           </div>
 
@@ -180,42 +163,36 @@ export default async function MobileScanPage({
 (function() {
   var API = ${JSON.stringify(apiUrl)};
   var BYPASS = ${JSON.stringify(bypass)};
-  var COUNT_URL = ${JSON.stringify(countUrl)};
 
   // Set bypass cookie
   if (BYPASS) {
     document.cookie = "x-vercel-protection-bypass=" + BYPASS + ";path=/;secure;samesite=lax;max-age=86400";
   }
 
-  var video = document.getElementById('video');
-  var guide = document.getElementById('guide');
   var toast = document.getElementById('toast');
   var title = document.getElementById('title');
   var hint = document.getElementById('hint');
   var stateIdle = document.getElementById('state-idle');
   var stateStarting = document.getElementById('state-starting');
   var stateError = document.getElementById('state-error');
-  var stateNodetect = document.getElementById('state-nodetect');
   var errorMsg = document.getElementById('error-msg');
   var startBtn = document.getElementById('start-btn');
   var retryBtn = document.getElementById('retry-btn');
   var manualInput = document.getElementById('manual-input');
   var goBtn = document.getElementById('go-btn');
 
-  var stream = null;
+  var scanner = null;
   var scanCount = 0;
   var cooldown = false;
-  var detecting = false;
-  var frameId = 0;
 
   function showState(name) {
     stateIdle.style.display = name === 'idle' ? '' : 'none';
     stateStarting.style.display = name === 'starting' ? '' : 'none';
     stateError.style.display = name === 'error' ? '' : 'none';
-    stateNodetect.style.display = name === 'nodetect' ? '' : 'none';
-    video.className = (name === 'scanning' || name === 'nodetect') ? 'cam-video active' : 'cam-video';
-    guide.className = name === 'scanning' ? 'guide active' : 'guide';
     hint.style.display = name === 'scanning' ? '' : 'none';
+    // Hide the scanner region when not scanning
+    var region = document.getElementById('scanner-region');
+    if (region) region.style.display = (name === 'scanning') ? '' : 'none';
   }
 
   var toastTimer = null;
@@ -238,9 +215,7 @@ export default async function MobileScanPage({
 
     try {
       var headers = { 'Content-Type': 'application/json' };
-      if (BYPASS) {
-        headers['x-vercel-protection-bypass'] = BYPASS;
-      }
+      if (BYPASS) headers['x-vercel-protection-bypass'] = BYPASS;
       var res = await fetch(API, {
         method: 'POST',
         headers: headers,
@@ -261,75 +236,64 @@ export default async function MobileScanPage({
     setTimeout(function() { cooldown = false; }, 2000);
   }
 
-  async function startCamera() {
+  function startScanner() {
     showState('starting');
 
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      });
-    } catch (err) {
-      var msg = 'Camera error: ' + (err.message || err.name || 'unknown');
-      if (err.name === 'NotAllowedError') {
+    // Check if html5-qrcode loaded from CDN
+    if (typeof Html5Qrcode === 'undefined') {
+      errorMsg.textContent = 'Scanner library failed to load. Check your internet connection and try again.';
+      showState('error');
+      return;
+    }
+
+    // Clean up previous scanner instance if any
+    if (scanner) {
+      try { scanner.stop().catch(function(){}); } catch(e) {}
+      try { scanner.clear(); } catch(e) {}
+      scanner = null;
+    }
+
+    // Clear the scanner region
+    var region = document.getElementById('scanner-region');
+    region.innerHTML = '';
+
+    scanner = new Html5Qrcode('scanner-region');
+
+    scanner.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 250, height: 150 },
+        aspectRatio: 1.777,
+        disableFlip: false,
+      },
+      function onSuccess(decodedText) {
+        if (!cooldown) {
+          handleCode(decodedText);
+        }
+      },
+      function onFailure() {
+        // Ignore — no barcode in frame
+      }
+    ).then(function() {
+      showState('scanning');
+    }).catch(function(err) {
+      var msg = String(err || '');
+      if (msg.indexOf('NotAllowed') !== -1) {
         msg = 'Camera access denied. Please allow camera in your browser settings and try again.';
-      } else if (err.name === 'NotFoundError') {
+      } else if (msg.indexOf('NotFound') !== -1) {
         msg = 'No camera found on this device.';
+      } else {
+        msg = 'Camera error: ' + msg;
       }
       errorMsg.textContent = msg;
       showState('error');
-      return;
-    }
-
-    video.srcObject = stream;
-    try {
-      await video.play();
-    } catch (err) {
-      errorMsg.textContent = 'Video playback failed: ' + (err.message || 'unknown');
-      showState('error');
-      stream.getTracks().forEach(function(t) { t.stop(); });
-      stream = null;
-      return;
-    }
-
-    // Start BarcodeDetector if available
-    if ('BarcodeDetector' in window) {
-      try {
-        var detector = new BarcodeDetector({
-          formats: ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf', 'data_matrix'],
-        });
-        showState('scanning');
-
-        function detect() {
-          if (!video || video.readyState < 2) {
-            frameId = requestAnimationFrame(detect);
-            return;
-          }
-          if (!detecting && !cooldown) {
-            detecting = true;
-            detector.detect(video).then(function(barcodes) {
-              if (barcodes.length > 0 && !cooldown) {
-                handleCode(barcodes[0].rawValue);
-              }
-              detecting = false;
-            }).catch(function() {
-              detecting = false;
-            });
-          }
-          frameId = requestAnimationFrame(detect);
-        }
-        frameId = requestAnimationFrame(detect);
-      } catch (e) {
-        showState('nodetect');
-      }
-    } else {
-      showState('nodetect');
-    }
+    });
   }
 
   // Event listeners
-  startBtn.addEventListener('click', startCamera);
-  retryBtn.addEventListener('click', startCamera);
+  startBtn.addEventListener('click', startScanner);
+  retryBtn.addEventListener('click', startScanner);
 
   goBtn.addEventListener('click', function() {
     var code = manualInput.value.trim();
