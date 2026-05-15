@@ -419,6 +419,87 @@ export default function ItemDetailPage() {
           </span>
         </div>
 
+        {/* Variant Grid (parent items only) */}
+        {item.is_parent && snapshot.variants && (
+          <div>
+            <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">
+              <Package className="h-4 w-4" />
+              Variants ({snapshot.variants.length})
+            </h3>
+            {snapshot.variants.length > 0 ? (
+              <div className="rounded-xl border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Variant</th>
+                      <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">SKU</th>
+                      {item.variant_dimensions?.map((dim: string) => (
+                        <th key={dim} className="px-4 py-2.5 text-left font-medium text-muted-foreground capitalize">{dim}</th>
+                      ))}
+                      <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">On Hand</th>
+                      <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Reserved</th>
+                      <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Available</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshot.variants.map((v) => (
+                      <tr key={v.variant_id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-2.5">
+                          <button
+                            onClick={() => router.push(`/inventory/items/${v.variant_id}`)}
+                            className="font-medium text-primary hover:underline text-left"
+                          >
+                            {v.variant_name}
+                          </button>
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-xs">{v.variant_sku}</td>
+                        {item.variant_dimensions?.map((dim: string) => (
+                          <td key={dim} className="px-4 py-2.5">{v.variant_attributes?.[dim] ?? '-'}</td>
+                        ))}
+                        <td className="px-4 py-2.5 text-right font-mono">{formatQty(v.on_hand)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono">{formatQty(v.reserved)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono">
+                          <span className={Number(v.available) <= 0 ? 'text-red-600 font-semibold' : ''}>
+                            {formatQty(v.available)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                No variants created yet.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Parent link for variant children */}
+        {item.parent_item_id && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+            <p className="text-sm text-violet-800">
+              This is a variant.{' '}
+              <button
+                onClick={() => router.push(`/inventory/items/${item.parent_item_id}`)}
+                className="font-medium text-violet-700 hover:underline"
+              >
+                View parent item
+              </button>
+            </p>
+            {item.variant_attributes && (
+              <div className="mt-1 flex gap-2">
+                {Object.entries(item.variant_attributes).map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-200 text-violet-800 capitalize">
+                    {k}: {String(v)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Stock by Location */}
         <div>
           <h3 className="mb-3 flex items-center gap-2 text-base font-semibold">

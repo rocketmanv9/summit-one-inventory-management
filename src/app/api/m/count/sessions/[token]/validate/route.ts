@@ -76,7 +76,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
       ? inv.from('locations').select('id, name').eq('id', cc.location_id).single()
       : Promise.resolve({ data: null }),
     itemIds.length > 0
-      ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure').in('id', itemIds)
+      ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure, parent_item_id, variant_attributes').in('id', itemIds)
       : Promise.resolve({ data: [] }),
   ]);
 
@@ -104,17 +104,26 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     }
   }
 
+  // Fetch parent item names for variants
+  const parentIds = [...new Set(items.filter((i: any) => i.parent_item_id).map((i: any) => i.parent_item_id))];
+  let parentNameMap = new Map<string, string>();
+  if (parentIds.length > 0) {
+    const { data: parents } = await inv.from('catalog_items').select('id, name').in('id', parentIds);
+    parentNameMap = new Map((parents || []).map((p: any) => [p.id, p.name]));
+  }
+
   // Merge items into lines
   const itemMap = new Map(items.map((i: any) => [i.id, i]));
   const enrichedLines = lines.map((line: any) => {
     const item = itemMap.get(line.catalog_item_id);
+    const parentName = item?.parent_item_id ? parentNameMap.get(item.parent_item_id) || null : null;
     const lineAssets = assetDetails
       .filter((a: any) => a.catalog_item_id === line.catalog_item_id);
     const lineCounted = countedAssets
       .filter((ca: any) => ca.line_number === line.line_number && ca.counted_present);
     return {
       ...line,
-      catalog_item: item || null,
+      catalog_item: item ? { ...item, parent_name: parentName } : null,
       expected_assets: item?.tracking_mode === 'serialized' ? lineAssets : [],
       counted_assets: lineCounted.map((ca: any) => ({ asset_id: ca.asset_id })),
     };

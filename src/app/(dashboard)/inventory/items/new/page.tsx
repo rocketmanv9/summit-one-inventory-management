@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -52,6 +52,13 @@ interface WizardState {
   tracking_mode: 'stock' | 'serialized' | 'both';
   reorder_point: string;
   base_sku: string;
+
+  // Step 1b: Variants
+  has_variants: boolean;
+  variant_dimensions: string[];       // e.g. ["size", "color"]
+  variant_options: Record<string, string[]>; // e.g. {"size":["S","M","L"],"color":["Red","Blue"]}
+  new_dimension_name: string;
+  new_option_value: string;
 
   // Step 2: Identifiers
   catalog_barcode: string;
@@ -116,6 +123,11 @@ const defaultState: WizardState = {
   tracking_mode: 'stock',
   reorder_point: '',
   base_sku: '',
+  has_variants: false,
+  variant_dimensions: [],
+  variant_options: {},
+  new_dimension_name: '',
+  new_option_value: '',
   catalog_barcode: '',
   identifier_types: ['barcode'],
   create_assets: false,
@@ -354,6 +366,9 @@ export default function NewItemWizardPage() {
         initial_cost: form.initial_cost ? Number(form.initial_cost) : null,
         barcode: form.catalog_barcode.trim() || null,
         create_assets: assets,
+        has_variants: form.has_variants,
+        variant_dimensions: form.has_variants && form.variant_dimensions.length > 0 ? form.variant_dimensions : null,
+        variant_options: form.has_variants && Object.keys(form.variant_options).length > 0 ? form.variant_options : null,
         idempotency_key: idempotencyKey,
       });
 
@@ -508,6 +523,7 @@ export default function NewItemWizardPage() {
             categories={categories}
             skuPreview={skuPreview}
             updateForm={updateForm}
+            updateFormDirect={updateFormDirect}
             onAddCategory={() => setShowCategoryModal(true)}
             onAiSuggest={handleAiSuggest}
             aiLoading={aiLoading}
@@ -620,6 +636,7 @@ function StepBasics({
   categories,
   skuPreview,
   updateForm,
+  updateFormDirect,
   onAddCategory,
   onAiSuggest,
   aiLoading,
@@ -631,6 +648,7 @@ function StepBasics({
   categories: ItemCategoryRow[];
   skuPreview: string;
   updateForm: (field: keyof WizardState, value: string) => void;
+  updateFormDirect: <K extends keyof WizardState>(field: K, value: WizardState[K]) => void;
   onAddCategory: () => void;
   onAiSuggest: () => void;
   aiLoading: boolean;
@@ -816,6 +834,209 @@ function StepBasics({
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('reorder_point', e.target.value)}
             placeholder="Optional - triggers low stock alerts"
           />
+        </div>
+
+        {/* Variants toggle + dimension setup */}
+        <div className="space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-semibold">Has Variants?</Label>
+              <p className="text-xs text-muted-foreground">
+                e.g., same item in different sizes, colors, or styles
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.has_variants}
+              onClick={() => updateFormDirect('has_variants', !form.has_variants)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                form.has_variants ? 'bg-violet-600' : 'bg-gray-200'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${
+                  form.has_variants ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {form.has_variants && (
+            <div className="space-y-4 rounded-md border border-violet-200 bg-violet-50/30 p-4">
+              {/* Add dimension */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                  Variant Dimensions
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={form.new_dimension_name}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('new_dimension_name', e.target.value)}
+                    placeholder="e.g., Size, Color, Style"
+                    className="text-sm"
+                    onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const dim = form.new_dimension_name.trim().toLowerCase();
+                        if (dim && !form.variant_dimensions.includes(dim)) {
+                          updateFormDirect('variant_dimensions', [...form.variant_dimensions, dim]);
+                          updateFormDirect('variant_options', { ...form.variant_options, [dim]: [] });
+                          updateForm('new_dimension_name', '');
+                        }
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const dim = form.new_dimension_name.trim().toLowerCase();
+                      if (dim && !form.variant_dimensions.includes(dim)) {
+                        updateFormDirect('variant_dimensions', [...form.variant_dimensions, dim]);
+                        updateFormDirect('variant_options', { ...form.variant_options, [dim]: [] });
+                        updateForm('new_dimension_name', '');
+                      }
+                    }}
+                    disabled={!form.new_dimension_name.trim()}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add
+                  </Button>
+                </div>
+              </div>
+
+              {/* Dimension pills + options per dimension */}
+              {form.variant_dimensions.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  Add at least one dimension (e.g., &quot;size&quot;) to define variants.
+                </p>
+              )}
+
+              {form.variant_dimensions.map((dim) => (
+                <div key={dim} className="space-y-2 rounded-md border bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium capitalize">{dim}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateFormDirect(
+                          'variant_dimensions',
+                          form.variant_dimensions.filter(d => d !== dim),
+                        );
+                        const opts = { ...form.variant_options };
+                        delete opts[dim];
+                        updateFormDirect('variant_options', opts);
+                      }}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  {/* Option chips */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {(form.variant_options[dim] || []).map((opt) => (
+                      <span
+                        key={opt}
+                        className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-800"
+                      >
+                        {opt}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateFormDirect('variant_options', {
+                              ...form.variant_options,
+                              [dim]: form.variant_options[dim].filter(o => o !== opt),
+                            });
+                          }}
+                          className="ml-0.5 text-violet-500 hover:text-violet-800"
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Add option input */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder={`Add ${dim} value (e.g., ${dim === 'size' ? 'S, M, L, XL' : dim === 'color' ? 'Red, Blue' : 'Option 1'})`}
+                      className="text-sm h-8"
+                      onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = (e.target as HTMLInputElement).value.trim();
+                          if (val && !(form.variant_options[dim] || []).includes(val)) {
+                            updateFormDirect('variant_options', {
+                              ...form.variant_options,
+                              [dim]: [...(form.variant_options[dim] || []), val],
+                            });
+                            (e.target as HTMLInputElement).value = '';
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {/* Variant count preview */}
+              {form.variant_dimensions.length > 0 && (() => {
+                const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
+                const total = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
+                const skuBase = form.base_sku || form.name.slice(0, 6).toUpperCase().replace(/\s+/g, '') || 'ITEM';
+
+                return (
+                  <div className="rounded-md border border-dashed border-violet-300 bg-violet-50/60 p-3 text-sm">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-violet-600">
+                      Variant Preview
+                    </div>
+                    {total > 0 ? (
+                      <>
+                        <p className="mt-1 text-violet-900">
+                          <span className="font-mono font-bold">{total}</span> variant{total !== 1 ? 's' : ''} will be created
+                          {' '}({form.variant_dimensions.map(d => `${(form.variant_options[d] || []).length} ${d}`).join(' x ')})
+                        </p>
+                        <div className="mt-2 font-mono text-xs text-violet-700 space-y-0.5">
+                          {(() => {
+                            // Show first few example SKUs
+                            const examples: string[] = [];
+                            const dims = form.variant_dimensions;
+                            const firstOpts = dims.map(d => form.variant_options[d] || []);
+                            // Generate up to 3 examples
+                            outer:
+                            for (const o0 of firstOpts[0] || []) {
+                              if (firstOpts.length === 1) {
+                                examples.push(`${skuBase}-${o0.toUpperCase()}`);
+                                if (examples.length >= 3) break;
+                              } else {
+                                for (const o1 of firstOpts[1] || []) {
+                                  const suffix = [o0, o1].map(v => v.toUpperCase()).join('-');
+                                  examples.push(`${skuBase}-${suffix}`);
+                                  if (examples.length >= 3) break outer;
+                                }
+                              }
+                            }
+                            return (
+                              <>
+                                {examples.map((ex, i) => <div key={i}>{ex}</div>)}
+                                {total > 3 && <div>... and {total - 3} more</div>}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="mt-1 text-violet-600 italic">
+                        Add values to each dimension to generate variants.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -1273,6 +1494,31 @@ function StepReview({
             )}
           </div>
         </div>
+
+        {/* Variants */}
+        {form.has_variants && form.variant_dimensions.length > 0 && (
+          <div className="rounded-md border border-violet-200 bg-violet-50/30 p-4 space-y-2">
+            <h4 className="text-sm font-semibold flex items-center gap-2 text-violet-700">
+              <Package className="h-4 w-4" /> Variants
+            </h4>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              <span className="text-muted-foreground">Dimensions</span>
+              <span className="capitalize">{form.variant_dimensions.join(', ')}</span>
+              {form.variant_dimensions.map(dim => (
+                <Fragment key={dim}>
+                  <span className="text-muted-foreground capitalize">{dim} values</span>
+                  <span>{(form.variant_options[dim] || []).join(', ') || 'None'}</span>
+                </Fragment>
+              ))}
+              <span className="text-muted-foreground">Total variants</span>
+              <span className="font-mono font-bold">
+                {form.variant_dimensions.map(d => (form.variant_options[d] || []).length).every(c => c > 0)
+                  ? form.variant_dimensions.map(d => (form.variant_options[d] || []).length).reduce((a, b) => a * b, 1)
+                  : 0}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Identifiers */}
         {(form.catalog_barcode || (assets && assets.length > 0)) && (

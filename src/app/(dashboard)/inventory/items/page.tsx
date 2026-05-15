@@ -129,12 +129,19 @@ export default function ItemsPage() {
       sortable: true,
       render: (row: CatalogItem) => (
         <div>
-          <button
-            onClick={() => router.push(`/inventory/items/${row.id}`)}
-            className="font-medium text-primary hover:underline text-left"
-          >
-            {row.name}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => router.push(`/inventory/items/${row.id}`)}
+              className="font-medium text-primary hover:underline text-left"
+            >
+              {row.name}
+            </button>
+            {(row as any).is_parent && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700">
+                Variants
+              </span>
+            )}
+          </div>
           {row.description && (
             <div className="text-xs text-muted-foreground truncate max-w-xs">
               {row.description}

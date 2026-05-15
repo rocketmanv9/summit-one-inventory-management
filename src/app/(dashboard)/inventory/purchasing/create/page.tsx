@@ -26,6 +26,7 @@ interface CatalogItem {
   name: string;
   sku: string;
   unit_of_measure: string | null;
+  is_parent?: boolean;
 }
 
 interface POLine {
@@ -56,6 +57,10 @@ export default function CreatePurchaseOrderPage() {
     { catalog_item_id: '', qty_ordered: 0, unit_cost: 0 },
   ]);
 
+  // Track parent selection per line + cached variants per parent
+  const [lineParentIds, setLineParentIds] = useState<Record<number, string>>({});
+  const [variantsByParent, setVariantsByParent] = useState<Record<string, CatalogItem[]>>({});
+
   useEffect(() => {
     loadData();
   }, []);
@@ -74,6 +79,38 @@ export default function CreatePurchaseOrderPage() {
       setError(`Failed to load data: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadVariants = async (parentId: string) => {
+    if (variantsByParent[parentId]) return; // already cached
+    try {
+      const variants = await InventoryRPC.getCatalogItems({
+        active: true,
+        parent_item_id: parentId,
+        exclude_variants: false,
+      });
+      setVariantsByParent(prev => ({ ...prev, [parentId]: variants }));
+    } catch (err: any) {
+      console.error('Failed to load variants:', err);
+    }
+  };
+
+  const handleItemSelect = (index: number, itemId: string) => {
+    const item = items.find(i => i.id === itemId);
+    if (item?.is_parent) {
+      // Parent selected — store parent selection, clear catalog_item_id until variant is chosen
+      setLineParentIds(prev => ({ ...prev, [index]: itemId }));
+      updateLine(index, 'catalog_item_id', '');
+      loadVariants(itemId);
+    } else {
+      // Standalone item — set directly
+      setLineParentIds(prev => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      updateLine(index, 'catalog_item_id', itemId);
     }
   };
 
@@ -296,28 +333,49 @@ export default function CreatePurchaseOrderPage() {
 
             <div className="space-y-3">
               {lines.map((line, index) => {
-                const selectedItem = items.find((i) => i.id === line.catalog_item_id);
+                const parentId = lineParentIds[index];
+                const selectedItem = parentId
+                  ? (variantsByParent[parentId] || []).find(v => v.id === line.catalog_item_id)
+                  : items.find((i) => i.id === line.catalog_item_id);
                 const lineTotal = line.qty_ordered * line.unit_cost;
 
                 return (
                   <div key={index} className="space-y-2">
                     <div className="flex gap-3 items-start">
-                      <div className="flex-1">
+                      <div className="flex-1 space-y-2">
                         <select
-                          value={line.catalog_item_id}
-                          onChange={(e) =>
-                            updateLine(index, 'catalog_item_id', e.target.value)
-                          }
+                          value={parentId || line.catalog_item_id}
+                          onChange={(e) => handleItemSelect(index, e.target.value)}
                           required
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="">Select item...</option>
                           {items.map((item) => (
                             <option key={item.id} value={item.id}>
-                              {item.name} ({item.sku}) - {item.unit_of_measure || 'N/A'}
+                              {item.name} ({item.sku}){item.is_parent ? ' [has variants]' : ''} - {item.unit_of_measure || 'N/A'}
                             </option>
                           ))}
                         </select>
+
+                        {/* Variant sub-dropdown for parent items */}
+                        {parentId && (
+                          <select
+                            value={line.catalog_item_id}
+                            onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
+                            required
+                            className="w-full px-3 py-2 border border-violet-300 rounded-md bg-violet-50 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm"
+                          >
+                            <option value="">Select variant...</option>
+                            {(variantsByParent[parentId] || []).map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.name} ({v.sku})
+                              </option>
+                            ))}
+                            {!variantsByParent[parentId] && (
+                              <option value="" disabled>Loading variants...</option>
+                            )}
+                          </select>
+                        )}
                       </div>
 
                       <div className="w-24">

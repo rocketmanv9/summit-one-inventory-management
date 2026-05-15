@@ -52,7 +52,7 @@ async function loadCountData(token: string) {
   const itemIds = [...new Set(rawLines.map((l: any) => l.catalog_item_id))];
   const [locationResult, itemsResult] = await Promise.all([
     cc.location_id ? inv.from('locations').select('id, name').eq('id', cc.location_id).single() : Promise.resolve({ data: null }),
-    itemIds.length > 0 ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure').in('id', itemIds) : Promise.resolve({ data: [] }),
+    itemIds.length > 0 ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure, parent_item_id, variant_attributes').in('id', itemIds) : Promise.resolve({ data: [] }),
   ]);
 
   const location = locationResult.data;
@@ -74,13 +74,23 @@ async function loadCountData(token: string) {
   }
 
   const itemMap = new Map(items.map((i: any) => [i.id, i]));
+
+  // Fetch parent item names for variants
+  const parentIds = [...new Set(items.filter((i: any) => i.parent_item_id).map((i: any) => i.parent_item_id))];
+  let parentNameMap = new Map<string, string>();
+  if (parentIds.length > 0) {
+    const { data: parents } = await inv.from('catalog_items').select('id, name').in('id', parentIds);
+    parentNameMap = new Map((parents || []).map((p: any) => [p.id, p.name]));
+  }
+
   const enrichedLines = rawLines.map((line: any) => {
     const item = itemMap.get(line.catalog_item_id);
+    const parentName = item?.parent_item_id ? parentNameMap.get(item.parent_item_id) || null : null;
     const lineAssets = assetDetails.filter((a: any) => a.catalog_item_id === line.catalog_item_id);
     const lineCounted = countedAssets.filter((ca: any) => ca.line_number === line.line_number && ca.counted_present);
     return {
       ...line,
-      catalog_item: item || null,
+      catalog_item: item ? { ...item, parent_name: parentName } : null,
       expected_assets: item?.tracking_mode === 'serialized' ? lineAssets : [],
       counted_assets: lineCounted,
     };
@@ -374,12 +384,26 @@ function ItemCard({ line, token, bypass, isBlind, isSubmitted }: {
         {/* Item name */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '10px' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
+            {line.catalog_item?.parent_name && (
+              <div style={{ fontSize: '11px', color: colors.gray400, fontWeight: 500, marginBottom: '2px' }}>
+                {line.catalog_item.parent_name}
+              </div>
+            )}
             <div style={{ fontWeight: 600, fontSize: '15px', color: colors.gray900, lineHeight: '1.3' }}>
               {line.catalog_item?.name || 'Unknown Item'}
             </div>
             {line.catalog_item?.sku && (
               <div style={{ fontSize: '12px', color: colors.gray500, marginTop: '2px', fontFamily: 'ui-monospace, monospace' }}>
                 {line.catalog_item.sku}
+              </div>
+            )}
+            {line.catalog_item?.variant_attributes && (
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                {Object.entries(line.catalog_item.variant_attributes).map(([k, v]: [string, any]) => (
+                  <span key={k} style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: '#ede9fe', color: '#6d28d9', fontWeight: 500 }}>
+                    {k}: {v}
+                  </span>
+                ))}
               </div>
             )}
           </div>
@@ -466,12 +490,26 @@ function AssetCard({ line, token, bypass, isSubmitted }: {
       <div style={{ padding: '12px 16px', background: allFound ? colors.green50 : colors.white }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
+            {line.catalog_item?.parent_name && (
+              <div style={{ fontSize: '11px', color: colors.gray400, fontWeight: 500, marginBottom: '2px' }}>
+                {line.catalog_item.parent_name}
+              </div>
+            )}
             <div style={{ fontWeight: 600, fontSize: '15px', color: colors.gray900, lineHeight: '1.3' }}>
               {line.catalog_item?.name || 'Unknown Item'}
             </div>
             {line.catalog_item?.sku && (
               <div style={{ fontSize: '12px', color: colors.gray500, marginTop: '2px', fontFamily: 'ui-monospace, monospace' }}>
                 {line.catalog_item.sku}
+              </div>
+            )}
+            {line.catalog_item?.variant_attributes && (
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                {Object.entries(line.catalog_item.variant_attributes).map(([k, v]: [string, any]) => (
+                  <span key={k} style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: '#ede9fe', color: '#6d28d9', fontWeight: 500 }}>
+                    {k}: {v}
+                  </span>
+                ))}
               </div>
             )}
           </div>

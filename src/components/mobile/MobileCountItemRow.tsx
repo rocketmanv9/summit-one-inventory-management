@@ -9,6 +9,9 @@ interface CountLine {
     name: string;
     sku?: string;
     unit_of_measure?: string;
+    parent_item_id?: string | null;
+    parent_name?: string | null;
+    variant_attributes?: Record<string, string> | null;
   };
   qty_expected: number;
   qty_counted: number | null;
@@ -145,11 +148,25 @@ export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCount
     <div style={cardStyle}>
       <div style={headerRow}>
         <div style={{ flex: 1, minWidth: 0 }}>
+          {line.catalog_item?.parent_name && (
+            <div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>
+              {line.catalog_item.parent_name}
+            </div>
+          )}
           <div style={itemName}>
             {line.catalog_item?.name || 'Unknown Item'}
           </div>
           {line.catalog_item?.sku && (
             <div style={skuStyle}>{line.catalog_item.sku}</div>
+          )}
+          {line.catalog_item?.variant_attributes && (
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+              {Object.entries(line.catalog_item.variant_attributes).map(([k, v]) => (
+                <span key={k} style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: '#ede9fe', color: '#6d28d9', fontWeight: 500 }}>
+                  {k}: {v}
+                </span>
+              ))}
+            </div>
           )}
         </div>
         {isCounted && (

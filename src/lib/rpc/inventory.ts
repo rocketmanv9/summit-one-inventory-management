@@ -308,12 +308,14 @@ export const InventoryRPC = {
     category_id?: string;
     tracking_mode?: string;
     search?: string;
+    exclude_variants?: boolean;
+    parent_item_id?: string;
   }): Promise<CatalogItemWithCategory[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('catalog_items')
       .select(
-        'id, name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, item_categories(name)'
+        'id, name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, is_parent, parent_item_id, variant_attributes, variant_dimensions, variant_options, item_categories(name)'
       )
       .order('name');
 
@@ -328,6 +330,14 @@ export const InventoryRPC = {
     }
     if (filters?.search) {
       query = query.or(`name.ilike.%${filters.search}%,sku.ilike.%${filters.search}%`);
+    }
+    // By default, hide variant children (show parents + standalone items)
+    if (filters?.exclude_variants !== false) {
+      query = query.is('parent_item_id', null);
+    }
+    // Filter to a specific parent's variants
+    if (filters?.parent_item_id) {
+      query = query.eq('parent_item_id', filters.parent_item_id);
     }
 
     const { data, error } = await query;
@@ -2787,6 +2797,9 @@ export const InventoryRPC = {
     initial_cost?: number | null;
     barcode?: string | null;
     create_assets?: Array<{ asset_tag: string; serial_number?: string }> | null;
+    has_variants?: boolean;
+    variant_dimensions?: string[] | null;
+    variant_options?: Record<string, string[]> | null;
     idempotency_key: string;
   }): Promise<{
     success: boolean;
@@ -2829,6 +2842,9 @@ export const InventoryRPC = {
       p_initial_cost: params.initial_cost ?? null,
       p_barcode: params.barcode ?? null,
       p_create_assets: params.create_assets ? JSON.stringify(params.create_assets) : null,
+      p_has_variants: params.has_variants ?? false,
+      p_variant_dimensions: params.variant_dimensions ?? null,
+      p_variant_options: params.variant_options ?? null,
       p_idempotency_key: params.idempotency_key,
     });
 
@@ -2873,6 +2889,30 @@ export const InventoryRPC = {
    * Item stock snapshot: on_hand, reserved, available, inbound, locations breakdown.
    * RPC: inventory.rpc_item_stock_snapshot
    */
+  async createItemVariants(parentItemId: string, variants: Array<{
+    attributes: Record<string, string>;
+    sku_suffix: string;
+    barcode?: string;
+  }>): Promise<{
+    success: boolean;
+    parent_item_id: string;
+    variant_ids: string[];
+    count: number;
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_create_item_variants', {
+      p_parent_item_id: parentItemId,
+      p_variants: JSON.stringify(variants),
+      p_idempotency_key: crypto.randomUUID(),
+    });
+
+    if (error) {
+      throw AppError.internal(`Failed to create variants: ${error.message}`);
+    }
+
+    return data as any;
+  },
+
   async getItemStockSnapshot(catalogItemId: string): Promise<{
     item: {
       id: string;
@@ -2885,6 +2925,11 @@ export const InventoryRPC = {
       category_name: string | null;
       active: boolean;
       last_event_id: string | null;
+      is_parent?: boolean;
+      parent_item_id?: string | null;
+      variant_attributes?: Record<string, string> | null;
+      variant_dimensions?: string[] | null;
+      variant_options?: Record<string, string[]> | null;
     };
     on_hand: number;
     reserved: number;
@@ -2897,6 +2942,16 @@ export const InventoryRPC = {
       reserved: number;
       available: number;
     }>;
+    variants?: Array<{
+      variant_id: string;
+      variant_name: string;
+      variant_sku: string;
+      variant_barcode: string | null;
+      variant_attributes: Record<string, string>;
+      on_hand: number;
+      reserved: number;
+      available: number;
+    }> | null;
     last_movement_at: string | null;
     last_count_at: string | null;
   }> {

@@ -13,6 +13,9 @@ interface CountLine {
     barcode?: string;
     tracking_mode?: string;
     unit_of_measure?: string;
+    parent_item_id?: string | null;
+    parent_name?: string | null;
+    variant_attributes?: Record<string, string> | null;
   };
   qty_expected: number;
   qty_counted: number | null;
