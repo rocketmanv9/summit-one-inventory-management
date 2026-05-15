@@ -5,6 +5,7 @@
 
 export { SupplyChainRPC } from './supply-chain';
 export { InventoryRPC } from './inventory';
+export { ProvisioningRPC } from './provisioning';
 
 export type {
   // Supply Chain Types

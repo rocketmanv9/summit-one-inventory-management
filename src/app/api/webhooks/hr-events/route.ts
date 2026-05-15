@@ -1,22 +1,30 @@
 import { createWebhookRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { orchestrateProvisioning } from '@/lib/provisioning/orchestrator';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'my-service';
 
 /**
  * Webhook endpoint for HR events from Summit Core.
  *
- * Handles employee.created events to:
- * 1. Reserve a shirt for the new employee (by size)
- * 2. Check stock levels against reorder threshold
- * 3. Create a pending apparel order if stock is low
+ * Routes employee events through the provisioning orchestrator when
+ * provisioning policies are configured. Falls back to the legacy
+ * apparel workflow if no policies match.
  */
 export const POST = createWebhookRoute(async ({ eventType, payload, supabase, log, tenantId }) => {
   switch (eventType) {
     case 'employee.created':
-      await handleEmployeeCreated(supabase, payload, tenantId, log);
+    case 'employee.transferred':
+    case 'employee.promoted': {
+      // Try the new provisioning orchestrator first
+      const provisioningHandled = await handleViaProvisioning(supabase, eventType, payload, tenantId, log);
+      // Fall back to legacy apparel flow if no provisioning policies matched
+      if (!provisioningHandled && eventType === 'employee.created') {
+        await handleEmployeeCreated(supabase, payload, tenantId, log);
+      }
       break;
+    }
     default:
       log.warn('hr-webhook.unhandled', { eventType });
   }
@@ -29,6 +37,56 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
     tenantId,
   }),
 });
+
+// ── Provisioning Orchestrator Integration ───────────────────────────────────
+
+async function handleViaProvisioning(
+  supabase: SupabaseClient,
+  eventType: string,
+  payload: any,
+  tenantId: string,
+  log: any,
+): Promise<boolean> {
+  try {
+    const idempotencyKey = `hr-provision-${tenantId}-${payload.employee_id}-${eventType}-${new Date().toISOString().split('T')[0]}`;
+
+    const result = await orchestrateProvisioning(
+      supabase,
+      tenantId,
+      eventType,
+      {
+        employeeId: payload.employee_id,
+        employeeName: payload.employee_name,
+        position: payload.position,
+        division: payload.division,
+        location: payload.location,
+        certifications: payload.certifications,
+        employmentType: payload.employment_type,
+        shirtSize: payload.shirt_size,
+        attributes: payload,
+      },
+      idempotencyKey,
+      {
+        shippingAddress: payload.shipping_address,
+      },
+    );
+
+    if (result.status === 'no_match') {
+      log.info('hr-webhook.no_provisioning_policy', { eventType, employeeId: payload.employee_id });
+      return false;
+    }
+
+    log.info('hr-webhook.provisioning_triggered', {
+      requestId: result.requestId,
+      status: result.status,
+      lineCount: result.lines.length,
+    });
+    return true;
+  } catch (err: any) {
+    log.error('hr-webhook.provisioning_failed', { error: err.message, eventType });
+    return false;
+  }
+}
 
 // ── Event Handler ────────────────────────────────────────────────────────────
 

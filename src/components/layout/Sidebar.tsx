@@ -20,6 +20,11 @@ import {
   History,
   Wrench,
   HardHat,
+  PackageCheck,
+  Shield,
+  BoxSelect,
+  Building2,
+  UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -132,6 +137,36 @@ const navigation: NavSection[] = [
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
+      },
+    ],
+  },
+  {
+    title: 'Provisioning',
+    items: [
+      {
+        title: 'Requests',
+        href: '/provisioning/requests',
+        icon: PackageCheck,
+      },
+      {
+        title: 'Policies',
+        href: '/provisioning/policies',
+        icon: Shield,
+      },
+      {
+        title: 'Kits',
+        href: '/provisioning/kits',
+        icon: BoxSelect,
+      },
+      {
+        title: 'Providers',
+        href: '/provisioning/providers',
+        icon: Building2,
+      },
+      {
+        title: 'Employee Gear',
+        href: '/provisioning/employee-gear',
+        icon: UserCheck,
       },
     ],
   },
