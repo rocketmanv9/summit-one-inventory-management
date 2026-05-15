@@ -417,7 +417,7 @@ export default function ProvisioningPoliciesPage() {
                   {dryRunLoading ? 'Evaluating...' : 'Evaluate'}
                 </button>
 
-                {dryRunResult && (
+                {dryRunResult != null && (
                   <div className="mt-4 p-4 rounded-lg border bg-muted/30">
                     <h4 className="text-sm font-semibold mb-2">Result</h4>
                     <pre className="text-xs overflow-x-auto whitespace-pre-wrap font-mono">

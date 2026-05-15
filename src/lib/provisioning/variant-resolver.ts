@@ -21,7 +21,7 @@ export interface ResolvedItem {
 export interface KitLineForResolution {
   catalog_item_id: string;
   qty: number;
-  size_source: 'employee_profile' | 'fixed' | 'ask_at_provision';
+  size_source?: 'employee_profile' | 'fixed' | 'ask_at_provision';
   fixed_variant_attributes?: Record<string, string> | null;
   substitute_catalog_item_id?: string | null;
 }

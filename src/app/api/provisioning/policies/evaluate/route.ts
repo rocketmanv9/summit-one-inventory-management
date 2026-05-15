@@ -17,7 +17,7 @@ const EvaluateSchema = z.object({
     certifications: z.array(z.string()).optional(),
     employmentType: z.string().optional(),
     shirtSize: z.string().optional(),
-    attributes: z.record(z.unknown()).optional(),
+    attributes: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 

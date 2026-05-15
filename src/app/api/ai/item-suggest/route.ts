@@ -159,7 +159,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
     // Validate variant fields
     const hasVariants = !!suggestion.has_variants;
     let variantDimensions: string[] = [];
-    let variantOptions: Record<string, string[]> = {};
+    const variantOptions: Record<string, string[]> = {};
 
     if (hasVariants && Array.isArray(suggestion.variant_dimensions)) {
       variantDimensions = suggestion.variant_dimensions

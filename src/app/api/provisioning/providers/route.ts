@@ -32,7 +32,7 @@ const CreateProviderSchema = z.object({
   provider_key: z.string().min(1).regex(/^[a-z0-9_-]+$/, 'Must be lowercase alphanumeric with hyphens/underscores'),
   display_name: z.string().min(1),
   provider_type: z.enum(['print_on_demand', 'uniform_vendor', 'internal_warehouse', 'custom']),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   capabilities: z.array(z.string()).default([]),
   priority: z.number().int().default(100),
   is_active: z.boolean().default(true),

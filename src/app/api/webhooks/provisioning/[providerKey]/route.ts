@@ -8,8 +8,9 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
  * Generic webhook endpoint for fulfillment provider status updates.
  * Each provider sends updates here; we normalize and apply them.
  */
-export const POST = createWebhookRoute(async ({ eventType, payload, supabase, log, tenantId }) => {
+export const POST = createWebhookRoute(async ({ eventType, payload: rawPayload, supabase, log, tenantId }) => {
   const prov = (supabase as any).schema('provisioning');
+  const payload = rawPayload as Record<string, any>;
 
   // Normalize the provider update
   const externalOrderId = payload.external_order_id || payload.order_id || payload.id;

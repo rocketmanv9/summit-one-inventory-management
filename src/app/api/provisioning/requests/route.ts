@@ -41,10 +41,10 @@ const CreateRequestSchema = z.object({
   employee_id: z.string().min(1),
   employee_name: z.string().optional(),
   trigger_event: z.string().min(1).default('manual.provision'),
-  employee_attributes: z.record(z.unknown()).optional().default({}),
+  employee_attributes: z.record(z.string(), z.unknown()).optional().default({}),
   kit_id: z.string().uuid().optional(),
   delivery_method: z.string().optional(),
-  shipping_address: z.record(z.unknown()).optional(),
+  shipping_address: z.record(z.string(), z.unknown()).optional(),
   priority: z.number().int().optional(),
   needed_by: z.string().optional(),
   skip_policy_evaluation: z.boolean().optional().default(false),
@@ -84,7 +84,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
 
   if (!result.requestId) {
     return {
-      data: { message: 'No matching policy or items found', status: result.status },
+      data: { message: 'No matching policy or items found', status: result.status } as any,
       status: 200,
       events: [],
     };
@@ -93,7 +93,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
   log.info('request.created', { requestId: result.requestId, lineCount: result.lines.length });
 
   return {
-    data: result,
+    data: result as any,
     status: 201,
     events: result.events,
   };

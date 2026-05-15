@@ -31,7 +31,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
 const UpdateProviderSchema = z.object({
   display_name: z.string().min(1).optional(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
   capabilities: z.array(z.string()).optional(),
   priority: z.number().int().optional(),
   is_active: z.boolean().optional(),

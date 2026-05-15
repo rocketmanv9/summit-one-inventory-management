@@ -45,7 +45,7 @@ const CreateKitSchema = z.object({
     qty: z.number().int().min(1).default(1),
     is_required: z.boolean().default(true),
     size_source: z.enum(['employee_profile', 'fixed', 'ask_at_provision']).default('employee_profile'),
-    fixed_variant_attributes: z.record(z.string()).optional(),
+    fixed_variant_attributes: z.record(z.string(), z.string()).optional(),
     provider_id: z.string().uuid().optional(),
     substitute_catalog_item_id: z.string().uuid().optional(),
     sort_order: z.number().int().default(0),

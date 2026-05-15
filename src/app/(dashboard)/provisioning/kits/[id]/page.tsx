@@ -303,7 +303,7 @@ export default function KitDetailPage() {
             data={lines}
             columns={lineColumns}
             emptyMessage="No lines in this kit. Add items to get started."
-            rowKey={(_, i) => String(i)}
+            rowKey={(row: KitLine) => row.id || `${row.catalog_item_id}-${row.sort_order}`}
           />
         </div>
 

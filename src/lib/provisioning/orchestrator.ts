@@ -325,7 +325,7 @@ export async function approveRequest(
   supabase: SupabaseClient,
   tenantId: string,
   requestId: string,
-  userId: string,
+  userId: string | undefined,
   idempotencyKey: string,
 ): Promise<{ events: ProvisioningEvent[] }> {
   const prov = (supabase as any).schema('provisioning');
@@ -416,7 +416,7 @@ export async function cancelRequest(
   supabase: SupabaseClient,
   tenantId: string,
   requestId: string,
-  userId: string,
+  userId: string | undefined,
   reason: string,
   idempotencyKey: string,
 ): Promise<{ events: ProvisioningEvent[] }> {
@@ -475,7 +475,7 @@ export async function issueLine(
   tenantId: string,
   requestId: string,
   lineId: string,
-  userId: string,
+  userId: string | undefined,
   idempotencyKey: string,
 ): Promise<{ events: ProvisioningEvent[] }> {
   const prov = (supabase as any).schema('provisioning');
