@@ -42,6 +42,7 @@ interface NavItem {
 interface NavSection {
   title: string;
   items: NavItem[];
+  requiresDeveloper?: boolean;
 }
 
 const navigation: NavSection[] = [
@@ -143,6 +144,7 @@ const navigation: NavSection[] = [
   },
   {
     title: 'Provisioning',
+    requiresDeveloper: true,
     items: [
       {
         title: 'Requests',
@@ -219,6 +221,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-4">
         {navigation.map((section) => {
+          if (section.requiresDeveloper && !isDeveloper) return null;
           const visibleItems = section.items.filter(
             (item) => !item.requiresDeveloper || isDeveloper
           );
