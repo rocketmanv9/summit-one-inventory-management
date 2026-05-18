@@ -20,11 +20,6 @@ import {
   History,
   Wrench,
   HardHat,
-  PackageCheck,
-  Shield,
-  BoxSelect,
-  Building2,
-  UserCheck,
   Plug,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -42,7 +37,6 @@ interface NavItem {
 interface NavSection {
   title: string;
   items: NavItem[];
-  requiresDeveloper?: boolean;
 }
 
 const navigation: NavSection[] = [
@@ -143,37 +137,6 @@ const navigation: NavSection[] = [
     ],
   },
   {
-    title: 'Provisioning',
-    requiresDeveloper: true,
-    items: [
-      {
-        title: 'Requests',
-        href: '/provisioning/requests',
-        icon: PackageCheck,
-      },
-      {
-        title: 'Policies',
-        href: '/provisioning/policies',
-        icon: Shield,
-      },
-      {
-        title: 'Kits',
-        href: '/provisioning/kits',
-        icon: BoxSelect,
-      },
-      {
-        title: 'Providers',
-        href: '/provisioning/providers',
-        icon: Building2,
-      },
-      {
-        title: 'Employee Gear',
-        href: '/provisioning/employee-gear',
-        icon: UserCheck,
-      },
-    ],
-  },
-  {
     title: 'Audit',
     items: [
       {
@@ -221,7 +184,6 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-4">
         {navigation.map((section) => {
-          if (section.requiresDeveloper && !isDeveloper) return null;
           const visibleItems = section.items.filter(
             (item) => !item.requiresDeveloper || isDeveloper
           );
