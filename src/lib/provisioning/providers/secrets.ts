@@ -28,9 +28,11 @@ export async function storeProviderSecret(
   const name = secretName(tenantId, providerId);
 
   // Delete existing secret if present (vault.create_secret would fail on duplicate name)
-  await supabase.rpc('delete_secret_by_name', { secret_name: name }).catch(() => {
+  try {
+    await supabase.rpc('delete_secret_by_name', { secret_name: name });
+  } catch {
     // Ignore — may not exist yet
-  });
+  }
 
   const { error } = await supabase.rpc('create_secret', {
     secret: secretValue,
