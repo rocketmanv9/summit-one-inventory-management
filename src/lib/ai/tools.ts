@@ -1011,4 +1011,55 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+
+  // ── Ontology Tools ──────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'resolve_entity',
+      description: 'Resolve free-text to a canonical entity in the system. Tries exact match, alias match, then vector similarity. Use this when the user mentions an entity by name, abbreviation, or description and you need to find the exact entity.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The text to resolve (item name, vendor name, location name, etc.)' },
+          entity_type: {
+            type: 'string',
+            description: 'Optional: narrow resolution to a specific entity type',
+            enum: ['item', 'vendor', 'location', 'asset'],
+          },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_relationships',
+      description: 'Find all ontology relationships for an entity. Shows what an entity is related to — substitutes, suppliers, components, storage locations, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity_type: { type: 'string', description: 'The entity type (item, vendor, location, asset)' },
+          entity_id: { type: 'string', description: 'The entity UUID' },
+        },
+        required: ['entity_type', 'entity_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_substitutes',
+      description: 'Find substitute items or alternatives for an entity. Answers questions like "what can replace X?" or "alternatives to Y".',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity_type: { type: 'string', description: 'The entity type (usually "item")', enum: ['item', 'vendor', 'location', 'asset'] },
+          entity_id: { type: 'string', description: 'The entity UUID to find substitutes for' },
+        },
+        required: ['entity_id'],
+      },
+    },
+  },
 ];

@@ -41,6 +41,31 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 }
 
 /**
+ * Generate embeddings for multiple texts in a single API call.
+ * Returns an array of embedding vectors in the same order as input.
+ */
+export async function generateEmbeddingBatch(texts: string[]): Promise<number[][]> {
+  const filtered = texts.map((t) => t.trim()).filter(Boolean);
+  if (filtered.length === 0) return [];
+
+  try {
+    const openai = getOpenAIClient();
+    const response = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: filtered,
+      dimensions: 1536,
+    });
+
+    return response.data
+      .sort((a, b) => a.index - b.index)
+      .map((d) => d.embedding);
+  } catch (err) {
+    console.error('[embeddings] Batch embedding failed:', err);
+    return texts.map(() => []);
+  }
+}
+
+/**
  * Build a search-friendly text string from entity fields.
  *
  * Concatenates available fields into a single string optimized for embedding generation.

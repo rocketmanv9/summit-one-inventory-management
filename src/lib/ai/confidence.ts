@@ -60,3 +60,20 @@ export function estimateConfidence(ctx: ConfidenceContext): number {
   // Clamp to [0, 1]
   return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
 }
+
+const HEDGE_THRESHOLD = 0.5;
+
+/**
+ * Determine if the response confidence is too low and should be hedged.
+ * Returns true when the AI should suggest the user verify the answer.
+ */
+export function shouldHedge(score: number): boolean {
+  return score < HEDGE_THRESHOLD;
+}
+
+/**
+ * Generate a hedge disclaimer to append to low-confidence responses.
+ */
+export function getHedgeText(): string {
+  return '\n\n_Note: I\'m not fully confident in this answer. Please verify the details before acting on it._';
+}

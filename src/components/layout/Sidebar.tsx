@@ -25,6 +25,7 @@ import {
   BoxSelect,
   Building2,
   UserCheck,
+  Plug,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -263,6 +264,18 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-sidebar-border p-4">
+        <Link
+          href="/settings/integrations"
+          className={cn(
+            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors mb-2',
+            pathname === '/settings/integrations'
+              ? 'bg-primary text-primary-foreground'
+              : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          )}
+        >
+          <Plug className="h-4 w-4" />
+          <span>Integrations</span>
+        </Link>
         <Link
           href="/settings/device-management"
           className={cn(

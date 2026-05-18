@@ -8,6 +8,8 @@
  */
 
 import type { AiDataDisplay } from './types';
+import { resolveEntity } from './ontology/entity-resolver';
+import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
 
 // ─── Context ──────────────────────────────────────────────────────────
 
@@ -30,6 +32,8 @@ export interface ServerToolResult {
   text: string;
   /** Structured display data for rich UI rendering */
   dataDisplay: AiDataDisplay;
+  /** Execution duration in milliseconds */
+  durationMs?: number;
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────
@@ -71,6 +75,9 @@ const SERVER_TOOLS = new Set([
   'semantic_search',
   'purchasing_assistant',
   'create_item_with_variants',
+  'resolve_entity',
+  'query_relationships',
+  'find_substitutes',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -80,6 +87,17 @@ export function isServerTool(name: string): boolean {
 // ─── Executor ─────────────────────────────────────────────────────────
 
 export async function executeServerTool(
+  toolName: string,
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const toolStart = Date.now();
+  const result = await executeServerToolInner(toolName, params, ctx);
+  result.durationMs = Date.now() - toolStart;
+  return result;
+}
+
+async function executeServerToolInner(
   toolName: string,
   params: Record<string, any>,
   ctx: ServerToolContext
@@ -157,6 +175,12 @@ export async function executeServerTool(
       return purchasingAssistant(params, ctx);
     case 'create_item_with_variants':
       return createItemWithVariants(params, ctx);
+    case 'resolve_entity':
+      return resolveEntityTool(params, ctx);
+    case 'query_relationships':
+      return queryRelationshipsTool(params, ctx);
+    case 'find_substitutes':
+      return findSubstitutesTool(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -1271,7 +1295,7 @@ async function smartAddLocation(
   let locationTypeId: string | null = null;
   let locationTypeName = '';
 
-  const { data: locationTypes } = await ctx.supabase
+  const { data: locationTypes } = await inventorySchema(ctx.supabase)
     .from('location_types')
     .select('id, name')
     .limit(50);
@@ -1371,7 +1395,7 @@ async function smartAddLocation(
   if (locationTypeId) insertData.location_type_id = locationTypeId;
   if (validatedAddress) insertData.address = validatedAddress;
 
-  const { data: location, error } = await ctx.supabase
+  const { data: location, error } = await inventorySchema(ctx.supabase)
     .from('locations')
     .upsert(insertData, { onConflict: 'tenant_id,name' })
     .select('id, name, address, location_type_id')
@@ -3237,5 +3261,139 @@ async function createItemWithVariants(
       dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
     };
   }
+}
+
+// ─── Ontology Tool Implementations ───────────────────────────────────
+
+async function resolveEntityTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const text = params.text || params.query || '';
+  const entityType = params.entity_type || undefined;
+
+  if (!text) {
+    return {
+      text: 'Please provide text to resolve.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No text provided' },
+    };
+  }
+
+  const result = await resolveEntity(ctx.supabase, ctx.tenantId, text, entityType);
+
+  if (!result) {
+    return {
+      text: `Could not resolve "${text}" to any known entity.`,
+      dataDisplay: { displayType: 'metric', label: 'Entity Resolution', value: 'No match found' },
+    };
+  }
+
+  return {
+    text: `Resolved "${text}" → ${result.canonical_name} (${result.entity_type}, ${result.match_method} match, confidence: ${(result.confidence * 100).toFixed(0)}%)`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'field', label: 'Field' },
+        { key: 'value', label: 'Value' },
+      ],
+      rows: [
+        { field: 'Entity Type', value: result.entity_type },
+        { field: 'Entity ID', value: result.entity_id },
+        { field: 'Canonical Name', value: result.canonical_name },
+        { field: 'Match Method', value: result.match_method },
+        { field: 'Confidence', value: `${(result.confidence * 100).toFixed(0)}%` },
+      ],
+    },
+  };
+}
+
+async function queryRelationshipsTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const entityType = params.entity_type || '';
+  const entityId = params.entity_id || '';
+
+  if (!entityType || !entityId) {
+    return {
+      text: 'Please provide entity_type and entity_id to query relationships.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing parameters' },
+    };
+  }
+
+  const rels = await findAllRelationships(ctx.supabase, ctx.tenantId, entityType, entityId);
+
+  if (rels.length === 0) {
+    return {
+      text: `No relationships found for ${entityType} ${entityId}.`,
+      dataDisplay: { displayType: 'metric', label: 'Relationships', value: '0 found' },
+    };
+  }
+
+  const rows = rels.map((r) => ({
+    relation: r.relation,
+    source_type: r.source_type,
+    source_id: r.source_id || 'type-level',
+    target_type: r.target_type,
+    target_id: r.target_id || 'type-level',
+    confidence: `${(Number(r.confidence) * 100).toFixed(0)}%`,
+  }));
+
+  return {
+    text: `Found ${rels.length} relationship(s) for ${entityType} ${entityId}: ${rels.map((r) => r.relation).join(', ')}`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'relation', label: 'Relation' },
+        { key: 'source_type', label: 'Source Type' },
+        { key: 'target_type', label: 'Target Type' },
+        { key: 'confidence', label: 'Confidence' },
+      ],
+      rows,
+    },
+  };
+}
+
+async function findSubstitutesTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const entityType = params.entity_type || 'item';
+  const entityId = params.entity_id || '';
+
+  if (!entityId) {
+    return {
+      text: 'Please provide an entity_id to find substitutes for.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing entity_id' },
+    };
+  }
+
+  const result = await findSubstitutesQuery(ctx.supabase, ctx.tenantId, entityType, entityId);
+
+  if (result.entities.length === 0) {
+    return {
+      text: `No substitutes found for ${entityType} ${entityId}.`,
+      dataDisplay: { displayType: 'metric', label: 'Substitutes', value: '0 found' },
+    };
+  }
+
+  const rows = result.entities.map((e) => ({
+    entity_type: e.entity_type,
+    entity_id: e.entity_id || 'N/A',
+    confidence: `${(e.confidence * 100).toFixed(0)}%`,
+  }));
+
+  return {
+    text: `Found ${result.entities.length} substitute(s) for ${entityType} ${entityId}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'entity_type', label: 'Type' },
+        { key: 'entity_id', label: 'ID' },
+        { key: 'confidence', label: 'Confidence' },
+      ],
+      rows,
+    },
+  };
 }
 

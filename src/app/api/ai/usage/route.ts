@@ -1,16 +1,18 @@
 /**
  * AI Usage Stats Endpoint
  *
- * GET /api/ai/usage — Returns aggregated AI token usage, cost, and latency.
+ * GET  /api/ai/usage — Returns aggregated AI token usage, cost, and latency.
+ * POST /api/ai/usage — Accepts friction metrics from the client for persistence.
  *
- * Query params:
+ * Query params (GET):
  *   - days: number (default 7) — lookback window
  *   - group_by: 'day' | 'user' | 'tool' (default 'day')
  */
 
-import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { z } from 'zod';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -121,3 +123,63 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     },
   });
 }, { serviceName: SERVICE_NAME });
+
+// ── POST: Accept friction metrics from client ────────────────────────
+
+const FrictionMetricsSchema = z.object({
+  friction_metrics: z.object({
+    summary: z.object({
+      totalFlows: z.number(),
+      completedFlows: z.number(),
+      cancelRate: z.number(),
+      avgQuestions: z.number(),
+      autoExecRate: z.number(),
+      avgTimeMs: z.number(),
+    }),
+    flows: z.array(z.object({
+      intent: z.string(),
+      outcome: z.enum(['completed', 'cancelled', 'failed']),
+      questionsAsked: z.number(),
+      correctionsDetected: z.number(),
+      autoFilledFields: z.number(),
+      totalFields: z.number(),
+      wasAutoExecuted: z.boolean(),
+      durationMs: z.number().nullable(),
+    })),
+  }),
+});
+
+export const POST = createSessionWriteRoute(async ({ req, ctx, supabase, log, idempotencyKey }) => {
+  const body = FrictionMetricsSchema.parse(await req.json());
+
+  const inv = (supabase as any).schema('inventory');
+
+  const { error } = await inv.from('ai_usage_log').upsert({
+    tenant_id: ctx.tenantId,
+    user_id: ctx.userId,
+    model: 'friction_metrics',
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    estimated_cost_usd: 0,
+    latency_ms: 0,
+    tools_called: body.friction_metrics.flows.map((f) => f.intent),
+    surface: 'friction',
+    metadata: body.friction_metrics,
+  }, { onConflict: 'id' });
+
+  if (error) {
+    log.error('friction_metrics.store failed', { error: error.message });
+    throw AppError.internal(error.message);
+  }
+
+  return {
+    data: { stored: true },
+    status: 201,
+    events: [{
+      event_name: 'ai.friction_metrics.stored',
+      payload: { flow_count: body.friction_metrics.flows.length },
+      last_event_id: idempotencyKey,
+    }],
+  };
+}, { serviceName: SERVICE_NAME, scope: 'POST /api/ai/usage' });

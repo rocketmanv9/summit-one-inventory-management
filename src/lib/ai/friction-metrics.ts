@@ -73,3 +73,43 @@ export function getMetricsSummary() {
       : 0,
   };
 }
+
+/**
+ * Flush accumulated friction metrics to the server.
+ * POSTs to /api/ai/usage with friction_metrics in the body.
+ * Clears the local metrics array after successful flush.
+ */
+export async function flushMetrics(baseUrl?: string): Promise<void> {
+  if (metrics.length === 0) return;
+
+  const summary = getMetricsSummary();
+  const payload = {
+    friction_metrics: {
+      summary,
+      flows: metrics.map((m) => ({
+        intent: m.intent,
+        outcome: m.outcome,
+        questionsAsked: m.questionsAsked,
+        correctionsDetected: m.correctionsDetected,
+        autoFilledFields: m.autoFilledFields,
+        totalFields: m.totalFields,
+        wasAutoExecuted: m.wasAutoExecuted,
+        durationMs: m.completedAt ? m.completedAt - m.startedAt : null,
+      })),
+    },
+  };
+
+  try {
+    const url = `${baseUrl || ''}/api/ai/usage`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      metrics.length = 0; // Clear after successful flush
+    }
+  } catch {
+    // Flush is non-critical — metrics will accumulate and retry on next flush
+  }
+}

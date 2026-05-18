@@ -18,10 +18,12 @@ import { INVENTORY_TOOLS } from '@/lib/ai/tools';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt';
 import { isServerTool, executeServerTool, type ServerToolContext } from '@/lib/ai/server-tools';
 import { resolveUserRole, filterToolsForRole, canExecuteTool } from '@/lib/ai/tool-governance';
+import { toolRegistry } from '@/lib/ai/tool-registry';
+import '@/lib/ai/tool-registrations';
 import { checkRateLimit, aiRateLimit } from '@/lib/rate-limit';
 import { estimateCost } from '@/lib/ai/cost';
 import { selectModel } from '@/lib/ai/model-router';
-import { estimateConfidence } from '@/lib/ai/confidence';
+import { estimateConfidence, shouldHedge, getHedgeText } from '@/lib/ai/confidence';
 import { getRelevantMemories, formatMemoriesForPrompt, extractMemories, storeMemories } from '@/lib/ai/memory';
 import OpenAI from 'openai';
 
@@ -72,8 +74,11 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
     // ── Resolve user role for tool governance ────────────────────────────
     // local_users is in the public schema, so use `supabase` directly (not `inv`)
     const userRole = await resolveUserRole(supabase, session.userId, session.tenantId);
-    const filteredTools = filterToolsForRole(INVENTORY_TOOLS, userRole);
-    log.info(`[AI Chat] User role: ${userRole}, tools available: ${filteredTools.length}/${INVENTORY_TOOLS.length}`);
+
+    // Load tenant-specific tool config for overrides
+    const tenantToolConfig = await toolRegistry.loadTenantConfig(supabase, session.tenantId);
+    const filteredTools = toolRegistry.getOpenAITools(userRole, tenantToolConfig);
+    log.info(`[AI Chat] User role: ${userRole}, tools available: ${filteredTools.length}/${toolRegistry.names().length}`);
 
     // ── Select model based on conversation complexity ──────────────────
     const hasImage = trimmed.some((m) => !!m.imageUrl);
@@ -307,6 +312,13 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
                 dataDisplayPresent: !!lastDataDisplay,
               });
 
+              // Append hedge text for low-confidence responses
+              if (shouldHedge(confidence) && fullAssistantContent.length > 0) {
+                const hedge = getHedgeText();
+                sendEvent('delta', { content: hedge });
+                fullAssistantContent += hedge;
+              }
+
               sendEvent('done', {
                 conversation_id: activeConversationId,
                 message_id: assistantMessageId,
@@ -319,26 +331,33 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
               await logUsage();
 
               // ── Extract & store memories (fire-and-forget) ─────────
-              try {
-                const turns = trimmed.map((m) => ({
-                  role: m.role as 'user' | 'assistant',
-                  content: m.content,
-                }));
-                if (fullAssistantContent) {
-                  turns.push({ role: 'assistant', content: fullAssistantContent });
+              // Skip memory extraction for short conversations or trivial messages
+              const GREETING_PATTERNS = /^\s*(hi|hey|hello|thanks|thank you|ok|okay|sure|got it|yep|yes|no|bye|goodbye|cheers)\s*[.!?]*\s*$/i;
+              const lastMsg = lastUserMessage?.content || '';
+              const shouldExtractMemories = trimmed.length >= 4 && !GREETING_PATTERNS.test(lastMsg);
+
+              if (shouldExtractMemories) {
+                try {
+                  const turns = trimmed.map((m) => ({
+                    role: m.role as 'user' | 'assistant',
+                    content: m.content,
+                  }));
+                  if (fullAssistantContent) {
+                    turns.push({ role: 'assistant', content: fullAssistantContent });
+                  }
+                  const extracted = await extractMemories(turns);
+                  if (extracted.length > 0) {
+                    await storeMemories(
+                      supabase,
+                      session.tenantId,
+                      session.userId,
+                      activeConversationId || null,
+                      extracted,
+                    );
+                  }
+                } catch {
+                  // Memory extraction is non-critical
                 }
-                const extracted = await extractMemories(turns);
-                if (extracted.length > 0) {
-                  await storeMemories(
-                    supabase,
-                    session.tenantId,
-                    session.userId,
-                    activeConversationId || null,
-                    extracted,
-                  );
-                }
-              } catch {
-                // Memory extraction is non-critical
               }
 
               controller.close();
@@ -359,7 +378,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
             // Even though we filter tools sent to OpenAI, this is a
             // defense-in-depth check in case the model hallucinates
             // a tool name that was not in the filtered list.
-            if (!canExecuteTool(toolCallFunctionName, userRole)) {
+            if (!toolRegistry.canExecute(toolCallFunctionName, userRole)) {
               log.warn(`[AI Chat] Blocked tool ${toolCallFunctionName} for role ${userRole}`);
               sendEvent('delta', { content: "\n\nI'm sorry, but you don't have permission to use that tool. Please contact an admin.\n\n" });
               sendEvent('done', {
@@ -374,7 +393,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
             }
 
             // Client-side tool — return for client execution
-            if (!isServerTool(toolCallFunctionName)) {
+            if (!toolRegistry.isServerTool(toolCallFunctionName)) {
               toolsCalled.push(toolCallFunctionName);
               const stringParams: Record<string, string> = {};
               for (const [key, value] of Object.entries(params)) {
@@ -421,13 +440,33 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
             const ctx = await getServerToolCtx();
             let toolResult;
             try {
-              toolResult = await executeServerTool(toolCallFunctionName, params, ctx);
+              toolResult = await toolRegistry.execute(toolCallFunctionName, params, ctx);
               toolsCalledInSession.push({ success: true, name: toolCallFunctionName });
             } catch (toolErr: any) {
-              toolResult = { text: `Error: ${toolErr.message}`, dataDisplay: null as any };
+              toolResult = { text: `Error: ${toolErr.message}`, dataDisplay: null as any, durationMs: 0 };
               toolsCalledInSession.push({ success: false, name: toolCallFunctionName });
             }
             lastDataDisplay = toolResult.dataDisplay;
+
+            // ── Persist tool execution audit record ──────────────
+            if (activeConversationId) {
+              try {
+                await inv.from('ai_messages').insert({
+                  tenant_id: session.tenantId,
+                  conversation_id: activeConversationId,
+                  role: 'tool',
+                  content: toolResult.text?.slice(0, 2000) || null,
+                  metadata: {
+                    tool_name: toolCallFunctionName,
+                    params_keys: Object.keys(params),
+                    success: toolsCalledInSession[toolsCalledInSession.length - 1]?.success ?? false,
+                    duration_ms: toolResult.durationMs || 0,
+                  },
+                });
+              } catch {
+                // Audit logging is non-critical
+              }
+            }
 
             sendEvent('data_result', { dataDisplay: toolResult.dataDisplay });
 
