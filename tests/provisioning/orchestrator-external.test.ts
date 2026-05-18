@@ -212,9 +212,9 @@ describe('orchestrateProvisioning — external_order lines', () => {
       'idem-1',
     );
 
-    expect(result.requiresApproval).toBe(true);
-    expect(result.status).toBe('awaiting_approval');
-    // No placeOrder call since approval is required
+    // Blocking detection runs before approval — missing mapping detected
+    expect(result.status).toBe('needs_mapping');
+    // No placeOrder call since request is blocked
     expect(getProvider).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { ProvisioningRPC } from '@/lib/rpc/provisioning';
-import { ClipboardList, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ClipboardList, Clock, CheckCircle, AlertTriangle, Ban, Truck } from 'lucide-react';
 
 interface ProvisioningRequest {
   id: string;
@@ -53,10 +53,13 @@ export default function ProvisioningRequestsPage() {
   const countByStatus = (status: string) =>
     requests.filter((r) => r.status === status).length;
 
+  const countByStatuses = (...statuses: string[]) =>
+    requests.filter((r) => r.status && statuses.includes(r.status)).length;
+
   const summaryCards = [
-    { label: 'Pending', count: countByStatus('pending'), icon: Clock, bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700', subtext: 'text-yellow-600' },
-    { label: 'Provisioning', count: countByStatus('provisioning'), icon: ClipboardList, bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', subtext: 'text-blue-600' },
-    { label: 'Fulfilled', count: countByStatus('fulfilled'), icon: CheckCircle, bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', subtext: 'text-green-600' },
+    { label: 'Blocked', count: countByStatuses('needs_mapping', 'needs_address', 'needs_sizing'), icon: Ban, bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', subtext: 'text-orange-600' },
+    { label: 'In Progress', count: countByStatuses('provisioning', 'submitted', 'in_production', 'needs_approval'), icon: ClipboardList, bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', subtext: 'text-blue-600' },
+    { label: 'Shipped', count: countByStatuses('shipped', 'delivered', 'fulfilled'), icon: Truck, bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', subtext: 'text-green-600' },
     { label: 'Failed', count: countByStatus('failed'), icon: AlertTriangle, bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', subtext: 'text-red-600' },
   ];
 
@@ -131,8 +134,16 @@ export default function ProvisioningRequestsPage() {
       type: 'select' as const,
       options: [
         { value: 'pending', label: 'Pending' },
+        { value: 'needs_mapping', label: 'Needs Mapping' },
+        { value: 'needs_address', label: 'Needs Address' },
+        { value: 'needs_sizing', label: 'Needs Sizing' },
+        { value: 'needs_approval', label: 'Needs Approval' },
         { value: 'awaiting_approval', label: 'Awaiting Approval' },
-        { value: 'approved', label: 'Approved' },
+        { value: 'ready_to_order', label: 'Ready to Order' },
+        { value: 'submitted', label: 'Submitted' },
+        { value: 'in_production', label: 'In Production' },
+        { value: 'shipped', label: 'Shipped' },
+        { value: 'delivered', label: 'Delivered' },
         { value: 'provisioning', label: 'Provisioning' },
         { value: 'fulfilled', label: 'Fulfilled' },
         { value: 'failed', label: 'Failed' },

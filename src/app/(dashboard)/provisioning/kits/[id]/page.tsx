@@ -15,6 +15,7 @@ interface KitLine {
   qty: number;
   is_required?: boolean;
   size_source: string | null;
+  size_dimension: string | null;
   fixed_variant_attributes?: Record<string, string> | null;
   provider_id: string | null;
   substitute_catalog_item_id: string | null;
@@ -46,6 +47,7 @@ export default function KitDetailPage() {
     catalog_item_id: '',
     qty: 1,
     size_source: null,
+    size_dimension: null,
     provider_id: null,
     substitute_catalog_item_id: null,
     sort_order: 0,
@@ -84,6 +86,7 @@ export default function KitDetailPage() {
           qty: l.qty,
           is_required: l.is_required,
           size_source: l.size_source,
+          size_dimension: l.size_dimension,
           fixed_variant_attributes: l.fixed_variant_attributes,
           provider_id: l.provider_id,
           substitute_catalog_item_id: l.substitute_catalog_item_id,
@@ -103,7 +106,7 @@ export default function KitDetailPage() {
   const addLine = () => {
     if (!newLine.catalog_item_id) return;
     setLines([...lines, { ...newLine, sort_order: lines.length }]);
-    setNewLine({ catalog_item_id: '', qty: 1, size_source: null, provider_id: null, substitute_catalog_item_id: null, sort_order: 0 });
+    setNewLine({ catalog_item_id: '', qty: 1, size_source: null, size_dimension: null, provider_id: null, substitute_catalog_item_id: null, sort_order: 0 });
     setShowAddLine(false);
   };
 
@@ -152,11 +155,33 @@ export default function KitDetailPage() {
             className="px-2 py-1 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           >
             <option value="">None</option>
+            <option value="employee_profile">Employee Profile</option>
+            <option value="fixed">Fixed</option>
+            <option value="ask_at_provision">Ask at Provision</option>
+          </select>
+        );
+      },
+    },
+    {
+      key: 'size_dimension',
+      header: 'Size Dimension',
+      render: (row: KitLine) => {
+        const idx = lines.indexOf(row);
+        if (row.size_source !== 'employee_profile') {
+          return <span className="text-gray-400 text-sm">-</span>;
+        }
+        return (
+          <select
+            value={row.size_dimension || ''}
+            onChange={(e) => updateLine(idx, 'size_dimension', e.target.value || null)}
+            className="px-2 py-1 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="">Default (Shirt)</option>
             <option value="shirt_size">Shirt Size</option>
-            <option value="pant_size">Pant Size</option>
-            <option value="shoe_size">Shoe Size</option>
-            <option value="hat_size">Hat Size</option>
-            <option value="glove_size">Glove Size</option>
+            <option value="hoodie_size">Hoodie Size</option>
+            <option value="jacket_size">Jacket Size</option>
+            <option value="pants_size">Pants Size</option>
+            <option value="boot_size">Boot Size</option>
           </select>
         );
       },

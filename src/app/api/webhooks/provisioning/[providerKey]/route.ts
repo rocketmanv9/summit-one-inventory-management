@@ -5,6 +5,72 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
+ * Propagate line-level status changes up to the request level.
+ * Uses simple aggregation: if all external lines share a status, promote it.
+ */
+async function updateRequestStatusFromLines(
+  prov: any,
+  tenantId: string,
+  requestId: string,
+  log: any,
+): Promise<void> {
+  const { data: allLines } = await prov
+    .from('provisioning_lines')
+    .select('status, fulfillment_method')
+    .eq('request_id', requestId)
+    .eq('tenant_id', tenantId)
+    .limit(200);
+
+  if (!allLines || allLines.length === 0) return;
+
+  const externalLines = allLines.filter((l: any) => l.fulfillment_method === 'external_order');
+  if (externalLines.length === 0) return;
+
+  const statuses = externalLines.map((l: any) => l.status);
+
+  // Determine aggregate request status
+  let newRequestStatus: string | null = null;
+
+  if (statuses.every((s: string) => s === 'delivered')) {
+    newRequestStatus = 'delivered';
+  } else if (statuses.some((s: string) => s === 'shipped')) {
+    newRequestStatus = 'shipped';
+  } else if (statuses.every((s: string) => s === 'in_production' || s === 'shipped' || s === 'delivered')) {
+    newRequestStatus = 'in_production';
+  } else if (statuses.every((s: string) => ['failed', 'cancelled'].includes(s))) {
+    newRequestStatus = 'failed';
+  }
+
+  if (!newRequestStatus) return;
+
+  // Only update if status is progressing forward
+  const { data: currentReq } = await prov
+    .from('provisioning_requests')
+    .select('status')
+    .eq('id', requestId)
+    .limit(1)
+    .single();
+
+  if (!currentReq) return;
+
+  const statusOrder = ['submitted', 'in_production', 'shipped', 'delivered', 'failed'];
+  const currentIdx = statusOrder.indexOf(currentReq.status);
+  const newIdx = statusOrder.indexOf(newRequestStatus);
+
+  if (newIdx > currentIdx || currentReq.status === 'provisioning' || currentReq.status === 'submitted') {
+    await prov
+      .from('provisioning_requests')
+      .update({
+        status: newRequestStatus,
+        last_event_id: `webhook-req-${requestId}-${newRequestStatus}-${Date.now()}`,
+      })
+      .eq('id', requestId);
+
+    log.info('provider-webhook.request_status_updated', { requestId, newRequestStatus });
+  }
+}
+
+/**
  * Generic webhook endpoint for fulfillment provider status updates.
  * Each provider sends updates here; we normalize and apply them.
  */
@@ -90,6 +156,12 @@ export const POST = createWebhookRoute(async ({ eventType, payload: rawPayload, 
       newStatus,
       externalOrderId,
     });
+  }
+
+  // Propagate request-level status from line statuses
+  const affectedRequestIds = [...new Set(lines.map((l: any) => l.request_id))] as string[];
+  for (const reqId of affectedRequestIds) {
+    await updateRequestStatusFromLines(prov, tenantId, reqId, log);
   }
 }, {
   serviceName: SERVICE_NAME,

@@ -324,4 +324,97 @@ export const ProvisioningRPC = {
     const res = await fetch(`/api/provisioning/providers/${providerId}/products`);
     return res.json();
   },
+
+  // ── Employee Sizing ─────────────────────────────────────────────
+
+  async getEmployeeSizing(employeeId: string) {
+    const res = await fetch(`/api/provisioning/employees/${employeeId}/sizing`);
+    return res.json();
+  },
+
+  async updateEmployeeSizing(employeeId: string, data: {
+    shirt_size?: string;
+    hoodie_size?: string;
+    jacket_size?: string;
+    pants_size?: string;
+    boot_size?: string;
+    preferred_fit?: string;
+  }) {
+    const res = await fetch(`/api/provisioning/employees/${employeeId}/sizing`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  // ── Failure Queue ───────────────────────────────────────────────
+
+  async getFailureQueue() {
+    const res = await fetch('/api/provisioning/failure-queue');
+    return res.json();
+  },
+
+  async resolveBlocker(requestId: string, notes?: string) {
+    const res = await fetch(`/api/provisioning/requests/${requestId}/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ notes }),
+    });
+    return res.json();
+  },
+
+  // ── Dry-Run ─────────────────────────────────────────────────────
+
+  async dryRunRequest(requestId: string) {
+    const res = await fetch(`/api/provisioning/requests/${requestId}/dry-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({}),
+    });
+    return res.json();
+  },
+
+  // ── Notifications ───────────────────────────────────────────────
+
+  async getNotifications(options?: { unreadOnly?: boolean; limit?: number }) {
+    const url = new URL('/api/provisioning/notifications', window.location.origin);
+    if (options?.unreadOnly) url.searchParams.set('unread_only', 'true');
+    if (options?.limit) url.searchParams.set('limit', String(options.limit));
+    const res = await fetch(url);
+    return res.json();
+  },
+
+  async markNotificationRead(notificationId: string) {
+    const res = await fetch('/api/provisioning/notifications', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ notification_id: notificationId }),
+    });
+    return res.json();
+  },
+
+  async markAllNotificationsRead() {
+    const res = await fetch('/api/provisioning/notifications', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ mark_all_read: true }),
+    });
+    return res.json();
+  },
 };

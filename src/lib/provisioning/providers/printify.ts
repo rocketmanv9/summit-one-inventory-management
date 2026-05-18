@@ -86,6 +86,36 @@ function mapPrintifyStatus(status: string): ProviderStatusUpdate['status'] {
   }
 }
 
+/**
+ * Build the Printify order payload without submitting it.
+ * Used by the orchestrator for dry-run previews and by placeOrder for actual submission.
+ */
+export function buildPrintifyOrderPayload(
+  request: ProviderOrderRequest,
+  config: { shop_id: string },
+): { line_items: PrintifyLineItem[]; address: PrintifyAddress | null; label: string; external_id: string } | { error: string } {
+  const lineItems: PrintifyLineItem[] = request.items
+    .filter((item) => item.externalProductId && item.externalVariantId)
+    .map((item) => ({
+      product_id: item.externalProductId,
+      variant_id: parseInt(item.externalVariantId, 10),
+      quantity: item.qty,
+    }));
+
+  if (lineItems.length === 0) {
+    return { error: 'No items have valid Printify product/variant mappings' };
+  }
+
+  const address = request.shippingAddress ? toPrintifyAddress(request.shippingAddress) : null;
+
+  return {
+    line_items: lineItems,
+    address,
+    label: `Provision ${request.requestId}`,
+    external_id: request.idempotencyKey,
+  };
+}
+
 export const printifyProvider: FulfillmentProvider = {
   providerType: 'print_on_demand',
 
@@ -93,37 +123,26 @@ export const printifyProvider: FulfillmentProvider = {
     const printifyConfig = config as unknown as PrintifyConfig;
     const resolved = await resolveConfig(printifyConfig);
 
-    const lineItems: PrintifyLineItem[] = request.items
-      .filter((item) => item.externalProductId && item.externalVariantId)
-      .map((item) => ({
-        product_id: item.externalProductId,
-        variant_id: parseInt(item.externalVariantId, 10),
-        quantity: item.qty,
-      }));
+    const payload = buildPrintifyOrderPayload(request, { shop_id: resolved.shop_id });
 
-    if (lineItems.length === 0) {
-      return {
-        success: false,
-        error: 'No items have valid Printify product/variant mappings',
-      };
+    if ('error' in payload) {
+      return { success: false, error: payload.error };
     }
 
-    if (!request.shippingAddress) {
+    if (!payload.address) {
       return {
         success: false,
         error: 'Shipping address is required for Printify orders. Configure a default ship-to location or provide an address on the request.',
       };
     }
 
-    const address = toPrintifyAddress(request.shippingAddress);
-
     try {
       const order = await createPrintifyOrder(resolved, {
-        external_id: request.idempotencyKey,
-        label: `Provision ${request.requestId}`,
-        line_items: lineItems,
+        external_id: payload.external_id,
+        label: payload.label,
+        line_items: payload.line_items,
         shipping_method: 1, // Standard shipping
-        address_to: address,
+        address_to: payload.address,
         send_shipping_notification: true,
       });
 

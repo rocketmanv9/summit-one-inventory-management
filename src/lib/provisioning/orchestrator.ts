@@ -40,9 +40,12 @@ export interface OrchestrateResult {
     status: string;
     fulfillmentMethod: string;
     providerId: string | null;
+    dryRunPayload?: Record<string, unknown>;
   }>;
   events: ProvisioningEvent[];
   requiresApproval: boolean;
+  isDryRun?: boolean;
+  blockingReasons?: Array<{ type: string; lineId?: string; catalogItemId?: string; needed?: string }>;
 }
 
 /**
@@ -100,6 +103,7 @@ export async function orchestrateProvisioning(
     skipPolicyEvaluation?: boolean;
     kitId?: string;
     requiresApproval?: boolean;
+    dryRun?: boolean;
   },
 ): Promise<OrchestrateResult> {
   const prov = (supabase as any).schema('provisioning');
@@ -185,8 +189,162 @@ export async function orchestrateProvisioning(
     // External order lines will fail individually if address is missing.
   }
 
-  // 5. Create provisioning request
-  const initialStatus = requiresApproval ? 'awaiting_approval' : 'provisioning';
+  // 5. Select providers for each resolved item
+  const providerSelections = await selectProvidersForLines(
+    supabase,
+    tenantId,
+    resolvedItems.map((item) => ({
+      catalogItemId: item.catalogItemId,
+      qty: item.qty,
+    })),
+  );
+
+  // 6. Blocking checks — detect issues that prevent fulfillment
+  const blockingReasons: Array<{ type: string; lineId?: string; catalogItemId?: string; needed?: string }> = [];
+
+  for (let i = 0; i < resolvedItems.length; i++) {
+    const item = resolvedItems[i];
+    const selection = providerSelections[i];
+
+    // Check 1: Missing mapping for external orders
+    if (selection.fulfillmentMethod === 'external_order' &&
+        (!selection.externalProductId || !selection.externalVariantId)) {
+      blockingReasons.push({
+        type: 'missing_mapping',
+        catalogItemId: item.catalogItemId,
+      });
+    }
+
+    // Check 2: Missing sizing (variant resolution failed)
+    if (item.substitutionReason === 'Variant resolution failed; manual selection required') {
+      blockingReasons.push({
+        type: 'missing_sizing',
+        catalogItemId: item.originalCatalogItemId,
+      });
+    }
+  }
+
+  // Check 3: Missing address for external orders
+  const hasExternalOrders = providerSelections.some(s => s.fulfillmentMethod === 'external_order');
+  if (hasExternalOrders && !resolvedAddress) {
+    blockingReasons.push({ type: 'missing_address' });
+  }
+
+  // 7. If blocked, create request in blocked state and return early
+  if (blockingReasons.length > 0) {
+    // Priority: needs_mapping > needs_address > needs_sizing
+    const blockingStatus = blockingReasons.some(r => r.type === 'missing_mapping')
+      ? 'needs_mapping'
+      : blockingReasons.some(r => r.type === 'missing_address')
+        ? 'needs_address'
+        : 'needs_sizing';
+
+    const { data: request, error: reqError } = await prov
+      .from('provisioning_requests')
+      .upsert({
+        tenant_id: tenantId,
+        employee_id: employee.employeeId,
+        employee_name: employee.employeeName,
+        employee_attributes: {
+          position: employee.position,
+          division: employee.division,
+          location: employee.location,
+          certifications: employee.certifications,
+          employmentType: employee.employmentType,
+          shirtSize: employee.shirtSize,
+          ...employee.attributes,
+        },
+        trigger_event: triggerEvent,
+        trigger_payload: employee,
+        policy_rule_id: policyRuleId,
+        kit_id: kitId,
+        status: blockingStatus,
+        delivery_method: options?.deliveryMethod,
+        shipping_address: resolvedAddress ?? options?.shippingAddress,
+        priority: options?.priority ?? 100,
+        needed_by: options?.neededBy,
+        dedup_key: dedupKey,
+        last_event_id: idempotencyKey,
+      }, { onConflict: 'last_event_id' })
+      .select()
+      .single();
+
+    if (reqError) {
+      throw new Error(`Failed to create provisioning request: ${reqError.message}`);
+    }
+
+    // Create lines in blocked/pending state
+    const lineResults: OrchestrateResult['lines'] = [];
+    for (let i = 0; i < resolvedItems.length; i++) {
+      const item = resolvedItems[i];
+      const selection = providerSelections[i];
+
+      const { data: line, error: lineError } = await prov
+        .from('provisioning_lines')
+        .upsert({
+          tenant_id: tenantId,
+          request_id: request.id,
+          catalog_item_id: item.catalogItemId,
+          qty: item.qty,
+          fulfillment_method: selection.fulfillmentMethod,
+          provider_id: selection.providerId,
+          resolved_variant_attributes: item.resolvedVariantAttributes,
+          source_location_id: selection.sourceLocationId,
+          status: 'pending',
+          original_catalog_item_id: item.isSubstitution ? item.originalCatalogItemId : null,
+          substitution_reason: item.substitutionReason,
+        }, { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (lineError) continue;
+
+      lineResults.push({
+        lineId: line.id,
+        catalogItemId: item.catalogItemId,
+        status: 'pending',
+        fulfillmentMethod: selection.fulfillmentMethod,
+        providerId: selection.providerId,
+      });
+
+      await recordHistory(prov, tenantId, request.id, line.id, 'line_created', null, 'pending', 'orchestrator', {
+        catalog_item_id: item.catalogItemId,
+        fulfillment_method: selection.fulfillmentMethod,
+        blocked: true,
+      });
+    }
+
+    await recordHistory(prov, tenantId, request.id, null, 'request_blocked', null, blockingStatus, 'orchestrator', {
+      trigger_event: triggerEvent,
+      employee_id: employee.employeeId,
+      blocking_reasons: blockingReasons,
+    });
+
+    events.push({
+      event_name: 'provision_request.blocked',
+      payload: { request_id: request.id, employee_id: employee.employeeId, status: blockingStatus, blocking_reasons: blockingReasons },
+      last_event_id: idempotencyKey,
+    });
+
+    return {
+      requestId: request.id,
+      status: blockingStatus,
+      lines: lineResults,
+      events,
+      requiresApproval,
+      blockingReasons,
+    };
+  }
+
+  // 8. Check dry-run mode
+  const isDryRun = options?.dryRun || process.env.PRINTIFY_DRY_RUN === 'true';
+
+  // 9. Create provisioning request
+  const initialStatus = isDryRun
+    ? 'dry_run'
+    : requiresApproval
+      ? 'needs_approval'
+      : 'provisioning';
 
   const { data: request, error: reqError } = await prov
     .from('provisioning_requests')
@@ -208,6 +366,7 @@ export async function orchestrateProvisioning(
       policy_rule_id: policyRuleId,
       kit_id: kitId,
       status: initialStatus,
+      is_dry_run: isDryRun || false,
       delivery_method: options?.deliveryMethod,
       shipping_address: resolvedAddress ?? options?.shippingAddress,
       priority: options?.priority ?? 100,
@@ -226,32 +385,42 @@ export async function orchestrateProvisioning(
     trigger_event: triggerEvent,
     employee_id: employee.employeeId,
     item_count: resolvedItems.length,
+    is_dry_run: isDryRun,
   });
 
   events.push({
     event_name: 'provision_request.created',
-    payload: { request_id: request.id, employee_id: employee.employeeId, status: initialStatus },
+    payload: { request_id: request.id, employee_id: employee.employeeId, status: initialStatus, is_dry_run: isDryRun },
     last_event_id: idempotencyKey,
   });
 
-  // 5. Select providers for each resolved item
-  const providerSelections = await selectProvidersForLines(
-    supabase,
-    tenantId,
-    resolvedItems.map((item) => ({
-      catalogItemId: item.catalogItemId,
-      qty: item.qty,
-    })),
-  );
-
-  // 6. Create provisioning lines
+  // 10. Create provisioning lines
   const lineResults: OrchestrateResult['lines'] = [];
 
   for (let i = 0; i < resolvedItems.length; i++) {
     const item = resolvedItems[i];
     const selection = providerSelections[i];
 
-    const lineStatus = requiresApproval ? 'pending' : (selection.fulfillmentMethod === 'from_stock' ? 'reserved' : 'pending');
+    // In dry-run mode, external_order lines get dry_run_complete status
+    const lineStatus = isDryRun
+      ? (selection.fulfillmentMethod === 'external_order' ? 'dry_run_complete' : 'pending')
+      : requiresApproval
+        ? 'pending'
+        : (selection.fulfillmentMethod === 'from_stock' ? 'reserved' : 'pending');
+
+    // Build dry-run payload for external_order lines
+    let dryRunPayload: Record<string, unknown> | undefined;
+    if (isDryRun && selection.fulfillmentMethod === 'external_order') {
+      dryRunPayload = {
+        provider_type: selection.providerType,
+        provider_id: selection.providerId,
+        external_product_id: selection.externalProductId,
+        external_variant_id: selection.externalVariantId,
+        shipping_address: resolvedAddress,
+        qty: item.qty,
+        would_submit_to: selection.providerType,
+      };
+    }
 
     const { data: line, error: lineError } = await prov
       .from('provisioning_lines')
@@ -267,6 +436,7 @@ export async function orchestrateProvisioning(
         status: lineStatus,
         original_catalog_item_id: item.isSubstitution ? item.originalCatalogItemId : null,
         substitution_reason: item.substitutionReason,
+        dry_run_payload: dryRunPayload ?? null,
       }, { onConflict: 'id' })
       .select()
       .single();
@@ -279,10 +449,11 @@ export async function orchestrateProvisioning(
       status: lineStatus,
       fulfillmentMethod: selection.fulfillmentMethod,
       providerId: selection.providerId,
+      dryRunPayload,
     });
 
-    // 8. If not awaiting approval, execute fulfillment immediately
-    if (!requiresApproval && selection.fulfillmentMethod === 'from_stock' && selection.providerId) {
+    // Execute fulfillment only if NOT dry-run and NOT awaiting approval
+    if (!isDryRun && !requiresApproval && selection.fulfillmentMethod === 'from_stock' && selection.providerId) {
       const provider = getProvider('internal_warehouse');
       if (provider) {
         const orderResult = await provider.placeOrder(
@@ -316,8 +487,8 @@ export async function orchestrateProvisioning(
       }
     }
 
-    // 9. External order fulfillment (e.g. Printify)
-    if (!requiresApproval && selection.fulfillmentMethod === 'external_order' && selection.providerId) {
+    // External order fulfillment — skip in dry-run mode
+    if (!isDryRun && !requiresApproval && selection.fulfillmentMethod === 'external_order' && selection.providerId) {
       const providerType = selection.providerType as ProviderType;
       const provider = getProvider(providerType);
       if (provider) {
@@ -369,6 +540,7 @@ export async function orchestrateProvisioning(
     await recordHistory(prov, tenantId, request.id, line.id, 'line_created', null, lineStatus, 'orchestrator', {
       catalog_item_id: item.catalogItemId,
       fulfillment_method: selection.fulfillmentMethod,
+      is_dry_run: isDryRun,
     });
   }
 
@@ -378,6 +550,7 @@ export async function orchestrateProvisioning(
     lines: lineResults,
     events,
     requiresApproval,
+    isDryRun: isDryRun || undefined,
   };
 }
 
@@ -403,7 +576,7 @@ export async function approveRequest(
     .single();
 
   if (!request) throw new Error('Request not found');
-  if (request.status !== 'awaiting_approval') {
+  if (request.status !== 'awaiting_approval' && request.status !== 'needs_approval') {
     throw new Error(`Cannot approve request in status: ${request.status}`);
   }
 
@@ -555,7 +728,7 @@ export async function cancelRequest(
 
   if (!request) throw new Error('Request not found');
 
-  const cancellableStatuses = ['pending', 'evaluating', 'awaiting_approval', 'approved', 'provisioning'];
+  const cancellableStatuses = ['pending', 'evaluating', 'awaiting_approval', 'approved', 'provisioning', 'needs_approval', 'needs_mapping', 'needs_address', 'needs_sizing', 'ready_to_order', 'draft'];
   if (!cancellableStatuses.includes(request.status)) {
     throw new Error(`Cannot cancel request in status: ${request.status}`);
   }

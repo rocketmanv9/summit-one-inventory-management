@@ -8,6 +8,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { EmployeeContext } from './policy-engine';
+import type { SizeDimension } from './employee-sizing';
+import { getSizingForVariantResolution } from './employee-sizing';
 
 export interface ResolvedItem {
   catalogItemId: string;
@@ -22,14 +24,36 @@ export interface KitLineForResolution {
   catalog_item_id: string;
   qty: number;
   size_source?: 'employee_profile' | 'fixed' | 'ask_at_provision';
+  size_dimension?: string;
   fixed_variant_attributes?: Record<string, string> | null;
   substitute_catalog_item_id?: string | null;
 }
 
 /**
  * Extract size-related attributes from employee context.
+ *
+ * When a Supabase client and tenantId are provided, tries the dedicated
+ * employee_sizing table first (more granular per-dimension sizing).
+ * Falls back to the legacy EmployeeContext-based attributes.
  */
-function getEmployeeSizeAttributes(employee: EmployeeContext): Record<string, string> {
+async function getEmployeeSizeAttributes(
+  employee: EmployeeContext,
+  supabase?: SupabaseClient,
+  tenantId?: string,
+  sizeDimension?: SizeDimension,
+): Promise<Record<string, string>> {
+  // Try dedicated sizing table first
+  if (supabase && tenantId) {
+    const sizingAttrs = await getSizingForVariantResolution(
+      supabase,
+      tenantId,
+      employee.employeeId,
+      sizeDimension,
+    );
+    if (Object.keys(sizingAttrs).length > 0) return sizingAttrs;
+  }
+
+  // Fallback to EmployeeContext-based sizing
   const attrs: Record<string, string> = {};
   if (employee.shirtSize) {
     attrs['size'] = employee.shirtSize.toUpperCase();
@@ -114,6 +138,7 @@ async function resolveKitLine(
   tenantId: string,
   line: KitLineForResolution,
   employee: EmployeeContext,
+  supabase?: SupabaseClient,
 ): Promise<ResolvedItem> {
   const isParent = await checkIsParent(inv, tenantId, line.catalog_item_id);
 
@@ -130,17 +155,18 @@ async function resolveKitLine(
 
   // Determine target attributes based on size_source
   let targetAttributes: Record<string, string> = {};
+  const dimension = line.size_dimension as SizeDimension | undefined;
 
   switch (line.size_source) {
     case 'fixed':
       targetAttributes = line.fixed_variant_attributes ?? {};
       break;
     case 'employee_profile':
-      targetAttributes = getEmployeeSizeAttributes(employee);
+      targetAttributes = await getEmployeeSizeAttributes(employee, supabase, tenantId, dimension);
       break;
     case 'ask_at_provision':
       // Cannot auto-resolve; try employee profile as fallback
-      targetAttributes = getEmployeeSizeAttributes(employee);
+      targetAttributes = await getEmployeeSizeAttributes(employee, supabase, tenantId, dimension);
       break;
   }
 
@@ -215,6 +241,7 @@ export async function resolveItems(
         catalog_item_id: kl.catalog_item_id,
         qty: kl.qty,
         size_source: kl.size_source,
+        size_dimension: kl.size_dimension,
         fixed_variant_attributes: kl.fixed_variant_attributes,
         substitute_catalog_item_id: kl.substitute_catalog_item_id,
       }));
@@ -225,7 +252,7 @@ export async function resolveItems(
 
   const resolved: ResolvedItem[] = [];
   for (const line of linesToResolve) {
-    const result = await resolveKitLine(inv, tenantId, line, employee);
+    const result = await resolveKitLine(inv, tenantId, line, employee, supabase);
     resolved.push(result);
   }
 

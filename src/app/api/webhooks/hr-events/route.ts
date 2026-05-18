@@ -2,6 +2,8 @@ import { createWebhookRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { orchestrateProvisioning } from '@/lib/provisioning/orchestrator';
+import { upsertEmployeeSizing } from '@/lib/provisioning/employee-sizing';
+import type { SizeDimension } from '@/lib/provisioning/employee-sizing';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'my-service';
 
@@ -17,6 +19,8 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
     case 'employee.created':
     case 'employee.transferred':
     case 'employee.promoted': {
+      // Upsert employee sizing data from HR payload if present
+      await upsertSizingFromPayload(supabase, payload, tenantId, log);
       // Try the new provisioning orchestrator first
       const provisioningHandled = await handleViaProvisioning(supabase, eventType, payload, tenantId, log);
       // Fall back to legacy apparel flow if no provisioning policies matched
@@ -37,6 +41,45 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
     tenantId,
   }),
 });
+
+// ── Employee Sizing Extraction ────────────────────────────────────────────────
+
+const SIZING_FIELDS: SizeDimension[] = ['shirt_size', 'hoodie_size', 'jacket_size', 'pants_size', 'boot_size'];
+
+async function upsertSizingFromPayload(
+  supabase: SupabaseClient,
+  payload: any,
+  tenantId: string,
+  log: any,
+): Promise<void> {
+  if (!payload.employee_id) return;
+
+  const sizing: Record<string, string> = {};
+  for (const field of SIZING_FIELDS) {
+    if (payload[field]) {
+      sizing[field] = payload[field];
+    }
+  }
+  // Also check preferred_fit
+  if (payload.preferred_fit) {
+    sizing.preferred_fit = payload.preferred_fit;
+  }
+
+  if (Object.keys(sizing).length === 0) return;
+
+  try {
+    await upsertEmployeeSizing(
+      supabase,
+      tenantId,
+      payload.employee_id,
+      sizing,
+      `hr-sizing-${tenantId}-${payload.employee_id}-${new Date().toISOString().split('T')[0]}`,
+    );
+    log.info('hr-webhook.sizing_upserted', { employeeId: payload.employee_id, fields: Object.keys(sizing) });
+  } catch (err: any) {
+    log.warn('hr-webhook.sizing_upsert_failed', { error: err.message });
+  }
+}
 
 // ── Provisioning Orchestrator Integration ───────────────────────────────────
 
