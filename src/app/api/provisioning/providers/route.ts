@@ -2,6 +2,8 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { maskProviderConfig, storeProviderSecret } from '@/lib/provisioning/providers/secrets';
+import { getAdminClient } from '@/utils/supabase/admin';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -25,7 +27,9 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
     throw AppError.internal(error.message);
   }
 
-  return Response.json({ data });
+  const masked = (data ?? []).map((p: any) => ({ ...p, config: maskProviderConfig(p.config) }));
+
+  return Response.json({ data: masked });
 }, { serviceName: SERVICE_NAME });
 
 const CreateProviderSchema = z.object({
@@ -38,14 +42,19 @@ const CreateProviderSchema = z.object({
   is_active: z.boolean().default(true),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey, ctx }) => {
   const body = CreateProviderSchema.parse(await req.json());
   const prov = (supabase as any).schema('provisioning');
+
+  // Store API token in Vault if present in config
+  const configToStore = { ...body.config };
+  const rawToken = configToStore.api_token_ref as string | undefined;
 
   const { data: provider, error } = await prov
     .from('providers')
     .upsert({
       ...body,
+      config: configToStore,
       last_event_id: idempotencyKey,
     }, { onConflict: 'last_event_id' })
     .select()
@@ -59,10 +68,21 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
     throw AppError.internal(error.message);
   }
 
+  // Move plaintext token into Vault now that we have the provider ID
+  if (rawToken && !rawToken.startsWith('provider-secret-')) {
+    const adminClient = getAdminClient();
+    const vaultRef = await storeProviderSecret(adminClient, ctx.tenantId!, provider.id, rawToken);
+    await prov
+      .from('providers')
+      .update({ config: { ...provider.config, api_token_ref: vaultRef } })
+      .eq('id', provider.id);
+    provider.config.api_token_ref = vaultRef;
+  }
+
   log.info('provider.created', { providerId: provider.id, key: provider.provider_key });
 
   return {
-    data: provider,
+    data: { ...provider, config: maskProviderConfig(provider.config) },
     status: 201,
     events: [{
       event_name: 'provider.created',

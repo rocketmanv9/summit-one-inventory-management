@@ -319,4 +319,9 @@ export const ProvisioningRPC = {
     });
     return res.json();
   },
+
+  async getProviderProducts(providerId: string) {
+    const res = await fetch(`/api/provisioning/providers/${providerId}/products`);
+    return res.json();
+  },
 };

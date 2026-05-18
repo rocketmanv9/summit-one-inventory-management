@@ -14,6 +14,12 @@ export interface PrintifyConfig {
   shop_id: string;
 }
 
+/** Config with the real API token resolved from Vault. */
+export interface PrintifyResolvedConfig {
+  api_token: string;
+  shop_id: string;
+}
+
 export interface PrintifyLineItem {
   product_id: string;
   variant_id: number;
@@ -81,12 +87,12 @@ async function printifyFetch(
  * Create an order on Printify.
  */
 export async function createPrintifyOrder(
-  config: PrintifyConfig,
+  config: PrintifyResolvedConfig,
   order: PrintifyOrderRequest,
 ): Promise<PrintifyOrder> {
   const res = await printifyFetch(
     `/shops/${config.shop_id}/orders.json`,
-    config.api_token_ref,
+    config.api_token,
     {
       method: 'POST',
       body: JSON.stringify(order),
@@ -100,12 +106,12 @@ export async function createPrintifyOrder(
  * Get an order from Printify.
  */
 export async function getPrintifyOrder(
-  config: PrintifyConfig,
+  config: PrintifyResolvedConfig,
   orderId: string,
 ): Promise<PrintifyOrder> {
   const res = await printifyFetch(
     `/shops/${config.shop_id}/orders/${orderId}.json`,
-    config.api_token_ref,
+    config.api_token,
   );
   await requireOk(res, 'Printify get order');
   return res.json();
@@ -115,12 +121,12 @@ export async function getPrintifyOrder(
  * Cancel an order on Printify.
  */
 export async function cancelPrintifyOrder(
-  config: PrintifyConfig,
+  config: PrintifyResolvedConfig,
   orderId: string,
 ): Promise<void> {
   const res = await printifyFetch(
     `/shops/${config.shop_id}/orders/${orderId}/cancel.json`,
-    config.api_token_ref,
+    config.api_token,
     { method: 'POST' },
   );
   await requireOk(res, 'Printify cancel order');
@@ -130,11 +136,11 @@ export async function cancelPrintifyOrder(
  * List products from a Printify shop (for mapping validation).
  */
 export async function listPrintifyProducts(
-  config: PrintifyConfig,
+  config: PrintifyResolvedConfig,
 ): Promise<Array<{ id: string; title: string; variants: Array<{ id: number; title: string }> }>> {
   const res = await printifyFetch(
     `/shops/${config.shop_id}/products.json`,
-    config.api_token_ref,
+    config.api_token,
   );
   await requireOk(res, 'Printify list products');
   const data = await res.json();
@@ -145,12 +151,12 @@ export async function listPrintifyProducts(
  * Validate Printify credentials by fetching shop info.
  */
 export async function validatePrintifyConfig(
-  config: PrintifyConfig,
+  config: PrintifyResolvedConfig,
 ): Promise<{ valid: boolean; shopName?: string; error?: string }> {
   try {
     const res = await printifyFetch(
       `/shops/${config.shop_id}.json`,
-      config.api_token_ref,
+      config.api_token,
     );
     if (!res.ok) {
       return { valid: false, error: `API returned ${res.status}: ${res.statusText}` };
@@ -160,4 +166,44 @@ export async function validatePrintifyConfig(
   } catch (err: any) {
     return { valid: false, error: err.message };
   }
+}
+
+export interface PrintifyWebhook {
+  id: string;
+  topic: string;
+  url: string;
+}
+
+/**
+ * List webhooks registered on a Printify shop.
+ */
+export async function listPrintifyWebhooks(
+  config: PrintifyResolvedConfig,
+): Promise<PrintifyWebhook[]> {
+  const res = await printifyFetch(
+    `/shops/${config.shop_id}/webhooks.json`,
+    config.api_token,
+  );
+  await requireOk(res, 'Printify list webhooks');
+  return res.json();
+}
+
+/**
+ * Register a webhook on a Printify shop.
+ */
+export async function registerPrintifyWebhook(
+  config: PrintifyResolvedConfig,
+  url: string,
+  topic: string,
+): Promise<PrintifyWebhook> {
+  const res = await printifyFetch(
+    `/shops/${config.shop_id}/webhooks.json`,
+    config.api_token,
+    {
+      method: 'POST',
+      body: JSON.stringify({ url, topic }),
+    },
+  );
+  await requireOk(res, 'Printify register webhook');
+  return res.json();
 }

@@ -15,6 +15,17 @@ vi.mock('../../../src/lib/provisioning/providers/registry', () => ({
   registerProvider: vi.fn(),
 }));
 
+// Mock secrets — tokens in tests are plaintext (not vault refs)
+vi.mock('../../../src/lib/provisioning/providers/secrets', () => ({
+  resolveProviderSecret: vi.fn().mockResolvedValue('resolved-token'),
+  isVaultRef: vi.fn().mockReturnValue(false),
+}));
+
+// Mock admin client
+vi.mock('../../../src/utils/supabase/admin', () => ({
+  getAdminClient: vi.fn().mockReturnValue({}),
+}));
+
 import { createPrintifyOrder, getPrintifyOrder, cancelPrintifyOrder, validatePrintifyConfig } from '../../../src/lib/provisioning/providers/printify-client';
 import { printifyProvider } from '../../../src/lib/provisioning/providers/printify';
 
@@ -128,7 +139,7 @@ describe('printifyProvider', () => {
 
     expect(result.valid).toBe(true);
     expect(validatePrintifyConfig).toHaveBeenCalledWith({
-      api_token_ref: 'token-abc',
+      api_token: 'token-abc',
       shop_id: 'shop-123',
     });
   });

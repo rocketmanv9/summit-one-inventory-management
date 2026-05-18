@@ -18,10 +18,12 @@ import { evaluatePolicies, type EmployeeContext } from './policy-engine';
 import { resolveItems, type ResolvedItem } from './variant-resolver';
 import { selectProvidersForLines, type ProviderSelection } from './provider-selector';
 import { getProvider } from './providers/registry';
-import type { ProviderType, ProviderLineItem } from './providers/types';
+import type { ProviderType, ProviderLineItem, ShippingAddress } from './providers/types';
+import { resolveShippingAddress } from './shipping';
 
-// Ensure internal warehouse provider is registered
+// Ensure provider modules are registered
 import './providers/internal-warehouse';
+import './providers/printify';
 
 export interface ProvisioningEvent {
   event_name: string;
@@ -172,7 +174,18 @@ export async function orchestrateProvisioning(
     };
   }
 
-  // 4. Create provisioning request
+  // 4. Resolve shipping address (needed for external orders)
+  let resolvedAddress: ShippingAddress | undefined;
+  try {
+    resolvedAddress = await resolveShippingAddress(supabase, tenantId, {
+      explicitAddress: options?.shippingAddress as ShippingAddress | undefined,
+    });
+  } catch {
+    // No shipping address available — acceptable for from_stock-only requests.
+    // External order lines will fail individually if address is missing.
+  }
+
+  // 5. Create provisioning request
   const initialStatus = requiresApproval ? 'awaiting_approval' : 'provisioning';
 
   const { data: request, error: reqError } = await prov
@@ -196,7 +209,7 @@ export async function orchestrateProvisioning(
       kit_id: kitId,
       status: initialStatus,
       delivery_method: options?.deliveryMethod,
-      shipping_address: options?.shippingAddress,
+      shipping_address: resolvedAddress ?? options?.shippingAddress,
       priority: options?.priority ?? 100,
       needed_by: options?.neededBy,
       dedup_key: dedupKey,
@@ -268,7 +281,7 @@ export async function orchestrateProvisioning(
       providerId: selection.providerId,
     });
 
-    // 7. If not awaiting approval, execute fulfillment immediately
+    // 8. If not awaiting approval, execute fulfillment immediately
     if (!requiresApproval && selection.fulfillmentMethod === 'from_stock' && selection.providerId) {
       const provider = getProvider('internal_warehouse');
       if (provider) {
@@ -300,6 +313,56 @@ export async function orchestrateProvisioning(
             last_event_id: `prov-reserved-${line.id}`,
           });
         }
+      }
+    }
+
+    // 9. External order fulfillment (e.g. Printify)
+    if (!requiresApproval && selection.fulfillmentMethod === 'external_order' && selection.providerId) {
+      const providerType = selection.providerType as ProviderType;
+      const provider = getProvider(providerType);
+      if (provider) {
+        const lineIdempKey = `prov-order-${tenantId}-${line.id}`;
+
+        // Fetch provider config
+        const { data: providerConfig } = await prov
+          .from('providers')
+          .select('config')
+          .eq('id', selection.providerId)
+          .limit(1)
+          .single();
+
+        const orderResult = await provider.placeOrder(
+          {
+            tenantId,
+            requestId: request.id,
+            idempotencyKey: lineIdempKey,
+            shippingAddress: resolvedAddress,
+            items: [{
+              lineId: line.id,
+              catalogItemId: item.catalogItemId,
+              externalProductId: selection.externalProductId ?? '',
+              externalVariantId: selection.externalVariantId ?? '',
+              qty: item.qty,
+            }],
+          },
+          providerConfig?.config ?? {},
+        );
+
+        const newStatus = orderResult.success ? 'ordered' : 'failed';
+        await prov
+          .from('provisioning_lines')
+          .update({
+            status: newStatus,
+            external_order_id: orderResult.externalOrderId ?? null,
+            last_event_id: lineIdempKey,
+          })
+          .eq('id', line.id);
+
+        events.push({
+          event_name: `provision_line.${newStatus}`,
+          payload: { line_id: line.id, request_id: request.id, external_order_id: orderResult.externalOrderId },
+          last_event_id: lineIdempKey,
+        });
       }
     }
 
@@ -360,6 +423,16 @@ export async function approveRequest(
     last_event_id: idempotencyKey,
   });
 
+  // Resolve shipping address for external orders
+  let resolvedAddress: ShippingAddress | undefined;
+  try {
+    resolvedAddress = await resolveShippingAddress(supabase, tenantId, {
+      explicitAddress: request.shipping_address as ShippingAddress | undefined,
+    });
+  } catch {
+    // No address available — external_order lines will fail individually
+  }
+
   // Execute fulfillment for pending lines
   const { data: lines } = await prov
     .from('provisioning_lines')
@@ -401,6 +474,55 @@ export async function approveRequest(
             payload: { line_id: line.id, request_id: requestId },
             last_event_id: lineIdempKey,
           });
+        }
+      }
+
+      if (line.fulfillment_method === 'external_order' && line.provider_id) {
+        // Fetch provider record for type + config
+        const { data: providerRecord } = await prov
+          .from('providers')
+          .select('provider_type, config')
+          .eq('id', line.provider_id)
+          .limit(1)
+          .single();
+
+        if (providerRecord) {
+          const provider = getProvider(providerRecord.provider_type as ProviderType);
+          if (provider) {
+            const lineIdempKey = `prov-order-${tenantId}-${line.id}`;
+            const result = await provider.placeOrder(
+              {
+                tenantId,
+                requestId,
+                idempotencyKey: lineIdempKey,
+                shippingAddress: resolvedAddress,
+                items: [{
+                  lineId: line.id,
+                  catalogItemId: line.catalog_item_id,
+                  externalProductId: line.external_product_id ?? '',
+                  externalVariantId: line.external_variant_id ?? '',
+                  qty: line.qty,
+                }],
+              },
+              providerRecord.config ?? {},
+            );
+
+            const newStatus = result.success ? 'ordered' : 'failed';
+            await prov
+              .from('provisioning_lines')
+              .update({
+                status: newStatus,
+                external_order_id: result.externalOrderId ?? null,
+                last_event_id: lineIdempKey,
+              })
+              .eq('id', line.id);
+
+            events.push({
+              event_name: `provision_line.${newStatus}`,
+              payload: { line_id: line.id, request_id: requestId, external_order_id: result.externalOrderId },
+              last_event_id: lineIdempKey,
+            });
+          }
         }
       }
     }

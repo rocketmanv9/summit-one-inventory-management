@@ -40,6 +40,54 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
 
   log.info('provider.validated', { providerId, valid: result.valid });
 
+  // Auto-register webhooks for print_on_demand providers after successful validation
+  if (result.valid && providerRecord.provider_type === 'print_on_demand') {
+    try {
+      const { resolveProviderSecret, isVaultRef } = await import('@/lib/provisioning/providers/secrets');
+      const { listPrintifyWebhooks, registerPrintifyWebhook } = await import('@/lib/provisioning/providers/printify-client');
+      const { getAdminClient } = await import('@/utils/supabase/admin');
+
+      const config = providerRecord.config as { api_token_ref?: string; shop_id?: string };
+      if (config.api_token_ref && config.shop_id) {
+        const adminClient = getAdminClient();
+        let apiToken: string;
+        if (isVaultRef(config.api_token_ref)) {
+          apiToken = await resolveProviderSecret(adminClient, config.api_token_ref);
+        } else {
+          apiToken = config.api_token_ref;
+        }
+
+        const resolved = { api_token: apiToken, shop_id: config.shop_id };
+        const existingWebhooks = await listPrintifyWebhooks(resolved);
+
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL;
+        const webhookUrl = `${baseUrl}/api/webhooks/provisioning/${providerRecord.provider_key}`;
+        const requiredTopics = ['order:shipping-update', 'order:status-update'];
+
+        for (const topic of requiredTopics) {
+          const exists = existingWebhooks.some((w) => w.topic === topic && w.url === webhookUrl);
+          if (!exists) {
+            await registerPrintifyWebhook(resolved, webhookUrl, topic);
+          }
+        }
+
+        // Update webhook status on the provider
+        await prov
+          .from('providers')
+          .update({ webhook_status: 'registered' })
+          .eq('id', providerId);
+
+        log.info('provider.webhooks_registered', { providerId, topics: requiredTopics });
+      }
+    } catch (webhookErr: any) {
+      log.warn('provider.webhook_registration_failed', { providerId, error: webhookErr.message });
+      await prov
+        .from('providers')
+        .update({ webhook_status: 'failed' })
+        .eq('id', providerId);
+    }
+  }
+
   return {
     data: result,
     status: 200,

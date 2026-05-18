@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { ProvisioningRPC } from '@/lib/rpc/provisioning';
-import { Save, ShieldCheck, Plus } from 'lucide-react';
+import { Save, ShieldCheck, Plus, Wifi, WifiOff } from 'lucide-react';
 
 interface Mapping {
   id: string;
@@ -27,7 +27,14 @@ interface Provider {
   priority: number;
   is_active: boolean;
   config: Record<string, unknown> | null;
+  webhook_status?: string;
   created_at: string;
+}
+
+interface PrintifyProduct {
+  id: string;
+  title: string;
+  variants: Array<{ id: number; title: string }>;
 }
 
 export default function ProviderDetailPage() {
@@ -43,6 +50,12 @@ export default function ProviderDetailPage() {
   const [showAddMapping, setShowAddMapping] = useState(false);
   const [newMapping, setNewMapping] = useState({ catalog_item_id: '', external_product_id: '', external_variant_id: '', notes: '' });
   const [mappingSaving, setMappingSaving] = useState(false);
+  const [products, setProducts] = useState<PrintifyProduct[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState<string>('unknown');
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
+
+  const isPrintOnDemand = provider?.type === 'print_on_demand';
 
   useEffect(() => {
     fetchProvider();
@@ -56,6 +69,7 @@ export default function ProviderDetailPage() {
       const p = data?.data || data;
       setProvider(p);
       setConfigText(JSON.stringify(p.config || {}, null, 2));
+      setWebhookStatus(p.webhook_status || 'unknown');
     } catch (error) {
       console.error('Error fetching provider:', error);
     } finally {
@@ -69,6 +83,20 @@ export default function ProviderDetailPage() {
       setMappings(data?.data || data || []);
     } catch (error) {
       console.error('Error fetching mappings:', error);
+    }
+  };
+
+  const fetchProducts = async () => {
+    if (!isPrintOnDemand) return;
+    setProductsLoading(true);
+    try {
+      const data = await ProvisioningRPC.getProviderProducts(providerId);
+      setProducts(data?.data || data || []);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      setProducts([]);
+    } finally {
+      setProductsLoading(false);
     }
   };
 
@@ -94,12 +122,38 @@ export default function ProviderDetailPage() {
     try {
       const result = await ProvisioningRPC.validateProvider(providerId);
       setValidationResult(result?.data || result);
+      // Refresh provider to pick up webhook_status changes
+      fetchProvider();
     } catch (err: unknown) {
       setValidationResult({ valid: false, error: err instanceof Error ? err.message : 'Validation failed' });
     } finally {
       setValidating(false);
     }
   };
+
+  const openAddMapping = () => {
+    setShowAddMapping(true);
+    setSelectedProduct('');
+    setNewMapping({ catalog_item_id: '', external_product_id: '', external_variant_id: '', notes: '' });
+    if (isPrintOnDemand && products.length === 0) {
+      fetchProducts();
+    }
+  };
+
+  const handleProductSelect = (productId: string) => {
+    setSelectedProduct(productId);
+    setNewMapping((prev) => ({
+      ...prev,
+      external_product_id: productId,
+      external_variant_id: '',
+    }));
+  };
+
+  const handleVariantSelect = (variantId: string) => {
+    setNewMapping((prev) => ({ ...prev, external_variant_id: variantId }));
+  };
+
+  const selectedProductObj = products.find((p) => p.id === selectedProduct);
 
   const handleAddMapping = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,13 +255,26 @@ export default function ProviderDetailPage() {
               {validationResult.valid ? 'Configuration is valid' : `Validation failed: ${validationResult.error || 'Unknown error'}`}
             </div>
           )}
+          {/* Webhook status indicator */}
+          {isPrintOnDemand && (
+            <div className={`flex items-center gap-2 p-3 rounded text-sm ${
+              webhookStatus === 'registered'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : webhookStatus === 'failed'
+                  ? 'bg-red-50 border border-red-200 text-red-700'
+                  : 'bg-gray-50 border border-gray-200 text-gray-600'
+            }`}>
+              {webhookStatus === 'registered' ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+              Webhooks: {webhookStatus === 'registered' ? 'Registered' : webhookStatus === 'failed' ? 'Registration failed' : 'Not registered'}
+            </div>
+          )}
         </div>
 
         {/* Item mappings */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-lg font-semibold">Item Mappings</h3>
-            <button onClick={() => setShowAddMapping(true)} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-1">
+            <button onClick={openAddMapping} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 flex items-center gap-1">
               <Plus className="h-3 w-3" />Add Mapping
             </button>
           </div>
@@ -223,14 +290,54 @@ export default function ProviderDetailPage() {
                   <label className="block text-sm font-medium mb-1">Catalog Item ID *</label>
                   <input type="text" value={newMapping.catalog_item_id} onChange={(e) => setNewMapping({ ...newMapping, catalog_item_id: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" required />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">External Product ID</label>
-                  <input type="text" value={newMapping.external_product_id} onChange={(e) => setNewMapping({ ...newMapping, external_product_id: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">External Variant ID</label>
-                  <input type="text" value={newMapping.external_variant_id} onChange={(e) => setNewMapping({ ...newMapping, external_variant_id: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono" />
-                </div>
+
+                {isPrintOnDemand ? (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Printify Product</label>
+                      {productsLoading ? (
+                        <div className="text-sm text-muted-foreground py-2">Loading products...</div>
+                      ) : (
+                        <select
+                          value={selectedProduct}
+                          onChange={(e) => handleProductSelect(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        >
+                          <option value="">Select a product...</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>{p.title}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Printify Variant</label>
+                      <select
+                        value={newMapping.external_variant_id}
+                        onChange={(e) => handleVariantSelect(e.target.value)}
+                        disabled={!selectedProduct}
+                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                      >
+                        <option value="">{selectedProduct ? 'Select a variant...' : 'Select a product first'}</option>
+                        {selectedProductObj?.variants.map((v) => (
+                          <option key={v.id} value={String(v.id)}>{v.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">External Product ID</label>
+                      <input type="text" value={newMapping.external_product_id} onChange={(e) => setNewMapping({ ...newMapping, external_product_id: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">External Variant ID</label>
+                      <input type="text" value={newMapping.external_variant_id} onChange={(e) => setNewMapping({ ...newMapping, external_variant_id: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono" />
+                    </div>
+                  </>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium mb-1">Notes</label>
                   <input type="text" value={newMapping.notes} onChange={(e) => setNewMapping({ ...newMapping, notes: e.target.value })} className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" />

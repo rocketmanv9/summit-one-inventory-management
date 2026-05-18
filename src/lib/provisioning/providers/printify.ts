@@ -4,6 +4,10 @@
  * Implements the FulfillmentProvider interface for Printify print-on-demand
  * orders. Maps provisioning line items to Printify products/variants using
  * the provider_item_mappings table.
+ *
+ * All API tokens are resolved from Supabase Vault at call time —
+ * the config.api_token_ref stored in the DB is a vault reference name,
+ * never a plaintext token.
  */
 
 import type {
@@ -11,8 +15,6 @@ import type {
   ProviderOrderRequest,
   ProviderOrderResult,
   ProviderStatusUpdate,
-  ProviderLineItem,
-  ProviderCostEstimate,
   ShippingAddress,
 } from './types';
 import { registerProvider } from './registry';
@@ -22,9 +24,30 @@ import {
   cancelPrintifyOrder,
   validatePrintifyConfig,
   type PrintifyConfig,
+  type PrintifyResolvedConfig,
   type PrintifyAddress,
   type PrintifyLineItem,
 } from './printify-client';
+import { resolveProviderSecret, isVaultRef } from './secrets';
+import { getAdminClient } from '@/utils/supabase/admin';
+
+/**
+ * Resolve a PrintifyConfig (with vault ref) into a PrintifyResolvedConfig
+ * (with real API token).
+ */
+async function resolveConfig(config: PrintifyConfig): Promise<PrintifyResolvedConfig> {
+  const supabase = getAdminClient();
+  let apiToken: string;
+
+  if (isVaultRef(config.api_token_ref)) {
+    apiToken = await resolveProviderSecret(supabase, config.api_token_ref);
+  } else {
+    // Legacy plaintext token (pre-migration) — use directly
+    apiToken = config.api_token_ref;
+  }
+
+  return { api_token: apiToken, shop_id: config.shop_id };
+}
 
 function toPrintifyAddress(addr: ShippingAddress): PrintifyAddress {
   const nameParts = addr.name.split(' ');
@@ -68,6 +91,7 @@ export const printifyProvider: FulfillmentProvider = {
 
   async placeOrder(request: ProviderOrderRequest, config: Record<string, unknown>): Promise<ProviderOrderResult> {
     const printifyConfig = config as unknown as PrintifyConfig;
+    const resolved = await resolveConfig(printifyConfig);
 
     const lineItems: PrintifyLineItem[] = request.items
       .filter((item) => item.externalProductId && item.externalVariantId)
@@ -84,22 +108,17 @@ export const printifyProvider: FulfillmentProvider = {
       };
     }
 
-    const defaultAddress: PrintifyAddress = {
-      first_name: 'Warehouse',
-      last_name: 'Delivery',
-      country: 'US',
-      region: 'CA',
-      address1: '123 Main St',
-      city: 'Los Angeles',
-      zip: '90001',
-    };
+    if (!request.shippingAddress) {
+      return {
+        success: false,
+        error: 'Shipping address is required for Printify orders. Configure a default ship-to location or provide an address on the request.',
+      };
+    }
 
-    const address = request.shippingAddress
-      ? toPrintifyAddress(request.shippingAddress)
-      : defaultAddress;
+    const address = toPrintifyAddress(request.shippingAddress);
 
     try {
-      const order = await createPrintifyOrder(printifyConfig, {
+      const order = await createPrintifyOrder(resolved, {
         external_id: request.idempotencyKey,
         label: `Provision ${request.requestId}`,
         line_items: lineItems,
@@ -127,8 +146,9 @@ export const printifyProvider: FulfillmentProvider = {
 
   async getOrderStatus(externalOrderId: string, config: Record<string, unknown>): Promise<ProviderStatusUpdate> {
     const printifyConfig = config as unknown as PrintifyConfig;
+    const resolved = await resolveConfig(printifyConfig);
 
-    const order = await getPrintifyOrder(printifyConfig, externalOrderId);
+    const order = await getPrintifyOrder(resolved, externalOrderId);
     const shipment = order.shipments?.[0];
 
     return {
@@ -142,9 +162,10 @@ export const printifyProvider: FulfillmentProvider = {
 
   async cancelOrder(externalOrderId: string, config: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     const printifyConfig = config as unknown as PrintifyConfig;
+    const resolved = await resolveConfig(printifyConfig);
 
     try {
-      await cancelPrintifyOrder(printifyConfig, externalOrderId);
+      await cancelPrintifyOrder(resolved, externalOrderId);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -160,10 +181,12 @@ export const printifyProvider: FulfillmentProvider = {
 
     if (errors.length > 0) return { valid: false, errors };
 
-    const result = await validatePrintifyConfig({
+    const resolved = await resolveConfig({
       api_token_ref: c.api_token_ref,
       shop_id: c.shop_id,
     });
+
+    const result = await validatePrintifyConfig(resolved);
 
     if (!result.valid) {
       return { valid: false, errors: [result.error ?? 'Validation failed'] };

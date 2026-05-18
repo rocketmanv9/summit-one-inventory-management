@@ -2,6 +2,8 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { maskProviderConfig, storeProviderSecret } from '@/lib/provisioning/providers/secrets';
+import { getAdminClient } from '@/utils/supabase/admin';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -26,7 +28,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   if (error || !provider) throw AppError.notFound('Provider not found');
 
-  return Response.json({ data: provider });
+  return Response.json({ data: { ...provider, config: maskProviderConfig(provider.config) } });
 }, { serviceName: SERVICE_NAME });
 
 const UpdateProviderSchema = z.object({
@@ -38,7 +40,7 @@ const UpdateProviderSchema = z.object({
   last_event_id: z.string(),
 });
 
-export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
+export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey, ctx }) => {
   const id = req.url.split('/providers/')[1]?.split('/')[0]?.split('?')[0];
   if (!id) throw AppError.badRequest('Provider ID required');
 
@@ -47,7 +49,7 @@ export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempo
 
   const { data: existing } = await prov
     .from('providers')
-    .select('last_event_id')
+    .select('last_event_id, config')
     .eq('id', id)
     .limit(1)
     .single();
@@ -58,6 +60,21 @@ export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempo
   }
 
   const { last_event_id: _old, ...updates } = body;
+
+  // If config contains a new api_token_ref that is NOT the mask placeholder,
+  // store it in Vault and replace with the vault reference name.
+  if (updates.config?.api_token_ref && updates.config.api_token_ref !== '********') {
+    const rawToken = updates.config.api_token_ref as string;
+    if (!rawToken.startsWith('provider-secret-')) {
+      const adminClient = getAdminClient();
+      const vaultRef = await storeProviderSecret(adminClient, ctx.tenantId!, id, rawToken);
+      updates.config = { ...updates.config, api_token_ref: vaultRef };
+    }
+  } else if (updates.config?.api_token_ref === '********') {
+    // User didn't change the token — preserve existing vault ref
+    updates.config = { ...updates.config, api_token_ref: existing.config?.api_token_ref };
+  }
+
   const { data: provider, error } = await prov
     .from('providers')
     .update({ ...updates, last_event_id: idempotencyKey })
@@ -73,7 +90,7 @@ export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempo
   log.info('provider.updated', { providerId: id });
 
   return {
-    data: provider,
+    data: { ...provider, config: maskProviderConfig(provider.config) },
     status: 200,
     events: [{
       event_name: 'provider.updated',
