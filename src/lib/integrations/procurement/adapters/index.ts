@@ -7,8 +7,10 @@
 
 import { registerAdapter } from '../registry';
 import { amazonBusinessAdapter } from './amazon-business';
+import { ssActivewearAdapter } from './ss-activewear';
 
 // Auto-register all adapters
 registerAdapter(amazonBusinessAdapter);
+registerAdapter(ssActivewearAdapter);
 
-export { amazonBusinessAdapter };
+export { amazonBusinessAdapter, ssActivewearAdapter };
