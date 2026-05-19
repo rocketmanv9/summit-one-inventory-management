@@ -86,32 +86,105 @@ const body = CreateItemSchema.parse(await req.json());
   - Index on `tenant_id`
 - Number migrations sequentially: `00013_...`, `00014_...`, etc.
 
-## Global Values & Vendor Rules
+## Global Values (GV)
 
-- Use `getGVClient()` from `@/lib/gv` for GV read operations, `getTenantGVClient(tenantId)` for writes.
-- Use `getCatalogClient()` from `@/lib/vendors` for catalog reads, `getTenantVendorClient(tenantId)` for tenant vendor CRUD.
-- **Store `TermId` in database columns**, never raw display labels — use `toTermId()` or `resolveTermId()` to obtain them.
-- Both SDKs connect to the GV Supabase project via `GV_SUPABASE_URL` + `GV_SUPABASE_ANON_KEY` (already configured by `chassis init`).
-- Use `buildLabelMap()` to populate dropdowns; use `displayLabel()` for single term resolution.
-- For vendor adoption, call `vendors.adopt([catalogVendorId])` — this copies contacts and addresses automatically.
+GV is a **shared Supabase data layer** (separate project, not a REST API). All Summit microservices connect to it via `GV_SUPABASE_URL` + `GV_SUPABASE_ANON_KEY` and consume data through direct table queries, PostgreSQL RPCs, and the chassis SDK.
 
-## Tools, Vehicles & Equipment Rules
+### Core Principle: Store Term IDs, Not Labels
 
-Three additional GV entity SDKs are available via the chassis. Each follows the same catalog + tenant client pattern as vendors.
+- **On write**: resolve user input to a `term_id` (UUID) via `resolveTermId()` or code lookup, store the UUID.
+- **On read**: batch-fetch display labels via `displayLabels()` or preload a domain with `buildLabelMap()`.
+- Tenants can override display labels per-term without changing underlying data.
+
+### GV Term SDK
+
+- Use `getGVClient()` from `@/lib/gv` for read operations (lazy singleton, 30s cache).
+- Use `getTenantGVClient(tenantId)` from `@/lib/gv` for write operations (RLS-scoped).
+- Both import from `@rocketmanv9/chassis/global-values`.
+
+```ts
+const gv = getGVClient();
+const label = await gv.displayLabel(tenantId, termId);
+const labels = await gv.displayLabels(tenantId, [termId1, termId2]);
+const map = await gv.buildLabelMap(tenantId, 'materials');
+const termId = await gv.resolveTermId(tenantId, 'materials', freeText, true);
+```
+
+### GV Domains (Live in Dev)
+
+These are the term domains currently seeded in the GV database:
+
+| Domain | Owner | Example Terms |
+|--------|-------|---------------|
+| `materials` | inventory | HOTMIX, CRACKFILL, AGGREGATE, SEALCOAT, TACK_COAT, CONCRETE, FABRIC |
+| `uom` | inventory | TON, SF, SY, GAL, LF, CY, LB, EA, BAG, DRUM, PALLET, LOAD |
+| `item_category` | inventory | RAW_MATERIAL, CHEMICAL, CONSUMABLE, EQUIPMENT, SAFETY |
+| `vendor_type` | purchasing | SUPPLIER, DISTRIBUTOR, SUBCONTRACTOR, EQUIPMENT_RENTAL |
+| `industry_tag` | purchasing | ASPHALT, CONCRETE, PAVING, EQUIPMENT, RENTAL, MASONRY, etc. |
+| `tool_type` | fleet | HAND_TOOL, POWER_TOOL, SAW, SPRAYER, BLOWER, MELTER, ROUTER, etc. |
+| `vehicle_type` | fleet | DUMP_TRUCK, PICKUP_TRUCK, FLATBED, TANKER, TRAILER, VAN, SUV, etc. |
+| `equipment_type` | fleet | PAVER, COMPACTOR, ROLLER, EXCAVATOR, LOADER, GRADER, CRANE, etc. |
+
+### GV Global Catalogs (Beyond Terms)
+
+GV also hosts standalone global catalog tables that are **not** part of the term system. These are queried directly via Supabase client:
+
+| Catalog | Table(s) | Seeded Data |
+|---------|----------|-------------|
+| **Services** | `services`, `service_conversions` | 37 atomic services (asphalt-removal, asphalt-compaction, striping-line, roofing-prep, etc.) |
+| **Service Families** | `service_families` | 8 families: asphalt, concrete, drywall, hvac, roofing, sealcoat, striping, subgrade |
+| **Service Actions** | `service_actions` | 31 reusable verbs (removal, placement, compaction, hauling, etc.) |
+| **Equipment Classes** | `equipment_classes` + variants, dimensions, workflows, planning, attachments | 18 classes (asphalt_paver, double_drum_roller, dump_truck, plate_compactor, etc.) |
+| **Materials Catalog** | `materials`, `material_categories`, `material_products`, `material_quality_tiers` | 4 materials, 8 categories, 3 products, 3 quality tiers |
+| **Units of Measure** | `units_of_measure`, `time_units` | 27 UOM (area, volume, length, mass, temperature, density, etc.), 5 time units |
+| **Positions & Skills** | `positions`, `position_levels`, `skills`, `certifications` | 6 skills seeded |
+| **Vendor Catalog** | `vendor_catalog`, `vendor_catalog_industry_tags` | 19 vendors with 38 industry tags |
+| **Service Offering Templates** | `service_offering_templates`, `service_offering_template_services` | 7 templates with 28 service mappings |
+| **Minimum Wage Markets** | `global_minimum_wage_markets` | 3 markets |
+| **Production Profiles** | `production_profiles`, `production_profile_variables`, `production_profile_rates` | Schema ready, no seed data yet |
+
+### Vendor, Tool, Vehicle & Equipment SDK Clients
+
+Four entity SDKs follow the same catalog + tenant client pattern:
 
 | Entity | Catalog Client | Tenant Client | Import Path |
 |--------|---------------|---------------|-------------|
+| Vendors | `getCatalogClient()` from `@/lib/vendors` | `getTenantVendorClient(tenantId)` from `@/lib/vendors` | `@rocketmanv9/chassis/vendors` |
 | Tools | `getToolCatalogClient()` from `@/lib/tools` | `getTenantToolClient(tenantId)` from `@/lib/tools` | `@rocketmanv9/chassis/tools` |
 | Vehicles | `getVehicleCatalogClient()` from `@/lib/vehicles` | `getTenantVehicleClient(tenantId)` from `@/lib/vehicles` | `@rocketmanv9/chassis/vehicles` |
 | Equipment | `getEquipmentCatalogClient()` from `@/lib/equipment` | `getTenantEquipmentClient(tenantId)` from `@/lib/equipment` | `@rocketmanv9/chassis/equipment` |
 
 - **Catalog clients** are lazy singletons (read-only, 30s cache) — use for browsing the shared GV catalog.
 - **Tenant clients** are scoped per-tenant (RLS-aware) — use for CRUD, adoption, and submissions.
-- API proxy routes live under `src/app/api/gv/{tools,vehicles,equipment}/` — the frontend calls these since GV is a separate Supabase project.
+- API proxy routes live under `src/app/api/gv/{tools,vehicles,equipment}/` — the frontend calls these since GV is a separate Supabase project. (No vendor proxy routes exist yet.)
 - GV proxy write routes return `events: []` because the GV service emits its own outbox events — this is expected and not a bug.
 - For adoption: `client.adopt([catalogId1, catalogId2])` — copies contacts and addresses automatically.
 - For submissions: `client.submitToCatalog(id, { tenantId, userId, email })` — proposes a custom item to the shared catalog.
 - UI pages live under `src/app/(dashboard)/fleet/{tools,vehicles,equipment}/`.
+
+### GV Key RPCs
+
+These PostgreSQL RPCs are available via `supabase.rpc()` for direct access:
+
+| RPC | Purpose |
+|-----|---------|
+| `rpc_gv_resolve_term_id` | Resolve free text to a term_id (with optional auto-create) |
+| `rpc_gv_display_label` / `rpc_gv_display_labels` | Fetch tenant-aware display labels (single or batch) |
+| `rpc_gv_get_term_id_by_code` / `rpc_gv_terms_by_codes` | Look up term IDs by code |
+| `rpc_gv_list_terms` / `rpc_gv_list_domains` | List all terms in a domain or all domains |
+| `rpc_gv_search_terms` | Full-text search across terms |
+| `rpc_gv_domain_summary` | Domain statistics |
+| `rpc_gv_upsert_override` / `rpc_gv_upsert_alias` | Tenant customization |
+| `rpc_upsert_equipment_class` / `rpc_upsert_equipment_model` | Equipment catalog management |
+
+### GV Environment
+
+| Var | Purpose |
+|-----|---------|
+| `GV_SUPABASE_URL` | GV Supabase project URL (auto-hydrated by chassis) |
+| `GV_SUPABASE_ANON_KEY` | GV Supabase anon key (auto-hydrated by chassis) |
+
+Both are set in `.env.local` and `.env.example`. The chassis auto-discovers them from `.chassis-init.json`.
 
 ## Event Rules
 

@@ -21,6 +21,8 @@ import {
   Wrench,
   HardHat,
   Plug,
+  Search,
+  ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -133,6 +135,26 @@ const navigation: NavSection[] = [
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
+      },
+    ],
+  },
+  {
+    title: 'Procurement',
+    items: [
+      {
+        title: 'Low Stock',
+        href: '/procurement',
+        icon: Search,
+      },
+      {
+        title: 'Reorder Rules',
+        href: '/procurement/reorder-rules',
+        icon: Settings,
+      },
+      {
+        title: 'Purchase Orders',
+        href: '/procurement/orders',
+        icon: ClipboardList,
       },
     ],
   },

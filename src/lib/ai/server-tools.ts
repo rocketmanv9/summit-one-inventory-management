@@ -1074,7 +1074,7 @@ async function deleteDashboardTool(
   };
 }
 
-// ─── Workflow: Auto-Reorder ──────────────────────────────────────────
+// ─── Workflow: Auto-Reorder (Printify) ──────────────────────────────
 
 async function workflowAutoReorder(
   params: Record<string, any>,
@@ -1083,62 +1083,168 @@ async function workflowAutoReorder(
   const dryRun = params.dry_run !== false && params.dry_run !== 'false';
 
   try {
-    const idempotencyKey = `ai-auto-reorder-${ctx.tenantId}-${Date.now()}`;
-    const res = await fetch(`${ctx.baseUrl}/api/ai/workflows`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': ctx.cookieHeader,
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: JSON.stringify({ workflow: 'auto_reorder', dry_run: dryRun }),
-    });
+    // 1. Get reorder suggestions from RPC
+    const { data: suggestions, error: rpcError } = await inventorySchema(ctx.supabase)
+      .rpc('rpc_report_reorder_suggestions');
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    if (rpcError || !suggestions?.length) {
       return {
-        text: `Workflow failed: ${err.error || res.statusText}`,
-        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Workflow failed' },
+        text: rpcError
+          ? `Failed to fetch reorder suggestions: ${rpcError.message}`
+          : 'No items are below their reorder point. Stock levels look good.',
+        dataDisplay: { displayType: 'metric', label: 'Reorder Check', value: rpcError ? 'Error' : 'All stocked' },
       };
     }
 
-    const result = await res.json();
-    const data = result.data;
+    // 2. Check which items have Printify mappings
+    const adminClient = (await import('@/utils/supabase/admin')).getAdminClient();
+    const prov = (adminClient as any).schema('provisioning');
 
-    if (dryRun) {
+    // Find active Printify provider for this tenant
+    const { data: provider } = await prov
+      .from('providers')
+      .select('id')
+      .eq('tenant_id', ctx.tenantId)
+      .eq('provider_type', 'print_on_demand')
+      .like('provider_key', 'printify%')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (!provider) {
       return {
-        text: `Auto-Reorder Preview: ${data.suggestions?.length || 0} draft POs would be created across ${data.vendorCount || 0} vendors, totaling ${formatCurrency(data.totalAmount || 0)}. Say "confirm" or "go ahead" to create them.`,
+        text: `Found ${suggestions.length} items below reorder point, but Printify is not connected. Connect it in Settings > Integrations.`,
         dataDisplay: {
           displayType: 'table',
           columns: [
-            { key: 'vendor', label: 'Vendor' },
-            { key: 'itemCount', label: 'Items' },
-            { key: 'totalQty', label: 'Total Qty' },
-            { key: 'estimatedAmount', label: 'Est. Amount' },
+            { key: 'item_name', label: 'Item' },
+            { key: 'qty_on_hand', label: 'On Hand' },
+            { key: 'reorder_point', label: 'Reorder Pt' },
+            { key: 'suggested_order_qty', label: 'Suggested Qty' },
           ],
-          rows: data.suggestions || [],
-          totalRows: data.suggestions?.length || 0,
+          rows: suggestions.slice(0, 20),
+          totalRows: suggestions.length,
         },
       };
     }
 
+    // Get mappings for these items
+    const catalogItemIds = suggestions.map((s: any) => s.catalog_item_id).filter(Boolean);
+    const { data: mappings } = await prov
+      .from('provider_item_mappings')
+      .select('catalog_item_id, external_product_id, external_variant_id')
+      .eq('provider_id', provider.id)
+      .in('catalog_item_id', catalogItemIds)
+      .limit(200);
+
+    const mappingMap = new Map<string, { catalog_item_id: string; external_product_id: string; external_variant_id: string }>(
+      (mappings || []).map((m: any) => [m.catalog_item_id, m])
+    );
+
+    const mappedItems = suggestions.filter((s: any) => mappingMap.has(s.catalog_item_id));
+    const unmappedItems = suggestions.filter((s: any) => !mappingMap.has(s.catalog_item_id));
+
+    if (mappedItems.length === 0) {
+      return {
+        text: `Found ${suggestions.length} items below reorder point, but none have Printify product mappings. Add mappings in Settings > Integrations.`,
+        dataDisplay: {
+          displayType: 'table',
+          columns: [
+            { key: 'item_name', label: 'Item' },
+            { key: 'qty_on_hand', label: 'On Hand' },
+            { key: 'reorder_point', label: 'Reorder Pt' },
+            { key: 'suggested_order_qty', label: 'Suggested Qty' },
+          ],
+          rows: suggestions.slice(0, 20),
+          totalRows: suggestions.length,
+        },
+      };
+    }
+
+    // 3. Dry run — show what would be ordered
+    const orderPreview = mappedItems.map((s: any) => ({
+      item_name: s.item_name || s.sku,
+      qty_on_hand: s.qty_on_hand,
+      reorder_qty: Number(s.suggested_order_qty) || Number(s.reorder_qty) || 1,
+      printify_product: mappingMap.get(s.catalog_item_id)?.external_product_id,
+    }));
+
+    if (dryRun) {
+      const totalQty = orderPreview.reduce((sum: number, i: any) => sum + i.reorder_qty, 0);
+      const unmappedNote = unmappedItems.length > 0
+        ? ` (${unmappedItems.length} additional items need Printify mappings)`
+        : '';
+      return {
+        text: `Auto-Reorder Preview: ${mappedItems.length} items would be ordered from Printify (${totalQty} total units).${unmappedNote} Say "confirm" or "go ahead" to place the order.`,
+        dataDisplay: {
+          displayType: 'table',
+          columns: [
+            { key: 'item_name', label: 'Item' },
+            { key: 'qty_on_hand', label: 'On Hand' },
+            { key: 'reorder_qty', label: 'Order Qty' },
+            { key: 'printify_product', label: 'Printify Product' },
+          ],
+          rows: orderPreview,
+          totalRows: orderPreview.length,
+        },
+      };
+    }
+
+    // 4. Place the order via the Printify orders API
+    const idempotencyKey = `ai-auto-reorder-${ctx.tenantId}-${Date.now()}`;
+    const orderItems = mappedItems.map((s: any) => ({
+      catalog_item_id: s.catalog_item_id,
+      qty: Number(s.suggested_order_qty) || Number(s.reorder_qty) || 1,
+    }));
+
+    const res = await fetch(`${ctx.baseUrl}/api/settings/integrations/printify/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': ctx.cookieHeader,
+        'X-Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        items: orderItems,
+        shipping_address: params.shipping_address || {
+          first_name: 'Inventory',
+          last_name: 'Reorder',
+          country: 'US',
+          region: 'CA',
+          address1: 'TBD',
+          city: 'TBD',
+          zip: '00000',
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: { message: 'Unknown error' } }));
+      return {
+        text: `Printify order failed: ${err?.error?.message || res.statusText}. The ${mappedItems.length} items are still below reorder point.`,
+        dataDisplay: { displayType: 'metric', label: 'Order Failed', value: err?.error?.message || 'Error' },
+      };
+    }
+
+    const result = await res.json();
+    const totalQty = orderItems.reduce((sum: number, i: any) => sum + i.qty, 0);
+
     return {
-      text: `Auto-Reorder Complete: Created ${data.posCreated || 0} draft purchase orders totaling ${formatCurrency(data.totalAmount || 0)}.`,
+      text: `Printify order placed successfully. Ordered ${orderItems.length} items (${totalQty} units). Printify order ID: ${result.data?.printify_order_id || 'pending'}.`,
       dataDisplay: {
         displayType: 'table',
         columns: [
-          { key: 'poNumber', label: 'PO #' },
-          { key: 'vendor', label: 'Vendor' },
-          { key: 'itemCount', label: 'Items' },
-          { key: 'totalAmount', label: 'Amount' },
+          { key: 'item_name', label: 'Item' },
+          { key: 'reorder_qty', label: 'Ordered Qty' },
+          { key: 'printify_product', label: 'Printify Product' },
         ],
-        rows: data.createdPOs || [],
-        totalRows: data.posCreated || 0,
+        rows: orderPreview,
+        totalRows: orderPreview.length,
       },
     };
   } catch (err: any) {
     return {
-      text: `Workflow failed: ${err.message}`,
+      text: `Auto-reorder failed: ${err.message}`,
       dataDisplay: { displayType: 'metric', label: 'Error', value: 'Workflow failed' },
     };
   }
