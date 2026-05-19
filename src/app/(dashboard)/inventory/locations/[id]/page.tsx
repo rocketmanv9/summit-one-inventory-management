@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 type LocationSnapshot = Awaited<ReturnType<typeof InventoryRPC.getLocationInventorySnapshot>>;
 
@@ -51,6 +52,7 @@ function StatCard({
 export default function LocationDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const uomLabels = useUOMLabelMap();
   const [snapshot, setSnapshot] = useState<LocationSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -137,9 +139,9 @@ export default function LocationDetailPage() {
       ),
     },
     {
-      key: 'unit_of_measure',
+      key: 'uom_term_id',
       header: 'UOM',
-      render: (row: LocationSnapshot['items'][number]) => row.unit_of_measure || '-',
+      render: (row: LocationSnapshot['items'][number]) => uomLabels[(row as any).uom_term_id] || (row as any).uom_term_id || '-',
     },
     {
       key: 'on_hand',
@@ -184,7 +186,7 @@ export default function LocationDetailPage() {
                 location.location_type,
                 location.address,
                 location.max_capacity != null &&
-                  `Capacity: ${Number(location.max_capacity).toLocaleString()} ${location.capacity_uom || ''}`,
+                  `Capacity: ${Number(location.max_capacity).toLocaleString()} ${uomLabels[(location as any).capacity_uom_term_id] || (location as any).capacity_uom_term_id || ''}`,
               ]
                 .filter(Boolean)
                 .join('  |  ')

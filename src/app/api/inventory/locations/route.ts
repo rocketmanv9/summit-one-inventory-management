@@ -14,7 +14,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const inv = (supabase as any).schema('inventory');
   const { data, error } = await inv
     .from('locations')
-    .select('id, name, parent_location_id, active, address, location_type:location_types(id, name), max_capacity, capacity_uom')
+    .select('id, name, parent_location_id, active, address, location_type:location_types(id, name), max_capacity, capacity_uom_term_id')
     .eq('active', true)
     .order('name', { ascending: true })
     .limit(200);

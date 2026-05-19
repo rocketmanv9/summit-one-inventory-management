@@ -63,7 +63,7 @@ type CatalogItemWithCategory = {
   sku: string;
   description: string | null;
   category_id: string | null;
-  unit_of_measure: string | null;
+  uom_term_id: string;
   tracking_mode: string;
   reorder_point: number | null;
   min_stock_level: number | null;
@@ -315,7 +315,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('catalog_items')
       .select(
-        'id, name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, is_parent, parent_item_id, variant_attributes, variant_dimensions, variant_options, item_categories(name)'
+        'id, name, sku, description, category_id, uom_term_id, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, is_parent, parent_item_id, variant_attributes, variant_dimensions, variant_options, item_categories(name)'
       )
       .order('name');
 
@@ -420,14 +420,15 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('item_categories')
-      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id, created_at, updated_at')
+      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id, created_at, updated_at, gv_category_term_id')
       .order('name');
 
     if (error) {
       throw AppError.internal(`Failed to fetch item categories: ${error.message}`);
     }
 
-    return (data || []) as ItemCategoryRow[];
+    // Cast via unknown — gv_category_term_id not yet in generated types (added by migration)
+    return (data || []) as unknown as ItemCategoryRow[];
   },
 
   /**
@@ -655,7 +656,7 @@ export const InventoryRPC = {
       p_name: payload.name,
       p_description: payload.description ?? null,
       p_category_id: payload.category_id ?? null,
-      p_unit_of_measure: payload.unit_of_measure ?? null,
+      p_uom_term_id: payload.uom_term_id ?? null,
       p_tracking_mode: payload.tracking_mode ?? null,
       p_reorder_point: payload.reorder_point ?? null,
       p_base_sku: payload.base_sku ?? null,
@@ -1724,7 +1725,7 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data: stockData, error: stockError } = await supabase
       .from('stock_balances')
-      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
+      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, uom_term_id, tracking_mode)')
       .eq('location_id', locationId)
       .gt('qty_available', 0)
       .order('name', { foreignTable: 'catalog_items' });
@@ -1735,7 +1736,7 @@ export const InventoryRPC = {
 
     const { data: assetData, error: assetError } = await supabase
       .from('assets')
-      .select('catalog_item_id, catalog_item:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
+      .select('catalog_item_id, catalog_item:catalog_item_id(id, name, sku, uom_term_id, tracking_mode)')
       .eq('location_id', locationId)
       .in('status', ['available', 'assigned']);
 
@@ -1743,7 +1744,7 @@ export const InventoryRPC = {
       throw AppError.internal(`Failed to load location assets: ${assetError.message}`);
     }
 
-    const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null }>();
+    const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null }>();
     (assetData || []).forEach((row) => {
       const catalogItemId = row.catalog_item_id as string | null;
       if (!catalogItemId) return;
@@ -1753,7 +1754,7 @@ export const InventoryRPC = {
       const existing = assetCounts.get(catalogItemId);
       assetCounts.set(catalogItemId, {
         count: (existing?.count || 0) + 1,
-        catalog_item: (catalogItem || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_item: (catalogItem || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null,
       });
     });
 
@@ -1768,7 +1769,7 @@ export const InventoryRPC = {
       catalog_item_id: string;
       qty_available: number | null;
       asset_count?: number | null;
-      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
     }>();
 
     (stockData || []).forEach((row) => {
@@ -1779,7 +1780,7 @@ export const InventoryRPC = {
         catalog_item_id: row.catalog_item_id,
         qty_available: row.qty_available,
         asset_count: null,
-        catalog_items: catalogItems as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_items: catalogItems as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null,
       });
     });
 
@@ -1795,7 +1796,7 @@ export const InventoryRPC = {
             catalog_item_id: string;
             qty_available: number | null;
             asset_count?: number | null;
-            catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+            catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
           });
           return;
         }
@@ -1809,7 +1810,7 @@ export const InventoryRPC = {
           catalog_item_id: string;
           qty_available: number | null;
           asset_count?: number | null;
-          catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+          catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
         });
       }
     });
@@ -1820,7 +1821,7 @@ export const InventoryRPC = {
       catalog_item_id: string;
       qty_available: number | null;
       asset_count?: number | null;
-      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
     }>;
   },
 
@@ -2083,7 +2084,7 @@ export const InventoryRPC = {
       .from('stock_balances')
       .select(`
         *,
-        catalog_items:catalog_item_id(name, sku, unit_of_measure, reorder_point),
+        catalog_items:catalog_item_id(name, sku, uom_term_id, reorder_point),
         locations:location_id(name)
       `)
       .order('catalog_items(name)');
@@ -2265,8 +2266,8 @@ export const InventoryRPC = {
    */
   async getUomConversions(): Promise<Array<{
     id: string;
-    from_uom: string;
-    to_uom: string;
+    from_uom_term_id: string;
+    to_uom_term_id: string;
     conversion_factor: number;
     is_bidirectional: boolean;
     last_event_id: string;
@@ -2275,8 +2276,8 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('uom_conversions')
-      .select('id, from_uom, to_uom, conversion_factor, is_bidirectional, last_event_id, created_at')
-      .order('from_uom');
+      .select('id, from_uom_term_id, to_uom_term_id, conversion_factor, is_bidirectional, last_event_id, created_at')
+      .order('from_uom_term_id');
 
     if (error) {
       throw AppError.internal(`Failed to fetch UOM conversions: ${error.message}`);
@@ -2290,15 +2291,15 @@ export const InventoryRPC = {
    * Table: inventory.uom_conversions
    */
   async createUomConversion(payload: {
-    from_uom: string;
-    to_uom: string;
+    from_uom_term_id: string;
+    to_uom_term_id: string;
     conversion_factor: number;
     is_bidirectional?: boolean;
   }) {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const insertPayload = {
-      from_uom: payload.from_uom.toUpperCase(),
-      to_uom: payload.to_uom.toUpperCase(),
+      from_uom_term_id: payload.from_uom_term_id,
+      to_uom_term_id: payload.to_uom_term_id,
       conversion_factor: payload.conversion_factor,
       is_bidirectional: payload.is_bidirectional ?? true,
       last_event_id: crypto.randomUUID(),
@@ -2349,8 +2350,8 @@ export const InventoryRPC = {
     const { data, error } = await supabase.rpc('convert_uom', {
       p_tenant_id: tenantId,
       p_qty: qty,
-      p_from_uom: fromUom,
-      p_to_uom: toUom,
+      p_from_uom_term_id: fromUom,
+      p_to_uom_term_id: toUom,
     });
 
     if (error) {
@@ -2598,7 +2599,7 @@ export const InventoryRPC = {
     location_name: string;
     location_type: string | null;
     max_capacity: number | null;
-    capacity_uom: string | null;
+    capacity_uom_term_id: string | null;
     current_qty: number;
     utilization_pct: number | null;
     is_over_capacity: boolean;
@@ -2763,7 +2764,7 @@ export const InventoryRPC = {
   async wizardCreateItem(params: {
     name: string;
     description?: string | null;
-    unit_of_measure?: string;
+    uom_term_id?: string | null;
     tracking_mode?: string;
     reorder_point?: number | null;
     base_sku?: string | null;
@@ -2825,7 +2826,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase.rpc('rpc_wizard_create_item', {
       p_name: params.name,
       p_description: params.description ?? null,
-      p_unit_of_measure: params.unit_of_measure ?? 'EA',
+      p_uom_term_id: params.uom_term_id ?? null,
       p_tracking_mode: params.tracking_mode ?? 'stock',
       p_reorder_point: params.reorder_point ?? null,
       p_base_sku: params.base_sku ?? null,
@@ -2919,7 +2920,7 @@ export const InventoryRPC = {
       name: string;
       sku: string;
       barcode: string | null;
-      unit_of_measure: string | null;
+      uom_term_id: string;
       tracking_mode: string;
       reorder_point: number | null;
       category_name: string | null;
@@ -2979,7 +2980,7 @@ export const InventoryRPC = {
       active: boolean;
       location_type: string | null;
       max_capacity: number | null;
-      capacity_uom: string | null;
+      capacity_uom_term_id: string | null;
     };
     totals: {
       on_hand: number;
@@ -2991,7 +2992,7 @@ export const InventoryRPC = {
       item_id: string;
       item_name: string;
       sku: string | null;
-      unit_of_measure: string | null;
+      uom_term_id: string | null;
       on_hand: number;
       reserved: number;
       available: number;

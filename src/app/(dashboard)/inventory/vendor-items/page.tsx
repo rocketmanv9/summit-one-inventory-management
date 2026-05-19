@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 
 type Vendor = {
   id: string;
@@ -26,7 +27,7 @@ type CatalogItem = {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure?: string | null;
+  uom_term_id?: string | null;
   tracking_mode?: string | null;
 };
 
@@ -35,7 +36,7 @@ type VendorItem = {
   vendor_id: string;
   catalog_item_id: string;
   vendor_sku: string;
-  vendor_uom: string | null;
+  vendor_uom_term_id: string | null;
   pack_size: number | null;
   is_preferred: boolean | null;
   unit_cost: number | null;
@@ -53,6 +54,8 @@ type EnrichedVendorItem = VendorItem & {
 };
 
 export default function VendorItemsPage() {
+  const uomLabels = useUOMLabelMap();
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [vendorItems, setVendorItems] = useState<VendorItem[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
@@ -67,7 +70,7 @@ export default function VendorItemsPage() {
     vendor_id: '',
     catalog_item_id: '',
     vendor_sku: '',
-    vendor_uom: '',
+    vendor_uom_term_id: '',
     pack_size: 1,
     is_preferred: false,
     unit_cost: '',
@@ -86,7 +89,7 @@ export default function VendorItemsPage() {
   const fetchVendorItems = async () => {
     try {
       const data = await SupplyChainRPC.getVendorItems();
-      setVendorItems(data || []);
+      setVendorItems((data || []) as any);
     } catch (error) {
       console.error('Error fetching vendor items:', error);
     } finally {
@@ -119,7 +122,7 @@ export default function VendorItemsPage() {
       vendor_id: formData.vendor_id,
       catalog_item_id: formData.catalog_item_id,
       vendor_sku: formData.vendor_sku,
-      vendor_uom: formData.vendor_uom || null,
+      vendor_uom_term_id: formData.vendor_uom_term_id || null,
       pack_size: parseFloat(formData.pack_size.toString()) || 1,
       is_preferred: formData.is_preferred,
       unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : null,
@@ -157,7 +160,7 @@ export default function VendorItemsPage() {
       vendor_id: item.vendor_id,
       catalog_item_id: item.catalog_item_id,
       vendor_sku: item.vendor_sku,
-      vendor_uom: item.vendor_uom || '',
+      vendor_uom_term_id: item.vendor_uom_term_id || '',
       pack_size: item.pack_size || 1,
       is_preferred: !!item.is_preferred,
       unit_cost: item.unit_cost?.toString() || '',
@@ -193,7 +196,7 @@ export default function VendorItemsPage() {
       vendor_id: '',
       catalog_item_id: '',
       vendor_sku: '',
-      vendor_uom: '',
+      vendor_uom_term_id: '',
       pack_size: 1,
       is_preferred: false,
       unit_cost: '',
@@ -340,9 +343,9 @@ export default function VendorItemsPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">{item.vendor_sku}</div>
-                    {item.vendor_uom && (
+                    {item.vendor_uom_term_id && (
                       <div className="text-sm text-gray-500">
-                        {item.pack_size} {item.vendor_uom}
+                        {item.pack_size} {uomLabels[item.vendor_uom_term_id] || item.vendor_uom_term_id}
                       </div>
                     )}
                   </td>
@@ -463,15 +466,22 @@ export default function VendorItemsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Vendor UOM
                     </label>
-                    <input
-                      type="text"
-                      value={formData.vendor_uom}
+                    <select
+                      value={formData.vendor_uom_term_id}
                       onChange={(e) =>
-                        setFormData({ ...formData, vendor_uom: e.target.value })
+                        setFormData({ ...formData, vendor_uom_term_id: e.target.value })
                       }
-                      placeholder="each, box, pallet"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+                    >
+                      <option value="">Select UOM...</option>
+                      {uomLoading ? (
+                        <option disabled>Loading...</option>
+                      ) : (
+                        uomTerms.map((t) => (
+                          <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                        ))
+                      )}
+                    </select>
                   </div>
                 </div>
 

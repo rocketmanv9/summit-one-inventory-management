@@ -5,12 +5,13 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface UomConversion {
   id: string;
-  from_uom: string;
-  to_uom: string;
+  from_uom_term_id: string;
+  to_uom_term_id: string;
   conversion_factor: number;
   is_bidirectional: boolean;
   last_event_id: string;
@@ -18,6 +19,7 @@ interface UomConversion {
 }
 
 export default function UomConversionsPage() {
+  const uomLabels = useUOMLabelMap();
   const [conversions, setConversions] = useState<UomConversion[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -39,7 +41,7 @@ export default function UomConversionsPage() {
   };
 
   const handleDelete = async (conv: UomConversion) => {
-    if (!confirm(`Delete conversion ${conv.from_uom} -> ${conv.to_uom}?`)) return;
+    if (!confirm(`Delete conversion ${uomLabels[conv.from_uom_term_id] || conv.from_uom_term_id} -> ${uomLabels[conv.to_uom_term_id] || conv.to_uom_term_id}?`)) return;
     try {
       await InventoryRPC.deleteUomConversion(conv.id, conv.last_event_id);
       await fetchConversions();
@@ -50,19 +52,19 @@ export default function UomConversionsPage() {
 
   const columns = [
     {
-      key: 'from_uom',
+      key: 'from_uom_term_id',
       header: 'From UOM',
       sortable: true,
       render: (row: UomConversion) => (
-        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{row.from_uom}</code>
+        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{uomLabels[row.from_uom_term_id] || row.from_uom_term_id}</code>
       ),
     },
     {
-      key: 'to_uom',
+      key: 'to_uom_term_id',
       header: 'To UOM',
       sortable: true,
       render: (row: UomConversion) => (
-        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{row.to_uom}</code>
+        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{uomLabels[row.to_uom_term_id] || row.to_uom_term_id}</code>
       ),
     },
     {
@@ -85,12 +87,16 @@ export default function UomConversionsPage() {
     {
       key: 'description',
       header: 'Meaning',
-      render: (row: UomConversion) => (
-        <span className="text-sm text-muted-foreground">
-          1 {row.from_uom} = {row.conversion_factor} {row.to_uom}
-          {row.is_bidirectional && ` (and 1 ${row.to_uom} = ${(1 / row.conversion_factor).toFixed(6)} ${row.from_uom})`}
-        </span>
-      ),
+      render: (row: UomConversion) => {
+        const fromLabel = uomLabels[row.from_uom_term_id] || row.from_uom_term_id;
+        const toLabel = uomLabels[row.to_uom_term_id] || row.to_uom_term_id;
+        return (
+          <span className="text-sm text-muted-foreground">
+            1 {fromLabel} = {row.conversion_factor} {toLabel}
+            {row.is_bidirectional && ` (and 1 ${toLabel} = ${(1 / row.conversion_factor).toFixed(6)} ${fromLabel})`}
+          </span>
+        );
+      },
     },
     {
       key: 'actions',
@@ -159,9 +165,10 @@ export default function UomConversionsPage() {
 }
 
 function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [form, setForm] = useState({
-    from_uom: '',
-    to_uom: '',
+    from_uom_term_id: '',
+    to_uom_term_id: '',
     conversion_factor: '',
     is_bidirectional: true,
   });
@@ -174,7 +181,7 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
     setError('');
 
     try {
-      if (!form.from_uom || !form.to_uom || !form.conversion_factor) {
+      if (!form.from_uom_term_id || !form.to_uom_term_id || !form.conversion_factor) {
         throw AppError.badRequest('All fields are required');
       }
 
@@ -184,11 +191,11 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
       }
 
       await InventoryRPC.createUomConversion({
-        from_uom: form.from_uom.toUpperCase(),
-        to_uom: form.to_uom.toUpperCase(),
+        from_uom_term_id: form.from_uom_term_id,
+        to_uom_term_id: form.to_uom_term_id,
         conversion_factor: factor,
         is_bidirectional: form.is_bidirectional,
-      });
+      } as any);
 
       onCreated();
     } catch (err: any) {
@@ -216,25 +223,39 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">From UOM *</label>
-              <input
-                type="text"
-                value={form.from_uom}
-                onChange={(e) => setForm({ ...form, from_uom: e.target.value })}
+              <select
+                value={form.from_uom_term_id}
+                onChange={(e) => setForm({ ...form, from_uom_term_id: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g., EA"
                 required
-              />
+              >
+                <option value="">Select UOM...</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">To UOM *</label>
-              <input
-                type="text"
-                value={form.to_uom}
-                onChange={(e) => setForm({ ...form, to_uom: e.target.value })}
+              <select
+                value={form.to_uom_term_id}
+                onChange={(e) => setForm({ ...form, to_uom_term_id: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g., DZ"
                 required
-              />
+              >
+                <option value="">Select UOM...</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
+              </select>
             </div>
           </div>
 

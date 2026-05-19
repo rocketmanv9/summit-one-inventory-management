@@ -210,7 +210,7 @@ describe('friction metrics', () => {
 // ── Sprint 1: SMART_DEFAULTS expansion ──────────────────────────────────
 
 describe('SMART_DEFAULTS', () => {
-  it('add_item includes tracking_mode and unit_of_measure', async () => {
+  it('add_item includes tracking_mode default', async () => {
     // We can't easily import SMART_DEFAULTS directly since it's a const in useAiChat,
     // but we can verify the expected defaults exist by checking the source structure.
     // For now, test the values we expect:
@@ -218,12 +218,11 @@ describe('SMART_DEFAULTS', () => {
       adjust_stock:       { reason: 'other' },
       adjust_stock_delta: { reason: 'other' },
       issue_inventory:    { issued_to_type: 'other' },
-      add_item:           { tracking_mode: 'fungible', unit_of_measure: 'each' },
+      add_item:           { tracking_mode: 'fungible' },
       create_reservation: { allocation_type: 'other' },
     };
 
     expect(expectedDefaults.add_item.tracking_mode).toBe('fungible');
-    expect(expectedDefaults.add_item.unit_of_measure).toBe('each');
     expect(expectedDefaults.create_reservation.allocation_type).toBe('other');
   });
 });

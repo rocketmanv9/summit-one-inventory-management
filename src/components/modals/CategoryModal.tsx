@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useItemCategoryTerms } from '@/hooks/useGVTerms';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
@@ -37,9 +38,11 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
   const [parentCategoryId, setParentCategoryId] = useState('');
   const [separator, setSeparator] = useState('-');
   const [nextSequence, setNextSequence] = useState('1');
+  const [gvCategoryTermId, setGvCategoryTermId] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { terms: gvCategoryTerms, loading: gvCategoryLoading } = useItemCategoryTerms();
 
   useEffect(() => {
     if (!open) return;
@@ -52,6 +55,7 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
       setSkuPrefix(item.sku_prefix || '');
       setSkuMode(item.sku_mode || 'sequential');
       setParentCategoryId(item.parent_category_id || '');
+      setGvCategoryTermId((item as any).gv_category_term_id || '');
     } else {
       setName(defaultName || '');
       setSkuPrefix(defaultSkuPrefix || '');
@@ -59,6 +63,7 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
       setParentCategoryId('');
       setSeparator('-');
       setNextSequence('1');
+      setGvCategoryTermId('');
     }
 
     loadCategories();
@@ -87,6 +92,20 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
       console.error('Error loading SKU settings:', err);
     }
   }
+
+  // Auto-suggest GV mapping when name matches a GV term label (create mode only)
+  useEffect(() => {
+    if (isEdit || !name.trim() || gvCategoryLoading || gvCategoryTerms.length === 0) return;
+    // Only auto-suggest if user hasn't manually selected one
+    if (gvCategoryTermId) return;
+    const lower = name.trim().toLowerCase();
+    const match = gvCategoryTerms.find(
+      (t) => t.label.toLowerCase() === lower || t.label.toLowerCase().replace(/[_\s]/g, ' ') === lower
+    );
+    if (match) {
+      setGvCategoryTermId(match.term_id);
+    }
+  }, [name, gvCategoryTerms, gvCategoryLoading, isEdit]);
 
   const buildSkuPreview = () => {
     const prefix = skuPrefix ? skuPrefix.toUpperCase() : '';
@@ -118,6 +137,7 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
         sku_prefix: skuPrefix || null,
         sku_mode: skuMode || null,
         parent_category_id: parentCategoryId || null,
+        gv_category_term_id: gvCategoryTermId || null,
       };
 
       let categoryId = item?.id;
@@ -190,6 +210,30 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}
             </select>
+          </div>
+
+          {/* GV Category Mapping (optional) */}
+          <div className="space-y-2">
+            <Label htmlFor="cat-gv-mapping">Standard Category Mapping</Label>
+            <select
+              id="cat-gv-mapping"
+              value={gvCategoryTermId}
+              onChange={(e) => setGvCategoryTermId(e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+            >
+              <option value="">-- None --</option>
+              {gvCategoryLoading ? (
+                <option disabled>Loading...</option>
+              ) : (
+                gvCategoryTerms.map((t) => (
+                  <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                ))
+              )}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Optionally map to a standard category for cross-service reporting.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

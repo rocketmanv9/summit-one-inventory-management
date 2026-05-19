@@ -22,7 +22,7 @@ interface StockBalance {
   qty_on_order?: number;
   inventory_position?: number;
   reorder_point?: number;
-  catalog_items?: { id: string; name: string; sku: string; unit_of_measure: string };
+  catalog_items?: { id: string; name: string; sku: string; uom_term_id: string };
   locations?: { id: string; name: string; location_type: string };
 }
 

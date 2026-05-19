@@ -29,6 +29,7 @@ import { validatePOForm, calculatePOTotal, getOrderingModeLabel, getOrderingMode
 import type { CreatePOFormState, CreatePOLineInput, DeliveryMethod, CostContext } from '@/types/purchase-orders';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMTerms } from '@/hooks/useGVTerms';
 
 interface CreatePOModalProps {
   open: boolean;
@@ -697,6 +698,7 @@ interface LineItemInputProps {
 }
 
 function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVendorItems, hasVendorSelected }: LineItemInputProps) {
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [itemType, setItemType] = useState<'catalog' | 'freetext'>(
     line.catalog_item_id ? 'catalog' : 'freetext'
   );
@@ -728,7 +730,7 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
         onValueChange={(value: string) => {
           setItemType(value as 'catalog' | 'freetext');
           if (value === 'catalog') {
-            onChange({ item_description: undefined, unit_of_measure: undefined });
+            onChange({ item_description: undefined, uom_term_id: undefined });
           } else {
             onChange({ catalog_item_id: undefined });
           }
@@ -811,11 +813,20 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
             </div>
             <div className="space-y-2">
               <Label className="text-sm">Unit of Measure *</Label>
-              <Input
-                placeholder="e.g., tons, bags, each"
-                value={line.unit_of_measure || ''}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ unit_of_measure: e.target.value })}
-              />
+              <select
+                value={line.uom_term_id || ''}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChange({ uom_term_id: e.target.value || undefined })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+              >
+                <option value="">Select UOM...</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
+              </select>
             </div>
           </>
         )}

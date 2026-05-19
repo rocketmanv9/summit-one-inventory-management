@@ -49,7 +49,7 @@ export interface CreatePurchaseOrderParams {
   lines: Array<{
     catalog_item_id?: string;
     item_description?: string;
-    unit_of_measure?: string;
+    uom_term_id?: string;
     qty_ordered: number;
     unit_cost?: number;
     estimated_unit_cost?: number;
@@ -188,7 +188,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, notes, active, created_at, updated_at, last_event_id')
+      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id')
       .eq('id', vendorId)
       .maybeSingle();
 
@@ -259,7 +259,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id')
+      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id')
       .eq('active', true)
       .order('name');
 
@@ -399,7 +399,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
       .from('vendor_items')
-      .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
       .order('updated_at', { ascending: false });
 
     if (vendorId) {

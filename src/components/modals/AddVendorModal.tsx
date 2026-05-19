@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -13,9 +13,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Loader2, Search } from 'lucide-react';
+import { AlertCircle, Loader2, Search, MapPin } from 'lucide-react';
 import { searchVendorOnline } from '@/lib/ai/client';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { geocodeAddress } from '@/lib/geocode';
+import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
@@ -56,6 +58,13 @@ interface VendorFormState {
   payment_terms: string;
   lead_time_days: string;
   notes: string;
+  vendor_type_term_id: string;
+  address_line_1: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  latitude: string;
+  longitude: string;
 }
 
 const emptyForm: VendorFormState = {
@@ -67,16 +76,56 @@ const emptyForm: VendorFormState = {
   payment_terms: 'NET30',
   lead_time_days: '',
   notes: '',
+  vendor_type_term_id: '',
+  address_line_1: '',
+  city: '',
+  state: '',
+  postal_code: '',
+  latitude: '',
+  longitude: '',
 };
 
 export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }: AddVendorModalProps) {
   const isEdit = !!vendor;
   const [form, setForm] = useState<VendorFormState>(emptyForm);
   const [searching, setSearching] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchDone, setSearchDone] = useState(false);
   const [codeSettings, setCodeSettings] = useState<VendorCodeSettings | null>(null);
+  const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
+  const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastGeocodedAddress = useRef('');
+
+  const autoGeocodeVendor = useCallback(() => {
+    // Debounce: wait 600ms after last blur before geocoding
+    if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
+    geocodeTimer.current = setTimeout(async () => {
+      const parts = [form.address_line_1, form.city, form.state, form.postal_code].filter(Boolean);
+      const fullAddress = parts.join(', ').trim();
+      if (!fullAddress || fullAddress === lastGeocodedAddress.current) return;
+      // Skip if coordinates already populated
+      if (form.latitude && form.longitude) return;
+
+      lastGeocodedAddress.current = fullAddress;
+      setGeocoding(true);
+      try {
+        const result = await geocodeAddress(fullAddress);
+        if (result) {
+          setForm((prev) => ({
+            ...prev,
+            latitude: result.latitude.toString(),
+            longitude: result.longitude.toString(),
+          }));
+        }
+      } catch {
+        // Silent fail on auto-geocode
+      } finally {
+        setGeocoding(false);
+      }
+    }, 600);
+  }, [form.address_line_1, form.city, form.state, form.postal_code, form.latitude, form.longitude]);
 
   // Load vendor code settings on mount
   useEffect(() => {
@@ -126,6 +175,13 @@ export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }
         payment_terms: vendor.payment_terms || 'NET30',
         lead_time_days: vendor.lead_time_days?.toString() || '',
         notes: vendor.notes || '',
+        vendor_type_term_id: (vendor as any).vendor_type_term_id || '',
+        address_line_1: (vendor as any).address_line_1 || '',
+        city: (vendor as any).city || '',
+        state: (vendor as any).state || '',
+        postal_code: (vendor as any).postal_code || '',
+        latitude: (vendor as any).latitude?.toString() || '',
+        longitude: (vendor as any).longitude?.toString() || '',
       });
     } else if (initialName) {
       setForm({ ...emptyForm, name: initialName });
@@ -294,6 +350,13 @@ export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }
         payment_terms: form.payment_terms || undefined,
         lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
         notes: form.notes.trim() || undefined,
+        vendor_type_term_id: form.vendor_type_term_id || null,
+        address_line_1: form.address_line_1.trim() || null,
+        city: form.city.trim() || null,
+        state: form.state.trim() || null,
+        postal_code: form.postal_code.trim() || null,
+        latitude: form.latitude ? parseFloat(form.latitude) : null,
+        longitude: form.longitude ? parseFloat(form.longitude) : null,
       };
 
       if (isEdit && vendor) {
@@ -426,6 +489,27 @@ export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }
             )}
           </div>
 
+          {/* Vendor Type */}
+          <div className="space-y-2">
+            <Label htmlFor="vendor-type">Vendor Type</Label>
+            <select
+              id="vendor-type"
+              value={form.vendor_type_term_id}
+              onChange={(e) => handleChange('vendor_type_term_id', e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+            >
+              <option value="">-- Select type --</option>
+              {vendorTypeLoading ? (
+                <option disabled>Loading...</option>
+              ) : (
+                vendorTypeTerms.map((t) => (
+                  <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                ))
+              )}
+            </select>
+          </div>
+
           {/* Contact Information */}
           <div className="space-y-3 border-t pt-4">
             <h4 className="text-sm font-medium">Contact Information</h4>
@@ -464,6 +548,73 @@ export function AddVendorModal({ open, onClose, onSuccess, initialName, vendor }
                 disabled={submitting}
               />
             </div>
+          </div>
+
+          {/* Address & Geocoding */}
+          <div className="space-y-3 border-t pt-4">
+            <h4 className="text-sm font-medium">Address</h4>
+
+            <div className="space-y-2">
+              <Label htmlFor="vendor-address">Street Address</Label>
+              <Input
+                id="vendor-address"
+                value={form.address_line_1}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange('address_line_1', e.target.value)}
+                onBlur={autoGeocodeVendor}
+                placeholder="e.g. 123 Main St"
+                disabled={submitting}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-2">
+                <Label htmlFor="vendor-city">City</Label>
+                <Input
+                  id="vendor-city"
+                  value={form.city}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange('city', e.target.value)}
+                  onBlur={autoGeocodeVendor}
+                  placeholder="City"
+                  disabled={submitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vendor-state">State</Label>
+                <Input
+                  id="vendor-state"
+                  value={form.state}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange('state', e.target.value)}
+                  onBlur={autoGeocodeVendor}
+                  placeholder="WA"
+                  disabled={submitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vendor-postal">ZIP</Label>
+                <Input
+                  id="vendor-postal"
+                  value={form.postal_code}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChange('postal_code', e.target.value)}
+                  onBlur={autoGeocodeVendor}
+                  placeholder="98001"
+                  disabled={submitting}
+                />
+              </div>
+            </div>
+
+            {geocoding && (
+              <p className="text-xs text-muted-foreground animate-pulse flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Geocoding address...
+              </p>
+            )}
+
+            {!geocoding && (form.latitude || form.longitude) && (
+              <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                <MapPin className="h-3 w-3" />
+                {form.latitude}, {form.longitude}
+              </p>
+            )}
           </div>
 
           {/* Terms */}

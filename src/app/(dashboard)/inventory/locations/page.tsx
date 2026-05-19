@@ -2,7 +2,7 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
@@ -12,6 +12,8 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { LocationTypeModal } from '@/components/modals/LocationTypeModal';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
+import { geocodeAddress } from '@/lib/geocode';
 import type { Database } from 'types/supabase';
 
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
@@ -39,6 +41,7 @@ function normalizeLocationTypes(data: LocationTypeRow[] | null | undefined): Loc
 
 export default function LocationsPage() {
   const router = useRouter();
+  const uomLabels = useUOMLabelMap();
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -141,7 +144,7 @@ export default function LocationsPage() {
         if (!(row as any).max_capacity) return <span className="text-muted-foreground">-</span>;
         return (
           <span className="text-sm font-mono">
-            {(row as any).max_capacity} {(row as any).capacity_uom || ''}
+            {(row as any).max_capacity} {uomLabels[(row as any).capacity_uom_term_id] || (row as any).capacity_uom_term_id || ''}
           </span>
         );
       },
@@ -267,6 +270,7 @@ export default function LocationsPage() {
 
 function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { location?: Location | null; onClose: () => void; onCreated: () => void; onAddNewType: () => void }) {
   const isEditing = !!location;
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [form, setForm] = useState({
     name: location?.name || '',
     location_type_id: location?.location_type_id || '',
@@ -274,12 +278,40 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
     parent_location_id: location?.parent_location_id || '',
     active: location?.active !== undefined ? location.active : true,
     max_capacity: (location as any)?.max_capacity?.toString() || '',
-    capacity_uom: (location as any)?.capacity_uom || '',
+    capacity_uom_term_id: (location as any)?.capacity_uom_term_id || '',
+    latitude: (location as any)?.latitude?.toString() || '',
+    longitude: (location as any)?.longitude?.toString() || '',
   });
   const [locationTypes, setLocationTypes] = useState<LocationType[]>([]);
   const [availableParents, setAvailableParents] = useState<Location[]>([]);
   const [saving, setSaving] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [error, setError] = useState('');
+  const lastGeocodedAddress = useRef('');
+
+  const autoGeocode = useCallback(async (address: string) => {
+    const trimmed = address.trim();
+    if (!trimmed || trimmed === lastGeocodedAddress.current) return;
+    // Skip if coordinates are already manually entered
+    if (form.latitude && form.longitude) return;
+
+    lastGeocodedAddress.current = trimmed;
+    setGeocoding(true);
+    try {
+      const result = await geocodeAddress(trimmed);
+      if (result) {
+        setForm((prev) => ({
+          ...prev,
+          latitude: result.latitude.toString(),
+          longitude: result.longitude.toString(),
+        }));
+      }
+    } catch {
+      // Silent fail on auto-geocode — user can manually geocode or enter coords
+    } finally {
+      setGeocoding(false);
+    }
+  }, [form.latitude, form.longitude]);
 
   useEffect(() => {
     fetchLocationTypes();
@@ -329,7 +361,9 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         location_type: locationTypeName,
         parent_location_id: form.parent_location_id || null,
         max_capacity: form.max_capacity ? parseFloat(form.max_capacity) : null,
-        capacity_uom: form.capacity_uom || null,
+        capacity_uom_term_id: form.capacity_uom_term_id || null,
+        latitude: form.latitude ? parseFloat(form.latitude) : null,
+        longitude: form.longitude ? parseFloat(form.longitude) : null,
       };
 
       if (isEditing && location) {
@@ -422,9 +456,38 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
             <textarea
               value={form.address}
               onChange={(e) => setForm({ ...form, address: e.target.value })}
+              onBlur={(e) => autoGeocode(e.target.value)}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               rows={2}
             />
+            {geocoding && (
+              <p className="mt-1 text-xs text-muted-foreground animate-pulse">Geocoding address...</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={form.latitude}
+                onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. 47.3073"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={form.longitude}
+                onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. -122.2285"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -442,16 +505,18 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
             <div>
               <label className="block text-sm font-medium mb-1">Capacity Unit</label>
               <select
-                value={form.capacity_uom}
-                onChange={(e) => setForm({ ...form, capacity_uom: e.target.value })}
+                value={form.capacity_uom_term_id}
+                onChange={(e) => setForm({ ...form, capacity_uom_term_id: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">None</option>
-                <option value="unit">Units</option>
-                <option value="pallet">Pallets</option>
-                <option value="sqft">Sq. Feet</option>
-                <option value="ton">Tons</option>
-                <option value="cy">Cubic Yards</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
               </select>
             </div>
           </div>

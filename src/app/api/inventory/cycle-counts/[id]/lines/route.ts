@@ -25,7 +25,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const inv = (supabase as any).schema('inventory');
   const { data, error } = await inv
     .from('cycle_count_lines')
-    .select('*, catalog_item:catalog_items(id, name, sku, tracking_mode, unit_of_measure)')
+    .select('*, catalog_item:catalog_items(id, name, sku, tracking_mode, uom_term_id)')
     .eq('cycle_count_id', cycleCountId)
     .order('line_number', { ascending: true })
     .limit(500);

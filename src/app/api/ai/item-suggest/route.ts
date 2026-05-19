@@ -14,6 +14,7 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import OpenAI from 'openai';
 import { z } from 'zod';
+import { getGVClient } from '@/lib/gv';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -26,7 +27,7 @@ const RequestSchema = z.object({
   })).optional().default([]),
 });
 
-export const POST = createSessionReadRoute(async ({ req, log }) => {
+export const POST = createSessionReadRoute(async ({ req, session, log }) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json(
@@ -50,6 +51,28 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
     ? existing_categories.map(c => `- "${c.name}" (prefix: ${c.sku_prefix || 'none'})`).join('\n')
     : '(no categories exist yet)';
 
+  // Fetch valid UOM terms from GV for the AI prompt and validation
+  let uomLabelMap: Record<string, string> = {}; // termId → label
+  let uomLabels: string[];
+  const FALLBACK_UOM_LABELS = ['Each', 'Box', 'Case', 'Pound', 'Kilogram', 'Ton', 'Gallon', 'Liter', 'Foot', 'Meter', 'Yard', 'Pallet', 'Roll', 'Bag', 'Drum', 'Square Foot', 'Square Yard', 'Cubic Yard', 'Linear Foot', 'Load'];
+  try {
+    const gv = getGVClient();
+    const rawMap = await gv.buildLabelMap(session.tenantId!, 'uom');
+    // Convert Map to plain Record if needed
+    uomLabelMap = rawMap instanceof Map ? Object.fromEntries(rawMap) : rawMap as Record<string, string>;
+    uomLabels = Object.keys(uomLabelMap).length > 0
+      ? Object.values(uomLabelMap)
+      : FALLBACK_UOM_LABELS;
+  } catch {
+    uomLabels = FALLBACK_UOM_LABELS;
+  }
+
+  // Build reverse lookup: lowercase label → termId
+  const labelToTermId: Record<string, string> = {};
+  for (const [termId, label] of Object.entries(uomLabelMap)) {
+    labelToTermId[label.toLowerCase()] = termId;
+  }
+
   try {
     const openai = new OpenAI({ apiKey });
 
@@ -67,7 +90,7 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
             '  description   — concise professional description (1-2 sentences)',
             '  category      — pick the BEST match from the existing categories list below, or suggest a new one',
             '  category_match — "existing" if you picked from the list, "new" if suggesting a new category',
-            '  unit_of_measure — one of: EA, BOX, CASE, LB, KG, TON, GAL, LTR, FT, M, YD, PALLET, ROLL, BAG, DRUM',
+            `  unit_of_measure — one of: ${uomLabels.join(', ')}`,
             '  tracking_mode — one of: "stock" (bulk/quantity items), "serialized" (individual tracked assets like equipment), "both" (items that can be either)',
             '  suggested_identifier_types — array of label types to print: ["barcode"] for stock materials, ["barcode", "qr"] for serialized/high-value items',
             '  reorder_point — suggested default reorder point (integer) for a mid-size company',
@@ -136,11 +159,37 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
       new_category_name = suggestion.category;
     }
 
-    // Validate UOM against allowed values
-    const VALID_UOMS = ['EA', 'BOX', 'CASE', 'LB', 'KG', 'TON', 'GAL', 'LTR', 'FT', 'M', 'YD', 'PALLET', 'ROLL', 'BAG', 'DRUM'];
-    const uom = VALID_UOMS.includes(suggestion.unit_of_measure?.toUpperCase())
-      ? suggestion.unit_of_measure.toUpperCase()
-      : 'EA';
+    // Resolve UOM to GV term ID
+    const aiUom = suggestion.unit_of_measure || '';
+    let uomLabel = aiUom;
+    let uomTermId: string | null = labelToTermId[aiUom.toLowerCase()] || null;
+
+    // Try partial match if exact label match failed
+    if (!uomTermId && aiUom) {
+      const lower = aiUom.toLowerCase();
+      const entry = Object.entries(uomLabelMap).find(
+        ([, label]) => label.toLowerCase().includes(lower) || lower.includes(label.toLowerCase())
+      );
+      if (entry) {
+        uomTermId = entry[0];
+        uomLabel = entry[1];
+      }
+    }
+
+    // Fallback to "Each" if nothing matches
+    if (!uomTermId) {
+      const eachEntry = Object.entries(uomLabelMap).find(
+        ([, label]) => label.toLowerCase() === 'each'
+      );
+      if (eachEntry) {
+        uomTermId = eachEntry[0];
+        uomLabel = eachEntry[1];
+      } else {
+        uomLabel = 'Each';
+      }
+    }
+
+    const uom = uomLabel;
 
     // Validate tracking mode
     const VALID_MODES = ['stock', 'serialized', 'both'];
@@ -183,7 +232,8 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
         category_id,
         new_category_name,
         category_display: suggestion.category || '',
-        unit_of_measure: uom,
+        uom: uom,
+        uom_term_id: uomTermId,
         tracking_mode: tracking,
         reorder_point: typeof suggestion.reorder_point === 'number' ? suggestion.reorder_point : null,
         suggested_identifier_types: identifierTypes,

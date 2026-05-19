@@ -9,7 +9,7 @@ const StockReceiveSchema = z.object({
   item_description: z.string().optional(),
   location_name: z.string().min(1),
   quantity: z.number().positive(),
-  unit_of_measure: z.string().default('each'),
+  uom_term_id: z.string().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
@@ -38,7 +38,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
   // ── 2. Search for existing catalog item ───────────────────────────
   const { data: existingItems, error: itemSearchError } = await inv
     .from('catalog_items')
-    .select('id, name, sku, unit_of_measure')
+    .select('id, name, sku, uom_term_id')
     .or(`name.ilike.%${body.item_name}%,sku.ilike.%${body.item_name}%`)
     .eq('active', true)
     .limit(5);
@@ -64,7 +64,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
       .rpc('rpc_create_catalog_item', {
         p_name: body.item_name,
         p_sku: autoSku,
-        p_unit_of_measure: body.unit_of_measure,
+        p_uom_term_id: body.uom_term_id || null,
         p_description: body.item_description || null,
         p_tracking_mode: 'fungible',
         p_last_event_id: `${idempotencyKey}_create_item`,
@@ -104,7 +104,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
       p_location_id: location.id,
       p_new_qty: newQty,
       p_reason: 'other',
-      p_notes: `AI image recognition stock receive: +${body.quantity} ${body.unit_of_measure}`,
+      p_notes: `AI image recognition stock receive: +${body.quantity} ${body.uom_term_id || 'each'}`,
       p_last_event_id: `${idempotencyKey}_adjust`,
     });
 
@@ -129,7 +129,7 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
       item_created: itemCreated,
       location_name: location.name,
       quantity_added: body.quantity,
-      unit_of_measure: body.unit_of_measure,
+      uom_term_id: body.uom_term_id || null,
       previous_qty: previousQty,
       new_qty: newQty,
     },

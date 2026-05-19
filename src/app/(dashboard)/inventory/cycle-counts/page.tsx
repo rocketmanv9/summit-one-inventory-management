@@ -10,6 +10,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 interface CycleCount {
   id: string;
@@ -338,6 +339,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   onClose: () => void;
   onUpdate: () => void;
 }) {
+  const uomLabels = useUOMLabelMap();
   const [countLines, setCountLines] = useState<any[]>([]);
   const [loadingLines, setLoadingLines] = useState(true);
   const [showMobileDialog, setShowMobileDialog] = useState(false);
@@ -950,11 +952,11 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                                   <span className="font-medium">Reason:</span> {formatReason(line.decision_reason)}
                                 </div>
                                 <div className="text-xs text-blue-700 flex items-center gap-2 mt-0.5">
-                                  <span>Stock: {line.qty_expected} {item?.unit_of_measure || 'units'}</span>
+                                  <span>Stock: {line.qty_expected} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
                                   <span className={delta < 0 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
                                     {delta >= 0 ? '+' : ''}{delta}
                                   </span>
-                                  <span>→ {newQty} {item?.unit_of_measure || 'units'}</span>
+                                  <span>→ {newQty} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
                                 </div>
                               </div>
                             );
@@ -972,7 +974,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                               <div key={line.id} className="pl-3 border-l-2 border-orange-300">
                                 <div className="text-xs font-medium text-orange-900">{item?.name || 'Unknown Item'}</div>
                                 <div className="text-xs text-orange-700">
-                                  Variance: {delta >= 0 ? '+' : ''}{delta} {item?.unit_of_measure || 'units'} - Requires follow-up
+                                  Variance: {delta >= 0 ? '+' : ''}{delta} {uomLabels[(item as any)?.uom_term_id] || 'units'} - Requires follow-up
                                 </div>
                               </div>
                             );

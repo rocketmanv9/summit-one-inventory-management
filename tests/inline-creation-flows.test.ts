@@ -122,7 +122,7 @@ test.describe('Inline Creation Flows', () => {
         name: `Test Item ${Date.now()}`,
         sku: `TST-${Date.now()}`,
         category_id: cat.id,
-        unit_of_measure: 'EA',
+        uom_term_id: 'e4624aa5-8637-4967-b48d-3b11e085d0cf', // EA term from GV
         tracking_mode: 'stock',
         last_event_id: itemEventId,
       })
@@ -271,7 +271,7 @@ test.describe('Inline Creation Flows', () => {
         p_lines: JSON.stringify([
           {
             item_description: 'Custom Material - Not in Catalog',
-            unit_of_measure: 'TON',
+            uom_term_id: null,
             qty_ordered: 50,
             unit_cost: 125.00,
           },
@@ -290,7 +290,7 @@ test.describe('Inline Creation Flows', () => {
           p_lines: JSON.stringify([
             {
               item_description: 'Custom Material - Not in Catalog',
-              unit_of_measure: 'TON',
+              uom_term_id: null,
               qty_ordered: 50,
               unit_cost: 125.00,
             },

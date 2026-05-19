@@ -10,6 +10,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 
@@ -36,6 +37,7 @@ interface PurchaseOrder {
 }
 
 export default function PurchasingPage() {
+  const uomLabels = useUOMLabelMap();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -517,17 +519,18 @@ export default function PurchasingPage() {
   );
 }
 
-function PODetailPanel({ 
-  po, 
-  onClose, 
-  locations, 
-  catalogItems 
-}: { 
-  po: PurchaseOrder; 
+function PODetailPanel({
+  po,
+  onClose,
+  locations,
+  catalogItems
+}: {
+  po: PurchaseOrder;
   onClose: () => void;
   locations: Map<string, string>;
   catalogItems: Map<string, any>;
 }) {
+  const uomLabels = useUOMLabelMap();
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -649,7 +652,7 @@ function PODetailPanel({
                     <StatusChip status={line.status} size="sm" />
                   </div>
                   <div className="text-xs text-muted-foreground mb-2">
-                    {item?.sku} | {item?.unit_of_measure}
+                    {item?.sku} | {uomLabels[(item as any)?.uom_term_id] || (item as any)?.uom_term_id || '-'}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     <div>
@@ -795,8 +798,9 @@ function PODetailPanel({
 }
 
 function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClose: () => void; onCreated: () => void; onAddVendor: () => void; newVendorId?: string | null }) {
-  type POLine = { catalog_item_id: string; item_description: string; unit_of_measure: string; qty: string; unit_cost: string };
-  const emptyLine: POLine = { catalog_item_id: '', item_description: '', unit_of_measure: 'EA', qty: '', unit_cost: '' };
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
+  type POLine = { catalog_item_id: string; item_description: string; uom_term_id: string; qty: string; unit_cost: string };
+  const emptyLine: POLine = { catalog_item_id: '', item_description: '', uom_term_id: '', qty: '', unit_cost: '' };
   const [form, setForm] = useState({
     vendor_id: '',
     ship_to_location_id: '',
@@ -895,7 +899,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
       let validLines: Array<{
         catalog_item_id?: string;
         item_description?: string;
-        unit_of_measure?: string;
+        uom_term_id?: string;
         qty_ordered: number;
         unit_cost: number;
       }>;
@@ -906,7 +910,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
           .filter(l => l.item_description.trim() && l.qty)
           .map(l => ({
             item_description: l.item_description.trim(),
-            unit_of_measure: l.unit_of_measure || 'EA',
+            uom_term_id: l.uom_term_id || undefined,
             qty_ordered: parseInt(l.qty),
             unit_cost: parseFloat(l.unit_cost) || 0,
           }));
@@ -1070,17 +1074,18 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                         placeholder="Item description..."
                       />
                       <select
-                        value={line.unit_of_measure}
-                        onChange={(e) => updateLine(index, 'unit_of_measure', e.target.value)}
-                        className="w-20 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                        value={line.uom_term_id}
+                        onChange={(e) => updateLine(index, 'uom_term_id', e.target.value)}
+                        className="w-24 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                       >
-                        <option value="EA">EA</option>
-                        <option value="TON">TON</option>
-                        <option value="CY">CY</option>
-                        <option value="LB">LB</option>
-                        <option value="GAL">GAL</option>
-                        <option value="FT">FT</option>
-                        <option value="BOX">BOX</option>
+                        <option value="">UOM</option>
+                        {uomLoading ? (
+                          <option disabled>...</option>
+                        ) : (
+                          uomTerms.map((t) => (
+                            <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                          ))
+                        )}
                       </select>
                     </>
                   ) : (

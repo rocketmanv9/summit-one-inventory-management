@@ -12,7 +12,7 @@ interface CountLine {
     sku?: string;
     barcode?: string;
     tracking_mode?: string;
-    unit_of_measure?: string;
+    uom_term_id?: string;
     parent_item_id?: string | null;
     parent_name?: string | null;
     variant_attributes?: Record<string, string> | null;

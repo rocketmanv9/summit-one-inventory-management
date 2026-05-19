@@ -394,8 +394,8 @@ export type Database = {
           target_level: number | null
           tenant_id: string
           tracking_mode: string
-          unit_of_measure: string | null
           uom: string | null
+          uom_term_id: string
           updated_at: string
           updated_by: string | null
         }
@@ -429,8 +429,8 @@ export type Database = {
           target_level?: number | null
           tenant_id: string
           tracking_mode: string
-          unit_of_measure?: string | null
           uom?: string | null
+          uom_term_id: string
           updated_at?: string
           updated_by?: string | null
         }
@@ -464,8 +464,8 @@ export type Database = {
           target_level?: number | null
           tenant_id?: string
           tracking_mode?: string
-          unit_of_measure?: string | null
           uom?: string | null
+          uom_term_id?: string
           updated_at?: string
           updated_by?: string | null
         }
@@ -3071,7 +3071,7 @@ export type Database = {
           updated_at: string | null
           vendor_id: string | null
           vendor_sku: string | null
-          vendor_uom: string | null
+          vendor_uom_term_id: string | null
         }
         Insert: {
           catalog_item_id?: string | null
@@ -3088,7 +3088,7 @@ export type Database = {
           updated_at?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Update: {
           catalog_item_id?: string | null
@@ -3105,7 +3105,7 @@ export type Database = {
           updated_at?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Relationships: [
           {
@@ -4550,7 +4550,7 @@ export type Database = {
           updated_at: string
           vendor_id: string
           vendor_sku: string
-          vendor_uom: string | null
+          vendor_uom_term_id: string | null
         }
         Insert: {
           catalog_item_id: string
@@ -4568,7 +4568,7 @@ export type Database = {
           updated_at?: string
           vendor_id: string
           vendor_sku: string
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Update: {
           catalog_item_id?: string
@@ -4586,7 +4586,7 @@ export type Database = {
           updated_at?: string
           vendor_id?: string
           vendor_sku?: string
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Relationships: [
           {

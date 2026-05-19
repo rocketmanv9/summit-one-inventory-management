@@ -1342,7 +1342,7 @@ async function smartStockReceive(
         item_description: params.item_description,
         location_name: params.location_name,
         quantity: params.quantity,
-        unit_of_measure: params.unit_of_measure,
+        uom_term_id: params.uom_term_id,
       }),
     });
 
@@ -1363,7 +1363,7 @@ async function smartStockReceive(
         displayType: 'metric',
         label: 'Stock Received',
         value: `+${d.quantity_added}`,
-        unit: d.unit_of_measure || 'units',
+        unit: d.uom_label || 'units',
         secondaryMetrics: [
           { label: 'Item', value: d.item_name },
           { label: 'Location', value: d.location_name },
@@ -1591,7 +1591,6 @@ async function smartRegisterAsset(
           sku,
           description: description || name,
           tracking_mode: 'serialized',
-          unit_of_measure: 'each',
           tenant_id: ctx.tenantId,
         },
         { onConflict: 'tenant_id,sku' }
@@ -2127,7 +2126,7 @@ async function enrichItem(
   // 1. Find existing item
   const { data: items } = await inventorySchema(ctx.supabase)
     .from('catalog_items')
-    .select('id, name, sku, description, unit_of_measure, reorder_point, category_id, tracking_mode')
+    .select('id, name, sku, description, uom_term_id, reorder_point, category_id, tracking_mode')
     .or(`name.ilike.%${itemHint}%,sku.ilike.%${itemHint}%`)
     .limit(10);
 
@@ -2179,7 +2178,7 @@ async function enrichItem(
             'Given an item name, suggest standardized field values based on industry conventions.',
             'Return ONLY a valid JSON object with these fields (omit any where you have low confidence):',
             '  category       — industry-standard category (e.g. "Concrete", "Steel", "Fasteners", "Safety Equipment", "Lumber")',
-            '  unit_of_measure — standard UOM (e.g. "each", "ton", "bag", "gallon", "lb", "ft", "yd")',
+            '  unit_of_measure — standard UOM label (e.g. "Each", "Ton", "Bag", "Gallon", "Pound", "Foot", "Yard")',
             '  description    — concise professional description (1-2 sentences)',
             '  reorder_point  — suggested reorder point for a mid-size construction company (number)',
             '  confidence     — overall confidence 0.0-1.0',
@@ -2212,9 +2211,9 @@ async function enrichItem(
           confidence: overallConfidence,
         };
       }
-      if (parsed.unit_of_measure && parsed.unit_of_measure !== item.unit_of_measure) {
-        suggestedFields['unit_of_measure'] = {
-          current: item.unit_of_measure || '(none)',
+      if (parsed.unit_of_measure) {
+        suggestedFields['uom'] = {
+          current: item.uom_term_id || '(none)',
           suggested: parsed.unit_of_measure,
           confidence: overallConfidence,
         };
@@ -2271,7 +2270,7 @@ async function enrichItem(
 
   const fieldLabels: Record<string, string> = {
     category: 'Category',
-    unit_of_measure: 'Unit of Measure',
+    uom: 'Unit of Measure',
     description: 'Description',
     reorder_point: 'Reorder Point',
   };
@@ -2676,7 +2675,7 @@ async function draftPurchaseRequest(
       orderItems = vendorItems.slice(0, 10).map((r: any) => ({
         name: r.item_name || r.sku,
         qty: Number(r.suggested_order_qty) || 0,
-        unit: r.unit_of_measure,
+        unit: r.uom_label || r.uom_term_id || 'units',
       }));
     }
   }
@@ -3282,7 +3281,7 @@ async function createItemWithVariants(
     const { data, error } = await inventorySchema(ctx.supabase).rpc('rpc_wizard_create_item', {
       p_name: name,
       p_description: params.description || null,
-      p_unit_of_measure: params.unit_of_measure || 'EA',
+      p_uom_term_id: params.uom_term_id || null,
       p_tracking_mode: 'stock',
       p_reorder_point: null,
       p_base_sku: null,

@@ -30,7 +30,7 @@ export const GET = createReadRoute(async ({ req, log }) => {
   if (barcode || sku) {
     let query = supabase
       .from('catalog_items')
-      .select('id, name, sku, barcode, tracking_mode, unit_of_measure');
+      .select('id, name, sku, barcode, tracking_mode, uom_term_id');
 
     if (barcode) {
       query = query.eq('barcode', barcode);
@@ -56,7 +56,7 @@ export const GET = createReadRoute(async ({ req, log }) => {
     if (asset?.catalog_item_id) {
       const { data: item } = await supabase
         .from('catalog_items')
-        .select('id, name, sku, barcode, tracking_mode, unit_of_measure')
+        .select('id, name, sku, barcode, tracking_mode, uom_term_id')
         .eq('id', asset.catalog_item_id)
         .single();
       catalogItem = item;

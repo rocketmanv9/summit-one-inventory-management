@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, type CSSProperties } from 'react';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 interface CountLine {
   id: string;
@@ -8,7 +9,7 @@ interface CountLine {
   catalog_item?: {
     name: string;
     sku?: string;
-    unit_of_measure?: string;
+    uom_term_id?: string;
     parent_item_id?: string | null;
     parent_name?: string | null;
     variant_attributes?: Record<string, string> | null;
@@ -24,6 +25,7 @@ interface MobileCountItemRowProps {
 }
 
 export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCountItemRowProps) {
+  const uomLabels = useUOMLabelMap();
   const [value, setValue] = useState(line.qty_counted?.toString() ?? '');
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -182,7 +184,7 @@ export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCount
         {!isBlind && (
           <div style={expectedBadge}>
             Exp: <span style={expectedValue}>{line.qty_expected}</span>
-            {line.catalog_item?.unit_of_measure ? ` ${line.catalog_item.unit_of_measure}` : ''}
+            {line.catalog_item?.uom_term_id ? ` ${uomLabels[line.catalog_item.uom_term_id] || ''}` : ''}
           </div>
         )}
         <div style={{ flex: 1 }}>

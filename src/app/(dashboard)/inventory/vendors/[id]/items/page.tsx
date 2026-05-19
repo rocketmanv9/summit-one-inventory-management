@@ -10,6 +10,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 
 interface Vendor {
   id: string;
@@ -32,7 +33,7 @@ interface VendorItem {
   vendor_id: string;
   catalog_item_id: string;
   vendor_sku: string | null;
-  vendor_uom?: string;
+  vendor_uom_term_id?: string;
   pack_size?: number;
   is_preferred: boolean;
   unit_cost?: number;
@@ -50,6 +51,8 @@ export default function VendorItemsPage() {
   const params = useParams();
   const router = useRouter();
   const vendorId = params.id as string;
+  const uomLabels = useUOMLabelMap();
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
 
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [vendorItems, setVendorItems] = useState<VendorItem[]>([]);
@@ -63,7 +66,7 @@ export default function VendorItemsPage() {
   const [formData, setFormData] = useState({
     catalog_item_id: '',
     vendor_sku: '',
-    vendor_uom: '',
+    vendor_uom_term_id: '',
     pack_size: '1',
     unit_cost: '',
     currency: 'USD',
@@ -129,7 +132,7 @@ export default function VendorItemsPage() {
         vendor_id: vendorId,
         catalog_item_id: formData.catalog_item_id,
         vendor_sku: formData.vendor_sku || '',
-        vendor_uom: formData.vendor_uom || null,
+        vendor_uom_term_id: formData.vendor_uom_term_id || null,
         pack_size: formData.pack_size ? parseFloat(formData.pack_size) : 1,
         unit_cost: formData.unit_cost ? parseFloat(formData.unit_cost) : null,
         currency: formData.currency,
@@ -161,7 +164,7 @@ export default function VendorItemsPage() {
     setFormData({
       catalog_item_id: item.catalog_item_id,
       vendor_sku: item.vendor_sku || '',
-      vendor_uom: item.vendor_uom || '',
+      vendor_uom_term_id: item.vendor_uom_term_id || '',
       pack_size: item.pack_size?.toString() || '1',
       unit_cost: item.unit_cost?.toString() || '',
       currency: item.currency || 'USD',
@@ -194,7 +197,7 @@ export default function VendorItemsPage() {
     setFormData({
       catalog_item_id: '',
       vendor_sku: '',
-      vendor_uom: '',
+      vendor_uom_term_id: '',
       pack_size: '1',
       unit_cost: '',
       currency: 'USD',
@@ -334,7 +337,7 @@ export default function VendorItemsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="text-sm text-gray-900">
-                      {item.vendor_uom || '-'}
+                      {item.vendor_uom_term_id ? (uomLabels[item.vendor_uom_term_id] || item.vendor_uom_term_id) : '-'}
                       {item.pack_size && item.pack_size !== 1 && (
                         <span className="text-xs text-gray-500 ml-1">
                           (x{item.pack_size})
@@ -480,13 +483,20 @@ export default function VendorItemsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Vendor UOM
                   </label>
-                  <input
-                    type="text"
-                    value={formData.vendor_uom}
-                    onChange={(e) => setFormData({ ...formData, vendor_uom: e.target.value })}
+                  <select
+                    value={formData.vendor_uom_term_id}
+                    onChange={(e) => setFormData({ ...formData, vendor_uom_term_id: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md"
-                    placeholder="e.g., BOX, PALLET"
-                  />
+                  >
+                    <option value="">Select UOM...</option>
+                    {uomLoading ? (
+                      <option disabled>Loading...</option>
+                    ) : (
+                      uomTerms.map((t) => (
+                        <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                      ))
+                    )}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

@@ -304,8 +304,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             validate: (v) => (v.trim().length < 2 ? 'Name must be at least 2 characters' : null),
           },
           {
-            field: 'unit_of_measure',
-            prompt: 'Unit of measure? (e.g. each, ton, gallon, bag — press Enter to skip)',
+            field: 'uom_term_id',
+            prompt: 'Unit of measure term ID? (press Enter to skip, defaults to Each)',
             type: 'text',
             required: false,
           },
@@ -357,7 +357,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             sku,
             description: params.description || null,
             category_id: categoryId,
-            unit_of_measure: params.unit_of_measure || null,
+            uom_term_id: params.uom_term_id as string,
             tracking_mode: params.tracking_mode || 'fungible',
           });
           const categoryNote = categoryId && params.category ? ` in category "${params.category}"` : '';
@@ -393,7 +393,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             options: [
               { label: 'Name', value: 'name' },
               { label: 'Category', value: 'category' },
-              { label: 'Unit of Measure', value: 'unit_of_measure' },
+              { label: 'Unit of Measure', value: 'uom_term_id' },
               { label: 'Reorder Point', value: 'reorder_point' },
               { label: 'Description', value: 'description' },
             ],

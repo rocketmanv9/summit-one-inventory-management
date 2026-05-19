@@ -9,6 +9,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 type TransferLine = {
   id: string;
@@ -45,7 +46,7 @@ type CatalogItemOption = {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure?: string | null;
+  uom_term_id?: string | null;
   tracking_mode?: string | null;
 };
 
@@ -1009,6 +1010,7 @@ function TransferDetailPanel({ transfer, onClose }: { transfer: Transfer; onClos
 }
 
 function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const uomLabels = useUOMLabelMap();
   const [form, setForm] = useState({
     from_location_id: '',
     to_location_id: '',
@@ -1055,7 +1057,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
       setLoadingItems(true);
       try {
         const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
-        setItems(data || []);
+        setItems((data || []) as any);
       } catch (err) {
         console.error('[CreateTransferModal] Error loading items:', err);
         setItems([]);
@@ -1307,7 +1309,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                                 : (item.qty_available ?? 0);
                               return (
                                 <option key={item.catalog_item_id} value={item.catalog_item_id}>
-                                  {item.catalog_items?.name} ({item.catalog_items?.sku}) - {serialized ? 'Assets' : 'Available'}: {availableCount} {serialized ? '' : item.catalog_items?.unit_of_measure || ''}
+                                  {item.catalog_items?.name} ({item.catalog_items?.sku}) - {serialized ? 'Assets' : 'Available'}: {availableCount} {serialized ? '' : uomLabels[(item.catalog_items as any)?.uom_term_id] || ''}
                                 </option>
                               );
                             })}
@@ -1407,6 +1409,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
 }
 
 function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfer; onClose: () => void; onUpdated: () => void }) {
+  const uomLabels = useUOMLabelMap();
   const [form, setForm] = useState<{
     from_location_id: string;
     to_location_id: string;
@@ -1460,7 +1463,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
       setLoadingItems(true);
       try {
         const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
-        setItems(data || []);
+        setItems((data || []) as any);
       } catch (err) {
         console.error('Error loading items:', err);
         setItems([]);
@@ -1603,7 +1606,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
                         <option value="">Select item...</option>
                         {items.map((item) => (
                           <option key={item.catalog_item_id} value={item.catalog_item_id}>
-                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - {item.catalog_items?.unit_of_measure}
+                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - {uomLabels[(item.catalog_items as any)?.uom_term_id] || ''}
                           </option>
                         ))}
                       </select>

@@ -23,6 +23,7 @@ import {
   Plug,
   Search,
   ClipboardList,
+  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -116,6 +117,11 @@ const navigation: NavSection[] = [
   {
     title: 'Operations',
     items: [
+      {
+        title: 'Network',
+        href: '/operations/globe',
+        icon: Globe,
+      },
       {
         title: 'Reservations',
         href: '/inventory/reservations',

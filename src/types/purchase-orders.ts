@@ -198,8 +198,8 @@ export interface PurchaseOrderLine {
   catalog_item_id?: string;
   item_description?: string;
   item_vendor_sku?: string;
-  unit_of_measure?: string;
-  
+  uom_term_id?: string;
+
   // Quantities
   qty_ordered: number;
   qty_received: number;
@@ -255,7 +255,7 @@ export interface CreatePOLineInput {
   
   // Required
   qty_ordered: number;
-  unit_of_measure?: string; // Required if non-catalog
+  uom_term_id?: string; // Required if non-catalog
   
   // Optional
   item_vendor_sku?: string;
@@ -399,7 +399,7 @@ export function validatePOForm(form: CreatePOFormState): POValidationResult {
     }
     
     // Non-catalog items need UOM
-    if (!line.catalog_item_id && !line.unit_of_measure) {
+    if (!line.catalog_item_id && !line.uom_term_id) {
       errors.push(`Line ${index + 1}: Unit of measure is required for non-catalog items`);
     }
     

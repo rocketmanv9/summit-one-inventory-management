@@ -15,6 +15,7 @@ import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/B
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
 import {
   ArrowLeft,
   ArrowRight,
@@ -48,7 +49,7 @@ interface WizardState {
   name: string;
   description: string;
   category_id: string;
-  unit_of_measure: string;
+  uom_term_id: string;
   tracking_mode: 'stock' | 'serialized' | 'both';
   reorder_point: string;
   base_sku: string;
@@ -90,23 +91,7 @@ interface Location {
   location_type?: { name?: string } | null;
 }
 
-const COMMON_UOMS = [
-  { value: 'EA', label: 'Each (EA)' },
-  { value: 'BOX', label: 'Box' },
-  { value: 'CASE', label: 'Case' },
-  { value: 'LB', label: 'Pound (LB)' },
-  { value: 'KG', label: 'Kilogram (KG)' },
-  { value: 'TON', label: 'Ton' },
-  { value: 'GAL', label: 'Gallon' },
-  { value: 'LTR', label: 'Liter' },
-  { value: 'FT', label: 'Foot (FT)' },
-  { value: 'M', label: 'Meter (M)' },
-  { value: 'YD', label: 'Yard (YD)' },
-  { value: 'PALLET', label: 'Pallet' },
-  { value: 'ROLL', label: 'Roll' },
-  { value: 'BAG', label: 'Bag' },
-  { value: 'DRUM', label: 'Drum' },
-];
+// COMMON_UOMS removed — now loaded dynamically from GV via useUOMTerms() hook
 
 const STEPS = [
   { key: 'basics', label: 'Basics', icon: Package },
@@ -119,7 +104,7 @@ const defaultState: WizardState = {
   name: '',
   description: '',
   category_id: '',
-  unit_of_measure: 'EA',
+  uom_term_id: '',
   tracking_mode: 'stock',
   reorder_point: '',
   base_sku: '',
@@ -158,6 +143,10 @@ export default function NewItemWizardPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [skuPreview, setSkuPreview] = useState('');
+
+  // GV dynamic UOM terms
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
+  const uomLabels = useUOMLabelMap();
 
   // Inline create modals
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -249,7 +238,7 @@ export default function NewItemWizardPage() {
       setForm(prev => ({
         ...prev,
         description: suggestion.description || prev.description,
-        unit_of_measure: suggestion.unit_of_measure || prev.unit_of_measure,
+        uom_term_id: suggestion.uom_term_id || prev.uom_term_id,
         tracking_mode: suggestion.tracking_mode || prev.tracking_mode,
         reorder_point: suggestion.reorder_point != null ? String(suggestion.reorder_point) : prev.reorder_point,
         base_sku: suggestion.sku_prefix || prev.base_sku,
@@ -363,7 +352,7 @@ export default function NewItemWizardPage() {
       const res = await InventoryRPC.wizardCreateItem({
         name: form.name.trim(),
         description: form.description.trim() || null,
-        unit_of_measure: form.unit_of_measure || 'EA',
+        uom_term_id: form.uom_term_id || null,
         tracking_mode: form.tracking_mode,
         reorder_point: form.reorder_point ? Number(form.reorder_point) : null,
         base_sku: form.base_sku || null,
@@ -558,6 +547,7 @@ export default function NewItemWizardPage() {
         {step === 0 && (
           <StepBasics
             form={form}
+            setForm={setForm}
             categories={categories}
             skuPreview={skuPreview}
             updateForm={updateForm}
@@ -568,6 +558,8 @@ export default function NewItemWizardPage() {
             aiFilled={aiFilled}
             aiSuggestedCategory={aiSuggestedCategory}
             onDismissSuggestedCategory={() => setAiSuggestedCategory(null)}
+            uomTerms={uomTerms}
+            uomLoading={uomLoading}
           />
         )}
         {step === 1 && (
@@ -671,6 +663,7 @@ export default function NewItemWizardPage() {
 
 function StepBasics({
   form,
+  setForm,
   categories,
   skuPreview,
   updateForm,
@@ -681,8 +674,11 @@ function StepBasics({
   aiFilled,
   aiSuggestedCategory,
   onDismissSuggestedCategory,
+  uomTerms,
+  uomLoading,
 }: {
   form: WizardState;
+  setForm: React.Dispatch<React.SetStateAction<WizardState>>;
   categories: ItemCategoryRow[];
   skuPreview: string;
   updateForm: (field: keyof WizardState, value: string) => void;
@@ -693,6 +689,8 @@ function StepBasics({
   aiFilled: boolean;
   aiSuggestedCategory: string | null;
   onDismissSuggestedCategory: () => void;
+  uomTerms: { term_id: string; label: string }[];
+  uomLoading: boolean;
 }) {
   const selectedCategory = categories.find(c => c.id === form.category_id);
   const isAttributeBased = selectedCategory?.sku_mode === 'attribute_based';
@@ -837,13 +835,27 @@ function StepBasics({
             <Label htmlFor="wiz-uom">Unit of Measure</Label>
             <select
               id="wiz-uom"
-              value={form.unit_of_measure}
-              onChange={(e) => updateForm('unit_of_measure', e.target.value)}
+              value={form.uom_term_id}
+              onChange={(e) => {
+                const selected = uomTerms.find(t => t.term_id === e.target.value);
+                if (selected) {
+                  setForm(prev => ({ ...prev, uom_term_id: selected.term_id }));
+                } else {
+                  updateForm('uom_term_id', e.target.value);
+                }
+              }}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              disabled={uomLoading}
             >
-              {COMMON_UOMS.map((uom) => (
-                <option key={uom.value} value={uom.value}>{uom.label}</option>
-              ))}
+              {uomLoading ? (
+                <option>Loading...</option>
+              ) : uomTerms.length > 0 ? (
+                uomTerms.map((uom) => (
+                  <option key={uom.term_id} value={uom.term_id}>{uom.label}</option>
+                ))
+              ) : (
+                <option value="EA">Each</option>
+              )}
             </select>
           </div>
 
@@ -1300,6 +1312,7 @@ function StepSupply({
   onAddVendor: () => void;
   onAddLocation: () => void;
 }) {
+  const uomLabels = useUOMLabelMap();
   const [vendorOpen, setVendorOpen] = useState(!!form.vendor_id);
   const [stockOpen, setStockOpen] = useState(!!form.location_id);
 
@@ -1465,7 +1478,7 @@ function StepSupply({
                     const totalUnits = variantTotal * Number(form.initial_qty || 0);
                     return (
                       <p className="mt-1 text-blue-900">
-                        <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
+                        <span className="font-mono font-bold">{form.initial_qty}</span> {uomLabels[form.uom_term_id] || 'EA'}
                         {' '}&times; <span className="font-mono font-bold">{variantTotal}</span> variant{variantTotal !== 1 ? 's' : ''}
                         {' '}= <span className="font-mono font-bold">{totalUnits}</span> total units
                         {form.initial_cost && (
@@ -1477,7 +1490,7 @@ function StepSupply({
                   })() : (
                     <p className="mt-1 text-blue-900">
                       This will create an <span className="font-medium">initial stock adjustment</span> of{' '}
-                      <span className="font-mono font-bold">{form.initial_qty}</span> {form.unit_of_measure}
+                      <span className="font-mono font-bold">{form.initial_qty}</span> {uomLabels[form.uom_term_id] || 'EA'}
                       {form.initial_cost && (
                         <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
                       )}{' '}
@@ -1509,6 +1522,7 @@ function StepReview({
   locations: Location[];
   buildAssetList: () => Array<{ asset_tag: string; serial_number?: string }> | null;
 }) {
+  const uomLabels = useUOMLabelMap();
   const category = categories.find(c => c.id === form.category_id);
   const vendor = vendors.find(v => v.id === form.vendor_id);
   const location = locations.find(l => l.id === form.location_id);
@@ -1540,7 +1554,7 @@ function StepReview({
             <span className="text-muted-foreground">Category</span>
             <span>{category?.name || 'None'}</span>
             <span className="text-muted-foreground">UOM</span>
-            <span>{form.unit_of_measure}</span>
+            <span>{uomLabels[form.uom_term_id] || 'EA'}</span>
             <span className="text-muted-foreground">Tracking</span>
             <span className="capitalize">{form.tracking_mode}</span>
             {form.reorder_point && (
@@ -1639,7 +1653,7 @@ function StepReview({
               <span className="text-muted-foreground">
                 {form.has_variants ? 'Qty per Variant' : 'Quantity'}
               </span>
-              <span className="font-mono">{form.initial_qty} {form.unit_of_measure}</span>
+              <span className="font-mono">{form.initial_qty} {uomLabels[form.uom_term_id] || 'EA'}</span>
               {form.has_variants && form.variant_dimensions.length > 0 && (() => {
                 const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
                 const variantTotal = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
@@ -1647,7 +1661,7 @@ function StepReview({
                 return (
                   <>
                     <span className="text-muted-foreground">Total Stock</span>
-                    <span className="font-mono">{totalUnits} {form.unit_of_measure} ({variantTotal} variants)</span>
+                    <span className="font-mono">{totalUnits} {uomLabels[form.uom_term_id] || 'EA'} ({variantTotal} variants)</span>
                   </>
                 );
               })()}

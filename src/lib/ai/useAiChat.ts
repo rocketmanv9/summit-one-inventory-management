@@ -93,7 +93,7 @@ const AI_PARAM_MAP: Partial<Record<IntentType, Record<string, ParamMapping>>> = 
   },
   add_item: {
     name:            { actionField: 'name' },
-    unit_of_measure: { actionField: 'unit_of_measure' },
+    uom_term_id: { actionField: 'uom_term_id' },
     tracking_mode:   { actionField: 'tracking_mode' },
   },
   add_location: {
@@ -111,7 +111,7 @@ const SMART_DEFAULTS: Partial<Record<IntentType, Record<string, string>>> = {
   adjust_stock:       { reason: 'other' },
   adjust_stock_delta: { reason: 'other' },
   issue_inventory:    { issued_to_type: 'other' },
-  add_item:           { tracking_mode: 'fungible', unit_of_measure: 'each' },
+  add_item:           { tracking_mode: 'fungible' },
   create_reservation: { allocation_type: 'other' },
 };
 

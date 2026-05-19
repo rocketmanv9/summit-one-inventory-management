@@ -76,7 +76,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
       ? inv.from('locations').select('id, name').eq('id', cc.location_id).single()
       : Promise.resolve({ data: null }),
     itemIds.length > 0
-      ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure, parent_item_id, variant_attributes').in('id', itemIds)
+      ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, uom_term_id, parent_item_id, variant_attributes').in('id', itemIds)
       : Promise.resolve({ data: [] }),
   ]);
 

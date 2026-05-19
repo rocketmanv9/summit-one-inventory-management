@@ -23,6 +23,7 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 type StockSnapshot = Awaited<ReturnType<typeof InventoryRPC.getItemStockSnapshot>>;
 
@@ -75,6 +76,7 @@ function StatCard({
 export default function ItemDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const uomLabels = useUOMLabelMap();
   const [snapshot, setSnapshot] = useState<StockSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -247,7 +249,7 @@ export default function ItemDetailPage() {
               [
                 item.sku && `SKU: ${item.sku}`,
                 item.category_name,
-                item.unit_of_measure && `UOM: ${item.unit_of_measure}`,
+                (item as any).uom_term_id && `UOM: ${uomLabels[(item as any).uom_term_id] || (item as any).uom_term_id}`,
                 item.tracking_mode,
               ]
                 .filter(Boolean)

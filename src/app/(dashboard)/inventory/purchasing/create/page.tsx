@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import { ShoppingCart, Plus, AlertCircle, Check, Info } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -25,7 +26,7 @@ interface CatalogItem {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure: string | null;
+  uom_term_id: string | null;
   is_parent?: boolean;
 }
 
@@ -37,6 +38,7 @@ interface POLine {
 
 export default function CreatePurchaseOrderPage() {
   const router = useRouter();
+  const uomLabels = useUOMLabelMap();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [items, setItems] = useState<CatalogItem[]>([]);
@@ -352,7 +354,7 @@ export default function CreatePurchaseOrderPage() {
                           <option value="">Select item...</option>
                           {items.map((item) => (
                             <option key={item.id} value={item.id}>
-                              {item.name} ({item.sku}){item.is_parent ? ' [has variants]' : ''} - {item.unit_of_measure || 'N/A'}
+                              {item.name} ({item.sku}){item.is_parent ? ' [has variants]' : ''} - {uomLabels[item.uom_term_id || ''] || item.uom_term_id || 'N/A'}
                             </option>
                           ))}
                         </select>
@@ -431,7 +433,7 @@ export default function CreatePurchaseOrderPage() {
 
                     {selectedItem && (
                       <div className="ml-0 text-sm text-gray-600">
-                        Unit: {selectedItem.unit_of_measure || 'N/A'}
+                        Unit: {uomLabels[selectedItem.uom_term_id || ''] || selectedItem.uom_term_id || 'N/A'}
                       </div>
                     )}
                   </div>

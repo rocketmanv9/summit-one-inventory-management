@@ -52,7 +52,7 @@ async function loadCountData(token: string) {
   const itemIds = [...new Set(rawLines.map((l: any) => l.catalog_item_id))];
   const [locationResult, itemsResult] = await Promise.all([
     cc.location_id ? inv.from('locations').select('id, name').eq('id', cc.location_id).single() : Promise.resolve({ data: null }),
-    itemIds.length > 0 ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, unit_of_measure, parent_item_id, variant_attributes').in('id', itemIds) : Promise.resolve({ data: [] }),
+    itemIds.length > 0 ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, uom_term_id, parent_item_id, variant_attributes').in('id', itemIds) : Promise.resolve({ data: [] }),
   ]);
 
   const location = locationResult.data;
@@ -432,7 +432,7 @@ function ItemCard({ line, token, bypass, isBlind, isSubmitted }: {
               lineHeight: 1,
             }}>
               Exp: <span style={{ fontWeight: 700, color: colors.gray700 }}>{line.qty_expected}</span>
-              {line.catalog_item?.unit_of_measure ? ` ${line.catalog_item.unit_of_measure}` : ''}
+              {/* UOM label resolved via term_id on client */}
             </div>
           )}
 

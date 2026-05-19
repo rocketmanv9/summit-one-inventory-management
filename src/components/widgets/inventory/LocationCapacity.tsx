@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
+  const uomLabels = useUOMLabelMap();
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -69,7 +71,7 @@ export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium truncate">{loc.location_name}</span>
                 <span className="text-xs text-muted-foreground ml-2 shrink-0">
-                  {Math.round(loc.current_qty)} / {Math.round(loc.max_capacity)} {loc.capacity_uom || ''}
+                  {Math.round(loc.current_qty)} / {Math.round(loc.max_capacity)} {uomLabels[loc.capacity_uom_term_id] || ''}
                 </span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">

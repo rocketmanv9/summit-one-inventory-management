@@ -80,7 +80,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           name: { type: 'string', description: 'Item name' },
           category: { type: 'string', description: 'Category name in plain text (e.g. "Fasteners", "Concrete", "Safety Equipment"). Auto-matched to existing categories or created if new.' },
           description: { type: 'string', description: 'Item description' },
-          unit_of_measure: { type: 'string', description: 'Unit of measure (e.g. each, ton, gallon, bag). Default: "each"' },
+          uom_term_id: { type: 'string', description: 'UOM term ID from Global Values (resolved via GV). If unknown, omit and it defaults to "each".' },
           tracking_mode: {
             type: 'string',
             description: 'Tracking mode (default: "fungible")',
@@ -117,7 +117,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           field_to_update: {
             type: 'string',
             description: 'Which field to change',
-            enum: ['name', 'unit_of_measure', 'reorder_point', 'description', 'category'],
+            enum: ['name', 'uom_term_id', 'reorder_point', 'description', 'category'],
           },
           new_value: { type: 'string', description: 'The new value for the field' },
         },
@@ -145,7 +145,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           name: { type: 'string', description: 'Parent item name (e.g. "Company T-Shirt", "Work Gloves")' },
           description: { type: 'string', description: 'Item description' },
           category: { type: 'string', description: 'Category name in plain text (auto-matched or created)' },
-          unit_of_measure: { type: 'string', description: 'Unit of measure (default: "EA")' },
+          uom_term_id: { type: 'string', description: 'UOM term ID from Global Values (default: EA term)' },
           variant_dimensions: {
             type: 'array',
             items: { type: 'string' },
@@ -737,7 +737,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item_description: { type: 'string', description: 'Additional specs, brand, size, or material details' },
           location_name: { type: 'string', description: 'Destination location name (warehouse, yard, job site)' },
           quantity: { type: 'number', description: 'Number of units to add' },
-          unit_of_measure: { type: 'string', description: 'Unit of measure (default: "each")' },
+          uom_term_id: { type: 'string', description: 'UOM term ID from Global Values (optional, defaults to "each")' },
         },
         required: ['item_name', 'location_name', 'quantity'],
       },
