@@ -1062,4 +1062,67 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'query_cycle_counts',
+      description: 'Query cycle counts — physical inventory audits. Answers: "any cycle counts going on?", "show me scheduled counts".',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', description: 'Filter by status', enum: ['scheduled', 'in_progress', 'completed', 'cancelled'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_cancelled_transfers',
+      description: 'Query recently cancelled inventory transfers. Answers: "any cancelled transfers?", "transfers cancelled this week".',
+      parameters: {
+        type: 'object',
+        properties: {
+          days: { type: 'number', description: 'Look back this many days (default 7)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_stock_movements',
+      description: 'Query the stock movement ledger — all inventory ins and outs. Answers: "audit my ledger", "show recent movements", "what happened to my stock".',
+      parameters: {
+        type: 'object',
+        properties: {
+          movement_type: { type: 'string', description: 'Filter by movement type (e.g. receipt, adjustment, transfer, issue)' },
+          start_date: { type: 'string', description: 'Start date ISO (YYYY-MM-DD)' },
+          end_date: { type: 'string', description: 'End date ISO (YYYY-MM-DD)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_stock_by_location',
+      description: 'Show all stock balances at a specific location. Answers: "what do I have in Portland?", "stock at Auburn Yard", "items in warehouse".',
+      parameters: {
+        type: 'object',
+        properties: {
+          location: { type: 'string', description: 'Location name or partial match (e.g. "Portland", "Auburn")' },
+        },
+        required: ['location'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_integrations',
+      description: 'Show configured integrations and tool settings. Answers: "do I have any integrations?", "what integrations are set up?".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ];

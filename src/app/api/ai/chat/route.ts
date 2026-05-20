@@ -340,6 +340,14 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
 
             // ── No tool call → done ──────────────────────────────────
             if (!hasToolCall) {
+              // If OpenAI returned empty content after a tool result, use the last tool's text
+              if (!accumulatedContent && toolsCalledInSession.length > 0 && lastDataDisplay) {
+                const lastToolMsg = openaiMessages.filter((m) => m.role === 'tool').pop();
+                if (lastToolMsg && 'content' in lastToolMsg && lastToolMsg.content) {
+                  accumulatedContent = String(lastToolMsg.content);
+                  sendEvent('delta', { content: accumulatedContent });
+                }
+              }
               fullAssistantContent = accumulatedContent;
 
               // Persist assistant message

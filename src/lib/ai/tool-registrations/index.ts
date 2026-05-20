@@ -104,6 +104,13 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   resolve_entity: ['ontology', 'search'],
   query_relationships: ['ontology'],
   find_substitutes: ['ontology'],
+
+  // New analytics tools
+  query_cycle_counts: ['analytics'],
+  query_cancelled_transfers: ['analytics'],
+  query_stock_movements: ['analytics'],
+  query_stock_by_location: ['analytics'],
+  query_integrations: ['analytics'],
 };
 
 // Default governance for tools that don't have explicit metadata

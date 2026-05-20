@@ -116,4 +116,9 @@ export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
   inventory_summary: { name: 'inventory_summary', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   navigate: { name: 'navigate', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   help: { name: 'help', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  query_cycle_counts: { name: 'query_cycle_counts', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  query_cancelled_transfers: { name: 'query_cancelled_transfers', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  query_stock_movements: { name: 'query_stock_movements', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  query_stock_by_location: { name: 'query_stock_by_location', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  query_integrations: { name: 'query_integrations', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
 };

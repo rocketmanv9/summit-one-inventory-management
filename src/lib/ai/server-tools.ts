@@ -78,6 +78,11 @@ const SERVER_TOOLS = new Set([
   'resolve_entity',
   'query_relationships',
   'find_substitutes',
+  'query_cycle_counts',
+  'query_cancelled_transfers',
+  'query_stock_movements',
+  'query_stock_by_location',
+  'query_integrations',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -181,6 +186,16 @@ async function executeServerToolInner(
       return queryRelationshipsTool(params, ctx);
     case 'find_substitutes':
       return findSubstitutesTool(params, ctx);
+    case 'query_cycle_counts':
+      return queryCycleCounts(params, ctx);
+    case 'query_cancelled_transfers':
+      return queryCancelledTransfers(params, ctx);
+    case 'query_stock_movements':
+      return queryStockMovements(params, ctx);
+    case 'query_stock_by_location':
+      return queryStockByLocation(params, ctx);
+    case 'query_integrations':
+      return queryIntegrations(ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -525,7 +540,7 @@ async function queryInventoryTurnover(ctx: ServerToolContext): Promise<ServerToo
 async function queryPoStatus(ctx: ServerToolContext): Promise<ServerToolResult> {
   const { data, error } = await supplyChainSchema(ctx.supabase)
     .from('purchase_orders')
-    .select('id, po_number, vendor_name, status, total_amount, expected_date, created_at')
+    .select('id, po_number, vendor_name_snapshot, status, expected_delivery_date, created_at')
     .order('created_at', { ascending: false })
     .limit(50);
 
@@ -538,29 +553,33 @@ async function queryPoStatus(ctx: ServerToolContext): Promise<ServerToolResult> 
 
   const rows = data as any[];
   const statusCounts: Record<string, number> = {};
-  let totalAmount = 0;
   for (const r of rows) {
     const s = r.status || 'unknown';
     statusCounts[s] = (statusCounts[s] || 0) + 1;
-    totalAmount += Number(r.total_amount) || 0;
   }
 
   const statusSummary = Object.entries(statusCounts)
     .map(([s, c]) => `${c} ${s}`)
     .join(', ');
 
+  const displayRows = rows.slice(0, 20).map((r: any) => ({
+    po_number: r.po_number,
+    vendor: r.vendor_name_snapshot || '—',
+    status: r.status,
+    expected_delivery_date: r.expected_delivery_date || '—',
+  }));
+
   return {
-    text: `PO Status: ${rows.length} purchase orders totaling ${formatCurrency(totalAmount)}. Breakdown: ${statusSummary}.`,
+    text: `PO Status: ${rows.length} purchase orders. Breakdown: ${statusSummary}.`,
     dataDisplay: {
       displayType: 'table',
       columns: [
         { key: 'po_number', label: 'PO #' },
-        { key: 'vendor_name', label: 'Vendor' },
+        { key: 'vendor', label: 'Vendor' },
         { key: 'status', label: 'Status' },
-        { key: 'total_amount', label: 'Amount' },
-        { key: 'expected_date', label: 'Expected' },
+        { key: 'expected_delivery_date', label: 'Expected Delivery' },
       ],
-      rows: rows.slice(0, 20),
+      rows: displayRows,
       totalRows: rows.length,
     },
   };
@@ -637,7 +656,7 @@ function fuzzyMatchWidget(widgets: any[], query: string): any | null {
 }
 
 async function listDashboards(ctx: ServerToolContext): Promise<ServerToolResult> {
-  const { data, error } = await ctx.supabase
+  const { data, error } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .select('id, name, description, is_default, created_at, dashboard_widgets(id, title, widget_key, deleted_at)')
     .is('deleted_at', null)
@@ -688,7 +707,7 @@ async function listDashboards(ctx: ServerToolContext): Promise<ServerToolResult>
 }
 
 async function listAvailableWidgets(ctx: ServerToolContext): Promise<ServerToolResult> {
-  const { data, error } = await ctx.supabase
+  const { data, error } = await inventorySchema(ctx.supabase)
     .from('widget_registry')
     .select('widget_key, name, domain, description, default_width, default_height')
     .eq('is_enabled', true)
@@ -747,7 +766,7 @@ async function addDashboardWidget(
   }
 
   // Find the dashboard
-  const { data: dashboards, error: dashError } = await ctx.supabase
+  const { data: dashboards, error: dashError } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -769,7 +788,7 @@ async function addDashboardWidget(
   }
 
   // Find the widget in registry
-  const { data: registryWidgets, error: wError } = await ctx.supabase
+  const { data: registryWidgets, error: wError } = await inventorySchema(ctx.supabase)
     .from('widget_registry')
     .select('widget_key, name, default_width, default_height, default_config')
     .eq('is_enabled', true)
@@ -791,7 +810,7 @@ async function addDashboardWidget(
   }
 
   // Get existing widgets to calculate next Y position
-  const { data: existing } = await ctx.supabase
+  const { data: existing } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .select('layout')
     .eq('dashboard_id', dashboard.id)
@@ -809,7 +828,7 @@ async function addDashboardWidget(
 
   const eventId = `ai_add_widget_${dashboard.id}_${widget.widget_key}_${Date.now()}`;
 
-  const { error: insertError } = await ctx.supabase
+  const { error: insertError } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .upsert(
       {
@@ -835,7 +854,7 @@ async function addDashboardWidget(
   }
 
   // Read-after-write: verify widget was added
-  const { data: verifyWidgets } = await ctx.supabase
+  const { data: verifyWidgets } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .select('id')
     .eq('dashboard_id', dashboard.id)
@@ -867,7 +886,7 @@ async function removeDashboardWidget(
   }
 
   // Find dashboard
-  const { data: dashboards } = await ctx.supabase
+  const { data: dashboards } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -883,7 +902,7 @@ async function removeDashboardWidget(
   }
 
   // Find widget on this dashboard
-  const { data: widgets } = await ctx.supabase
+  const { data: widgets } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .select('id, title, widget_key')
     .eq('dashboard_id', dashboard.id)
@@ -910,7 +929,7 @@ async function removeDashboardWidget(
   }
 
   // Soft-delete the widget
-  const { error } = await ctx.supabase
+  const { error } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .update({ deleted_at: new Date().toISOString(), updated_by: ctx.userId })
     .eq('id', match.id);
@@ -923,7 +942,7 @@ async function removeDashboardWidget(
   }
 
   // Read-after-write: verify widget was removed
-  const { data: remainingWidgets } = await ctx.supabase
+  const { data: remainingWidgets } = await inventorySchema(ctx.supabase)
     .from('dashboard_widgets')
     .select('id')
     .eq('dashboard_id', dashboard.id)
@@ -953,7 +972,7 @@ async function updateDashboardTool(
     };
   }
 
-  const { data: dashboards } = await ctx.supabase
+  const { data: dashboards } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -984,7 +1003,7 @@ async function updateDashboardTool(
 
     // If setting as default, unset other defaults first
     if (isDefault) {
-      await ctx.supabase
+      await inventorySchema(ctx.supabase)
         .from('dashboards')
         .update({ is_default: false, updated_at: new Date().toISOString() })
         .eq('is_default', true)
@@ -1002,7 +1021,7 @@ async function updateDashboardTool(
     };
   }
 
-  const { error } = await ctx.supabase
+  const { error } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .update(updates)
     .eq('id', dashboard.id);
@@ -1037,7 +1056,7 @@ async function deleteDashboardTool(
     };
   }
 
-  const { data: dashboards } = await ctx.supabase
+  const { data: dashboards } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -1052,7 +1071,7 @@ async function deleteDashboardTool(
     };
   }
 
-  const { error } = await ctx.supabase
+  const { error } = await inventorySchema(ctx.supabase)
     .from('dashboards')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', dashboard.id);
@@ -1496,14 +1515,30 @@ async function smartAddLocation(
   const insertData: Record<string, any> = {
     name,
     tenant_id: ctx.tenantId,
-    is_active: true,
+    active: true,
   };
   if (locationTypeId) insertData.location_type_id = locationTypeId;
   if (validatedAddress) insertData.address = validatedAddress;
 
+  // Check for existing location by name first (no unique constraint on tenant_id,name)
+  const { data: existingLoc } = await inventorySchema(ctx.supabase)
+    .from('locations')
+    .select('id, name')
+    .eq('tenant_id', ctx.tenantId)
+    .ilike('name', name)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingLoc) {
+    return {
+      text: `A location named "${existingLoc.name}" already exists.`,
+      dataDisplay: { displayType: 'metric', label: 'Already Exists', value: existingLoc.name },
+    };
+  }
+
   const { data: location, error } = await inventorySchema(ctx.supabase)
     .from('locations')
-    .upsert(insertData, { onConflict: 'tenant_id,name' })
+    .insert(insertData)
     .select('id, name, address, location_type_id')
     .single();
 
@@ -1615,7 +1650,7 @@ async function smartRegisterAsset(
   let locationName = '';
 
   if (locationHint) {
-    const { data: locations } = await ctx.supabase
+    const { data: locations } = await inventorySchema(ctx.supabase)
       .from('locations')
       .select('id, name')
       .ilike('name', `%${locationHint}%`)
@@ -1756,7 +1791,7 @@ async function searchVendorsOnline(
     const content = completion.choices?.[0]?.message?.content;
     if (!content) {
       return {
-        text: 'No vendor results found. Try broadening your search.',
+        text: `No vendor results found for "${query}"${location ? ` near ${location}` : ''}. Try broadening your search or add a vendor manually with "add a vendor named [company]".`,
         dataDisplay: { displayType: 'metric', label: 'Vendors Found', value: '0' },
       };
     }
@@ -1802,10 +1837,10 @@ async function searchVendorsOnline(
         totalRows: cleaned.length,
       },
     };
-  } catch (err: any) {
+  } catch {
     return {
-      text: `Vendor search failed: ${err.message}`,
-      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Search failed' },
+      text: `Online vendor search is currently unavailable. You can add vendors manually — try "add a vendor named [company]".`,
+      dataDisplay: { displayType: 'metric', label: 'Vendor Search', value: 'Unavailable' },
     };
   }
 }
@@ -2429,7 +2464,7 @@ async function queryReservations(
   const locIds = [...new Set(reservations.map((r: any) => r.location_id).filter(Boolean))];
   let locMap: Record<string, string> = {};
   if (locIds.length > 0) {
-    const { data: locData } = await ctx.supabase
+    const { data: locData } = await inventorySchema(ctx.supabase)
       .from('locations')
       .select('id, name')
       .in('id', locIds)
@@ -2552,7 +2587,7 @@ async function queryAssetValue(
   const locIds = [...new Set(assets.map((a: any) => a.location_id).filter(Boolean))];
   let locMap: Record<string, string> = {};
   if (locIds.length > 0) {
-    const { data: locData } = await ctx.supabase
+    const { data: locData } = await inventorySchema(ctx.supabase)
       .from('locations')
       .select('id, name')
       .in('id', locIds)
@@ -3498,6 +3533,296 @@ async function findSubstitutesTool(
         { key: 'confidence', label: 'Confidence' },
       ],
       rows,
+    },
+  };
+}
+
+// ─── Query Cycle Counts ─────────────────────────────────────────────
+
+async function queryCycleCounts(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  let query = inventorySchema(ctx.supabase)
+    .from('cycle_counts')
+    .select('id, count_number, location_id, scheduled_for, status, started_at, completed_at, notes, created_at');
+
+  if (params.status) {
+    query = query.eq('status', params.status);
+  }
+
+  const { data, error } = await query.order('scheduled_for', { ascending: false }).limit(50);
+
+  if (error) {
+    return { text: `Failed to query cycle counts: ${error.message}`, dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' } };
+  }
+
+  if (!data?.length) {
+    return { text: `No cycle counts found${params.status ? ` with status "${params.status}"` : ''}. You can create cycle counts from the Cycle Counts page.`, dataDisplay: { displayType: 'metric', label: 'Cycle Counts', value: '0' } };
+  }
+
+  const locIds = [...new Set((data as any[]).map((r: any) => r.location_id).filter(Boolean))];
+  let locMap: Record<string, string> = {};
+  if (locIds.length > 0) {
+    const { data: locData } = await inventorySchema(ctx.supabase).from('locations').select('id, name').in('id', locIds).limit(200);
+    if (locData) locMap = Object.fromEntries(locData.map((l: any) => [l.id, l.name]));
+  }
+
+  const rows = (data as any[]).map((r: any) => ({
+    count_number: r.count_number,
+    location: locMap[r.location_id] || '—',
+    scheduled_for: r.scheduled_for,
+    status: r.status,
+    started_at: r.started_at ? new Date(r.started_at).toLocaleDateString() : '—',
+    completed_at: r.completed_at ? new Date(r.completed_at).toLocaleDateString() : '—',
+  }));
+
+  return {
+    text: `Found ${rows.length} cycle count${rows.length === 1 ? '' : 's'}. ${rows.slice(0, 3).map((r) => `${r.count_number} at ${r.location} — ${r.status}`).join('; ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'count_number', label: 'Count #' },
+        { key: 'location', label: 'Location' },
+        { key: 'scheduled_for', label: 'Scheduled' },
+        { key: 'status', label: 'Status' },
+        { key: 'started_at', label: 'Started' },
+        { key: 'completed_at', label: 'Completed' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Cancelled Transfers ──────────────────────────────────────
+
+async function queryCancelledTransfers(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const days = Number(params.days) || 7;
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const { data, error } = await inventorySchema(ctx.supabase)
+    .from('transfers')
+    .select('id, transfer_number, from_location_id, to_location_id, status, cancelled_at, cancellation_reason, created_at')
+    .eq('status', 'cancelled')
+    .gte('cancelled_at', since.toISOString())
+    .order('cancelled_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    return { text: `Failed to query cancelled transfers: ${error.message}`, dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' } };
+  }
+
+  if (!data?.length) {
+    return { text: `No cancelled transfers in the last ${days} day${days === 1 ? '' : 's'}.`, dataDisplay: { displayType: 'metric', label: 'Cancelled Transfers', value: '0' } };
+  }
+
+  const locIds = [...new Set((data as any[]).flatMap((r: any) => [r.from_location_id, r.to_location_id]).filter(Boolean))];
+  let locMap: Record<string, string> = {};
+  if (locIds.length > 0) {
+    const { data: locData } = await inventorySchema(ctx.supabase).from('locations').select('id, name').in('id', locIds).limit(200);
+    if (locData) locMap = Object.fromEntries(locData.map((l: any) => [l.id, l.name]));
+  }
+
+  const rows = (data as any[]).map((r: any) => ({
+    transfer_number: r.transfer_number,
+    from: locMap[r.from_location_id] || '—',
+    to: locMap[r.to_location_id] || '—',
+    cancelled_at: r.cancelled_at ? new Date(r.cancelled_at).toLocaleDateString() : '—',
+    reason: r.cancellation_reason || '—',
+  }));
+
+  return {
+    text: `Found ${rows.length} cancelled transfer${rows.length === 1 ? '' : 's'} in the last ${days} days. ${rows.slice(0, 3).map((r) => `${r.transfer_number}: ${r.from} → ${r.to} (${r.reason})`).join('; ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'transfer_number', label: 'Transfer #' },
+        { key: 'from', label: 'From' },
+        { key: 'to', label: 'To' },
+        { key: 'cancelled_at', label: 'Cancelled' },
+        { key: 'reason', label: 'Reason' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Stock Movements (Ledger) ─────────────────────────────────
+
+async function queryStockMovements(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  let query = inventorySchema(ctx.supabase)
+    .from('stock_movements')
+    .select('id, catalog_item_id, location_id, quantity_delta, movement_type, reason, notes, occurred_at, source_ref_type');
+
+  if (params.movement_type) query = query.eq('movement_type', params.movement_type);
+  if (params.start_date) query = query.gte('occurred_at', params.start_date);
+  if (params.end_date) query = query.lte('occurred_at', params.end_date);
+
+  const { data, error } = await query.order('occurred_at', { ascending: false }).limit(50);
+
+  if (error) {
+    return { text: `Failed to query stock movements: ${error.message}`, dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' } };
+  }
+
+  if (!data?.length) {
+    return { text: 'No stock movements found matching your filters.', dataDisplay: { displayType: 'metric', label: 'Movements', value: '0' } };
+  }
+
+  const itemIds = [...new Set((data as any[]).map((r: any) => r.catalog_item_id).filter(Boolean))];
+  let itemMap: Record<string, string> = {};
+  if (itemIds.length > 0) {
+    const { data: itemData } = await inventorySchema(ctx.supabase).from('catalog_items').select('id, name').in('id', itemIds).limit(200);
+    if (itemData) itemMap = Object.fromEntries(itemData.map((i: any) => [i.id, i.name]));
+  }
+
+  const locIds = [...new Set((data as any[]).map((r: any) => r.location_id).filter(Boolean))];
+  let locMap: Record<string, string> = {};
+  if (locIds.length > 0) {
+    const { data: locData } = await inventorySchema(ctx.supabase).from('locations').select('id, name').in('id', locIds).limit(200);
+    if (locData) locMap = Object.fromEntries(locData.map((l: any) => [l.id, l.name]));
+  }
+
+  const rows = (data as any[]).map((r: any) => ({
+    item: itemMap[r.catalog_item_id] || '—',
+    location: locMap[r.location_id] || '—',
+    delta: Number(r.quantity_delta) > 0 ? `+${r.quantity_delta}` : String(r.quantity_delta),
+    type: r.movement_type,
+    reason: r.reason || '—',
+    date: r.occurred_at ? new Date(r.occurred_at).toLocaleDateString() : '—',
+    source: r.source_ref_type || '—',
+  }));
+
+  return {
+    text: `Found ${rows.length} stock movement${rows.length === 1 ? '' : 's'}. ${rows.slice(0, 3).map((r) => `${r.item} at ${r.location}: ${r.delta} (${r.type})`).join('; ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'item', label: 'Item' },
+        { key: 'location', label: 'Location' },
+        { key: 'delta', label: 'Qty Change' },
+        { key: 'type', label: 'Type' },
+        { key: 'reason', label: 'Reason' },
+        { key: 'date', label: 'Date' },
+        { key: 'source', label: 'Source' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Stock By Location ────────────────────────────────────────
+
+async function queryStockByLocation(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const locationHint = typeof params.location === 'string' ? params.location.trim() : '';
+  if (!locationHint) {
+    return { text: 'Please specify a location name (e.g. "Portland", "Auburn Yard").', dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing location' } };
+  }
+
+  const { data: locations } = await inventorySchema(ctx.supabase)
+    .from('locations')
+    .select('id, name')
+    .ilike('name', `%${locationHint}%`)
+    .limit(5);
+
+  if (!locations?.length) {
+    return { text: `No location found matching "${locationHint}".`, dataDisplay: { displayType: 'metric', label: 'Not Found', value: locationHint } };
+  }
+
+  const loc = locations[0];
+
+  const { data: balances, error } = await inventorySchema(ctx.supabase)
+    .from('stock_balances')
+    .select('catalog_item_id, qty_on_hand, qty_reserved, qty_available')
+    .eq('location_id', loc.id)
+    .gt('qty_on_hand', 0)
+    .limit(100);
+
+  if (error) {
+    return { text: `Failed to query stock at ${loc.name}: ${error.message}`, dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' } };
+  }
+
+  if (!balances?.length) {
+    return { text: `No stock found at ${loc.name}.`, dataDisplay: { displayType: 'metric', label: loc.name, value: '0 items' } };
+  }
+
+  const itemIds = (balances as any[]).map((b: any) => b.catalog_item_id).filter(Boolean);
+  let itemMap: Record<string, string> = {};
+  if (itemIds.length > 0) {
+    const { data: itemData } = await inventorySchema(ctx.supabase).from('catalog_items').select('id, name').in('id', itemIds).limit(200);
+    if (itemData) itemMap = Object.fromEntries(itemData.map((i: any) => [i.id, i.name]));
+  }
+
+  const rows = (balances as any[]).map((b: any) => ({
+    item: itemMap[b.catalog_item_id] || '(unknown)',
+    on_hand: formatNumber(Number(b.qty_on_hand) || 0),
+    reserved: formatNumber(Number(b.qty_reserved) || 0),
+    available: formatNumber(Number(b.qty_available) || 0),
+  }));
+
+  return {
+    text: `${loc.name} has ${rows.length} item${rows.length === 1 ? '' : 's'} in stock. ${rows.slice(0, 5).map((r) => `${r.item}: ${r.on_hand} on hand`).join(', ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'item', label: 'Item' },
+        { key: 'on_hand', label: 'On Hand' },
+        { key: 'reserved', label: 'Reserved' },
+        { key: 'available', label: 'Available' },
+      ],
+      rows,
+      totalRows: rows.length,
+    },
+  };
+}
+
+// ─── Query Integrations ─────────────────────────────────────────────
+
+async function queryIntegrations(
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const { data: toolConfigs } = await inventorySchema(ctx.supabase)
+    .from('ai_tool_config')
+    .select('tool_name, enabled, config')
+    .eq('tenant_id', ctx.tenantId)
+    .limit(50);
+
+  const rows = (toolConfigs || []).map((c: any) => ({
+    tool: c.tool_name,
+    enabled: c.enabled ? 'Yes' : 'No',
+    config: c.config ? JSON.stringify(c.config).slice(0, 80) : '—',
+  }));
+
+  if (rows.length === 0) {
+    return {
+      text: 'No custom integrations or tool configurations found. All tools are running with default settings. You can configure integrations from Settings.',
+      dataDisplay: { displayType: 'metric', label: 'Integrations', value: '0 configured' },
+    };
+  }
+
+  return {
+    text: `Found ${rows.length} tool configuration${rows.length === 1 ? '' : 's'}. ${rows.map((r: any) => `${r.tool}: ${r.enabled}`).join(', ')}.`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'tool', label: 'Tool' },
+        { key: 'enabled', label: 'Enabled' },
+        { key: 'config', label: 'Config' },
+      ],
+      rows,
+      totalRows: rows.length,
     },
   };
 }
