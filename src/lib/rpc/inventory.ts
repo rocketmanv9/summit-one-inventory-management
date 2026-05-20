@@ -2024,10 +2024,7 @@ export const InventoryRPC = {
       last_event_id?: string;
       location_type?: unknown;
     };
-    const safeUpdates =
-      typeof location_type === 'string'
-        ? { ...restUpdates, location_type }
-        : { ...restUpdates };
+    const safeUpdates = { ...restUpdates };
 
     const { data, error } = await supabase
       .from('locations')
