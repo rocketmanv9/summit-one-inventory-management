@@ -20,7 +20,6 @@ export function useGlobeData(filters?: GlobeFilters) {
       setLoading(false);
     }
   }, [
-    filters?.transfer_status,
     filters?.date_from,
     filters?.date_to,
     filters?.show_vendors,

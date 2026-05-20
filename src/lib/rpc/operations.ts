@@ -65,11 +65,12 @@ export interface GlobeData {
 }
 
 export interface GlobeFilters {
-  transfer_status?: string;
   date_from?: string;
   date_to?: string;
   show_vendors?: boolean;
   show_pos?: boolean;
+  transfer_statuses?: string[];
+  po_statuses?: string[];
 }
 
 export const OperationsRPC = {
@@ -80,7 +81,6 @@ export const OperationsRPC = {
     }
 
     const params = new URLSearchParams();
-    if (filters?.transfer_status) params.set('transfer_status', filters.transfer_status);
     if (filters?.date_from) params.set('date_from', filters.date_from);
     if (filters?.date_to) params.set('date_to', filters.date_to);
     if (filters?.show_vendors === false) params.set('show_vendors', 'false');

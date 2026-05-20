@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { AppShell } from '@/components/layout/AppShell';
 import { useGlobeData } from '@/hooks/useGlobeData';
+import { useTimelineFilter } from '@/hooks/useTimelineFilter';
 import { GlobeFilterBar } from '@/components/globe/GlobeFilterBar';
+import { GlobeTimeline } from '@/components/globe/GlobeTimeline';
 import { GlobeDetailPanel } from '@/components/globe/GlobeDetailPanel';
 import { Loader2 } from 'lucide-react';
 import type { GlobePoint, GlobeArc, VisibleLayers } from '@/components/globe/GlobeVisualization';
@@ -14,6 +16,15 @@ const GlobeVisualization = dynamic(
   () => import('@/components/globe/GlobeVisualization').then((mod) => mod.GlobeVisualization),
   { ssr: false }
 );
+
+function deriveTimeRange(data: { transfers: { created_at: string }[]; purchaseOrders: { created_at: string }[] } | null) {
+  if (!data) return null;
+  const dates: number[] = [];
+  for (const t of data.transfers) dates.push(new Date(t.created_at).getTime());
+  for (const po of data.purchaseOrders) dates.push(new Date(po.created_at).getTime());
+  if (dates.length === 0) return null;
+  return { start: new Date(Math.min(...dates)), end: new Date(Math.max(...dates)) };
+}
 
 export default function OperationsGlobePage() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -28,11 +39,28 @@ export default function OperationsGlobePage() {
   const [selectedPoint, setSelectedPoint] = useState<GlobePoint | null>(null);
   const [selectedArc, setSelectedArc] = useState<GlobeArc | null>(null);
 
+  // Multi-select statuses (empty = show all)
+  const [transferStatuses, setTransferStatuses] = useState<string[]>([]);
+  const [poStatuses, setPoStatuses] = useState<string[]>([]);
+
+  // Timeline state
+  const [timelineActive, setTimelineActive] = useState(false);
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+
   const { data, loading, error } = useGlobeData({
     ...filters,
     show_vendors: visibleLayers.vendors,
     show_pos: visibleLayers.pos,
   });
+
+  const timeRange = useMemo(() => deriveTimeRange(data), [data]);
+
+  const filteredData = useTimelineFilter(
+    data,
+    timelineActive ? currentTime : null,
+    transferStatuses,
+    poStatuses,
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -65,12 +93,17 @@ export default function OperationsGlobePage() {
     setVisibleLayers((prev) => ({ ...prev, [layer]: value }));
   }, []);
 
-  const stats = data
+  const handleTimelineToggle = useCallback((active: boolean) => {
+    setTimelineActive(active);
+    if (!active) setCurrentTime(null);
+  }, []);
+
+  const stats = filteredData
     ? {
-        locations: data.locations.length,
-        vendors: data.vendors.length,
-        transfers: data.transfers.length,
-        pos: data.purchaseOrders.length,
+        locations: filteredData.locations.length,
+        vendors: filteredData.vendors.length,
+        transfers: filteredData.transfers.length,
+        pos: filteredData.purchaseOrders.length,
       }
     : null;
 
@@ -95,9 +128,9 @@ export default function OperationsGlobePage() {
           </div>
         )}
 
-        {data && (
+        {filteredData && (
           <GlobeVisualization
-            data={data}
+            data={filteredData}
             visibleLayers={visibleLayers}
             onPointClick={handlePointClick}
             onArcClick={handleArcClick}
@@ -111,6 +144,19 @@ export default function OperationsGlobePage() {
           onChange={setFilters}
           visibleLayers={visibleLayers}
           onToggleLayer={handleToggleLayer}
+          transferStatuses={transferStatuses}
+          onTransferStatusChange={setTransferStatuses}
+          poStatuses={poStatuses}
+          onPoStatusChange={setPoStatuses}
+          timelineActive={timelineActive}
+        />
+
+        <GlobeTimeline
+          active={timelineActive}
+          onToggle={handleTimelineToggle}
+          timeRange={timeRange}
+          currentTime={currentTime}
+          onTimeChange={setCurrentTime}
         />
 
         {stats && (

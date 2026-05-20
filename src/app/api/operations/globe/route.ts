@@ -12,7 +12,6 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   });
 
   const url = new URL(req.url);
-  const transferStatus = url.searchParams.get('transfer_status') || undefined;
   const dateFrom = url.searchParams.get('date_from') || undefined;
   const dateTo = url.searchParams.get('date_to') || undefined;
   const showVendors = url.searchParams.get('show_vendors') !== 'false';
@@ -42,11 +41,8 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
       'id, status, notes, created_at, initiated_at, completed_at, from_location:from_location_id(id, name, latitude, longitude), to_location:to_location_id(id, name, latitude, longitude), transfer_lines(id, qty, catalog_items:catalog_item_id(id, name, sku))'
     )
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(500);
 
-  if (transferStatus) {
-    transferQuery = transferQuery.eq('status', transferStatus);
-  }
   if (dateFrom) {
     transferQuery = transferQuery.gte('created_at', dateFrom);
   }
@@ -95,12 +91,20 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   // Fetch purchase orders with vendor/location links (if requested)
   let purchaseOrders: any[] = [];
   if (showPOs) {
-    const { data: poData, error: poErr } = await sc
+    let poQuery = sc
       .from('purchase_orders')
       .select('id, po_number, status, needed_by_date, vendor_id, delivery_location_id, created_at')
-      .in('status', ['draft', 'submitted', 'confirmed', 'partially_received'])
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(500);
+
+    if (dateFrom) {
+      poQuery = poQuery.gte('created_at', dateFrom);
+    }
+    if (dateTo) {
+      poQuery = poQuery.lte('created_at', dateTo);
+    }
+
+    const { data: poData, error: poErr } = await poQuery;
 
     if (poErr) {
       log.error('globe.pos_failed', { error: poErr.message });

@@ -113,8 +113,8 @@ const pointsLabelLayer = {
     'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
   },
   paint: {
-    'text-color': '#1e293b',
-    'text-halo-color': '#ffffff',
+    'text-color': '#ffffff',
+    'text-halo-color': '#000000',
     'text-halo-width': 1.5,
   },
 } satisfies LayerProps;
@@ -388,7 +388,7 @@ export function GlobeVisualization({
         zoom: 4,
       }}
       style={{ width, height }}
-      mapStyle="mapbox://styles/mapbox/light-v11"
+      mapStyle="mapbox://styles/mapbox/satellite-streets-v12"
       interactiveLayerIds={INTERACTIVE_LAYERS}
       onClick={handleClick}
       onMouseMove={handleMouseMove}
