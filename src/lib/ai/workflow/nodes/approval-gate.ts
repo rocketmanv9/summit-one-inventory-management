@@ -1,17 +1,17 @@
 /**
  * Approval Gate Node — Human-in-the-loop for high-risk operations.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 import { toolRegistry } from '../../tool-registry';
 
-export async function approvalGateNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function approvalGateNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   const highRiskTools = state.selectedTools.filter((t) => {
     const gov = toolRegistry.getGovernance(t);
     return gov?.riskLevel === 'high' && gov?.requiresConfirmation;
   });
 
   if (highRiskTools.length === 0) {
-    return { requiresApproval: false, nodesVisited: [...state.nodesVisited, 'approval_gate'] };
+    return { requiresApproval: false, nodesVisited: ['approval_gate'] };
   }
 
   try {
@@ -42,10 +42,15 @@ export async function approvalGateNode(state: WorkflowState): Promise<Partial<Wo
         requiresApproval: true,
         approvalGateId: gate?.id || null,
         traceId,
-        nodesVisited: [...state.nodesVisited, 'approval_gate'],
+        response: 'This action requires approval. An approval request has been created.',
+        nodesVisited: ['approval_gate'],
       };
     }
   } catch { /* non-critical */ }
 
-  return { requiresApproval: true, nodesVisited: [...state.nodesVisited, 'approval_gate'] };
+  return {
+    requiresApproval: true,
+    response: 'This action requires approval. An approval request has been created.',
+    nodesVisited: ['approval_gate'],
+  };
 }

@@ -1,12 +1,12 @@
 /**
  * Summarize Node — Composes final response from tool results and context.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 import { estimateConfidence, shouldHedge, getHedgeText } from '../../confidence';
 
-export async function summarizeNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function summarizeNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   if (state.permissionDenied) {
-    return { response: state.permissionDenied, confidence: 0, nodesVisited: [...state.nodesVisited, 'summarize'] };
+    return { response: state.permissionDenied, confidence: 0, nodesVisited: ['summarize'] };
   }
 
   let response = state.response || '';
@@ -23,5 +23,5 @@ export async function summarizeNode(state: WorkflowState): Promise<Partial<Workf
 
   if (shouldHedge(confidence)) response += getHedgeText();
 
-  return { response, confidence, nodesVisited: [...state.nodesVisited, 'summarize'] };
+  return { response, confidence, nodesVisited: ['summarize'] };
 }

@@ -1,15 +1,15 @@
 /**
  * Tool Execution Node — Executes selected tools via the registry.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate, ToolResultEntry } from '../graph-types';
 import { toolRegistry } from '../../tool-registry';
 
-export async function executeToolsNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function executeToolsNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   if (state.permissionDenied || state.selectedTools.length === 0) {
-    return { nodesVisited: [...state.nodesVisited, 'execute_tools'] };
+    return { nodesVisited: ['execute_tools'] };
   }
 
-  const results: WorkflowState['toolResults'] = [];
+  const results: ToolResultEntry[] = [];
 
   for (const toolName of state.selectedTools) {
     try {
@@ -25,9 +25,14 @@ export async function executeToolsNode(state: WorkflowState): Promise<Partial<Wo
   }
 
   const lastDisplay = results.find((r) => r.result.dataDisplay)?.result.dataDisplay || null;
+  const anyFailed = results.some((r) => !r.success);
+  const nextRound = state.toolRound + 1;
+
   return {
     toolResults: results,
     dataDisplay: lastDisplay,
-    nodesVisited: [...state.nodesVisited, 'execute_tools'],
+    toolRound: nextRound,
+    needsMoreTools: anyFailed && nextRound < state.maxToolRounds,
+    nodesVisited: ['execute_tools'],
   };
 }

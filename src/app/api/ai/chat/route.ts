@@ -25,6 +25,7 @@ import { estimateCost } from '@/lib/ai/cost';
 import { selectModel } from '@/lib/ai/model-router';
 import { estimateConfidence, shouldHedge, getHedgeText } from '@/lib/ai/confidence';
 import { getRelevantMemories, formatMemoriesForPrompt, extractMemories, storeMemories } from '@/lib/ai/memory';
+import { isGraphWorkflowEnabled, runChatGraph } from '@/lib/ai/workflow/chat-graph';
 import OpenAI from 'openai';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -221,6 +222,74 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
         try {
           let lastDataDisplay: import('@/lib/ai/types').AiDataDisplay | null = null;
           let fullAssistantContent = '';
+
+          // ── LangGraph workflow path (feature-flagged) ─────────────
+          if (isGraphWorkflowEnabled()) {
+            try {
+              const ctx = await getServerToolCtx();
+              const graphResult = await runChatGraph({
+                tenantId: session.tenantId,
+                userId: session.userId,
+                userMessage: lastUserMessage?.content || '',
+                conversationId: activeConversationId || null,
+                userRole,
+                surface,
+                serverToolCtx: ctx,
+                supabase,
+              });
+
+              // Stream the graph result as SSE events
+              if (graphResult.response) {
+                sendEvent('delta', { content: graphResult.response });
+                fullAssistantContent = graphResult.response;
+              }
+
+              if (graphResult.dataDisplay) {
+                sendEvent('data_result', { dataDisplay: graphResult.dataDisplay });
+                lastDataDisplay = graphResult.dataDisplay;
+              }
+
+              // Persist assistant message
+              let assistantMessageId: string | undefined;
+              if (activeConversationId) {
+                const { data: savedMsg } = await inv
+                  .from('ai_messages')
+                  .insert({
+                    tenant_id: session.tenantId,
+                    conversation_id: activeConversationId,
+                    role: 'assistant',
+                    content: graphResult.response || null,
+                    data_display: graphResult.dataDisplay || null,
+                    metadata: {
+                      graph: true,
+                      nodesVisited: graphResult.nodesVisited,
+                      confidence: graphResult.confidence,
+                      latency_ms: Date.now() - startTime,
+                    },
+                  })
+                  .select('id')
+                  .single();
+                assistantMessageId = savedMsg?.id;
+              }
+
+              sendEvent('done', {
+                conversation_id: activeConversationId,
+                message_id: assistantMessageId,
+                tokens: 0,
+                latency_ms: Date.now() - startTime,
+                model: 'langgraph',
+                confidence: graphResult.confidence,
+              });
+
+              controller.close();
+              return;
+            } catch (graphErr: any) {
+              // Graph workflow failed — fall through to existing OpenAI loop
+              log.warn('[AI Chat] Graph workflow failed, falling back to OpenAI loop', {
+                error: graphErr.message,
+              });
+            }
+          }
 
           for (let round = 0; round < MAX_SERVER_TOOL_ROUNDS; round++) {
             const streamResponse = await openai.chat.completions.create({

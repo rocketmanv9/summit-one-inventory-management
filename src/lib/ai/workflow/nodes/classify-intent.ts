@@ -1,10 +1,9 @@
 /**
  * Intent Classification Node
  */
-import type { WorkflowState } from '../graph-types';
-import { classifyIntent } from '../../types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 
-export async function classifyIntentNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function classifyIntentNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   const msg = state.userMessage.toLowerCase().trim();
 
   // Simple heuristic classification (OpenAI does the real work via tool selection)
@@ -24,6 +23,6 @@ export async function classifyIntentNode(state: WorkflowState): Promise<Partial<
   return {
     intent,
     intentConfidence: confidence,
-    nodesVisited: [...state.nodesVisited, 'classify_intent'],
+    nodesVisited: ['classify_intent'],
   };
 }

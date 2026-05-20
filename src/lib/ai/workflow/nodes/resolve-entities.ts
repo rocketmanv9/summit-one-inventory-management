@@ -1,10 +1,10 @@
 /**
  * Entity Resolution Node — Uses ontology to resolve entities in the user message.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 import { resolveEntities } from '../../ontology/entity-resolver';
 
-export async function resolveEntitiesNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function resolveEntitiesNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   try {
     const resolved = await resolveEntities(state.supabase, state.tenantId, state.userMessage);
     return {
@@ -14,9 +14,9 @@ export async function resolveEntitiesNode(state: WorkflowState): Promise<Partial
         canonical_name: r.canonical_name,
         confidence: r.confidence,
       })),
-      nodesVisited: [...state.nodesVisited, 'resolve_entities'],
+      nodesVisited: ['resolve_entities'],
     };
   } catch {
-    return { nodesVisited: [...state.nodesVisited, 'resolve_entities'] };
+    return { nodesVisited: ['resolve_entities'] };
   }
 }

@@ -1,13 +1,23 @@
 /**
- * LangGraph Chat Workflow — Stateful graph replacing the flat 5-round tool loop.
+ * LangGraph Chat Workflow — Real StateGraph implementation.
  *
- * Graph: classify_intent → resolve_entities → select_tools → check_permissions
- *        → approval_gate → execute_tools → semantic_retrieve → audit_emit → summarize
+ * Graph topology:
+ *   START → classify_intent → resolve_entities → select_tools → check_permissions
+ *     → [routeAfterPermissions]
+ *         if permissionDenied → summarize → audit_emit → END
+ *         else → approval_gate
+ *     → [routeAfterApproval]
+ *         if requiresApproval → summarize → audit_emit → END
+ *         else → semantic_retrieve → execute_tools
+ *     → [routeAfterTools]
+ *         if needsMoreTools → execute_tools (retry loop)
+ *         else → summarize → audit_emit → END
  *
  * Feature-flagged via AI_GRAPH_WORKFLOW env var.
  */
 
-import type { WorkflowState } from './graph-types';
+import { StateGraph, START, END } from '@langchain/langgraph';
+import { ChatGraphAnnotation, type ChatGraphState } from './graph-types';
 import type { ServerToolContext } from '../server-tools';
 import type { UserRole } from '../tool-governance';
 
@@ -25,76 +35,79 @@ export function isGraphWorkflowEnabled(): boolean {
   return process.env.AI_GRAPH_WORKFLOW === 'true';
 }
 
-function createInitialState(params: {
-  tenantId: string;
-  userId: string;
-  userMessage: string;
-  conversationId: string | null;
-  userRole: UserRole;
-  surface: string;
-  serverToolCtx: ServerToolContext;
-  supabase: any;
-}): WorkflowState {
-  return {
-    ...params,
-    intent: null,
-    intentConfidence: 0,
-    resolvedEntities: [],
-    retrievedContext: [],
-    selectedTools: [],
-    toolResults: [],
-    permissionDenied: null,
-    requiresApproval: false,
-    approvalGateId: null,
-    response: '',
-    dataDisplay: null,
-    confidence: 0,
-    traceId: null,
-    nodesVisited: [],
-    error: null,
-  };
+// ── Conditional edge routers ──────────────────────────────────────────
+
+function routeAfterPermissions(state: ChatGraphState): 'summarize' | 'approval_gate' {
+  return state.permissionDenied ? 'summarize' : 'approval_gate';
 }
 
-type WorkflowNode = (state: WorkflowState) => Promise<Partial<WorkflowState>>;
-
-/**
- * Execute the workflow graph as a sequential pipeline with conditional branching.
- * Uses LangGraph-compatible node signatures but runs them in a deterministic order.
- * This will be migrated to full StateGraph once the LangGraph API stabilizes.
- */
-async function executeGraph(state: WorkflowState): Promise<WorkflowState> {
-  const apply = async (node: WorkflowNode) => {
-    const patch = await node(state);
-    Object.assign(state, patch);
-  };
-
-  await apply(classifyIntentNode);
-  await apply(resolveEntitiesNode);
-  await apply(selectToolsNode);
-  await apply(checkPermissionsNode);
-
-  if (state.permissionDenied) {
-    await apply(summarizeNode);
-    await apply(auditEmitNode);
-    return state;
-  }
-
-  await apply(approvalGateNode);
-
-  if (state.requiresApproval) {
-    state.response = `This action requires approval. An approval request has been created.`;
-    await apply(auditEmitNode);
-    await apply(summarizeNode);
-    return state;
-  }
-
-  await apply(executeToolsNode);
-  await apply(semanticRetrieveNode);
-  await apply(auditEmitNode);
-  await apply(summarizeNode);
-
-  return state;
+function routeAfterApproval(state: ChatGraphState): 'summarize' | 'semantic_retrieve' {
+  return state.requiresApproval ? 'summarize' : 'semantic_retrieve';
 }
+
+function routeAfterTools(state: ChatGraphState): 'execute_tools' | 'summarize' {
+  return state.needsMoreTools ? 'execute_tools' : 'summarize';
+}
+
+// ── Build and compile the graph (singleton) ───────────────────────────
+
+function buildGraph() {
+  const graph = new StateGraph(ChatGraphAnnotation)
+    // Add all nodes
+    .addNode('classify_intent', classifyIntentNode)
+    .addNode('resolve_entities', resolveEntitiesNode)
+    .addNode('select_tools', selectToolsNode)
+    .addNode('check_permissions', checkPermissionsNode)
+    .addNode('approval_gate', approvalGateNode)
+    .addNode('semantic_retrieve', semanticRetrieveNode)
+    .addNode('execute_tools', executeToolsNode)
+    .addNode('summarize', summarizeNode)
+    .addNode('audit_emit', auditEmitNode)
+
+    // Linear edges: START → classify → resolve → select → check
+    .addEdge(START, 'classify_intent')
+    .addEdge('classify_intent', 'resolve_entities')
+    .addEdge('resolve_entities', 'select_tools')
+    .addEdge('select_tools', 'check_permissions')
+
+    // Conditional: after permissions check
+    .addConditionalEdges('check_permissions', routeAfterPermissions, {
+      summarize: 'summarize',
+      approval_gate: 'approval_gate',
+    })
+
+    // Conditional: after approval gate
+    .addConditionalEdges('approval_gate', routeAfterApproval, {
+      summarize: 'summarize',
+      semantic_retrieve: 'semantic_retrieve',
+    })
+
+    // Linear: semantic_retrieve → execute_tools
+    .addEdge('semantic_retrieve', 'execute_tools')
+
+    // Conditional: after tool execution (retry loop or done)
+    .addConditionalEdges('execute_tools', routeAfterTools, {
+      execute_tools: 'execute_tools',
+      summarize: 'summarize',
+    })
+
+    // Linear: summarize → audit → END
+    .addEdge('summarize', 'audit_emit')
+    .addEdge('audit_emit', END);
+
+  return graph.compile();
+}
+
+let _compiled: ReturnType<typeof buildGraph> | null = null;
+
+function getCompiledGraph() {
+  if (!_compiled) {
+    _compiled = buildGraph();
+  }
+  return _compiled;
+}
+
+// ── Public API ────────────────────────────────────────────────────────
 
 /**
  * Run the chat workflow graph.
@@ -108,7 +121,38 @@ export async function runChatGraph(params: {
   surface: string;
   serverToolCtx: ServerToolContext;
   supabase: any;
-}): Promise<WorkflowState> {
-  const initial = createInitialState(params);
-  return executeGraph(initial);
+}): Promise<ChatGraphState> {
+  const graph = getCompiledGraph();
+
+  const initial: Parameters<typeof graph.invoke>[0] = {
+    tenantId: params.tenantId,
+    userId: params.userId,
+    userMessage: params.userMessage,
+    conversationId: params.conversationId,
+    userRole: params.userRole,
+    surface: params.surface,
+    serverToolCtx: params.serverToolCtx,
+    supabase: params.supabase,
+    // Defaults
+    intent: null,
+    intentConfidence: 0,
+    resolvedEntities: [],
+    retrievedContext: [],
+    selectedTools: [],
+    toolResults: [],
+    permissionDenied: null,
+    requiresApproval: false,
+    approvalGateId: null,
+    toolRound: 0,
+    maxToolRounds: 5,
+    needsMoreTools: false,
+    response: '',
+    dataDisplay: null,
+    confidence: 0,
+    traceId: null,
+    nodesVisited: [],
+    error: null,
+  };
+
+  return graph.invoke(initial);
 }

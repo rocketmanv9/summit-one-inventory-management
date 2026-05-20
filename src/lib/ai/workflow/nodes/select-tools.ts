@@ -1,7 +1,7 @@
 /**
  * Tool Selection Node — Selects tools based on intent and entities.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 import { toolRegistry } from '../../tool-registry';
 
 const INTENT_TOOL_MAP: Record<string, string[]> = {
@@ -10,9 +10,9 @@ const INTENT_TOOL_MAP: Record<string, string[]> = {
   greeting: [],
 };
 
-export async function selectToolsNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function selectToolsNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   const tools = INTENT_TOOL_MAP[state.intent || ''] || [];
   // Filter to tools that actually exist in registry
   const valid = tools.filter((t) => toolRegistry.has(t));
-  return { selectedTools: valid, nodesVisited: [...state.nodesVisited, 'select_tools'] };
+  return { selectedTools: valid, nodesVisited: ['select_tools'] };
 }

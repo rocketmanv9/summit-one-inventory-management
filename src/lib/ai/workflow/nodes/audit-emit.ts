@@ -1,9 +1,9 @@
 /**
  * Audit & Emit Node — Persists workflow trace to ai_workflow_traces.
  */
-import type { WorkflowState } from '../graph-types';
+import type { ChatGraphState, ChatGraphUpdate } from '../graph-types';
 
-export async function auditEmitNode(state: WorkflowState): Promise<Partial<WorkflowState>> {
+export async function auditEmitNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   try {
     const inv = state.supabase.schema('inventory');
     const { data } = await inv.from('ai_workflow_traces').insert({
@@ -17,8 +17,8 @@ export async function auditEmitNode(state: WorkflowState): Promise<Partial<Workf
       total_duration_ms: null, // Set by caller
     }).select('id').single();
 
-    return { traceId: data?.id || null, nodesVisited: [...state.nodesVisited, 'audit_emit'] };
+    return { traceId: data?.id || null, nodesVisited: ['audit_emit'] };
   } catch {
-    return { nodesVisited: [...state.nodesVisited, 'audit_emit'] };
+    return { nodesVisited: ['audit_emit'] };
   }
 }
