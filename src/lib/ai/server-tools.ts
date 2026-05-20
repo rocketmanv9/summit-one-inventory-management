@@ -1438,7 +1438,7 @@ async function smartAddLocation(
     }
   }
 
-  // If no hint but name contains clues, try to infer type
+  // If no hint but name contains clues, try to infer type (also serves as fallback default)
   if (!locationTypeId && locationTypes?.length) {
     const nameLower = name.toLowerCase();
     const typeKeywords: Record<string, string[]> = {
@@ -1462,6 +1462,21 @@ async function smartAddLocation(
         }
       }
     }
+  }
+
+  // Default to first available location type if none matched (location_type_id is NOT NULL)
+  if (!locationTypeId && locationTypes?.length) {
+    const yardType = locationTypes.find((lt: any) => lt.name.toLowerCase().includes('yard'));
+    const fallback = yardType || locationTypes[0];
+    locationTypeId = fallback.id;
+    locationTypeName = fallback.name;
+  }
+
+  if (!locationTypeId) {
+    return {
+      text: 'Cannot create location — no location types are configured. Please add a location type first.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No location types' },
+    };
   }
 
   // 2. Validate/standardize address via OpenAI web search if provided
