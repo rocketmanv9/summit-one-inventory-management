@@ -3,14 +3,13 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import type { GlobeFilters } from '@/lib/rpc/operations';
+import type { VisibleLayers } from './GlobeVisualization';
 
 interface GlobeFilterBarProps {
   filters: GlobeFilters;
   onChange: (filters: GlobeFilters) => void;
-  showVendors: boolean;
-  onToggleVendors: (show: boolean) => void;
-  showPOs: boolean;
-  onTogglePOs: (show: boolean) => void;
+  visibleLayers: VisibleLayers;
+  onToggleLayer: (layer: keyof VisibleLayers, value: boolean) => void;
 }
 
 const TRANSFER_STATUSES = [
@@ -21,13 +20,18 @@ const TRANSFER_STATUSES = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
+const LAYER_OPTIONS: { key: keyof VisibleLayers; label: string; color: string }[] = [
+  { key: 'locations', label: 'Locations', color: 'bg-blue-500' },
+  { key: 'vendors', label: 'Vendors', color: 'bg-green-500' },
+  { key: 'transfers', label: 'Transfers', color: 'bg-amber-500' },
+  { key: 'pos', label: 'Purchase Orders', color: 'bg-purple-500' },
+];
+
 export function GlobeFilterBar({
   filters,
   onChange,
-  showVendors,
-  onToggleVendors,
-  showPOs,
-  onTogglePOs,
+  visibleLayers,
+  onToggleLayer,
 }: GlobeFilterBarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -51,8 +55,27 @@ export function GlobeFilterBar({
 
       {!collapsed && (
         <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
-          {/* Transfer Status */}
+          {/* Layers */}
           <div>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Show on Globe</label>
+            <div className="space-y-1.5">
+              {LAYER_OPTIONS.map((opt) => (
+                <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={visibleLayers[opt.key]}
+                    onChange={(e) => onToggleLayer(opt.key, e.target.checked)}
+                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <span className={`w-2.5 h-2.5 rounded-full ${opt.color}`} />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Transfer Status */}
+          <div className="border-t border-gray-100 pt-3">
             <label className="block text-xs font-medium text-gray-600 mb-1">Transfer Status</label>
             <select
               value={filters.transfer_status || ''}
@@ -89,28 +112,6 @@ export function GlobeFilterBar({
             </div>
           </div>
 
-          {/* Toggles */}
-          <div className="space-y-2 border-t border-gray-100 pt-3">
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showVendors}
-                onChange={(e) => onToggleVendors(e.target.checked)}
-                className="rounded border-gray-300 text-primary focus:ring-primary"
-              />
-              Show Vendors
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showPOs}
-                onChange={(e) => onTogglePOs(e.target.checked)}
-                className="rounded border-gray-300 text-primary focus:ring-primary"
-              />
-              Show PO Arcs
-            </label>
-          </div>
-
           {/* Legend */}
           <div className="border-t border-gray-100 pt-3">
             <div className="text-xs font-medium text-gray-600 mb-2">Legend</div>
@@ -118,6 +119,14 @@ export function GlobeFilterBar({
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <span className="w-3 h-3 rounded-full bg-blue-500" />
                 Yard / Warehouse
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <span className="w-3 h-3 rounded-full bg-orange-500" />
+                Job Site
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-600">
+                <span className="w-3 h-3 rounded-full bg-indigo-500" />
+                Plant
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-600">
                 <span className="w-3 h-3 rounded-full bg-green-500" />
