@@ -150,27 +150,27 @@ describe('Schema Bug Fixes', () => {
     expect(badPattern.test(serverToolsSrc)).toBe(false);
   });
 
-  it('no ctx.supabase.from("dashboards") — all use inventorySchema', async () => {
+  it('no inventorySchema for dashboards — table is in public schema', async () => {
     const serverToolsSrc = await import('fs').then(fs =>
       fs.readFileSync('src/lib/ai/server-tools.ts', 'utf8')
     );
-    const badPattern = /ctx\.supabase\s*\n?\s*\.from\('dashboards'\)/;
+    const badPattern = /inventorySchema\(ctx\.supabase\)\s*\n?\s*\.from\('dashboards'\)/;
     expect(badPattern.test(serverToolsSrc)).toBe(false);
   });
 
-  it('no ctx.supabase.from("dashboard_widgets") — all use inventorySchema', async () => {
+  it('no inventorySchema for dashboard_widgets — table is in public schema', async () => {
     const serverToolsSrc = await import('fs').then(fs =>
       fs.readFileSync('src/lib/ai/server-tools.ts', 'utf8')
     );
-    const badPattern = /ctx\.supabase\s*\n?\s*\.from\('dashboard_widgets'\)/;
+    const badPattern = /inventorySchema\(ctx\.supabase\)\s*\n?\s*\.from\('dashboard_widgets'\)/;
     expect(badPattern.test(serverToolsSrc)).toBe(false);
   });
 
-  it('no ctx.supabase.from("widget_registry") — all use inventorySchema', async () => {
+  it('no inventorySchema for widget_registry — table is in public schema', async () => {
     const serverToolsSrc = await import('fs').then(fs =>
       fs.readFileSync('src/lib/ai/server-tools.ts', 'utf8')
     );
-    const badPattern = /ctx\.supabase\s*\n?\s*\.from\('widget_registry'\)/;
+    const badPattern = /inventorySchema\(ctx\.supabase\)\s*\n?\s*\.from\('widget_registry'\)/;
     expect(badPattern.test(serverToolsSrc)).toBe(false);
   });
 });
@@ -234,7 +234,7 @@ describe('Blank Response Prevention', () => {
     const serverToolsSrc = await import('fs').then(fs =>
       fs.readFileSync('src/lib/ai/server-tools.ts', 'utf8')
     );
-    expect(serverToolsSrc).toContain('Online vendor search is currently unavailable');
+    expect(serverToolsSrc).toContain('Online vendor search failed');
     expect(serverToolsSrc).toContain('add vendors manually');
   });
 });

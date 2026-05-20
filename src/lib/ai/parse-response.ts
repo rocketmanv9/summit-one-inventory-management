@@ -50,7 +50,10 @@ const VALID_INTENTS: Set<string> = new Set([
   'query_reorder_suggestions', 'query_forecast', 'query_inventory_turnover',
   'query_po_status',
   // Dashboard & workflow tools
-  'create_dashboard', 'workflow_auto_reorder', 'workflow_stock_rebalance',
+  'create_dashboard', 'list_dashboards', 'list_available_widgets',
+  'add_dashboard_widget', 'remove_dashboard_widget',
+  'update_dashboard', 'delete_dashboard',
+  'workflow_auto_reorder', 'workflow_stock_rebalance',
   'smart_stock_receive', 'semantic_search', 'purchasing_assistant',
 ]);
 

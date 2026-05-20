@@ -260,7 +260,7 @@ export function useAiChat(options?: AiChatOptions) {
 
   // ── Load conversation from localStorage on mount ──────────────────
   useEffect(() => {
-    const storedId = localStorage.getItem(`ai-conversation-${mode}`);
+    const storedId = localStorage.getItem('ai-conversation');
     if (storedId) {
       setConversationId(storedId);
       // Load history from API
@@ -289,7 +289,7 @@ export function useAiChat(options?: AiChatOptions) {
         conversationHistory.current = historyForApi;
       }).catch(() => {
         // If load fails, clear stale ID
-        localStorage.removeItem(`ai-conversation-${mode}`);
+        localStorage.removeItem('ai-conversation');
         setConversationId(null);
       });
     }
@@ -299,19 +299,19 @@ export function useAiChat(options?: AiChatOptions) {
   // Persist conversationId to localStorage
   useEffect(() => {
     if (conversationId) {
-      localStorage.setItem(`ai-conversation-${mode}`, conversationId);
+      localStorage.setItem('ai-conversation', conversationId);
     }
-  }, [conversationId, mode]);
+  }, [conversationId]);
 
   // ── Start new conversation ────────────────────────────────────────
   const startNewConversation = useCallback(() => {
     setConversationId(null);
-    localStorage.removeItem(`ai-conversation-${mode}`);
+    localStorage.removeItem('ai-conversation');
     setMessages([WELCOME_MESSAGE]);
     conversationHistory.current = [];
     setActiveFlow(null);
     setActions([]);
-  }, [mode]);
+  }, []);
 
   // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -941,8 +941,15 @@ export function useAiChat(options?: AiChatOptions) {
   );
 
   const handleVendorModalClose = useCallback(() => {
-    setVendorModalOpen(false);
-    addMessage('assistant', 'Vendor creation cancelled. What else can I help with?');
+    // Guard against spurious close events (e.g. Dialog re-renders)
+    setVendorModalOpen((prev) => {
+      if (!prev) return false; // Already closed — skip duplicate message
+      // Defer the cancel message to avoid batching with the close state update
+      setTimeout(() => {
+        addMessage('assistant', 'Vendor creation cancelled. What else can I help with?');
+      }, 0);
+      return false;
+    });
   }, [addMessage]);
 
   // ── Select option click ────────────────────────────────────────────

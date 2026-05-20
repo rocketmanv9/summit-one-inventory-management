@@ -172,7 +172,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
 
       {/* Footer */}
       <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500" suppressHydrationWarning>
           Auto-refreshes every 30 seconds • Last updated:{' '}
           {new Date().toLocaleTimeString()}
         </p>

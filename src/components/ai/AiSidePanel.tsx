@@ -270,6 +270,7 @@ function PanelMessageBubble({
           className={`text-xs mt-1 ${
             message.role === 'user' ? 'text-blue-100' : 'text-gray-400'
           }`}
+          suppressHydrationWarning
         >
           {message.timestamp.toLocaleTimeString([], {
             hour: '2-digit',

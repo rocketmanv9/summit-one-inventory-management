@@ -10,6 +10,7 @@
 import type { AiDataDisplay } from './types';
 import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
+import { getTenantGVClient } from '@/lib/gv';
 
 // ─── Context ──────────────────────────────────────────────────────────
 
@@ -656,7 +657,7 @@ function fuzzyMatchWidget(widgets: any[], query: string): any | null {
 }
 
 async function listDashboards(ctx: ServerToolContext): Promise<ServerToolResult> {
-  const { data, error } = await inventorySchema(ctx.supabase)
+  const { data, error } = await ctx.supabase
     .from('dashboards')
     .select('id, name, description, is_default, created_at, dashboard_widgets(id, title, widget_key, deleted_at)')
     .is('deleted_at', null)
@@ -707,7 +708,7 @@ async function listDashboards(ctx: ServerToolContext): Promise<ServerToolResult>
 }
 
 async function listAvailableWidgets(ctx: ServerToolContext): Promise<ServerToolResult> {
-  const { data, error } = await inventorySchema(ctx.supabase)
+  const { data, error } = await ctx.supabase
     .from('widget_registry')
     .select('widget_key, name, domain, description, default_width, default_height')
     .eq('is_enabled', true)
@@ -766,7 +767,7 @@ async function addDashboardWidget(
   }
 
   // Find the dashboard
-  const { data: dashboards, error: dashError } = await inventorySchema(ctx.supabase)
+  const { data: dashboards, error: dashError } = await ctx.supabase
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -788,7 +789,7 @@ async function addDashboardWidget(
   }
 
   // Find the widget in registry
-  const { data: registryWidgets, error: wError } = await inventorySchema(ctx.supabase)
+  const { data: registryWidgets, error: wError } = await ctx.supabase
     .from('widget_registry')
     .select('widget_key, name, default_width, default_height, default_config')
     .eq('is_enabled', true)
@@ -810,7 +811,7 @@ async function addDashboardWidget(
   }
 
   // Get existing widgets to calculate next Y position
-  const { data: existing } = await inventorySchema(ctx.supabase)
+  const { data: existing } = await ctx.supabase
     .from('dashboard_widgets')
     .select('layout')
     .eq('dashboard_id', dashboard.id)
@@ -828,7 +829,7 @@ async function addDashboardWidget(
 
   const eventId = `ai_add_widget_${dashboard.id}_${widget.widget_key}_${Date.now()}`;
 
-  const { error: insertError } = await inventorySchema(ctx.supabase)
+  const { error: insertError } = await ctx.supabase
     .from('dashboard_widgets')
     .upsert(
       {
@@ -854,7 +855,7 @@ async function addDashboardWidget(
   }
 
   // Read-after-write: verify widget was added
-  const { data: verifyWidgets } = await inventorySchema(ctx.supabase)
+  const { data: verifyWidgets } = await ctx.supabase
     .from('dashboard_widgets')
     .select('id')
     .eq('dashboard_id', dashboard.id)
@@ -886,7 +887,7 @@ async function removeDashboardWidget(
   }
 
   // Find dashboard
-  const { data: dashboards } = await inventorySchema(ctx.supabase)
+  const { data: dashboards } = await ctx.supabase
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -902,7 +903,7 @@ async function removeDashboardWidget(
   }
 
   // Find widget on this dashboard
-  const { data: widgets } = await inventorySchema(ctx.supabase)
+  const { data: widgets } = await ctx.supabase
     .from('dashboard_widgets')
     .select('id, title, widget_key')
     .eq('dashboard_id', dashboard.id)
@@ -929,7 +930,7 @@ async function removeDashboardWidget(
   }
 
   // Soft-delete the widget
-  const { error } = await inventorySchema(ctx.supabase)
+  const { error } = await ctx.supabase
     .from('dashboard_widgets')
     .update({ deleted_at: new Date().toISOString(), updated_by: ctx.userId })
     .eq('id', match.id);
@@ -942,7 +943,7 @@ async function removeDashboardWidget(
   }
 
   // Read-after-write: verify widget was removed
-  const { data: remainingWidgets } = await inventorySchema(ctx.supabase)
+  const { data: remainingWidgets } = await ctx.supabase
     .from('dashboard_widgets')
     .select('id')
     .eq('dashboard_id', dashboard.id)
@@ -972,7 +973,7 @@ async function updateDashboardTool(
     };
   }
 
-  const { data: dashboards } = await inventorySchema(ctx.supabase)
+  const { data: dashboards } = await ctx.supabase
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -1003,7 +1004,7 @@ async function updateDashboardTool(
 
     // If setting as default, unset other defaults first
     if (isDefault) {
-      await inventorySchema(ctx.supabase)
+      await ctx.supabase
         .from('dashboards')
         .update({ is_default: false, updated_at: new Date().toISOString() })
         .eq('is_default', true)
@@ -1021,7 +1022,7 @@ async function updateDashboardTool(
     };
   }
 
-  const { error } = await inventorySchema(ctx.supabase)
+  const { error } = await ctx.supabase
     .from('dashboards')
     .update(updates)
     .eq('id', dashboard.id);
@@ -1056,7 +1057,7 @@ async function deleteDashboardTool(
     };
   }
 
-  const { data: dashboards } = await inventorySchema(ctx.supabase)
+  const { data: dashboards } = await ctx.supabase
     .from('dashboards')
     .select('id, name')
     .is('deleted_at', null)
@@ -1071,7 +1072,7 @@ async function deleteDashboardTool(
     };
   }
 
-  const { error } = await inventorySchema(ctx.supabase)
+  const { error } = await ctx.supabase
     .from('dashboards')
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', dashboard.id);
@@ -1633,18 +1634,34 @@ async function smartRegisterAsset(
   if (!catalogItemId) {
     // Create a new catalog item with serialized tracking
     const sku = `AST-${name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+
+    // Resolve UOM term ID — assets default to "EA" (Each)
+    let uomTermId: string | null = null;
+    try {
+      const gv = await getTenantGVClient(ctx.tenantId);
+      uomTermId = await gv.resolveTermId(ctx.tenantId, 'uom', 'EA', true);
+    } catch {
+      // If GV resolution fails, try a direct code lookup
+      try {
+        const gv = await getTenantGVClient(ctx.tenantId);
+        uomTermId = await gv.resolveTermId(ctx.tenantId, 'uom', 'Each', true);
+      } catch {
+        // Non-fatal — will be caught by DB constraint if still null
+      }
+    }
+
+    const insertPayload: Record<string, any> = {
+      name,
+      sku,
+      description: description || name,
+      tracking_mode: 'serialized',
+      tenant_id: ctx.tenantId,
+    };
+    if (uomTermId) insertPayload.uom_term_id = uomTermId;
+
     const { data: newItem, error: itemError } = await inventorySchema(ctx.supabase)
       .from('catalog_items')
-      .upsert(
-        {
-          name,
-          sku,
-          description: description || name,
-          tracking_mode: 'serialized',
-          tenant_id: ctx.tenantId,
-        },
-        { onConflict: 'tenant_id,sku' }
-      )
+      .upsert(insertPayload, { onConflict: 'tenant_id,sku' })
       .select('id, name')
       .single();
 
@@ -1852,9 +1869,16 @@ async function searchVendorsOnline(
         totalRows: cleaned.length,
       },
     };
-  } catch {
+  } catch (err: any) {
+    const errMsg = err?.message || err?.code || 'Unknown error';
+    console.error('[search_vendors_online] Failed:', {
+      message: errMsg,
+      status: err?.status,
+      code: err?.code,
+      type: err?.type,
+    });
     return {
-      text: `Online vendor search is currently unavailable. You can add vendors manually — try "add a vendor named [company]".`,
+      text: `Online vendor search failed: ${errMsg}. You can add vendors manually — try "add a vendor named [company]".`,
       dataDisplay: { displayType: 'metric', label: 'Vendor Search', value: 'Unavailable' },
     };
   }
@@ -3328,10 +3352,23 @@ async function createItemWithVariants(
     const initialQty = typeof params.initial_qty_per_variant === 'number' ? params.initial_qty_per_variant : null;
     const locationId = params.location_id || null;
     const idempotencyKey = `ai-variant-item-${ctx.tenantId}-${Date.now()}`;
+
+    // Resolve UOM term ID — use provided value, or resolve from text, or default to "EA"
+    let uomTermId = params.uom_term_id || null;
+    if (!uomTermId) {
+      try {
+        const gv = await getTenantGVClient(ctx.tenantId);
+        const uomText = typeof params.uom === 'string' ? params.uom.trim() : 'EA';
+        uomTermId = await gv.resolveTermId(ctx.tenantId, 'uom', uomText, true);
+      } catch {
+        // Non-fatal — RPC will handle null if allowed
+      }
+    }
+
     const { data, error } = await inventorySchema(ctx.supabase).rpc('rpc_wizard_create_item', {
       p_name: name,
       p_description: params.description || null,
-      p_uom_term_id: params.uom_term_id || null,
+      p_uom_term_id: uomTermId,
       p_tracking_mode: 'stock',
       p_reorder_point: null,
       p_base_sku: null,

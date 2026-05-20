@@ -24,12 +24,16 @@ import {
   AlertCircle,
   VolumeX,
   Volume2,
+  Trash2,
 } from 'lucide-react';
+import { usePathname } from 'next/navigation';
 import { useAvatarState } from '@/lib/ai/avatar-store';
 import { useAiChat } from '@/lib/ai/useAiChat';
 import { useTts } from '@/lib/ai/tts';
+import { QUICK_ACTIONS } from '@/lib/ai/types';
 import { AvatarVideo } from './AvatarVideo';
 import { AiDataRenderer } from './AiDataRenderer';
+import { ImageAttachment } from './ImageAttachment';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import type { Message, ChatAction } from '@/lib/ai/types';
 
@@ -44,6 +48,7 @@ function detectSentiment(text: string): 'thinking' | 'talking' {
 }
 
 export function AvatarChatPage() {
+  const pathname = usePathname();
   const { status, ttsMuted, hovering, setStatus, toggleMute, setHovering } = useAvatarState();
 
   const tts = useTts({
@@ -63,6 +68,7 @@ export function AvatarChatPage() {
 
   const chat = useAiChat({
     mode: 'workspace',
+    pageContext: { currentPage: pathname },
     onAssistantMessage,
   });
 
@@ -95,6 +101,7 @@ export function AvatarChatPage() {
   const actionHistory = chat.actions.filter(
     (a) => a.status === 'completed' || a.status === 'failed'
   );
+  const quickActions = QUICK_ACTIONS[pathname] || [];
 
   const statusLabel =
     status === 'talking'
@@ -155,6 +162,21 @@ export function AvatarChatPage() {
 
           {/* ── Chat Column ──────────────────────────────── */}
           <div className="flex flex-col flex-[3] min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {/* Chat header with clear button */}
+            {chat.messages.length > 1 && (
+              <div className="flex items-center justify-end px-4 py-1.5 border-b bg-gray-50">
+                <button
+                  onClick={chat.startNewConversation}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                  aria-label="Clear chat history"
+                  title="Clear chat"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  New chat
+                </button>
+              </div>
+            )}
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
               {chat.messages.map((message) => (
@@ -228,9 +250,31 @@ export function AvatarChatPage() {
               </div>
             )}
 
+            {/* Quick Action Chips */}
+            {!chat.activeFlow && quickActions.length > 0 && (
+              <div className="px-4 py-1.5 border-t border-gray-100 flex flex-wrap gap-1.5">
+                {quickActions.map((qa) => (
+                  <button
+                    key={qa.label}
+                    onClick={() => chat.sendMessage(qa.message)}
+                    disabled={chat.isLoading}
+                    className="px-2.5 py-1 text-xs bg-gray-50 border border-gray-200 rounded-full hover:bg-teal-50 hover:border-teal-300 transition-colors disabled:opacity-50 text-gray-600"
+                  >
+                    {qa.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Input */}
             <div className="p-3 border-t">
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <ImageAttachment
+                  pendingImage={chat.pendingImage}
+                  onImageAttach={(dataUrl) => chat.setPendingImage(dataUrl)}
+                  onImageRemove={() => chat.setPendingImage(null)}
+                  disabled={chat.isLoading}
+                />
                 <input
                   ref={inputRef}
                   type="text"
@@ -238,16 +282,18 @@ export function AvatarChatPage() {
                   onChange={(e) => chat.setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={
-                    chat.activeFlow
-                      ? 'Type your answer...'
-                      : 'Ask Isabelle anything...'
+                    chat.pendingImage
+                      ? 'Describe the image or say "add 4 to Auburn Yard"...'
+                      : chat.activeFlow
+                        ? 'Type your answer...'
+                        : 'Ask Isabelle anything...'
                   }
                   className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
                   disabled={chat.isLoading}
                 />
                 <button
                   onClick={() => chat.sendMessage()}
-                  disabled={!chat.input.trim() || chat.isLoading}
+                  disabled={(!chat.input.trim() && !chat.pendingImage) || chat.isLoading}
                   className="px-3 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Send message"
                 >
@@ -368,6 +414,15 @@ function ChatMessageBubble({
                 : 'bg-gray-100 text-gray-900'
         }`}
       >
+        {/* Attached image */}
+        {message.imageUrl && (
+          <img
+            src={message.imageUrl}
+            alt="Attached"
+            className="rounded max-w-[200px] max-h-[200px] object-contain mb-1"
+          />
+        )}
+
         {message.status === 'executing' ? (
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -393,6 +448,7 @@ function ChatMessageBubble({
           className={`text-xs mt-1 ${
             message.role === 'user' ? 'text-teal-100' : 'text-gray-400'
           }`}
+          suppressHydrationWarning
         >
           {message.timestamp.toLocaleTimeString([], {
             hour: '2-digit',
@@ -454,7 +510,7 @@ function HistoryActionRow({ action }: { action: ChatAction }) {
           {action.result?.message || action.summary}
         </div>
       </div>
-      <span className="text-xs text-gray-400 flex-shrink-0">
+      <span className="text-xs text-gray-400 flex-shrink-0" suppressHydrationWarning>
         {action.createdAt.toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
