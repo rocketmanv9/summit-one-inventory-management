@@ -27,7 +27,7 @@ function deriveTimeRange(data: { transfers: { created_at: string }[]; purchaseOr
 }
 
 export default function OperationsGlobePage() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [filters, setFilters] = useState<GlobeFilters>({});
   const [visibleLayers, setVisibleLayers] = useState<VisibleLayers>({
@@ -62,8 +62,9 @@ export default function OperationsGlobePage() {
     poStatuses,
   );
 
+  // Observe the map container (not the full page) for sizing
   useEffect(() => {
-    const container = containerRef.current;
+    const container = mapContainerRef.current;
     if (!container) return;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -109,36 +110,9 @@ export default function OperationsGlobePage() {
 
   return (
     <AppShell>
-      <div className="-mx-6 -mt-6 relative" ref={containerRef} style={{ height: 'calc(100vh - 4rem)' }}>
-        {loading && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30">
-            <div className="flex items-center gap-3 bg-white rounded-lg shadow-lg px-6 py-4">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              <span className="text-sm font-medium text-gray-700">Loading map data...</span>
-            </div>
-          </div>
-        )}
-
-        {error && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30">
-            <div className="bg-white rounded-lg shadow-lg px-6 py-4 max-w-md">
-              <p className="text-sm text-red-600 font-medium">Failed to load globe data</p>
-              <p className="text-xs text-gray-500 mt-1">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {filteredData && (
-          <GlobeVisualization
-            data={filteredData}
-            visibleLayers={visibleLayers}
-            onPointClick={handlePointClick}
-            onArcClick={handleArcClick}
-            width={dimensions.width}
-            height={dimensions.height}
-          />
-        )}
-
+      {/* Full-bleed flex row: sidebar filter panel + map */}
+      <div className="-mx-6 -mt-6 flex" style={{ height: 'calc(100vh - 4rem)' }}>
+        {/* Left filter sidebar */}
         <GlobeFilterBar
           filters={filters}
           onChange={setFilters}
@@ -151,28 +125,60 @@ export default function OperationsGlobePage() {
           timelineActive={timelineActive}
         />
 
-        <GlobeTimeline
-          active={timelineActive}
-          onToggle={handleTimelineToggle}
-          timeRange={timeRange}
-          currentTime={currentTime}
-          onTimeChange={setCurrentTime}
-        />
+        {/* Right map area */}
+        <div className="flex-1 relative" ref={mapContainerRef}>
+          {loading && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30">
+              <div className="flex items-center gap-3 bg-white rounded-lg shadow-lg px-6 py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="text-sm font-medium text-gray-700">Loading map data...</span>
+              </div>
+            </div>
+          )}
 
-        {stats && (
-          <div className="absolute bottom-4 left-4 z-10 flex gap-3">
-            {visibleLayers.locations && <StatBadge label="Locations" count={stats.locations} color="bg-blue-500" />}
-            {visibleLayers.vendors && <StatBadge label="Vendors" count={stats.vendors} color="bg-green-500" />}
-            {visibleLayers.transfers && <StatBadge label="Transfers" count={stats.transfers} color="bg-amber-500" />}
-            {visibleLayers.pos && <StatBadge label="POs" count={stats.pos} color="bg-purple-500" />}
-          </div>
-        )}
+          {error && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30">
+              <div className="bg-white rounded-lg shadow-lg px-6 py-4 max-w-md">
+                <p className="text-sm text-red-600 font-medium">Failed to load globe data</p>
+                <p className="text-xs text-gray-500 mt-1">{error}</p>
+              </div>
+            </div>
+          )}
 
-        <GlobeDetailPanel
-          selectedPoint={selectedPoint}
-          selectedArc={selectedArc}
-          onClose={handleCloseDetail}
-        />
+          {filteredData && (
+            <GlobeVisualization
+              data={filteredData}
+              visibleLayers={visibleLayers}
+              onPointClick={handlePointClick}
+              onArcClick={handleArcClick}
+              width={dimensions.width}
+              height={dimensions.height}
+            />
+          )}
+
+          <GlobeTimeline
+            active={timelineActive}
+            onToggle={handleTimelineToggle}
+            timeRange={timeRange}
+            currentTime={currentTime}
+            onTimeChange={setCurrentTime}
+          />
+
+          {stats && (
+            <div className="absolute bottom-4 left-4 z-10 flex gap-3">
+              {visibleLayers.locations && <StatBadge label="Locations" count={stats.locations} color="bg-blue-500" />}
+              {visibleLayers.vendors && <StatBadge label="Vendors" count={stats.vendors} color="bg-green-500" />}
+              {visibleLayers.transfers && <StatBadge label="Transfers" count={stats.transfers} color="bg-amber-500" />}
+              {visibleLayers.pos && <StatBadge label="POs" count={stats.pos} color="bg-purple-500" />}
+            </div>
+          )}
+
+          <GlobeDetailPanel
+            selectedPoint={selectedPoint}
+            selectedArc={selectedArc}
+            onClose={handleCloseDetail}
+          />
+        </div>
       </div>
     </AppShell>
   );

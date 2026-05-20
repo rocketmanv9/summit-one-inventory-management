@@ -32,42 +32,52 @@ export function GlobeTimeline({
   const draggingRef = useRef(false);
   const scrubberRef = useRef<HTMLDivElement>(null);
 
+  // Use refs for values that the animation loop reads, so the loop
+  // callback doesn't need to be recreated each frame.
+  const currentTimeRef = useRef<Date | null>(currentTime);
+  const speedRef = useRef(speed);
+  const timeRangeRef = useRef(timeRange);
+  const onTimeChangeRef = useRef(onTimeChange);
+
+  currentTimeRef.current = currentTime;
+  speedRef.current = speed;
+  timeRangeRef.current = timeRange;
+  onTimeChangeRef.current = onTimeChange;
+
   // Compute progress (0..1)
   const progress =
     timeRange && currentTime
       ? Math.max(0, Math.min(1, (currentTime.getTime() - timeRange.start.getTime()) / (timeRange.end.getTime() - timeRange.start.getTime())))
       : 0;
 
-  // Animation loop
-  const animate = useCallback(
-    (timestamp: number) => {
-      if (!timeRange || draggingRef.current) {
-        rafRef.current = requestAnimationFrame(animate);
-        lastFrameRef.current = timestamp;
-        return;
-      }
-
-      const delta = timestamp - lastFrameRef.current;
+  // Stable animation loop — reads from refs, never recreated
+  const animate = useCallback((timestamp: number) => {
+    const tr = timeRangeRef.current;
+    if (!tr || draggingRef.current) {
       lastFrameRef.current = timestamp;
-
-      const rangeMs = timeRange.end.getTime() - timeRange.start.getTime();
-      if (rangeMs <= 0) return;
-
-      const advanceMs = (delta / PLAYBACK_DURATION_MS) * rangeMs * speed;
-      const current = currentTime ?? timeRange.start;
-      const nextMs = current.getTime() + advanceMs;
-
-      if (nextMs >= timeRange.end.getTime()) {
-        onTimeChange(timeRange.end);
-        setPlaying(false);
-        return;
-      }
-
-      onTimeChange(new Date(nextMs));
       rafRef.current = requestAnimationFrame(animate);
-    },
-    [timeRange, currentTime, speed, onTimeChange],
-  );
+      return;
+    }
+
+    const delta = timestamp - lastFrameRef.current;
+    lastFrameRef.current = timestamp;
+
+    const rangeMs = tr.end.getTime() - tr.start.getTime();
+    if (rangeMs <= 0) return;
+
+    const current = currentTimeRef.current ?? tr.start;
+    const advanceMs = (delta / PLAYBACK_DURATION_MS) * rangeMs * speedRef.current;
+    const nextMs = current.getTime() + advanceMs;
+
+    if (nextMs >= tr.end.getTime()) {
+      onTimeChangeRef.current(tr.end);
+      setPlaying(false);
+      return;
+    }
+
+    onTimeChangeRef.current(new Date(nextMs));
+    rafRef.current = requestAnimationFrame(animate);
+  }, []); // stable — no deps, reads everything from refs
 
   useEffect(() => {
     if (playing && active && timeRange) {
@@ -104,7 +114,7 @@ export function GlobeTimeline({
       onTimeChange(timeRange.start);
     }
     // If at end, restart
-    if (currentTime && timeRange && currentTime.getTime() >= timeRange.end.getTime()) {
+    if (currentTime && currentTime.getTime() >= timeRange.end.getTime()) {
       onTimeChange(timeRange.start);
     }
     setPlaying((p) => !p);
@@ -123,13 +133,15 @@ export function GlobeTimeline({
     setSpeed(next);
   };
 
-  const handleScrub = (clientX: number) => {
-    if (!scrubberRef.current || !timeRange) return;
-    const rect = scrubberRef.current.getBoundingClientRect();
+  const handleScrub = useCallback((clientX: number) => {
+    const el = scrubberRef.current;
+    const tr = timeRangeRef.current;
+    if (!el || !tr) return;
+    const rect = el.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const rangeMs = timeRange.end.getTime() - timeRange.start.getTime();
-    onTimeChange(new Date(timeRange.start.getTime() + pct * rangeMs));
-  };
+    const rangeMs = tr.end.getTime() - tr.start.getTime();
+    onTimeChangeRef.current(new Date(tr.start.getTime() + pct * rangeMs));
+  }, []);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     draggingRef.current = true;
@@ -205,7 +217,7 @@ export function GlobeTimeline({
           >
             {/* Filled portion */}
             <div
-              className="absolute inset-y-0 left-0 bg-primary rounded-full transition-[width] duration-75"
+              className="absolute inset-y-0 left-0 bg-primary rounded-full"
               style={{ width: `${progress * 100}%` }}
             />
             {/* Thumb */}

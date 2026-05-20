@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Loader2, ExternalLink, Check, XCircle } from 'lucide-react';
+import { X, Send, Loader2, ExternalLink, Check, XCircle, Trash2 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { useAiChat } from '@/lib/ai/useAiChat';
@@ -68,15 +68,27 @@ export function ChatBot({ onClose }: ChatBotProps) {
               <p className="text-xs text-blue-100">Inventory Assistant</p>
             </div>
           </div>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="hover:bg-blue-700 rounded p-1 transition-colors"
-              aria-label="Close chat"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            {chat.messages.length > 1 && (
+              <button
+                onClick={chat.startNewConversation}
+                className="hover:bg-blue-700 rounded p-1 transition-colors"
+                aria-label="Clear chat history"
+                title="Clear chat"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="hover:bg-blue-700 rounded p-1 transition-colors"
+                aria-label="Close chat"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Messages */}

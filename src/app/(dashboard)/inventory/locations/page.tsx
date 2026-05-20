@@ -275,6 +275,12 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
     name: location?.name || '',
     location_type_id: location?.location_type_id || '',
     address: location?.address || '',
+    address_line_1: (location as any)?.address_line_1 || '',
+    address_line_2: (location as any)?.address_line_2 || '',
+    city: (location as any)?.city || '',
+    state: (location as any)?.state || '',
+    postal_code: (location as any)?.postal_code || '',
+    country: (location as any)?.country || 'US',
     parent_location_id: location?.parent_location_id || '',
     active: location?.active !== undefined ? location.active : true,
     max_capacity: (location as any)?.max_capacity?.toString() || '',
@@ -359,6 +365,12 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
       const base = {
         ...form,
         parent_location_id: form.parent_location_id || null,
+        address_line_1: form.address_line_1 || null,
+        address_line_2: form.address_line_2 || null,
+        city: form.city || null,
+        state: form.state || null,
+        postal_code: form.postal_code || null,
+        country: form.country || 'US',
         max_capacity: form.max_capacity ? parseFloat(form.max_capacity) : null,
         capacity_uom_term_id: form.capacity_uom_term_id || null,
         latitude: form.latitude ? parseFloat(form.latitude) : null,
@@ -466,6 +478,64 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
               <p className="mt-1 text-xs text-muted-foreground animate-pulse">Geocoding address...</p>
             )}
           </div>
+
+          {/* Structured address fields for Amazon Business shipping */}
+          <details className="group">
+            <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+              Structured address fields (for Amazon Business shipping)
+            </summary>
+            <div className="mt-3 space-y-3 p-3 bg-gray-50 border rounded-lg">
+              <p className="text-xs text-muted-foreground">
+                These fields are required for placing Amazon Business orders to this location.
+              </p>
+              <div>
+                <label className="block text-sm font-medium mb-1">Address Line 1</label>
+                <input type="text" value={form.address_line_1}
+                  onChange={(e) => setForm({ ...form, address_line_1: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                  placeholder="123 Main St" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Address Line 2</label>
+                <input type="text" value={form.address_line_2}
+                  onChange={(e) => setForm({ ...form, address_line_2: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                  placeholder="Suite 100, Building A, etc." />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">City</label>
+                  <input type="text" value={form.city}
+                    onChange={(e) => setForm({ ...form, city: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                    placeholder="Seattle" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">State</label>
+                  <input type="text" value={form.state}
+                    onChange={(e) => setForm({ ...form, state: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                    placeholder="WA" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Postal Code</label>
+                  <input type="text" value={form.postal_code}
+                    onChange={(e) => setForm({ ...form, postal_code: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                    placeholder="98101" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Country</label>
+                  <input type="text" value={form.country}
+                    onChange={(e) => setForm({ ...form, country: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                    placeholder="US" />
+                </div>
+              </div>
+            </div>
+          </details>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

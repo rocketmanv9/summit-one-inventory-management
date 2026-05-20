@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, ChevronUp, Filter } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Filter, Save, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import type { GlobeFilters } from '@/lib/rpc/operations';
 import type { VisibleLayers } from './GlobeVisualization';
 
@@ -15,6 +15,30 @@ interface GlobeFilterBarProps {
   poStatuses: string[];
   onPoStatusChange: (statuses: string[]) => void;
   timelineActive: boolean;
+}
+
+// Saved preset shape
+interface FilterPreset {
+  name: string;
+  filters: GlobeFilters;
+  visibleLayers: VisibleLayers;
+  transferStatuses: string[];
+  poStatuses: string[];
+}
+
+const STORAGE_KEY = 'globe-filter-presets';
+
+function loadPresets(): FilterPreset[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(presets: FilterPreset[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
 }
 
 const TRANSFER_STATUS_OPTIONS = [
@@ -61,186 +85,281 @@ export function GlobeFilterBar({
   onPoStatusChange,
   timelineActive,
 }: GlobeFilterBarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [presets, setPresets] = useState<FilterPreset[]>([]);
+  const [savingName, setSavingName] = useState('');
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+
+  // Load presets from localStorage on mount
+  useEffect(() => {
+    setPresets(loadPresets());
+  }, []);
 
   const updateFilter = (key: keyof GlobeFilters, value: string) => {
     onChange({ ...filters, [key]: value || undefined });
   };
 
+  const handleSavePreset = () => {
+    const name = savingName.trim();
+    if (!name) return;
+    const preset: FilterPreset = {
+      name,
+      filters,
+      visibleLayers,
+      transferStatuses,
+      poStatuses,
+    };
+    const updated = [...presets.filter((p) => p.name !== name), preset];
+    setPresets(updated);
+    savePresets(updated);
+    setSavingName('');
+    setShowSaveInput(false);
+  };
+
+  const handleLoadPreset = (preset: FilterPreset) => {
+    onChange(preset.filters);
+    for (const [k, v] of Object.entries(preset.visibleLayers) as [keyof VisibleLayers, boolean][]) {
+      onToggleLayer(k, v);
+    }
+    onTransferStatusChange(preset.transferStatuses);
+    onPoStatusChange(preset.poStatuses);
+  };
+
+  const handleDeletePreset = (name: string) => {
+    const updated = presets.filter((p) => p.name !== name);
+    setPresets(updated);
+    savePresets(updated);
+  };
+
   return (
-    <div className="absolute top-4 left-4 z-10 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 w-64 max-h-[calc(100vh-8rem)] overflow-y-auto">
+    <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full overflow-y-auto">
       {/* Header */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg sticky top-0 bg-white/95 backdrop-blur-sm z-10"
-      >
-        <span className="flex items-center gap-2">
-          <Filter className="h-4 w-4" />
-          Filters
-        </span>
-        {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-      </button>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 sticky top-0 bg-white z-10">
+        <Filter className="h-4 w-4 text-gray-500" />
+        <span className="text-sm font-semibold text-gray-800">Map Filters</span>
+      </div>
 
-      {!collapsed && (
-        <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
-          {/* Layers */}
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Show on Map</label>
-            <div className="space-y-1.5">
-              {LAYER_OPTIONS.map((opt) => (
-                <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={visibleLayers[opt.key]}
-                    onChange={(e) => onToggleLayer(opt.key, e.target.checked)}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
-                  />
-                  <span className={`w-2.5 h-2.5 rounded-full ${opt.color}`} />
-                  {opt.label}
-                </label>
+      <div className="px-4 py-3 space-y-4 flex-1">
+        {/* Saved Presets */}
+        <div>
+          <button
+            onClick={() => setPresetsOpen(!presetsOpen)}
+            className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-2 hover:text-gray-800"
+          >
+            {presetsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Saved Filters
+          </button>
+
+          {presetsOpen && (
+            <div className="space-y-1.5 mb-2">
+              {presets.length === 0 && (
+                <p className="text-[11px] text-gray-400 italic">No saved filters yet</p>
+              )}
+              {presets.map((p) => (
+                <div key={p.name} className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleLoadPreset(p)}
+                    className="flex-1 text-left text-xs px-2 py-1 rounded hover:bg-gray-100 text-gray-700 truncate"
+                    title={`Load "${p.name}"`}
+                  >
+                    {p.name}
+                  </button>
+                  <button
+                    onClick={() => handleDeletePreset(p.name)}
+                    className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
+                    title="Delete preset"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
               ))}
-            </div>
-          </div>
 
-          {/* Transfer Statuses */}
-          <div className="border-t border-gray-100 pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium text-gray-600">Transfer Status</label>
-              <button
-                onClick={() => onTransferStatusChange(
-                  transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? [] : TRANSFER_STATUS_OPTIONS.map((s) => s.value)
-                )}
-                className="text-[10px] text-primary hover:underline"
-              >
-                {transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? 'None' : 'All'}
-              </button>
-            </div>
-            <div className="space-y-1">
-              {TRANSFER_STATUS_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              {showSaveInput ? (
+                <div className="flex gap-1 mt-1">
                   <input
-                    type="checkbox"
-                    checked={transferStatuses.length === 0 || transferStatuses.includes(opt.value)}
-                    onChange={() => {
-                      if (transferStatuses.length === 0) {
-                        // First click when "all" shown: select only this one
-                        onTransferStatusChange(TRANSFER_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
-                      } else {
-                        const next = toggleStatus(transferStatuses, opt.value);
-                        onTransferStatusChange(next);
-                      }
-                    }}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                    autoFocus
+                    value={savingName}
+                    onChange={(e) => setSavingName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSavePreset(); if (e.key === 'Escape') setShowSaveInput(false); }}
+                    placeholder="Preset name..."
+                    className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
                   />
-                  <span className={`w-2 h-2 rounded-full ${opt.color}`} />
-                  <span className="text-xs">{opt.label}</span>
-                </label>
-              ))}
+                  <button
+                    onClick={handleSavePreset}
+                    disabled={!savingName.trim()}
+                    className="px-2 py-1 text-xs bg-primary text-white rounded hover:bg-primary/90 disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowSaveInput(true)}
+                  className="flex items-center gap-1 text-xs text-primary hover:underline mt-1"
+                >
+                  <Save className="h-3 w-3" />
+                  Save current filters
+                </button>
+              )}
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* PO Statuses */}
-          <div className="border-t border-gray-100 pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium text-gray-600">PO Status</label>
-              <button
-                onClick={() => onPoStatusChange(
-                  poStatuses.length === PO_STATUS_OPTIONS.length ? [] : PO_STATUS_OPTIONS.map((s) => s.value)
-                )}
-                className="text-[10px] text-primary hover:underline"
-              >
-                {poStatuses.length === PO_STATUS_OPTIONS.length ? 'None' : 'All'}
-              </button>
-            </div>
-            <div className="space-y-1">
-              {PO_STATUS_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={poStatuses.length === 0 || poStatuses.includes(opt.value)}
-                    onChange={() => {
-                      if (poStatuses.length === 0) {
-                        onPoStatusChange(PO_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
-                      } else {
-                        const next = toggleStatus(poStatuses, opt.value);
-                        onPoStatusChange(next);
-                      }
-                    }}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
-                  />
-                  <span className={`w-2 h-2 rounded-full ${opt.color}`} />
-                  <span className="text-xs">{opt.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Date Range */}
-          <div className="border-t border-gray-100 pt-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+        {/* Layers */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-2">Show on Map</label>
+          <div className="space-y-1.5">
+            {LAYER_OPTIONS.map((opt) => (
+              <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input
-                  type="date"
-                  value={filters.date_from || ''}
-                  onChange={(e) => updateFilter('date_from', e.target.value)}
-                  disabled={timelineActive}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  type="checkbox"
+                  checked={visibleLayers[opt.key]}
+                  onChange={(e) => onToggleLayer(opt.key, e.target.checked)}
+                  className="rounded border-gray-300 text-primary focus:ring-primary"
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-                <input
-                  type="date"
-                  value={filters.date_to || ''}
-                  onChange={(e) => updateFilter('date_to', e.target.value)}
-                  disabled={timelineActive}
-                  className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-              </div>
-            </div>
+                <span className={`w-2.5 h-2.5 rounded-full ${opt.color}`} />
+                {opt.label}
+              </label>
+            ))}
           </div>
+        </div>
 
-          {/* Legend */}
-          <div className="border-t border-gray-100 pt-3">
-            <div className="text-xs font-medium text-gray-600 mb-2">Legend</div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-3 rounded-full bg-blue-500" />
-                Yard / Warehouse
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-3 rounded-full bg-orange-500" />
-                Job Site
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-3 rounded-full bg-indigo-500" />
-                Plant
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-3 rounded-full bg-green-500" />
-                Vendor
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-1 rounded-full bg-amber-500" />
-                Transfer (Draft)
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-1 rounded-full bg-blue-500" />
-                Transfer (In Transit)
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-1 rounded-full bg-green-500" />
-                Transfer (Completed)
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <span className="w-3 h-1 rounded-full bg-purple-500" />
-                Purchase Order
-              </div>
+        {/* Transfer Statuses */}
+        <div className="border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600">Transfer Status</label>
+            <button
+              onClick={() => onTransferStatusChange(
+                transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? [] : TRANSFER_STATUS_OPTIONS.map((s) => s.value)
+              )}
+              className="text-[10px] text-primary hover:underline"
+            >
+              {transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? 'None' : 'All'}
+            </button>
+          </div>
+          <div className="space-y-1">
+            {TRANSFER_STATUS_OPTIONS.map((opt) => (
+              <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={transferStatuses.length === 0 || transferStatuses.includes(opt.value)}
+                  onChange={() => {
+                    if (transferStatuses.length === 0) {
+                      onTransferStatusChange(TRANSFER_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
+                    } else {
+                      onTransferStatusChange(toggleStatus(transferStatuses, opt.value));
+                    }
+                  }}
+                  className="rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className={`w-2 h-2 rounded-full ${opt.color}`} />
+                <span className="text-xs">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* PO Statuses */}
+        <div className="border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600">PO Status</label>
+            <button
+              onClick={() => onPoStatusChange(
+                poStatuses.length === PO_STATUS_OPTIONS.length ? [] : PO_STATUS_OPTIONS.map((s) => s.value)
+              )}
+              className="text-[10px] text-primary hover:underline"
+            >
+              {poStatuses.length === PO_STATUS_OPTIONS.length ? 'None' : 'All'}
+            </button>
+          </div>
+          <div className="space-y-1">
+            {PO_STATUS_OPTIONS.map((opt) => (
+              <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={poStatuses.length === 0 || poStatuses.includes(opt.value)}
+                  onChange={() => {
+                    if (poStatuses.length === 0) {
+                      onPoStatusChange(PO_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
+                    } else {
+                      onPoStatusChange(toggleStatus(poStatuses, opt.value));
+                    }
+                  }}
+                  className="rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className={`w-2 h-2 rounded-full ${opt.color}`} />
+                <span className="text-xs">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Date Range */}
+        <div className="border-t border-gray-100 pt-3">
+          <label className="block text-xs font-medium text-gray-600 mb-2">Date Range</label>
+          <div className="space-y-2">
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-0.5">From</label>
+              <input
+                type="date"
+                value={filters.date_from || ''}
+                onChange={(e) => updateFilter('date_from', e.target.value)}
+                disabled={timelineActive}
+                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-0.5">To</label>
+              <input
+                type="date"
+                value={filters.date_to || ''}
+                onChange={(e) => updateFilter('date_to', e.target.value)}
+                disabled={timelineActive}
+                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              />
             </div>
           </div>
         </div>
-      )}
+
+        {/* Legend */}
+        <div className="border-t border-gray-100 pt-3">
+          <div className="text-xs font-medium text-gray-600 mb-2">Legend</div>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-blue-500" />
+              Yard / Warehouse
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-orange-500" />
+              Job Site
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-indigo-500" />
+              Plant
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-green-500" />
+              Vendor
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-1 rounded-full bg-amber-500" />
+              Transfer (Draft)
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-1 rounded-full bg-blue-500" />
+              Transfer (In Transit)
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-1 rounded-full bg-green-500" />
+              Transfer (Completed)
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <span className="w-3 h-1 rounded-full bg-purple-500" />
+              Purchase Order
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
