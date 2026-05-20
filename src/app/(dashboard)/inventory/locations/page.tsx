@@ -356,9 +356,8 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         throw AppError.badRequest('Please select a location type.');
       }
 
-      const payload = {
+      const base = {
         ...form,
-        location_type: locationTypeName,
         parent_location_id: form.parent_location_id || null,
         max_capacity: form.max_capacity ? parseFloat(form.max_capacity) : null,
         capacity_uom_term_id: form.capacity_uom_term_id || null,
@@ -370,9 +369,12 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         if (!location.last_event_id) {
           throw AppError.badRequest('Missing last_event_id for this location. Please refresh and try again.');
         }
-        await InventoryRPC.updateLocation(location.id, payload, location.last_event_id);
+        // Strip location_type — the DB column is location_type_id (already in form)
+        const { location_type: _lt, ...updatePayload } = base as any;
+        await InventoryRPC.updateLocation(location.id, updatePayload, location.last_event_id);
       } else {
-        await InventoryRPC.createLocation(payload);
+        // Creates need location_type text column populated
+        await InventoryRPC.createLocation({ ...base, location_type: locationTypeName });
       }
 
       onCreated();
