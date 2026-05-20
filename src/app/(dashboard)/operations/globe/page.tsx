@@ -81,7 +81,7 @@ export default function OperationsGlobePage() {
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/30">
             <div className="flex items-center gap-3 bg-white rounded-lg shadow-lg px-6 py-4">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              <span className="text-sm font-medium text-gray-700">Loading globe data...</span>
+              <span className="text-sm font-medium text-gray-700">Loading map data...</span>
             </div>
           </div>
         )}

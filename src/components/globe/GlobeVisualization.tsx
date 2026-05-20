@@ -1,7 +1,9 @@
 'use client';
 
-import { useRef, useEffect, useMemo, useCallback } from 'react';
-import Globe from 'react-globe.gl';
+import { useState, useMemo, useCallback } from 'react';
+import MapboxMap, { Source, Layer, Popup } from 'react-map-gl/mapbox';
+import type { MapMouseEvent, LayerProps } from 'react-map-gl/mapbox';
+import type { Feature, FeatureCollection } from 'geojson';
 import type { GlobeData, GlobeLocation, GlobeVendor, GlobeTransfer, GlobePurchaseOrder } from '@/lib/rpc/operations';
 
 export type PointType = 'location' | 'vendor';
@@ -58,6 +60,7 @@ const LOCATION_TYPE_COLORS: Record<string, string> = {
 
 const VENDOR_COLOR = '#22c55e';   // green
 const DEFAULT_LOCATION_COLOR = '#3b82f6'; // blue fallback
+const PO_COLOR = '#a855f7';       // purple
 
 const STATUS_COLORS: Record<string, string> = {
   draft: '#f59e0b',
@@ -75,6 +78,80 @@ function getLocationTypeLabel(loc: GlobeLocation): string {
   return loc.location_type?.name || 'Location';
 }
 
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
+
+const INTERACTIVE_LAYERS = [
+  'points-circle',
+  'transfer-lines-solid',
+  'transfer-lines-dashed',
+  'po-lines',
+];
+
+// ---------- Layer styles ----------
+
+const pointsCircleLayer = {
+  id: 'points-circle',
+  type: 'circle' as const,
+  paint: {
+    'circle-radius': 7,
+    'circle-color': ['get', 'color'],
+    'circle-stroke-width': 2,
+    'circle-stroke-color': '#ffffff',
+  },
+} satisfies LayerProps;
+
+const pointsLabelLayer = {
+  id: 'points-label',
+  type: 'symbol' as const,
+  layout: {
+    'text-field': ['get', 'name'],
+    'text-size': 11,
+    'text-offset': [0, 1.4],
+    'text-anchor': 'top' as const,
+    'text-allow-overlap': false,
+    'text-ignore-placement': false,
+    'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+  },
+  paint: {
+    'text-color': '#1e293b',
+    'text-halo-color': '#ffffff',
+    'text-halo-width': 1.5,
+  },
+} satisfies LayerProps;
+
+const transferLinesSolidLayer = {
+  id: 'transfer-lines-solid',
+  type: 'line' as const,
+  filter: ['!=', ['get', 'dashed'], true],
+  paint: {
+    'line-color': ['get', 'color'],
+    'line-width': 2,
+    'line-opacity': 0.8,
+  },
+} satisfies LayerProps;
+
+const transferLinesDashedLayer = {
+  id: 'transfer-lines-dashed',
+  type: 'line' as const,
+  filter: ['==', ['get', 'dashed'], true],
+  paint: {
+    'line-color': ['get', 'color'],
+    'line-width': 2,
+    'line-opacity': 0.8,
+    'line-dasharray': [2, 2],
+  },
+} satisfies LayerProps;
+
+const poLinesLayer = {
+  id: 'po-lines',
+  type: 'line' as const,
+  paint: {
+    'line-color': PO_COLOR,
+    'line-width': 2,
+    'line-opacity': 0.7,
+  },
+} satisfies LayerProps;
+
 export function GlobeVisualization({
   data,
   visibleLayers,
@@ -83,38 +160,22 @@ export function GlobeVisualization({
   width,
   height,
 }: GlobeVisualizationProps) {
-  const globeRef = useRef<any>(null);
+  const [hoverInfo, setHoverInfo] = useState<{
+    lng: number;
+    lat: number;
+    name: string;
+    typeLabel: string;
+  } | null>(null);
+  const [cursor, setCursor] = useState('grab');
 
-  // Initial position + auto-rotate that stops on interaction
-  useEffect(() => {
-    const globe = globeRef.current;
-    if (!globe) return;
-
-    globe.pointOfView({ lat: 39.8, lng: -98.5, altitude: 2.5 }, 1000);
-
-    const controls = globe.controls();
-    if (controls) {
-      controls.autoRotate = true;
-      controls.autoRotateSpeed = 0.3;
-
-      // Stop auto-rotate on any user interaction
-      const stopRotate = () => {
-        controls.autoRotate = false;
-      };
-      controls.addEventListener('start', stopRotate);
-      return () => {
-        controls.removeEventListener('start', stopRotate);
-      };
-    }
-  }, []);
-
-  // Build points data
-  const pointsData = useMemo(() => {
-    const points: GlobePoint[] = [];
+  // ── Build points (locations + vendors) ──
+  const { pointsGeoJSON, pointsLookup } = useMemo(() => {
+    const features: Feature[] = [];
+    const lookup: globalThis.Map<string, GlobePoint> = new globalThis.Map();
 
     if (visibleLayers.locations) {
       for (const loc of data.locations) {
-        points.push({
+        const point: GlobePoint = {
           id: loc.id,
           lat: loc.latitude,
           lng: loc.longitude,
@@ -123,13 +184,19 @@ export function GlobeVisualization({
           color: getLocationColor(loc),
           typeLabel: getLocationTypeLabel(loc),
           data: loc,
+        };
+        lookup.set(loc.id, point);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] },
+          properties: { id: loc.id, name: loc.name, color: point.color, typeLabel: point.typeLabel, pointType: 'location' },
         });
       }
     }
 
     if (visibleLayers.vendors) {
       for (const vendor of data.vendors) {
-        points.push({
+        const point: GlobePoint = {
           id: vendor.id,
           lat: vendor.latitude,
           lng: vendor.longitude,
@@ -138,24 +205,24 @@ export function GlobeVisualization({
           color: VENDOR_COLOR,
           typeLabel: 'Vendor',
           data: vendor,
+        };
+        lookup.set(vendor.id, point);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [vendor.longitude, vendor.latitude] },
+          properties: { id: vendor.id, name: vendor.name, color: VENDOR_COLOR, typeLabel: 'Vendor', pointType: 'vendor' },
         });
       }
     }
 
-    return points;
+    const geojson: FeatureCollection = { type: 'FeatureCollection', features };
+    return { pointsGeoJSON: geojson, pointsLookup: lookup };
   }, [data.locations, data.vendors, visibleLayers.locations, visibleLayers.vendors]);
 
-  // Build HTML label elements for each point
-  const htmlElementsData = useMemo(() => {
-    return pointsData.map((p) => ({
-      ...p,
-      size: 0,
-    }));
-  }, [pointsData]);
-
-  // Build arcs data
-  const arcsData = useMemo(() => {
-    const arcs: GlobeArc[] = [];
+  // ── Build transfer lines ──
+  const { transferGeoJSON, transferLookup } = useMemo(() => {
+    const features: Feature[] = [];
+    const lookup: globalThis.Map<string, GlobeArc> = new globalThis.Map();
 
     if (visibleLayers.transfers) {
       for (const transfer of data.transfers) {
@@ -163,7 +230,10 @@ export function GlobeVisualization({
         const to = transfer.to_location;
         if (!from?.latitude || !from?.longitude || !to?.latitude || !to?.longitude) continue;
 
-        arcs.push({
+        const color = STATUS_COLORS[transfer.status || ''] || '#6b7280';
+        const dashed = transfer.status === 'in_transit';
+
+        const arc: GlobeArc = {
           id: transfer.id,
           startLat: from.latitude,
           startLng: from.longitude,
@@ -172,20 +242,42 @@ export function GlobeVisualization({
           type: 'transfer',
           status: transfer.status,
           data: transfer,
+        };
+        lookup.set(transfer.id, arc);
+
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [from.longitude, from.latitude],
+              [to.longitude, to.latitude],
+            ],
+          },
+          properties: { id: transfer.id, color, dashed, arcType: 'transfer' },
         });
       }
     }
 
+    const geojson: FeatureCollection = { type: 'FeatureCollection', features };
+    return { transferGeoJSON: geojson, transferLookup: lookup };
+  }, [data.transfers, visibleLayers.transfers]);
+
+  // ── Build PO lines ──
+  const { poGeoJSON, poLookup } = useMemo(() => {
+    const features: Feature[] = [];
+    const lookup: globalThis.Map<string, GlobeArc> = new globalThis.Map();
+
     if (visibleLayers.pos) {
-      const vendorMap = new Map(data.vendors.map((v) => [v.id, v]));
-      const locationMap = new Map(data.locations.map((l) => [l.id, l]));
+      const vendorMap: globalThis.Map<string, GlobeVendor> = new globalThis.Map(data.vendors.map((v) => [v.id, v]));
+      const locationMap: globalThis.Map<string, GlobeLocation> = new globalThis.Map(data.locations.map((l) => [l.id, l]));
 
       for (const po of data.purchaseOrders) {
         const vendor = vendorMap.get(po.vendor_id);
         const location = po.delivery_location_id ? locationMap.get(po.delivery_location_id) : null;
         if (!vendor || !location) continue;
 
-        arcs.push({
+        const arc: GlobeArc = {
           id: po.id,
           startLat: vendor.latitude,
           startLng: vendor.longitude,
@@ -194,116 +286,148 @@ export function GlobeVisualization({
           type: 'po',
           status: po.status,
           data: po,
+        };
+        lookup.set(po.id, arc);
+
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [vendor.longitude, vendor.latitude],
+              [location.longitude, location.latitude],
+            ],
+          },
+          properties: { id: po.id, arcType: 'po' },
         });
       }
     }
 
-    return arcs;
-  }, [data.transfers, data.purchaseOrders, data.vendors, data.locations, visibleLayers.transfers, visibleLayers.pos]);
+    const geojson: FeatureCollection = { type: 'FeatureCollection', features };
+    return { poGeoJSON: geojson, poLookup: lookup };
+  }, [data.purchaseOrders, data.vendors, data.locations, visibleLayers.pos]);
 
-  const getPointColor = useCallback((point: object) => (point as GlobePoint).color, []);
-  const getPointAltitude = useCallback(() => 0.006, []);
-  const getPointRadius = useCallback(() => 0.25, []);
+  // ── Click handler ──
+  const handleClick = useCallback(
+    (e: MapMouseEvent) => {
+      const feature = (e as MapMouseEvent & { features?: Array<{ properties?: Record<string, unknown> }> }).features?.[0];
+      if (!feature?.properties) return;
 
-  const getPointLabel = useCallback((point: object) => {
-    const p = point as GlobePoint;
-    return `<div style="background:rgba(0,0,0,0.8);color:white;padding:4px 8px;border-radius:4px;font-size:12px"><b>${p.name}</b><br/><span style="opacity:0.7">${p.typeLabel}</span></div>`;
-  }, []);
+      const { id, pointType, arcType } = feature.properties;
 
-  // HTML element factory for persistent labels
-  const htmlElementFn = useCallback((d: object) => {
-    const p = d as GlobePoint;
-    const el = document.createElement('div');
-    el.style.cssText = `
-      pointer-events: none;
-      font-size: 10px;
-      font-weight: 600;
-      color: white;
-      text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.5);
-      white-space: nowrap;
-      transform: translate(-50%, -100%);
-      padding: 1px 4px;
-      border-radius: 2px;
-      background: ${p.color}cc;
-    `;
-    el.textContent = p.name;
-    return el;
-  }, []);
-
-  const getArcColor = useCallback((arc: object) => {
-    const a = arc as GlobeArc;
-    if (a.type === 'po') return ['#a855f7', '#a855f7'];
-    const color = STATUS_COLORS[a.status || ''] || '#6b7280';
-    return [color, color];
-  }, []);
-
-  const getArcDashLength = useCallback((arc: object) => {
-    return (arc as GlobeArc).status === 'in_transit' ? 0.4 : 1;
-  }, []);
-
-  const getArcDashGap = useCallback((arc: object) => {
-    return (arc as GlobeArc).status === 'in_transit' ? 0.2 : 0;
-  }, []);
-
-  const getArcDashAnimateTime = useCallback((arc: object) => {
-    return (arc as GlobeArc).status === 'in_transit' ? 2000 : 0;
-  }, []);
-
-  const getArcStroke = useCallback(() => 0.5, []);
-
-  const getArcLabel = useCallback((arc: object) => {
-    const a = arc as GlobeArc;
-    if (a.type === 'transfer') {
-      const t = a.data as GlobeTransfer;
-      return `<div style="background:rgba(0,0,0,0.8);color:white;padding:4px 8px;border-radius:4px;font-size:12px"><b>Transfer</b><br/>Status: ${t.status}<br/>${t.transfer_lines.length} item(s)</div>`;
-    }
-    const po = a.data as GlobePurchaseOrder;
-    return `<div style="background:rgba(0,0,0,0.8);color:white;padding:4px 8px;border-radius:4px;font-size:12px"><b>PO ${po.po_number}</b><br/>Status: ${po.status}</div>`;
-  }, []);
-
-  const handlePointClick = useCallback(
-    (point: object) => { onPointClick?.(point as GlobePoint); },
-    [onPointClick]
+      if (pointType) {
+        const point = pointsLookup.get(id as string);
+        if (point) onPointClick?.(point);
+      } else if (arcType === 'transfer') {
+        const arc = transferLookup.get(id as string);
+        if (arc) onArcClick?.(arc);
+      } else if (arcType === 'po') {
+        const arc = poLookup.get(id as string);
+        if (arc) onArcClick?.(arc);
+      }
+    },
+    [pointsLookup, transferLookup, poLookup, onPointClick, onArcClick]
   );
 
-  const handleArcClick = useCallback(
-    (arc: object) => { onArcClick?.(arc as GlobeArc); },
-    [onArcClick]
+  // ── Hover handler ──
+  const handleMouseMove = useCallback(
+    (e: MapMouseEvent) => {
+      const feature = (e as MapMouseEvent & { features?: Array<{ properties?: Record<string, unknown> }> }).features?.[0];
+      if (!feature?.properties) {
+        setHoverInfo(null);
+        setCursor('grab');
+        return;
+      }
+
+      setCursor('pointer');
+      const { id, pointType, arcType } = feature.properties;
+
+      if (pointType) {
+        const point = pointsLookup.get(id as string);
+        if (point) {
+          setHoverInfo({ lng: point.lng, lat: point.lat, name: point.name, typeLabel: point.typeLabel });
+        }
+      } else if (arcType === 'transfer') {
+        const arc = transferLookup.get(id as string);
+        if (arc) {
+          const t = arc.data as GlobeTransfer;
+          setHoverInfo({
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat,
+            name: `Transfer (${t.status})`,
+            typeLabel: `${t.transfer_lines.length} item(s)`,
+          });
+        }
+      } else if (arcType === 'po') {
+        const arc = poLookup.get(id as string);
+        if (arc) {
+          const po = arc.data as GlobePurchaseOrder;
+          setHoverInfo({
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat,
+            name: `PO ${po.po_number}`,
+            typeLabel: po.status,
+          });
+        }
+      }
+    },
+    [pointsLookup, transferLookup, poLookup]
   );
+
+  const handleMouseLeave = useCallback(() => {
+    setHoverInfo(null);
+    setCursor('grab');
+  }, []);
 
   return (
-    <Globe
-      ref={globeRef}
-      width={width}
-      height={height}
-      globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-      backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
-      pointsData={pointsData}
-      pointLat="lat"
-      pointLng="lng"
-      pointColor={getPointColor}
-      pointAltitude={getPointAltitude}
-      pointRadius={getPointRadius}
-      pointLabel={getPointLabel}
-      onPointClick={handlePointClick}
-      htmlElementsData={htmlElementsData}
-      htmlLat="lat"
-      htmlLng="lng"
-      htmlAltitude={0.02}
-      htmlElement={htmlElementFn}
-      arcsData={arcsData}
-      arcStartLat="startLat"
-      arcStartLng="startLng"
-      arcEndLat="endLat"
-      arcEndLng="endLng"
-      arcColor={getArcColor}
-      arcDashLength={getArcDashLength}
-      arcDashGap={getArcDashGap}
-      arcDashAnimateTime={getArcDashAnimateTime}
-      arcStroke={getArcStroke}
-      arcLabel={getArcLabel}
-      onArcClick={handleArcClick}
-      animateIn={true}
-    />
+    <MapboxMap
+      mapboxAccessToken={MAPBOX_TOKEN}
+      initialViewState={{
+        latitude: 39.8,
+        longitude: -98.5,
+        zoom: 4,
+      }}
+      style={{ width, height }}
+      mapStyle="mapbox://styles/mapbox/light-v11"
+      interactiveLayerIds={INTERACTIVE_LAYERS}
+      onClick={handleClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      cursor={cursor}
+    >
+      {/* Transfer lines */}
+      <Source id="transfers" type="geojson" data={transferGeoJSON}>
+        <Layer {...transferLinesSolidLayer} />
+        <Layer {...transferLinesDashedLayer} />
+      </Source>
+
+      {/* PO lines */}
+      <Source id="pos" type="geojson" data={poGeoJSON}>
+        <Layer {...poLinesLayer} />
+      </Source>
+
+      {/* Points (on top of lines) */}
+      <Source id="points" type="geojson" data={pointsGeoJSON}>
+        <Layer {...pointsCircleLayer} />
+        <Layer {...pointsLabelLayer} />
+      </Source>
+
+      {/* Hover popup */}
+      {hoverInfo && (
+        <Popup
+          longitude={hoverInfo.lng}
+          latitude={hoverInfo.lat}
+          closeButton={false}
+          closeOnClick={false}
+          anchor="bottom"
+          offset={12}
+        >
+          <div className="text-xs">
+            <div className="font-semibold">{hoverInfo.name}</div>
+            <div className="text-gray-500">{hoverInfo.typeLabel}</div>
+          </div>
+        </Popup>
+      )}
+    </MapboxMap>
   );
 }

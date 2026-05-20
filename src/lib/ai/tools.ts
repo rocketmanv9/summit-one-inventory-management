@@ -593,14 +593,14 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'create_dashboard',
-      description: 'Create a pre-configured dashboard from a template. Available templates: executive (high-level KPIs), operations (daily ops), procurement (PO tracking), inventory_health (stock health), alerts (warnings & risks), asset_tracking (equipment & assets).',
+      description: 'Create a pre-configured dashboard from a template. Available templates: executive (high-level KPIs), operations (daily ops), inventory_health (stock health), alerts (warnings & risks), asset_tracking (equipment & assets).',
       parameters: {
         type: 'object',
         properties: {
           template: {
             type: 'string',
             description: 'Dashboard template to use',
-            enum: ['executive', 'operations', 'procurement', 'inventory_health', 'alerts', 'asset_tracking'],
+            enum: ['executive', 'operations', 'inventory_health', 'alerts', 'asset_tracking'],
           },
           name: { type: 'string', description: 'Custom dashboard name (optional, template name used if omitted)' },
         },

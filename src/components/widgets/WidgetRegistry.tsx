@@ -6,7 +6,6 @@ import { GenericTableWidget } from './GenericTableWidget';
 import { GenericChartWidget } from './GenericChartWidget';
 
 // Import specific widget components
-import { OpenPurchaseOrdersRealtime } from './procurement/OpenPurchaseOrdersRealtime';
 import { RecentReceiptsRealtime } from './flow/RecentReceiptsRealtime';
 import { DeadStockWidget } from './inventory/DeadStockWidget';
 import { InventoryForecastWidget } from './inventory/InventoryForecastWidget';
@@ -41,12 +40,6 @@ export const WIDGET_COMPONENTS: Record<string, React.ComponentType<{
   'inventory.widget.low_stock_alerts': LowStockWidget,
   'inventory.widget.inventory_summary': InventorySummaryWidget,
 
-  // Procurement Widgets
-  'procurement.widget.open_purchase_orders': GenericTableWidget,
-  'procurement.widget.open_purchase_orders_realtime': OpenPurchaseOrdersRealtime,
-  'procurement.widget.late_deliveries': GenericTableWidget,
-  'procurement.widget.supplier_spend': GenericChartWidget,
-
   // Alerts Widgets
   'alerts.widget.jobs_at_risk_due_to_stock': GenericTableWidget,
   'alerts.widget.stockout_forecast': GenericTableWidget,
@@ -75,8 +68,6 @@ export const WIDGET_COMPONENTS: Record<string, React.ComponentType<{
   // Additional Epic Widgets
   'inventory.widget.stockouts_negative': GenericTableWidget,
   'inventory.widget.quarantine_hold': GenericTableWidget,
-  'procurement.widget.po_aging': GenericTableWidget,
-  'procurement.widget.vendor_lead_time': GenericChartWidget,
 
   // Feature Expansion Widgets
   'inventory.widget.dead_stock': DeadStockWidget,

@@ -2710,7 +2710,7 @@ async function draftPurchaseRequest(
         {
           role: 'system',
           content: [
-            'You are a professional procurement assistant for a construction company.',
+            'You are a professional purchasing assistant for a construction company.',
             'Draft a purchase request/RFQ email. Be concise and professional.',
             'Return ONLY a valid JSON object with:',
             '  subject — email subject line',

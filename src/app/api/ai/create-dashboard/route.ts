@@ -6,7 +6,7 @@ import { getTemplate, getTemplateNames } from '@/lib/ai/dashboard-templates';
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const CreateDashboardSchema = z.object({
-  template: z.enum(['executive', 'operations', 'procurement', 'inventory_health', 'alerts', 'asset_tracking']),
+  template: z.enum(['executive', 'operations', 'inventory_health', 'alerts', 'asset_tracking']),
   name: z.string().min(1).optional(),
 });
 

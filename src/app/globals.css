@@ -1,3 +1,5 @@
+@import 'mapbox-gl/dist/mapbox-gl.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -129,6 +131,11 @@
  * At runtime, the TenantBrandingProvider (src/lib/tenant-branding.tsx)
  * overrides them with tenant-specific colors fetched from the Core project.
  */
+
+/* Prevent Tailwind's global border-color from breaking Mapbox popup arrows */
+.mapboxgl-popup * {
+  border-color: initial;
+}
 
 /* ===== BASE STYLES ===== */
 * {

@@ -57,7 +57,7 @@ export function GlobeFilterBar({
         <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
           {/* Layers */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-2">Show on Globe</label>
+            <label className="block text-xs font-medium text-gray-600 mb-2">Show on Map</label>
             <div className="space-y-1.5">
               {LAYER_OPTIONS.map((opt) => (
                 <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">

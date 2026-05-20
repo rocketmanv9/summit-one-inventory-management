@@ -4,10 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
-import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, ShoppingBag } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link } from 'lucide-react';
 
 const API = '/api/settings/integrations/printify';
-const PROCUREMENT_API = '/api/settings/integrations/procurement';
 
 interface PrintifyStatus {
   connected: boolean;
@@ -25,27 +24,11 @@ interface Mapping {
   unit_cost?: number;
 }
 
-interface ProcurementAdapter {
-  key: string;
-  displayName: string;
-  description: string;
-  iconLetter: string;
-  iconColor: string;
-  connectionStatus: 'connected' | 'disconnected' | 'error';
-  providerId: string | null;
-  authMethod: string;
-}
-
 type ConnectionStatus = 'disconnected' | 'loading' | 'connected' | 'error';
 
 export default function IntegrationsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Procurement adapters state
-  const [procurementAdapters, setProcurementAdapters] = useState<ProcurementAdapter[]>([]);
-  const [procurementConnecting, setProcurementConnecting] = useState<string | null>(null);
-  const [procurementError, setProcurementError] = useState('');
-  const [procurementSuccess, setProcurementSuccess] = useState('');
   const [printify, setPrintify] = useState<PrintifyStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [apiToken, setApiToken] = useState('');
@@ -70,62 +53,7 @@ export default function IntegrationsPage() {
     const payload = token ? parseJwtPayload(token) : null;
     setIsAdmin(payload?.app_metadata?.role === 'admin');
     loadStatus();
-    loadProcurementAdapters();
   }, []);
-
-  const loadProcurementAdapters = async () => {
-    try {
-      const res = await fetch(PROCUREMENT_API);
-      if (res.ok) {
-        const json = await res.json();
-        setProcurementAdapters(json?.data || []);
-      }
-    } catch {
-      // Silently fail
-    }
-  };
-
-  const handleProcurementConnect = async (adapterKey: string) => {
-    if (!isAdmin) return;
-    setProcurementConnecting(adapterKey);
-    setProcurementError('');
-    setProcurementSuccess('');
-    try {
-      const res = await fetch(`${PROCUREMENT_API}/${adapterKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({ credentials: {}, settings: {} }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error?.message || 'Failed to connect');
-      setProcurementSuccess(`${adapterKey} connected successfully.`);
-      await loadProcurementAdapters();
-    } catch (err: unknown) {
-      setProcurementError(err instanceof Error ? err.message : 'Failed to connect');
-    } finally {
-      setProcurementConnecting(null);
-    }
-  };
-
-  const handleProcurementDisconnect = async (adapterKey: string) => {
-    if (!isAdmin) return;
-    setProcurementConnecting(adapterKey);
-    setProcurementError('');
-    setProcurementSuccess('');
-    try {
-      await fetch(`${PROCUREMENT_API}/${adapterKey}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({}),
-      });
-      setProcurementSuccess(`${adapterKey} disconnected.`);
-      await loadProcurementAdapters();
-    } catch (err: unknown) {
-      setProcurementError(err instanceof Error ? err.message : 'Failed to disconnect');
-    } finally {
-      setProcurementConnecting(null);
-    }
-  };
 
   const loadStatus = async () => {
     setLoading(true);
@@ -408,84 +336,6 @@ export default function IntegrationsPage() {
             )}
           </div>
         </div>
-
-        {/* Product Mappings Card — only shown when connected */}
-        {/* ── Procurement Integrations ──────────────────────────────── */}
-        {procurementAdapters.length > 0 && (
-          <div className="pt-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-4 flex items-center gap-2">
-              <ShoppingBag className="h-4 w-4" /> Procurement
-            </h2>
-            {procurementError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md flex items-start gap-2">
-                <XCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-red-800">{procurementError}</p>
-              </div>
-            )}
-            {procurementSuccess && (
-              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md flex items-start gap-2">
-                <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-green-800">{procurementSuccess}</p>
-              </div>
-            )}
-            {procurementAdapters.map((adapter) => {
-              const colorMap: Record<string, { bg: string; border: string; text: string }> = {
-                orange: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700' },
-                blue: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' },
-                green: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' },
-              };
-              const colors = colorMap[adapter.iconColor] || colorMap.blue;
-              const isConnecting = procurementConnecting === adapter.key;
-
-              return (
-                <div key={adapter.key} className="bg-white rounded-lg border mb-4">
-                  <div className="flex items-center justify-between p-6 border-b">
-                    <div className="flex items-center gap-4">
-                      <div className={`flex h-12 w-12 items-center justify-center rounded-lg ${colors.bg} ${colors.border} border`}>
-                        <span className={`text-xl font-bold ${colors.text}`}>{adapter.iconLetter}</span>
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold">{adapter.displayName}</h3>
-                        <p className="text-sm text-muted-foreground">{adapter.description}</p>
-                      </div>
-                    </div>
-                    <StatusBadge status={adapter.connectionStatus === 'connected' ? 'connected' : adapter.connectionStatus === 'error' ? 'error' : 'disconnected'} />
-                  </div>
-                  <div className="p-6">
-                    {adapter.connectionStatus === 'connected' ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                          <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                          <span>Connected to {adapter.displayName} (stub mode)</span>
-                        </div>
-                        <div className="flex items-center gap-3 pt-2 border-t">
-                          <button onClick={() => handleProcurementDisconnect(adapter.key)} disabled={isConnecting || !isAdmin}
-                            className="px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50 text-sm flex items-center gap-2">
-                            {isConnecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unplug className="h-3 w-3" />} Disconnect
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <p className="text-sm text-muted-foreground">
-                          Connect {adapter.displayName} to browse and order supplies directly from your dashboard.
-                          {adapter.authMethod === 'oauth2' ? ' Uses OAuth for secure authentication.' : ' Requires an API key.'}
-                        </p>
-                        <button
-                          onClick={() => handleProcurementConnect(adapter.key)}
-                          disabled={isConnecting || !isAdmin}
-                          className="w-full px-4 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 font-medium flex items-center justify-center gap-2"
-                        >
-                          {isConnecting ? (<><Loader2 className="h-4 w-4 animate-spin" />Connecting...</>) : `Connect ${adapter.displayName}`}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {/* Product Mappings Card — only shown when Printify connected */}
         {connectionStatus === 'connected' && (
