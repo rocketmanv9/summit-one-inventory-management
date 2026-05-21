@@ -66,6 +66,7 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   delete_item: ['crud'],
   create_item_with_variants: ['crud'],
   list_vendors: ['crud'],
+  list_catalog_vendors: ['crud', 'search'],
   list_items: ['crud'],
   check_stock: ['crud'],
   low_stock: ['crud'],

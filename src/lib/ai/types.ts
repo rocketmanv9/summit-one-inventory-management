@@ -167,6 +167,10 @@ export interface Message {
   status?: 'success' | 'error' | 'executing';
   selectOptions?: Array<{ label: string; value: string }>;
   navigateTo?: string;
+  /** Custom label for the navigation button (e.g. "View Vendors"). Defaults to "Go to page". */
+  navigateLabel?: string;
+  /** When true, force-show the nav button. When absent, only shown for mutation results (status='success'). */
+  showNavigation?: boolean;
   isConfirm?: boolean;
   /** When a MUTATION is proposed, the message carries the action for preview */
   action?: ChatAction;

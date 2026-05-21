@@ -31,7 +31,7 @@ CREATE POLICY "authenticated_insert" ON public.local_users
 -- Seed known user IDs (stub entries - webhook will fill details later)
 INSERT INTO public.local_users (user_id, tenant_id, email, name, role)
 VALUES
-  ('e9c3b342-1742-4333-9d00-585ee9b471b0', '052abee2-ffdc-470e-975a-b917dde72b8e', NULL, 'Unknown User', 'member'),
+  ('e9c3b342-1742-4333-9d00-585ee9b471b0', '052abee2-ffdc-470e-975a-b917dde72b8e', 'grant@acmoate.com', 'Grant Anderson', 'admin'),
   ('00000000-0000-0000-0000-000000000001', '052abee2-ffdc-470e-975a-b917dde72b8e', 'dev@test.com', 'Dev User', 'admin')
 ON CONFLICT (user_id) DO NOTHING;
 

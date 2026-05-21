@@ -34,14 +34,23 @@ function intentToTitle(intent: IntentType): string {
 
 /**
  * Build a brief summary of what the action will do, based on resolved params.
+ * When displayNames is provided, entity IDs are replaced with human-readable names.
  */
-function buildSummary(intent: IntentType, params: Record<string, string>): string {
+function buildSummary(
+  intent: IntentType,
+  params: Record<string, string>,
+  displayNames?: Record<string, string>
+): string {
   const parts: string[] = [];
 
   for (const [key, value] of Object.entries(params)) {
     if (value && key !== 'confirm') {
-      const label = key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      parts.push(`${label}: ${value}`);
+      // Use display name if available, fall back to raw value
+      const displayValue = displayNames?.[key] ?? value;
+      // Strip _id suffix for cleaner labels (e.g. "catalog_item_id" → "Catalog Item")
+      const labelKey = key.replace(/_id$/, '');
+      const label = labelKey.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      parts.push(`${label}: ${displayValue}`);
     }
   }
 
@@ -52,17 +61,21 @@ function buildSummary(intent: IntentType, params: Record<string, string>): strin
 /**
  * Builds a ChatAction preview from an intent + resolved params.
  * Does NOT execute — just proposes.
+ *
+ * @param displayNames - Optional map of param keys to human-readable names.
+ *   When provided, the summary shows "Vendor: Crafco" instead of "Vendor Id: 550e8400-...".
  */
 export function buildActionPreview(
   intent: IntentType,
-  params: Record<string, string>
+  params: Record<string, string>,
+  displayNames?: Record<string, string>
 ): ChatAction {
   return {
     id: crypto.randomUUID(),
     intent,
     intentType: classifyIntent(intent),
     title: intentToTitle(intent),
-    summary: buildSummary(intent, params),
+    summary: buildSummary(intent, params, displayNames),
     params,
     status: 'proposed',
     createdAt: new Date(),

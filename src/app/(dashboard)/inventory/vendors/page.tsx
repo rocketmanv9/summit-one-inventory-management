@@ -27,6 +27,34 @@ interface Vendor {
   metadata?: Record<string, unknown> | null;
 }
 
+interface VendorAddress {
+  id: string;
+  vendor_id: string;
+  address_type: 'billing' | 'shipping' | 'general';
+  label: string | null;
+  street1: string | null;
+  street2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string | null;
+}
+
+interface VendorContact {
+  id: string;
+  vendor_id: string;
+  is_primary: boolean;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  title: string | null;
+}
+
+interface VendorWithRelations extends Vendor {
+  contacts: VendorContact[];
+  addresses: VendorAddress[];
+}
+
 interface CatalogVendor {
   id: string;
   name: string;
@@ -54,6 +82,7 @@ export default function VendorsPage() {
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [notesVendor, setNotesVendor] = useState<Vendor | null>(null);
+  const [detailVendorId, setDetailVendorId] = useState<string | null>(null);
 
   /* ---- Fetching ---- */
 
@@ -211,6 +240,12 @@ export default function VendorsPage() {
       header: '',
       render: (row: Vendor) => (
         <div className="flex gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); setDetailVendorId(row.id); }}
+            className="px-2 py-1 text-xs bg-slate-50 text-slate-700 rounded hover:bg-slate-100"
+          >
+            View
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); setEditingVendor(row); }}
             className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
@@ -431,8 +466,581 @@ export default function VendorsPage() {
             onSaved={() => { setNotesVendor(null); fetchVendors(); }}
           />
         )}
+
+        {/* Vendor Detail Modal */}
+        {detailVendorId && (
+          <VendorDetailModal
+            vendorId={detailVendorId}
+            onClose={() => setDetailVendorId(null)}
+          />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Vendor Detail Modal                                                       */
+/* -------------------------------------------------------------------------- */
+
+function VendorDetailModal({
+  vendorId,
+  onClose,
+}: {
+  vendorId: string;
+  onClose: () => void;
+}) {
+  const [vendor, setVendor] = useState<VendorWithRelations | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailTab, setDetailTab] = useState<'addresses' | 'contacts'>('addresses');
+  const [editingAddress, setEditingAddress] = useState<VendorAddress | null>(null);
+  const [showAddAddress, setShowAddAddress] = useState(false);
+  const [editingContact, setEditingContact] = useState<VendorContact | null>(null);
+  const [showAddContact, setShowAddContact] = useState(false);
+
+  const fetchVendor = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/gv/vendors/${vendorId}`);
+      if (!res.ok) throw AppError.internal('Failed to fetch vendor');
+      const json = await res.json();
+      setVendor(json.data || null);
+    } catch (err) {
+      console.error('Error fetching vendor detail:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchVendor(); }, [vendorId]);
+
+  const handleDeleteAddress = async (addressId: string) => {
+    if (!confirm('Delete this address?')) return;
+    try {
+      const res = await fetch(`/api/gv/vendors/${vendorId}/addresses/${addressId}`, {
+        method: 'DELETE',
+        headers: { 'X-Idempotency-Key': crypto.randomUUID() },
+      });
+      if (!res.ok) throw AppError.internal('Failed to delete address');
+      await fetchVendor();
+    } catch (err) {
+      console.error('Error deleting address:', err);
+      alert('Failed to delete address');
+    }
+  };
+
+  const handleDeleteContact = async (contactId: string) => {
+    if (!confirm('Delete this contact?')) return;
+    try {
+      const res = await fetch(`/api/gv/vendors/${vendorId}/contacts/${contactId}`, {
+        method: 'DELETE',
+        headers: { 'X-Idempotency-Key': crypto.randomUUID() },
+      });
+      if (!res.ok) throw AppError.internal('Failed to delete contact');
+      await fetchVendor();
+    } catch (err) {
+      console.error('Error deleting contact:', err);
+      alert('Failed to delete contact');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 border-b flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <h3 className="text-lg font-semibold">{vendor?.name || 'Loading...'}</h3>
+            {vendor && (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                vendor.is_custom
+                  ? 'bg-purple-100 text-purple-800'
+                  : 'bg-blue-100 text-blue-800'
+              }`}>
+                {vendor.is_custom ? 'Custom' : 'Catalog'}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            Loading vendor details...
+          </div>
+        ) : !vendor ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            Vendor not found.
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            {/* Summary */}
+            <div className="px-6 py-4 border-b">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Account #:</span>{' '}
+                  <span className="font-medium">{vendor.account_number || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Payment Terms:</span>{' '}
+                  <span className="font-medium">{vendor.payment_terms || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Status:</span>{' '}
+                  <StatusChip status={vendor.is_active ? 'active' : 'inactive'} />
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Description:</span>{' '}
+                  <span className="font-medium">{vendor.description || '-'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="px-6 pt-4">
+              <div className="flex gap-4 border-b">
+                <button
+                  onClick={() => setDetailTab('addresses')}
+                  className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                    detailTab === 'addresses'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Addresses ({vendor.addresses?.length || 0})
+                </button>
+                <button
+                  onClick={() => setDetailTab('contacts')}
+                  className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                    detailTab === 'contacts'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Contacts ({vendor.contacts?.length || 0})
+                </button>
+              </div>
+            </div>
+
+            {/* Addresses Tab */}
+            {detailTab === 'addresses' && (
+              <div className="px-6 py-4 space-y-3">
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowAddAddress(true)}
+                    className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                  >
+                    + Add Address
+                  </button>
+                </div>
+                {(!vendor.addresses || vendor.addresses.length === 0) ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">No addresses yet.</p>
+                ) : (
+                  vendor.addresses.map((addr) => (
+                    <div key={addr.id} className="border rounded-lg p-3 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {addr.label && <span className="font-medium text-sm">{addr.label}</span>}
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                            {addr.address_type}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setEditingAddress(addr)}
+                            className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAddress(addr.id)}
+                            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {[addr.street1, addr.street2].filter(Boolean).join(', ')}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {[addr.city, addr.state, addr.zip].filter(Boolean).join(', ')}
+                        {addr.country ? ` ${addr.country}` : ''}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Contacts Tab */}
+            {detailTab === 'contacts' && (
+              <div className="px-6 py-4 space-y-3">
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowAddContact(true)}
+                    className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                  >
+                    + Add Contact
+                  </button>
+                </div>
+                {(!vendor.contacts || vendor.contacts.length === 0) ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">No contacts yet.</p>
+                ) : (
+                  vendor.contacts.map((contact) => (
+                    <div key={contact.id} className="border rounded-lg p-3 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{contact.name || 'Unnamed'}</span>
+                          {contact.is_primary && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                              Primary
+                            </span>
+                          )}
+                          {contact.title && (
+                            <span className="text-xs text-muted-foreground">{contact.title}</span>
+                          )}
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => setEditingContact(contact)}
+                            className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteContact(contact.id)}
+                            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex gap-4 text-sm text-muted-foreground">
+                        {contact.email && <span>{contact.email}</span>}
+                        {contact.phone && <span>{contact.phone}</span>}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Address Form Modal (layered above detail) */}
+      {(showAddAddress || editingAddress) && (
+        <AddressFormModal
+          vendorId={vendorId}
+          address={editingAddress}
+          onClose={() => { setShowAddAddress(false); setEditingAddress(null); }}
+          onComplete={() => { setShowAddAddress(false); setEditingAddress(null); fetchVendor(); }}
+        />
+      )}
+
+      {/* Contact Form Modal (layered above detail) */}
+      {(showAddContact || editingContact) && (
+        <ContactFormModal
+          vendorId={vendorId}
+          contact={editingContact}
+          onClose={() => { setShowAddContact(false); setEditingContact(null); }}
+          onComplete={() => { setShowAddContact(false); setEditingContact(null); fetchVendor(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Address Form Modal                                                        */
+/* -------------------------------------------------------------------------- */
+
+function AddressFormModal({
+  vendorId,
+  address,
+  onClose,
+  onComplete,
+}: {
+  vendorId: string;
+  address?: VendorAddress | null;
+  onClose: () => void;
+  onComplete: () => void;
+}) {
+  const isEdit = !!address;
+
+  const [form, setForm] = useState({
+    address_type: address?.address_type || 'general',
+    label: address?.label || '',
+    street1: address?.street1 || '',
+    street2: address?.street2 || '',
+    city: address?.city || '',
+    state: address?.state || '',
+    zip: address?.zip || '',
+    country: address?.country || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    try {
+      const url = isEdit
+        ? `/api/gv/vendors/${vendorId}/addresses/${address!.id}`
+        : `/api/gv/vendors/${vendorId}/addresses`;
+      const method = isEdit ? 'PATCH' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw AppError.internal(errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} address`);
+      }
+      onComplete();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-[60]">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">{isEdit ? 'Edit Address' : 'Add Address'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Type</label>
+              <select
+                value={form.address_type}
+                onChange={(e) => setForm({ ...form, address_type: e.target.value as 'billing' | 'shipping' | 'general' })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="general">General</option>
+                <option value="billing">Billing</option>
+                <option value="shipping">Shipping</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Label</label>
+              <input
+                type="text"
+                value={form.label}
+                onChange={(e) => setForm({ ...form, label: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. Store #1234"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Street 1</label>
+            <input
+              type="text"
+              value={form.street1}
+              onChange={(e) => setForm({ ...form, street1: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="123 Main St"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Street 2</label>
+            <input
+              type="text"
+              value={form.street2}
+              onChange={(e) => setForm({ ...form, street2: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Suite 100"
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">City</label>
+              <input
+                type="text"
+                value={form.city}
+                onChange={(e) => setForm({ ...form, city: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">State</label>
+              <input
+                type="text"
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">ZIP</label>
+              <input
+                type="text"
+                value={form.zip}
+                onChange={(e) => setForm({ ...form, zip: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Country</label>
+            <input
+              type="text"
+              value={form.country}
+              onChange={(e) => setForm({ ...form, country: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="US"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Add Address')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Contact Form Modal                                                        */
+/* -------------------------------------------------------------------------- */
+
+function ContactFormModal({
+  vendorId,
+  contact,
+  onClose,
+  onComplete,
+}: {
+  vendorId: string;
+  contact?: VendorContact | null;
+  onClose: () => void;
+  onComplete: () => void;
+}) {
+  const isEdit = !!contact;
+
+  const [form, setForm] = useState({
+    name: contact?.name || '',
+    email: contact?.email || '',
+    phone: contact?.phone || '',
+    title: contact?.title || '',
+    is_primary: contact?.is_primary || false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+
+    try {
+      const url = isEdit
+        ? `/api/gv/vendors/${vendorId}/contacts/${contact!.id}`
+        : `/api/gv/vendors/${vendorId}/contacts`;
+      const method = isEdit ? 'PATCH' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw AppError.internal(errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} contact`);
+      }
+      onComplete();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-[60]">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div className="px-6 py-4 border-b flex items-center justify-between">
+          <h3 className="text-lg font-semibold">{isEdit ? 'Edit Contact' : 'Add Contact'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-1">Name</label>
+            <input
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="John Smith"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="john@example.com"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Phone</label>
+              <input
+                type="text"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="(555) 123-4567"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Title</label>
+              <input
+                type="text"
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Sales Manager"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="is_primary"
+              checked={form.is_primary}
+              onChange={(e) => setForm({ ...form, is_primary: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+            />
+            <label htmlFor="is_primary" className="text-sm font-medium">Primary contact</label>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Add Contact')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 

@@ -63,8 +63,23 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_vendors',
-      description: 'List all active vendors',
+      description: 'List all active vendors in your account (tenant vendors)',
       parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_catalog_vendors',
+      description: 'List vendors from the global/shared catalog that you can adopt into your account. Use when user asks to browse available vendors, see the catalog, or find vendors to add. NOT for listing their own vendors — use list_vendors for that.',
+      parameters: {
+        type: 'object',
+        properties: {
+          industry: { type: 'string', description: 'Filter by industry tag (e.g. "asphalt", "concrete", "equipment")' },
+          search: { type: 'string', description: 'Search text to filter vendors by name' },
+        },
+        required: [],
+      },
     },
   },
 

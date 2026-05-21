@@ -9,12 +9,37 @@ import {
 } from '@rocketmanv9/chassis/auth';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { getAdminClient } from '@/utils/supabase/admin';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const ExchangeSchema = z.object({
   ticket: z.string().min(1),
 });
+
+/**
+ * Enrich user role from local_users table.
+ * If the user has 'admin' in local_users, override the role from Core.
+ * This ensures local admin assignments survive Core migrations.
+ */
+async function enrichRoleFromLocalUsers(user: SessionUserInfo): Promise<SessionUserInfo> {
+  try {
+    const admin = getAdminClient();
+    const { data } = await admin
+      .from('local_users')
+      .select('role')
+      .eq('user_id', user.userId)
+      .eq('tenant_id', user.tenantId)
+      .single();
+
+    if (data?.role === 'admin') {
+      return { ...user, role: 'admin' };
+    }
+  } catch {
+    // local_users table may not exist yet — fall through to Core role
+  }
+  return user;
+}
 
 /**
  * POST /api/auth/exchange — exchange a one-time ticket for session tokens.
@@ -50,6 +75,9 @@ export const POST = createReadRoute(async ({ req }) => {
         'user-agent': req.headers.get('user-agent') || 'unknown',
       },
     });
+
+    // Enrich role from local_users — local admin assignments take precedence over Core
+    user = await enrichRoleFromLocalUsers(user);
   }
 
   const { accessToken, refreshToken } = await mintSessionTokens(user);

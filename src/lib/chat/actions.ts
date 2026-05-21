@@ -126,8 +126,35 @@ async function resolveLocationId(hint: string): Promise<{ id: string; name: stri
 async function resolveVendorId(hint: string): Promise<{ id: string; name: string; last_event_id?: string }> {
   const vendors = await SupplyChainRPC.getVendors();
   const match = fuzzyFind(vendors, hint, (v) => `${v.name} ${v.code || ''}`);
-  if (!match) throw AppError.notFound(`Vendor "${hint}" not found`);
-  return match as any;
+  if (match) return match as any;
+
+  // Not found in tenant vendors — check the global catalog
+  try {
+    const res = await fetch('/api/gv/vendors/catalog');
+    if (res.ok) {
+      const { data: catalogVendors } = await res.json();
+      if (Array.isArray(catalogVendors)) {
+        const catalogMatch = fuzzyFind(
+          catalogVendors.map((v: any) => ({ id: v.id, name: v.name || '' })),
+          hint,
+          (v) => v.name
+        );
+        if (catalogMatch) {
+          throw AppError.notFound(
+            `Vendor "${hint}" exists in the global catalog but hasn't been added to your account yet. Say "add ${catalogMatch.name} from the catalog" to adopt it.`
+          );
+        }
+      }
+    }
+  } catch (e: any) {
+    // Re-throw if it's already an AppError (our catalog match message)
+    if (e?.statusCode) throw e;
+    // Otherwise swallow — catalog check is best-effort
+  }
+
+  throw AppError.notFound(
+    `Vendor "${hint}" not found. I can create it for you — say "add vendor ${hint}".`
+  );
 }
 
 function resolveEnum(hint: string, validValues: string[], fallback: string): string {
@@ -352,12 +379,30 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             sku = `${prefix}-${suffix}`;
           }
 
+          // Resolve uom_term_id — use provided value or default to "EA" (Each)
+          let uomTermId = params.uom_term_id as string | undefined;
+          if (!uomTermId) {
+            try {
+              const res = await fetch('/api/gv/terms/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain: 'uom', value: 'EA', auto_create: true }),
+              });
+              if (res.ok) {
+                const resolved = await res.json();
+                uomTermId = resolved.data?.term_id;
+              }
+            } catch {
+              // Non-fatal — will fail at DB constraint if still missing
+            }
+          }
+
           const result = await InventoryRPC.createCatalogItem({
             name: params.name,
             sku,
             description: params.description || null,
             category_id: categoryId,
-            uom_term_id: params.uom_term_id as string,
+            uom_term_id: uomTermId as string,
             tracking_mode: params.tracking_mode || 'fungible',
           });
           const categoryNote = categoryId && params.category ? ` in category "${params.category}"` : '';

@@ -434,13 +434,13 @@ function ChatMessageBubble({
           </div>
         )}
 
-        {message.navigateTo && message.status !== 'executing' && (
+        {message.navigateTo && message.status !== 'executing' && (message.showNavigation || message.status === 'success') && (
           <button
             onClick={() => onNavigate(message.navigateTo!)}
             className="mt-2 flex items-center gap-1 text-xs text-teal-600 hover:text-teal-800 underline"
           >
             <ExternalLink className="w-3 h-3" />
-            Go to page
+            {message.navigateLabel || 'Go to page'}
           </button>
         )}
 

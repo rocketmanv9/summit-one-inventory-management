@@ -152,9 +152,9 @@ async function resolveAIParams(
   intent: IntentType,
   aiParams: Record<string, string>,
   originalText?: string
-): Promise<Record<string, string>> {
+): Promise<{ resolved: Record<string, string>; displayNames: Record<string, string> }> {
   const mapping = AI_PARAM_MAP[intent];
-  if (!mapping) return { ...aiParams };
+  if (!mapping) return { resolved: { ...aiParams }, displayNames: { ...aiParams } };
 
   const entityCache: Partial<Record<EntityType, Array<{ name: string; code?: string; sku?: string; id: string }>>> = {};
 
@@ -182,11 +182,13 @@ async function resolveAIParams(
   }
 
   const resolved: Record<string, string> = {};
+  const displayNames: Record<string, string> = {};
 
   for (const [aiKey, aiValue] of Object.entries(aiParams)) {
     const map = mapping[aiKey];
     if (!map) {
       resolved[aiKey] = aiValue;
+      displayNames[aiKey] = aiValue;
       continue;
     }
 
@@ -195,9 +197,12 @@ async function resolveAIParams(
       const matchedId = fuzzyMatch(aiValue, entities);
       if (matchedId) {
         resolved[map.actionField] = matchedId;
+        const matchedEntity = entities.find((e) => e.id === matchedId);
+        displayNames[map.actionField] = matchedEntity?.name ?? aiValue;
       }
     } else {
       resolved[map.actionField] = aiValue;
+      displayNames[map.actionField] = aiValue;
     }
   }
 
@@ -208,9 +213,10 @@ async function resolveAIParams(
     originalText
   ) {
     resolved.reason = inferReasonCode(originalText);
+    displayNames.reason = resolved.reason;
   }
 
-  return resolved;
+  return { resolved, displayNames };
 }
 
 // ─── Modal-preferred intents (open modal instead of step flow) ────────
@@ -257,6 +263,7 @@ export function useAiChat(options?: AiChatOptions) {
   const lastCancelledFlow = useRef<ActiveFlow | null>(null);
   const lastFlowParams = useRef<{ intent: IntentType; params: Record<string, string> } | null>(null);
   const flowMetric = useRef<FlowMetric | null>(null);
+  const vendorModalSubmitted = useRef(false);
 
   // ── Load conversation from localStorage on mount ──────────────────
   useEffect(() => {
@@ -577,7 +584,8 @@ export function useAiChat(options?: AiChatOptions) {
   const startActionFlow = async (
     intentType: IntentType,
     extractedParams: Record<string, string>,
-    text: string
+    text: string,
+    displayNames?: Record<string, string>
   ) => {
     lastCancelledFlow.current = null;
     // Handle navigation
@@ -612,6 +620,7 @@ export function useAiChat(options?: AiChatOptions) {
         }
       }
 
+      vendorModalSubmitted.current = false;
       setVendorModalInitialName(extractedParams.name || undefined);
       setVendorModalOpen(true);
       addMessage(
@@ -695,9 +704,10 @@ export function useAiChat(options?: AiChatOptions) {
             );
           } catch (err: any) {
             completeMetric(metric, 'failed');
+            const errMsg = err?.message || 'Unknown error';
             setMessages((prev) =>
               prev.map((m) => m.id === execMsg.id
-                ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
+                ? { ...m, content: `I couldn't complete that: ${errMsg}. Want to try again?`, status: 'error' }
                 : m
               )
             );
@@ -711,7 +721,7 @@ export function useAiChat(options?: AiChatOptions) {
 
     // Fallback: For MUTATION intents in workspace mode, show action preview card
     if (mode === 'workspace' && intentClassification === 'MUTATION' && !MODAL_INTENTS.has(intentType)) {
-      const preview = buildActionPreview(intentType, extractedParams);
+      const preview = buildActionPreview(intentType, extractedParams, displayNames);
       setActions((prev) => [preview, ...prev]);
       addMessage('assistant', `I've proposed an action: **${preview.title}**. Check the Actions panel to confirm or cancel.`, {
         action: preview,
@@ -721,7 +731,7 @@ export function useAiChat(options?: AiChatOptions) {
 
     // Fallback: For MUTATION intents in corner mode, show action preview card inline
     if (mode === 'corner' && intentClassification === 'MUTATION' && actionDef.steps.length > 0 && !MODAL_INTENTS.has(intentType)) {
-      const preview = buildActionPreview(intentType, extractedParams);
+      const preview = buildActionPreview(intentType, extractedParams, displayNames);
       setActions((prev) => [preview, ...prev]);
       addMessage('assistant', `Got it — let's ${actionDef.description.toLowerCase()}.`, {
         action: preview,
@@ -865,17 +875,18 @@ export function useAiChat(options?: AiChatOptions) {
             )
           );
         } catch (err: any) {
+          const errMsg = err?.message || 'Unknown error';
           setActions((prev) =>
             prev.map((a) =>
               a.id === actionId
-                ? { ...a, status: 'failed' as const, result: { success: false, message: err.message || 'Unknown error' } }
+                ? { ...a, status: 'failed' as const, result: { success: false, message: errMsg } }
                 : a
             )
           );
           setMessages((prev) =>
             prev.map((m) =>
               m.id === execMsg.id
-                ? { ...m, content: `Something went wrong: ${err.message}`, status: 'error' }
+                ? { ...m, content: `I couldn't complete that: ${errMsg}. Want to try again?`, status: 'error' }
                 : m
             )
           );
@@ -889,10 +900,8 @@ export function useAiChat(options?: AiChatOptions) {
       let startStep = actionDef.steps.length;
       for (let i = 0; i < actionDef.steps.length; i++) {
         const step = actionDef.steps[i];
-        if (step.type === 'confirm') {
-          startStep = i;
-          break;
-        }
+        // Skip the confirm step — user already confirmed via the Actions panel
+        if (step.type === 'confirm') continue;
         if (!collectedParams[step.field]) {
           startStep = i;
           break;
@@ -903,6 +912,9 @@ export function useAiChat(options?: AiChatOptions) {
       setActions((prev) =>
         prev.map((a) => (a.id === actionId ? { ...a, status: 'confirmed' as const } : a))
       );
+
+      // Pre-fill the confirm step so advanceFlow auto-skips it
+      collectedParams['confirm'] = 'yes';
 
       const flow: ActiveFlow = {
         action: actionDef,
@@ -931,6 +943,7 @@ export function useAiChat(options?: AiChatOptions) {
 
   const handleVendorModalSuccess = useCallback(
     (vendorName: string) => {
+      vendorModalSubmitted.current = true;
       setVendorModalOpen(false);
       addMessage('assistant', `Vendor "${vendorName}" created successfully!`, {
         status: 'success',
@@ -944,6 +957,11 @@ export function useAiChat(options?: AiChatOptions) {
     // Guard against spurious close events (e.g. Dialog re-renders)
     setVendorModalOpen((prev) => {
       if (!prev) return false; // Already closed — skip duplicate message
+      // If the modal was submitted successfully, don't emit a cancel message
+      if (vendorModalSubmitted.current) {
+        vendorModalSubmitted.current = false;
+        return false;
+      }
       // Defer the cancel message to avoid batching with the close state update
       setTimeout(() => {
         addMessage('assistant', 'Vendor creation cancelled. What else can I help with?');
@@ -979,7 +997,8 @@ export function useAiChat(options?: AiChatOptions) {
 
   // ── Cancel active flow ─────────────────────────────────────────────
 
-  const cancelFlow = useCallback(() => {
+  const cancelFlow = useCallback((reasonOrEvent?: string | React.MouseEvent) => {
+    const reason = typeof reasonOrEvent === 'string' ? reasonOrEvent : undefined;
     // If cancelling a flow that was started from a proposed action, revert it
     if (activeActionId.current) {
       const aid = activeActionId.current;
@@ -992,10 +1011,16 @@ export function useAiChat(options?: AiChatOptions) {
         )
       );
     }
+    const flowDesc = activeFlow?.action?.description;
     setActiveFlow(null);
     if (flowMetric.current) { completeMetric(flowMetric.current, 'cancelled'); flowMetric.current = null; }
-    addMessage('assistant', 'Cancelled. What else can I help with?');
-  }, [addMessage]);
+    const msg = reason
+      ? reason
+      : flowDesc
+        ? `I stopped the ${flowDesc.toLowerCase()} flow. Let me know if you want to try again.`
+        : 'Cancelled. What else can I help with?';
+    addMessage('assistant', msg);
+  }, [addMessage, activeFlow]);
 
   // ── Main send handler ──────────────────────────────────────────────
 
@@ -1153,12 +1178,12 @@ export function useAiChat(options?: AiChatOptions) {
               if (parsed.type === 'tool_use') {
                 // Remove the streaming placeholder for tool_use (action flow will add its own messages)
                 setMessages((prev) => prev.filter((m) => m.id !== placeholderId));
-                const resolvedParams = await resolveAIParams(parsed.intent, parsed.params, text);
+                const { resolved: resolvedParams, displayNames } = await resolveAIParams(parsed.intent, parsed.params, text);
                 conversationHistory.current.push({
                   role: 'assistant',
                   content: `[Action: ${parsed.intent}]`,
                 });
-                await startActionFlow(parsed.intent, resolvedParams, text);
+                await startActionFlow(parsed.intent, resolvedParams, text, displayNames);
                 return;
               }
 

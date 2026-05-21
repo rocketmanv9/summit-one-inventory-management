@@ -12,7 +12,7 @@ const StockReceiveSchema = z.object({
   uom_term_id: z.string().optional(),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = StockReceiveSchema.parse(await req.json());
 
   const inv = (supabase as any).schema('inventory');
@@ -60,11 +60,23 @@ export const POST = createSessionWriteRoute(async ({ req, log, supabase, idempot
     // ── 3. Create new catalog item ──────────────────────────────────
     const autoSku = `AI-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
 
+    // Resolve UOM term ID — default to "EA" (Each) if not provided
+    let resolvedUomTermId = body.uom_term_id || null;
+    if (!resolvedUomTermId) {
+      try {
+        const { getTenantGVClient } = await import('@/lib/gv');
+        const gv = await getTenantGVClient(ctx.tenantId);
+        resolvedUomTermId = await gv.resolveTermId(ctx.tenantId, 'uom', 'EA', true);
+      } catch {
+        log.warn('stock_receive.uom_resolve_failed', { fallback: 'EA' });
+      }
+    }
+
     const { data: newItem, error: createError } = await inv
       .rpc('rpc_create_catalog_item', {
         p_name: body.item_name,
         p_sku: autoSku,
-        p_uom_term_id: body.uom_term_id || null,
+        p_uom_term_id: resolvedUomTermId,
         p_description: body.item_description || null,
         p_tracking_mode: 'fungible',
         p_last_event_id: `${idempotencyKey}_create_item`,

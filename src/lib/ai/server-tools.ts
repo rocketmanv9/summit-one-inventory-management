@@ -11,6 +11,7 @@ import type { AiDataDisplay } from './types';
 import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
 import { getTenantGVClient } from '@/lib/gv';
+import { getCatalogClient } from '@/lib/vendors';
 
 // ─── Context ──────────────────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ const SERVER_TOOLS = new Set([
   'query_stock_movements',
   'query_stock_by_location',
   'query_integrations',
+  'list_catalog_vendors',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -197,6 +199,8 @@ async function executeServerToolInner(
       return queryStockByLocation(params, ctx);
     case 'query_integrations':
       return queryIntegrations(ctx);
+    case 'list_catalog_vendors':
+      return listCatalogVendors(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -1611,7 +1615,7 @@ async function smartRegisterAsset(
   // Search existing catalog items
   const { data: existingItems } = await inventorySchema(ctx.supabase)
     .from('catalog_items')
-    .select('id, name, sku')
+    .select('id, name, sku, tracking_mode')
     .or(`name.ilike.%${nameLower}%,sku.ilike.%${nameLower}%`)
     .limit(10);
 
@@ -1629,6 +1633,14 @@ async function smartRegisterAsset(
 
     catalogItemId = match.id;
     catalogItemName = match.name;
+
+    // If the existing item is fungible-only, suggest updating to serialized
+    if (match.tracking_mode === 'fungible') {
+      return {
+        text: `Found existing item "${match.name}" but it's tracked as fungible (bulk quantity), not serialized (individual assets). Update its tracking mode to "serialized" or "both" first, then try again. Say "update item ${match.name} tracking mode to both".`,
+        dataDisplay: { displayType: 'metric', label: 'Tracking Mode Conflict', value: `${match.name} is fungible` },
+      };
+    }
   }
 
   if (!catalogItemId) {
@@ -1666,9 +1678,13 @@ async function smartRegisterAsset(
       .single();
 
     if (itemError || !newItem) {
+      const dbMsg = itemError?.message || 'Unknown error';
+      const hint = itemError?.code === '23505'
+        ? ` An item with that SKU already exists — try a different name or register the asset against the existing item.`
+        : '';
       return {
-        text: `Failed to create catalog item for asset: ${itemError?.message || 'Unknown error'}`,
-        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Item creation failed' },
+        text: `Failed to create catalog item for "${name}": ${dbMsg}.${hint}`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: dbMsg.slice(0, 60) },
       };
     }
 
@@ -1677,19 +1693,24 @@ async function smartRegisterAsset(
     itemCreated = true;
   }
 
-  // 2. Find location if specified
+  // 2. Find location — required for assets
   let locationId: string | null = null;
   let locationName = '';
 
-  if (locationHint) {
-    const { data: locations } = await inventorySchema(ctx.supabase)
-      .from('locations')
-      .select('id, name')
-      .ilike('name', `%${locationHint}%`)
-      .limit(5);
+  // Fetch all locations for fallback suggestions
+  const { data: allLocations } = await inventorySchema(ctx.supabase)
+    .from('locations')
+    .select('id, name')
+    .eq('active', true)
+    .limit(50);
 
-    if (locations?.length) {
-      const locLower = locationHint.toLowerCase();
+  if (locationHint) {
+    const locLower = locationHint.toLowerCase();
+    const locations = (allLocations || []).filter((l: any) =>
+      l.name.toLowerCase().includes(locLower) || locLower.includes(l.name.toLowerCase())
+    );
+
+    if (locations.length) {
       const match =
         locations.find((l: any) => l.name.toLowerCase() === locLower) ||
         locations.find((l: any) => l.name.toLowerCase().includes(locLower)) ||
@@ -1698,6 +1719,21 @@ async function smartRegisterAsset(
       locationId = match.id;
       locationName = match.name;
     }
+  }
+
+  // If no location found/provided, ask user to specify one
+  if (!locationId) {
+    const locNames = (allLocations || []).map((l: any) => l.name);
+    if (locNames.length > 0) {
+      return {
+        text: `I need a location to register this asset. Available locations: ${locNames.join(', ')}. Which one?`,
+        dataDisplay: { displayType: 'metric', label: 'Location Required', value: locNames.join(', ') },
+      };
+    }
+    return {
+      text: 'I need a location to register this asset, but no locations exist yet. Say "add location [name]" first, then try again.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No locations available' },
+    };
   }
 
   // 3. Create asset(s)
@@ -1761,6 +1797,98 @@ async function smartRegisterAsset(
   };
 }
 
+// ─── List Catalog Vendors ───────────────────────────────────────────
+
+async function listCatalogVendors(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const industry = typeof params.industry === 'string' ? params.industry.trim() : '';
+  const search = typeof params.search === 'string' ? params.search.trim() : '';
+
+  try {
+    const catalog = getCatalogClient();
+    const catalogVendors = await catalog.list();
+
+    if (!catalogVendors || catalogVendors.length === 0) {
+      return {
+        text: 'The global vendor catalog is empty. You can search for vendors online with "search vendors for [product]" or add one manually.',
+        dataDisplay: { displayType: 'metric', label: 'Catalog Vendors', value: '0' },
+      };
+    }
+
+    // Filter by industry tag if provided
+    let filtered = catalogVendors;
+    if (industry) {
+      const industryLower = industry.toLowerCase();
+      filtered = filtered.filter((v: any) => {
+        const tags: string[] = v.industry_tags || v.tags || [];
+        return tags.some((t: string) => t.toLowerCase().includes(industryLower));
+      });
+    }
+
+    // Filter by search text if provided
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter((v: any) =>
+        (v.name || '').toLowerCase().includes(searchLower) ||
+        (v.description || '').toLowerCase().includes(searchLower)
+      );
+    }
+
+    if (filtered.length === 0) {
+      const filterDesc = [industry && `industry "${industry}"`, search && `search "${search}"`].filter(Boolean).join(' and ');
+      return {
+        text: `No catalog vendors found matching ${filterDesc}. Try broadening your search or use "search vendors online" to find new ones.`,
+        dataDisplay: { displayType: 'metric', label: 'Catalog Vendors', value: '0' },
+      };
+    }
+
+    // Cross-reference with tenant vendors to mark adoption status
+    const { data: tenantVendors } = await supplyChainSchema(ctx.supabase)
+      .from('vendors')
+      .select('catalog_vendor_id')
+      .not('catalog_vendor_id', 'is', null)
+      .limit(500);
+
+    const adoptedIds = new Set((tenantVendors || []).map((v: any) => v.catalog_vendor_id));
+
+    const rows = filtered.slice(0, 20).map((v: any) => {
+      const tags: string[] = v.industry_tags || v.tags || [];
+      return {
+        name: v.name || 'Unknown',
+        description: (v.description || '').slice(0, 100),
+        industry_tags: tags.join(', '),
+        adopted: adoptedIds.has(v.id) ? 'Yes' : 'No',
+      };
+    });
+
+    const adoptedCount = rows.filter((r) => r.adopted === 'Yes').length;
+    const availableCount = rows.length - adoptedCount;
+
+    return {
+      text: `Found ${filtered.length} vendor${filtered.length === 1 ? '' : 's'} in the global catalog${industry ? ` for "${industry}"` : ''}${search ? ` matching "${search}"` : ''}. ${availableCount} available to adopt, ${adoptedCount} already in your account. Say "add [vendor name] from the catalog" to adopt one.`,
+      dataDisplay: {
+        displayType: 'table',
+        columns: [
+          { key: 'name', label: 'Vendor' },
+          { key: 'description', label: 'Description' },
+          { key: 'industry_tags', label: 'Industry' },
+          { key: 'adopted', label: 'In Your Account' },
+        ],
+        rows,
+        totalRows: filtered.length,
+      },
+    };
+  } catch (err: any) {
+    console.error('[list_catalog_vendors] Failed:', err?.message);
+    return {
+      text: `Failed to load the vendor catalog: ${err?.message || 'Unknown error'}. Try "list vendors" to see your current vendors instead.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Catalog unavailable' },
+    };
+  }
+}
+
 // ─── Search Vendors Online ──────────────────────────────────────────
 
 async function searchVendorsOnline(
@@ -1822,10 +1950,8 @@ async function searchVendorsOnline(
 
     const content = completion.choices?.[0]?.message?.content;
     if (!content) {
-      return {
-        text: `No vendor results found for "${query}"${location ? ` near ${location}` : ''}. Try broadening your search or add a vendor manually with "add a vendor named [company]".`,
-        dataDisplay: { displayType: 'metric', label: 'Vendors Found', value: '0' },
-      };
+      // Fallback: check the global catalog
+      return catalogFallbackForVendorSearch(query, location, ctx);
     }
 
     let jsonStr = content.trim();
@@ -1835,10 +1961,8 @@ async function searchVendorsOnline(
     const vendors = JSON.parse(jsonStr);
 
     if (!Array.isArray(vendors) || vendors.length === 0) {
-      return {
-        text: `No vendors found for "${query}"${location ? ` near ${location}` : ''}. Try different search terms.`,
-        dataDisplay: { displayType: 'metric', label: 'Vendors Found', value: '0' },
-      };
+      // Fallback: check the global catalog
+      return catalogFallbackForVendorSearch(query, location, ctx);
     }
 
     // Clean up results
@@ -1870,18 +1994,65 @@ async function searchVendorsOnline(
       },
     };
   } catch (err: any) {
-    const errMsg = err?.message || err?.code || 'Unknown error';
-    console.error('[search_vendors_online] Failed:', {
-      message: errMsg,
-      status: err?.status,
-      code: err?.code,
-      type: err?.type,
-    });
-    return {
-      text: `Online vendor search failed: ${errMsg}. You can add vendors manually — try "add a vendor named [company]".`,
-      dataDisplay: { displayType: 'metric', label: 'Vendor Search', value: 'Unavailable' },
-    };
+    console.error('[search_vendors_online] Web search failed, trying catalog fallback:', err?.message);
+    // Fallback: check the global catalog before giving up
+    return catalogFallbackForVendorSearch(query, location, ctx);
   }
+}
+
+/** Shared fallback: search the global vendor catalog when web search fails or returns nothing */
+async function catalogFallbackForVendorSearch(
+  query: string,
+  location: string,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  try {
+    const catalog = getCatalogClient();
+    const catalogVendors = await catalog.list();
+
+    const queryLower = query.toLowerCase();
+    const matches = (catalogVendors || []).filter((v: any) => {
+      const name = (v.name || '').toLowerCase();
+      const desc = (v.description || '').toLowerCase();
+      const tags: string[] = v.industry_tags || v.tags || [];
+      return name.includes(queryLower) ||
+        desc.includes(queryLower) ||
+        tags.some((t: string) => t.toLowerCase().includes(queryLower)) ||
+        queryLower.includes(name);
+    });
+
+    if (matches.length > 0) {
+      const rows = matches.slice(0, 5).map((v: any) => ({
+        name: v.name || 'Unknown',
+        description: (v.description || '').slice(0, 100),
+        industry_tags: (v.industry_tags || v.tags || []).join(', '),
+        source: 'Global Catalog',
+      }));
+
+      return {
+        text: `Web search didn't find results, but I found ${matches.length} vendor${matches.length === 1 ? '' : 's'} matching "${query}" in the global catalog. Say "add [vendor name] from the catalog" to adopt one into your account.`,
+        dataDisplay: {
+          displayType: 'table',
+          columns: [
+            { key: 'name', label: 'Vendor' },
+            { key: 'description', label: 'Description' },
+            { key: 'industry_tags', label: 'Industry' },
+            { key: 'source', label: 'Source' },
+          ],
+          rows,
+          totalRows: matches.length,
+        },
+      };
+    }
+  } catch (catErr: any) {
+    console.error('[search_vendors_online] Catalog fallback also failed:', catErr?.message);
+  }
+
+  // Both web search and catalog failed/empty — offer to create
+  return {
+    text: `No vendors found for "${query}"${location ? ` near ${location}` : ''} in web search or the global catalog. I can create a vendor with just the name — say "add a vendor named [company]".`,
+    dataDisplay: { displayType: 'metric', label: 'Vendors Found', value: '0' },
+  };
 }
 
 // ─── Set Preferred Vendor ───────────────────────────────────────────
