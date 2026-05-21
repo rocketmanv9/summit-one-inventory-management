@@ -6,14 +6,39 @@ import {
   mintSessionTokens,
   accessTokenCookieConfig,
   refreshTokenCookieConfig,
+  type SessionUserInfo,
 } from '@rocketmanv9/chassis/auth';
+import { getAdminClient } from '@/utils/supabase/admin';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
+ * Enrich user role from local_users table.
+ * If the user has 'admin' in local_users, override the role from Core.
+ */
+async function enrichRoleFromLocalUsers(user: SessionUserInfo): Promise<SessionUserInfo> {
+  try {
+    const admin = getAdminClient();
+    const { data } = await admin
+      .from('local_users')
+      .select('role')
+      .eq('user_id', user.userId)
+      .eq('tenant_id', user.tenantId)
+      .single();
+
+    if (data?.role === 'admin') {
+      return { ...user, role: 'admin' };
+    }
+  } catch {
+    // local_users table may not exist yet — fall through to Core role
+  }
+  return user;
+}
+
+/**
  * SSO callback — Core redirects here with a one-time ticket.
  *
- * Flow: Core -> /auth/callback?ticket=XXX -> exchange ticket -> mint JWTs -> set cookies -> /dashboard
+ * Flow: Core -> /auth/callback?ticket=XXX -> exchange ticket -> enrich role -> mint JWTs -> set cookies -> /dashboard
  */
 export const GET = createReadRoute(async ({ req }) => {
   const { searchParams } = new URL(req.url);
@@ -27,7 +52,7 @@ export const GET = createReadRoute(async ({ req }) => {
 
   try {
     // 1. Exchange ticket with Core for user identity
-    const user = await exchangeTicketWithCore({
+    let user = await exchangeTicketWithCore({
       ticket,
       targetOrg,
       targetService: targetService || process.env.INTERNAL_JWT_ISSUER || undefined,
@@ -37,10 +62,13 @@ export const GET = createReadRoute(async ({ req }) => {
       },
     });
 
-    // 2. Mint access + refresh tokens signed with SUPABASE_JWT_SECRET
+    // 2. Enrich role from local_users — local admin assignments take precedence over Core
+    user = await enrichRoleFromLocalUsers(user);
+
+    // 3. Mint access + refresh tokens signed with SUPABASE_JWT_SECRET
     const { accessToken, refreshToken } = await mintSessionTokens(user);
 
-    // 3. Set httpOnly cookies
+    // 4. Set httpOnly cookies
     const cookieStore = await cookies();
     const accessCfg = accessTokenCookieConfig(accessToken);
     const refreshCfg = refreshTokenCookieConfig(refreshToken);
@@ -48,7 +76,7 @@ export const GET = createReadRoute(async ({ req }) => {
     cookieStore.set(accessCfg.name, accessCfg.value, accessCfg);
     cookieStore.set(refreshCfg.name, refreshCfg.value, refreshCfg);
 
-    // 4. Redirect to dashboard
+    // 5. Redirect to dashboard
     return NextResponse.redirect(new URL('/dashboard', req.url));
   } catch (error) {
     console.error('[Auth Callback] Exchange failed:', error);
