@@ -62,6 +62,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
       connected: data.is_active,
       provider_id: data.id,
       application_id: data.config?.application_id || null,
+      sandbox: data.config?.sandbox || false,
       last_event_id: data.last_event_id,
     },
   });
@@ -74,6 +75,7 @@ const ConnectSchema = z.object({
   client_id: z.string().min(1),
   client_secret: z.string().min(1),
   refresh_token: z.string().min(1),
+  sandbox: z.boolean().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
@@ -100,6 +102,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     const config = {
       ...existing.config,
       application_id: body.application_id || existing.config?.application_id,
+      sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
       client_id_ref: clientIdRef,
       client_secret_ref: clientSecretRef,
       refresh_token_ref: refreshTokenRef,
@@ -117,6 +120,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       clientId: body.client_id,
       clientSecret: body.client_secret,
       refreshToken: body.refresh_token,
+      sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
     });
 
     return {
@@ -134,7 +138,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       provider_key: 'amazon-business-main',
       display_name: 'Amazon Business',
       provider_type: 'procurement_marketplace',
-      config: { application_id: body.application_id },
+      config: { application_id: body.application_id, sandbox: body.sandbox ?? false },
       capabilities: ['procurement', 'marketplace'],
       priority: 100,
       is_active: true,
@@ -167,6 +171,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     clientId: body.client_id,
     clientSecret: body.client_secret,
     refreshToken: body.refresh_token,
+    sandbox: body.sandbox ?? false,
   });
 
   return {

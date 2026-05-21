@@ -15,6 +15,7 @@ export interface AmazonBusinessConfig {
   clientSecret: string;
   refreshToken: string;
   applicationId?: string;
+  sandbox?: boolean;
 }
 
 export interface AmazonProduct {
@@ -69,7 +70,12 @@ export interface AmazonOrder {
 // ── Token Management ───────────────────────────────────────────────────
 
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
-const AMAZON_BUSINESS_BASE = 'https://na.business-api.amazon.com';
+
+function getBaseUrl(sandbox?: boolean): string {
+  return sandbox
+    ? 'https://sandbox.na.business-api.amazon.com'
+    : 'https://na.business-api.amazon.com';
+}
 
 interface CachedToken {
   accessToken: string;
@@ -127,7 +133,7 @@ async function amazonBusinessFetch(
   retries = 3
 ): Promise<Response> {
   const accessToken = await refreshAccessToken(config);
-  const url = `${AMAZON_BUSINESS_BASE}${path}`;
+  const url = `${getBaseUrl(config.sandbox)}${path}`;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     const res = await fetch(url, {
@@ -326,7 +332,7 @@ export async function validateConnection(
     // Try a minimal search to verify API access
     const params = new URLSearchParams({ keywords: 'test', pageSize: '1' });
     const accessToken = await refreshAccessToken(config);
-    const res = await fetch(`${AMAZON_BUSINESS_BASE}/products/search?${params}`, {
+    const res = await fetch(`${getBaseUrl(config.sandbox)}/products/search?${params}`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -399,6 +405,7 @@ export async function resolveAmazonBusinessConfig(
     clientSecret,
     refreshToken,
     applicationId: provider.config?.application_id,
+    sandbox: provider.config?.sandbox ?? false,
     providerId: provider.id,
   };
 }

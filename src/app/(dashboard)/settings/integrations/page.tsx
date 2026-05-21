@@ -20,6 +20,7 @@ interface AmazonStatus {
   connected: boolean;
   provider_id?: string;
   application_id?: string | null;
+  sandbox?: boolean;
 }
 
 interface Mapping {
@@ -68,7 +69,7 @@ export default function IntegrationsPage() {
   // ── Amazon Business state ───────────────────────────────────────────
   const [amazon, setAmazon] = useState<AmazonStatus | null>(null);
   const [amazonStatus, setAmazonStatus] = useState<ConnectionStatus>('disconnected');
-  const [amazonForm, setAmazonForm] = useState({ application_id: '', client_id: '', client_secret: '', refresh_token: '' });
+  const [amazonForm, setAmazonForm] = useState({ application_id: '', client_id: '', client_secret: '', refresh_token: '', sandbox: false });
   const [amazonSaving, setAmazonSaving] = useState(false);
   const [amazonError, setAmazonError] = useState('');
   const [amazonSuccess, setAmazonSuccess] = useState('');
@@ -310,7 +311,7 @@ export default function IntegrationsPage() {
         throw new Error(json?.error?.message || 'Failed to connect');
       }
 
-      setAmazonForm({ application_id: '', client_id: '', client_secret: '', refresh_token: '' });
+      setAmazonForm({ application_id: '', client_id: '', client_secret: '', refresh_token: '', sandbox: false });
       const valid = json?.data?.valid;
       if (valid) {
         setAmazonSuccess('Connected to Amazon Business successfully.');
@@ -684,11 +685,28 @@ export default function IntegrationsPage() {
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
                   <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
                   <span>Connected to Amazon Business{amazon.application_id ? <> (App ID: <span className="font-mono font-medium">{amazon.application_id}</span>)</> : ''}</span>
+                  {amazon.sandbox ? (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-300">Sandbox</span>
+                  ) : (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-300">Production</span>
+                  )}
                 </div>
 
                 <details className="group">
                   <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">Update credentials</summary>
                   <form onSubmit={handleAmazonConnect} className="mt-3 space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
+                      <div>
+                        <label className="text-sm font-medium">Sandbox Mode</label>
+                        <p className="text-xs text-muted-foreground mt-0.5">Uses Amazon&apos;s test environment with mock data</p>
+                      </div>
+                      <button type="button" role="switch" aria-checked={amazonForm.sandbox}
+                        onClick={() => setAmazonForm({ ...amazonForm, sandbox: !amazonForm.sandbox })}
+                        disabled={!isAdmin}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 ${amazonForm.sandbox ? 'bg-yellow-500' : 'bg-gray-200'}`}>
+                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${amazonForm.sandbox ? 'translate-x-4' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
                     <div>
                       <label className="block text-sm font-medium mb-1">Application ID</label>
                       <input type="text" value={amazonForm.application_id}
@@ -740,6 +758,18 @@ export default function IntegrationsPage() {
                     Amazon Solution Provider Portal <ExternalLink className="h-3 w-3" />
                   </a>
                 </p>
+                <div className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
+                  <div>
+                    <label className="text-sm font-medium">Sandbox Mode</label>
+                    <p className="text-xs text-muted-foreground mt-0.5">Uses Amazon&apos;s test environment with mock data</p>
+                  </div>
+                  <button type="button" role="switch" aria-checked={amazonForm.sandbox}
+                    onClick={() => setAmazonForm({ ...amazonForm, sandbox: !amazonForm.sandbox })}
+                    disabled={!isAdmin}
+                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 ${amazonForm.sandbox ? 'bg-yellow-500' : 'bg-gray-200'}`}>
+                    <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${amazonForm.sandbox ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </button>
+                </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Application ID</label>
                   <input type="text" value={amazonForm.application_id}
