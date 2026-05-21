@@ -54,7 +54,7 @@ const INTENT_TAG_FALLBACK: Record<string, ToolTag> = {
 
 export async function selectToolsNode(state: ChatGraphState): Promise<ChatGraphUpdate> {
   const intent = state.intent || '';
-  let tools = INTENT_TOOL_MAP[intent] || [];
+  const tools = INTENT_TOOL_MAP[intent] || [];
 
   // Filter to tools that actually exist in registry
   let valid = tools.filter((t) => toolRegistry.has(t));
