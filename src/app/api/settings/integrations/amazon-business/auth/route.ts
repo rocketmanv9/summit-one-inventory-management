@@ -71,22 +71,15 @@ export const GET = createSessionReadRoute(async ({ session, req }) => {
     });
   }
 
-  // ── App-initiated flow (LWA OAuth) ───────────────────────────────────
-  const { data: secretData } = await adminClient
-    .from('decrypted_secrets')
-    .select('decrypted_secret')
-    .eq('name', provider.config.client_id_ref)
-    .limit(1)
-    .single();
-
-  if (!secretData?.decrypted_secret) {
-    throw AppError.internal('Client ID not found in vault');
+  // ── App-initiated flow (Amazon Business OAuth) ──────────────────────
+  if (!provider.config?.application_id) {
+    throw AppError.badRequest(
+      'Application ID is required for Amazon Business authorization. Update your credentials with an Application ID.'
+    );
   }
 
-  const authUrl = new URL('https://www.amazon.com/ap/oa');
-  authUrl.searchParams.set('client_id', secretData.decrypted_secret);
-  authUrl.searchParams.set('scope', 'profile');
-  authUrl.searchParams.set('response_type', 'code');
+  const authUrl = new URL('https://www.amazon.com/b2b/abws/oauth');
+  authUrl.searchParams.set('applicationId', provider.config.application_id);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('state', state);
 
