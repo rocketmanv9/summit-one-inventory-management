@@ -54,7 +54,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     .maybeSingle();
 
   if (!data) {
-    return Response.json({ data: { connected: false } });
+    return Response.json({ data: { connected: false, needs_authorization: false } });
   }
 
   return Response.json({
@@ -63,6 +63,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
       provider_id: data.id,
       application_id: data.config?.application_id || null,
       sandbox: data.config?.sandbox || false,
+      needs_authorization: !!(data.config?.client_id_ref && !data.config?.refresh_token_ref),
       last_event_id: data.last_event_id,
     },
   });
@@ -74,7 +75,7 @@ const ConnectSchema = z.object({
   application_id: z.string().min(1).optional(),
   client_id: z.string().min(1),
   client_secret: z.string().min(1),
-  refresh_token: z.string().min(1),
+  refresh_token: z.string().min(1).optional(),
   sandbox: z.boolean().optional(),
 });
 
@@ -94,43 +95,58 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     .maybeSingle();
 
   if (existing) {
-    // Update existing — store all three secrets
+    // Update existing — store client_id + client_secret always
     const clientIdRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'client-id', body.client_id);
     const clientSecretRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'client-secret', body.client_secret);
-    const refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'refresh-token', body.refresh_token);
 
+    // Only store refresh_token if provided (otherwise keep existing ref)
+    let refreshTokenRef = existing.config?.refresh_token_ref;
+    if (body.refresh_token) {
+      refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'refresh-token', body.refresh_token);
+    }
+
+    const hasRefreshToken = !!refreshTokenRef;
     const config = {
       ...existing.config,
       application_id: body.application_id || existing.config?.application_id,
       sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
       client_id_ref: clientIdRef,
       client_secret_ref: clientSecretRef,
-      refresh_token_ref: refreshTokenRef,
+      ...(refreshTokenRef ? { refresh_token_ref: refreshTokenRef } : {}),
     };
 
     const { error } = await prov
       .from('providers')
-      .update({ config, is_active: true, last_event_id: idempotencyKey })
+      .update({ config, is_active: hasRefreshToken, last_event_id: idempotencyKey })
       .eq('id', existing.id);
 
     if (error) throw AppError.internal(error.message);
 
-    // Validate connection
-    const valid = await validateConnection({
-      clientId: body.client_id,
-      clientSecret: body.client_secret,
-      refreshToken: body.refresh_token,
-      sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
-    });
+    // Validate connection only if we have all three credentials
+    let valid = false;
+    if (body.refresh_token) {
+      valid = await validateConnection({
+        clientId: body.client_id,
+        clientSecret: body.client_secret,
+        refreshToken: body.refresh_token,
+        sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
+      });
+    }
 
     return {
-      data: { connected: true, valid, provider_id: existing.id },
+      data: {
+        connected: hasRefreshToken,
+        valid,
+        provider_id: existing.id,
+        needs_authorization: !hasRefreshToken,
+      },
       status: 200,
       events: [{ event_name: 'integration.updated', payload: { provider: 'amazon-business' }, last_event_id: idempotencyKey }],
     };
   }
 
-  // Create new
+  // Create new — provider starts inactive until refresh_token is obtained via OAuth
+  const hasRefreshToken = !!body.refresh_token;
   const { data: provider, error } = await prov
     .from('providers')
     .upsert({
@@ -141,7 +157,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       config: { application_id: body.application_id, sandbox: body.sandbox ?? false },
       capabilities: ['procurement', 'marketplace'],
       priority: 100,
-      is_active: true,
+      is_active: hasRefreshToken,
       last_event_id: idempotencyKey,
     }, { onConflict: 'last_event_id' })
     .select()
@@ -149,10 +165,14 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (error) throw AppError.internal(error.message);
 
-  // Store all three secrets in Vault
+  // Store secrets in Vault
   const clientIdRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'client-id', body.client_id);
   const clientSecretRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'client-secret', body.client_secret);
-  const refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'refresh-token', body.refresh_token);
+
+  let refreshTokenRef: string | undefined;
+  if (body.refresh_token) {
+    refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'refresh-token', body.refresh_token);
+  }
 
   await prov
     .from('providers')
@@ -161,21 +181,29 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
         ...provider.config,
         client_id_ref: clientIdRef,
         client_secret_ref: clientSecretRef,
-        refresh_token_ref: refreshTokenRef,
+        ...(refreshTokenRef ? { refresh_token_ref: refreshTokenRef } : {}),
       },
     })
     .eq('id', provider.id);
 
-  // Validate connection
-  const valid = await validateConnection({
-    clientId: body.client_id,
-    clientSecret: body.client_secret,
-    refreshToken: body.refresh_token,
-    sandbox: body.sandbox ?? false,
-  });
+  // Validate connection only if we have all credentials
+  let valid = false;
+  if (body.refresh_token) {
+    valid = await validateConnection({
+      clientId: body.client_id,
+      clientSecret: body.client_secret,
+      refreshToken: body.refresh_token,
+      sandbox: body.sandbox ?? false,
+    });
+  }
 
   return {
-    data: { connected: true, valid, provider_id: provider.id },
+    data: {
+      connected: hasRefreshToken,
+      valid,
+      provider_id: provider.id,
+      needs_authorization: !hasRefreshToken,
+    },
     status: 201,
     events: [{ event_name: 'integration.created', payload: { provider: 'amazon-business' }, last_event_id: idempotencyKey }],
   };

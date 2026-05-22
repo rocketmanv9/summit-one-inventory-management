@@ -21,6 +21,7 @@ interface AmazonStatus {
   provider_id?: string;
   application_id?: string | null;
   sandbox?: boolean;
+  needs_authorization?: boolean;
 }
 
 interface Mapping {
@@ -86,6 +87,22 @@ export default function IntegrationsPage() {
   const [amazonSearchQuery, setAmazonSearchQuery] = useState('');
   const [amazonSearchResults, setAmazonSearchResults] = useState<AmazonProduct[]>([]);
   const [amazonSearching, setAmazonSearching] = useState(false);
+
+  // Handle OAuth callback query params (amazon_success / amazon_error)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthSuccess = params.get('amazon_success');
+    const oauthError = params.get('amazon_error');
+    if (oauthSuccess) {
+      setAmazonSuccess(oauthSuccess);
+      setAmazonStatus('connected');
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (oauthError) {
+      setAmazonError(oauthError);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   // Shared catalog items
   const [catalogItems, setCatalogItems] = useState<Array<{ id: string; label: string }>>([]);
@@ -309,6 +326,15 @@ export default function IntegrationsPage() {
 
       if (!res.ok) {
         throw new Error(json?.error?.message || 'Failed to connect');
+      }
+
+      // If no refresh_token was provided, credentials are saved — redirect to Amazon OAuth
+      if (json?.data?.needs_authorization) {
+        setAmazonSuccess('Credentials saved. Redirecting to Amazon for authorization...');
+        await loadAmazonStatus();
+        // Redirect to our auth route which redirects to Amazon
+        window.location.href = '/api/settings/integrations/amazon-business/auth';
+        return;
       }
 
       setAmazonForm({ application_id: '', client_id: '', client_secret: '', refresh_token: '', sandbox: false });
@@ -728,16 +754,9 @@ export default function IntegrationsPage() {
                         className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                         required disabled={!isAdmin} />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Refresh Token</label>
-                      <input type="password" value={amazonForm.refresh_token}
-                        onChange={(e) => setAmazonForm({ ...amazonForm, refresh_token: e.target.value })}
-                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                        required disabled={!isAdmin} />
-                    </div>
-                    <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret || !amazonForm.refresh_token}
+                    <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm">
-                      {amazonSaving ? 'Saving...' : 'Update Credentials'}
+                      {amazonSaving ? 'Saving...' : 'Update & Re-authorize'}
                     </button>
                   </form>
                 </details>
@@ -749,15 +768,46 @@ export default function IntegrationsPage() {
                   </button>
                 </div>
               </div>
+            ) : amazon?.needs_authorization ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                  <Loader2 className="h-4 w-4 flex-shrink-0" />
+                  <span>Credentials saved — authorization with Amazon required</span>
+                </div>
+                <a href="/api/settings/integrations/amazon-business/auth"
+                  className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium flex items-center justify-center gap-2 text-sm">
+                  <ExternalLink className="h-4 w-4" /> Authorize with Amazon
+                </a>
+                <div className="flex items-center gap-3 pt-2 border-t">
+                  <button onClick={handleAmazonDisconnect} disabled={amazonSaving || !isAdmin}
+                    className="px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50 text-sm flex items-center gap-2">
+                    <Unplug className="h-3 w-3" /> Remove Credentials
+                  </button>
+                </div>
+              </div>
             ) : (
               <form onSubmit={handleAmazonConnect} className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Enter your Amazon Business API credentials to connect. You can obtain these from the{' '}
-                  <a href="https://sellercentral.amazon.com/developer/register" target="_blank" rel="noopener noreferrer"
-                    className="text-primary hover:underline inline-flex items-center gap-1">
-                    Amazon Solution Provider Portal <ExternalLink className="h-3 w-3" />
-                  </a>
-                </p>
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm space-y-2">
+                  <p className="font-medium text-orange-900">Setup Instructions</p>
+                  <ol className="list-decimal list-inside text-orange-800 space-y-1 text-xs">
+                    <li>Go to the{' '}
+                      <a href="https://sellercentral.amazon.com/sellingpartner/developerconsole" target="_blank" rel="noopener noreferrer"
+                        className="text-primary hover:underline inline-flex items-center gap-1">
+                        Amazon Solution Provider Portal <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </li>
+                    <li>Create a new app — choose <strong>Sandbox</strong> or <strong>Production</strong> as the App Type</li>
+                    <li>Set <strong>OAuth Login URI</strong> and <strong>OAuth Redirect URI</strong> to this app&apos;s domain (see below)</li>
+                    <li>Under Business entities, select <strong>Vendors</strong></li>
+                    <li>Under Roles, select <strong>Inventory and Order Tracking</strong></li>
+                    <li>After creating the app, copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the LWA credentials section</li>
+                    <li>Enter the credentials below, then click <strong>Save &amp; Authorize</strong></li>
+                  </ol>
+                  <div className="mt-2 p-2 bg-white border border-orange-200 rounded text-xs font-mono text-orange-900">
+                    <div><span className="text-orange-600">OAuth Login URI:</span> {typeof window !== 'undefined' ? `${window.location.origin}/api/settings/integrations/amazon-business/auth` : ''}</div>
+                    <div><span className="text-orange-600">Redirect URI:</span> {typeof window !== 'undefined' ? `${window.location.origin}/api/settings/integrations/amazon-business/callback` : ''}</div>
+                  </div>
+                </div>
                 <div className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
                   <div>
                     <label className="text-sm font-medium">Sandbox Mode</label>
@@ -776,7 +826,7 @@ export default function IntegrationsPage() {
                     onChange={(e) => setAmazonForm({ ...amazonForm, application_id: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                     placeholder="amzn1.application..." disabled={!isAdmin} />
-                  <p className="text-xs text-muted-foreground mt-1">Optional. Found in your Amazon developer console.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Found in your app listing after creation. Used for SP-API authorization.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Client ID</label>
@@ -793,17 +843,9 @@ export default function IntegrationsPage() {
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                     required disabled={!isAdmin} />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Refresh Token</label>
-                  <input type="password" value={amazonForm.refresh_token}
-                    onChange={(e) => setAmazonForm({ ...amazonForm, refresh_token: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="Atzr|..." required disabled={!isAdmin} />
-                  <p className="text-xs text-muted-foreground mt-1">Generated via Login with Amazon (LWA) authorization.</p>
-                </div>
-                <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret || !amazonForm.refresh_token}
-                  className="w-full px-4 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 font-medium flex items-center justify-center gap-2">
-                  {amazonSaving ? (<><Loader2 className="h-4 w-4 animate-spin" />Connecting...</>) : 'Connect Amazon Business'}
+                <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret}
+                  className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 font-medium flex items-center justify-center gap-2">
+                  {amazonSaving ? (<><Loader2 className="h-4 w-4 animate-spin" />Saving...</>) : (<><ExternalLink className="h-4 w-4" /> Save &amp; Authorize with Amazon</>)}
                 </button>
               </form>
             )}
