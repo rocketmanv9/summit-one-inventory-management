@@ -82,6 +82,8 @@ export const GET = createSessionReadRoute(async ({ session, req }) => {
   authUrl.searchParams.set('applicationId', provider.config.application_id);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('state', state);
+  // Draft apps require version=beta; published apps ignore this param
+  authUrl.searchParams.set('version', 'beta');
 
   return new Response(null, {
     status: 302,
