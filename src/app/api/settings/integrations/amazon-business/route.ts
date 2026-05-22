@@ -75,7 +75,7 @@ const ConnectSchema = z.object({
   application_id: z.string().min(1).optional(),
   client_id: z.string().min(1),
   client_secret: z.string().min(1),
-  refresh_token: z.string().min(1).optional(),
+  refresh_token: z.string().min(1).optional().or(z.literal('')).transform(v => v || undefined),
   sandbox: z.boolean().optional(),
 });
 
