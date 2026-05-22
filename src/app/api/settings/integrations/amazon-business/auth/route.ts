@@ -71,24 +71,7 @@ export const GET = createSessionReadRoute(async ({ session, req }) => {
     });
   }
 
-  // ── App-initiated flow ────────────────────────────────────────────────
-  const applicationId = provider.config?.application_id;
-
-  if (applicationId) {
-    // SP-API consent page (preferred when application_id is available)
-    const authUrl = new URL(
-      'https://sellercentral.amazon.com/apps/authorize/consent'
-    );
-    authUrl.searchParams.set('application_id', applicationId);
-    authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('version', 'beta');
-    return new Response(null, {
-      status: 302,
-      headers: { Location: authUrl.toString() },
-    });
-  }
-
-  // Fallback to LWA authorization
+  // ── App-initiated flow (LWA OAuth) ───────────────────────────────────
   const { data: secretData } = await adminClient
     .from('decrypted_secrets')
     .select('decrypted_secret')
