@@ -220,7 +220,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
 
   const { data: existing } = await prov
     .from('providers')
-    .select('id')
+    .select('id, config')
     .eq('tenant_id', ctx.tenantId!)
     .eq('provider_type', 'procurement_marketplace')
     .like('provider_key', 'amazon-business%')
@@ -229,9 +229,20 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
 
   if (!existing) throw AppError.notFound('No Amazon Business connection found');
 
+  // Clean up secrets from Vault
+  const refs = [
+    existing.config?.client_id_ref,
+    existing.config?.client_secret_ref,
+    existing.config?.refresh_token_ref,
+  ].filter(Boolean);
+  for (const ref of refs) {
+    await adminClient.rpc('delete_secret_by_name', { secret_name: ref });
+  }
+
+  // Delete the provider record entirely so UI returns to credential entry
   await prov
     .from('providers')
-    .update({ is_active: false, last_event_id: idempotencyKey })
+    .delete()
     .eq('id', existing.id);
 
   return {
