@@ -18,12 +18,13 @@ export type PaymentMethod = 'invoice' | 'card' | 'cod' | 'account';
  * How orders are placed with this vendor
  * Drives UI hints and workflow guidance, not hard validation
  */
-export type OrderingMode = 
+export type OrderingMode =
   | 'email_po'              // Traditional: PO emailed to vendor
   | 'portal_with_po_ref'    // Portal ordering (Uline, Grainger) - PO # referenced during checkout
   | 'phone_with_po_ref'     // Phone ordering - PO # referenced verbally
   | 'card_only_internal_po' // Card payment (Home Depot, Amazon) - PO is internal only
   | 'pickup_only'           // In-person pickup - PO is authorization
+  | 'amazon_punchout'       // Amazon Business cXML punchout ordering
   | 'mixed';                // Vendor supports multiple methods
 
 export type OrderPlacementMethod = 'portal' | 'email' | 'phone' | 'in_person' | 'other';
@@ -481,6 +482,7 @@ export function getOrderingModeLabel(mode: OrderingMode): string {
     case 'phone_with_po_ref': return 'Phone (w/ PO Ref)';
     case 'card_only_internal_po': return 'Card Only (Internal PO)';
     case 'pickup_only': return 'Pickup Only';
+    case 'amazon_punchout': return 'Amazon Punchout';
     case 'mixed': return 'Mixed Methods';
     default: return mode;
   }
@@ -488,19 +490,21 @@ export function getOrderingModeLabel(mode: OrderingMode): string {
 
 export function getOrderingModeDescription(mode: OrderingMode): string {
   switch (mode) {
-    case 'email_po': 
+    case 'email_po':
       return 'PO is emailed directly to vendor';
-    case 'portal_with_po_ref': 
+    case 'portal_with_po_ref':
       return 'Order placed in vendor portal, PO # referenced during checkout';
-    case 'phone_with_po_ref': 
+    case 'phone_with_po_ref':
       return 'Order placed by phone, PO # referenced verbally';
-    case 'card_only_internal_po': 
+    case 'card_only_internal_po':
       return 'Vendor never sees PO - internal tracking only';
-    case 'pickup_only': 
+    case 'pickup_only':
       return 'Material picked up in person, PO is authorization';
-    case 'mixed': 
+    case 'amazon_punchout':
+      return 'Order via Amazon Business punchout - items selected on Amazon and submitted automatically';
+    case 'mixed':
       return 'Vendor supports multiple ordering methods';
-    default: 
+    default:
       return '';
   }
 }
@@ -512,6 +516,7 @@ export function getOrderingModeIcon(mode: OrderingMode): string {
     case 'phone_with_po_ref': return '📞';
     case 'card_only_internal_po': return '💳';
     case 'pickup_only': return '🚚';
+    case 'amazon_punchout': return '🛒';
     case 'mixed': return '🔀';
     default: return '📋';
   }
@@ -522,9 +527,10 @@ export function shouldShowSendPOButton(mode: OrderingMode): boolean {
 }
 
 export function shouldShowExternalOrderTracking(mode: OrderingMode): boolean {
-  return mode === 'portal_with_po_ref' || 
-         mode === 'phone_with_po_ref' || 
+  return mode === 'portal_with_po_ref' ||
+         mode === 'phone_with_po_ref' ||
          mode === 'card_only_internal_po' ||
+         mode === 'amazon_punchout' ||
          mode === 'mixed';
 }
 

@@ -13,6 +13,8 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
+import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
+import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 
 interface PurchaseOrder {
   id: string;
@@ -48,6 +50,8 @@ export default function PurchasingPage() {
   const [catalogItems, setCatalogItems] = useState<Map<string, any>>(new Map());
   const [showVendorModal, setShowVendorModal] = useState(false);
   const [pendingVendorId, setPendingVendorId] = useState<string | null>(null);
+  const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
+  const [placeOrderPO, setPlaceOrderPO] = useState<PurchaseOrder | null>(null);
 
   useEffect(() => {
     loadReferenceData();
@@ -146,28 +150,13 @@ export default function PurchasingPage() {
     }
   };
 
-  const handlePlacePO = async (poId: string, status: string, lastEventId: string) => {
-    if (status !== 'approved') {
-      alert(`Cannot place PO in status: ${status}. Only approved POs can be placed.`);
+  const handlePlacePO = (row: PurchaseOrder) => {
+    if (row.status !== 'approved') {
+      alert(`Cannot place PO in status: ${row.status}. Only approved POs can be placed.`);
       return;
     }
-
-    if (!confirm('Place this PO with vendor?')) return;
-
-    try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'placed', lastEventId);
-
-      if (error) {
-        alert(`Error: ${error.message}`);
-        return;
-      }
-
-      alert('PO placed with vendor!');
-      fetchOrders();
-    } catch (error) {
-      console.error('Error placing PO:', error);
-      alert('Failed to place PO. Please try again.');
-    }
+    setPlaceOrderPO(row);
+    setShowPlaceOrderModal(true);
   };
 
   const handleDeletePO = async (poId: string, status: string, poNumber: string, lastEventId: string) => {
@@ -319,7 +308,7 @@ export default function PurchasingPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handlePlacePO(row.id, row.status, row.last_event_id);
+                  handlePlacePO(row);
                 }}
                 className="px-3 py-1 text-sm rounded bg-purple-600 hover:bg-purple-700 text-white"
                 title="Place order with vendor"
@@ -463,6 +452,10 @@ export default function PurchasingPage() {
             onClose={() => setSelectedOrder(null)}
             locations={locations}
             catalogItems={catalogItems}
+            onPlaceOrder={(poRow) => {
+              setSelectedOrder(null);
+              handlePlacePO(poRow);
+            }}
           />
         )}
 
@@ -495,6 +488,22 @@ export default function PurchasingPage() {
           />
         )}
 
+        {showPlaceOrderModal && placeOrderPO && (
+          <PlaceOrderModal
+            open={showPlaceOrderModal}
+            onClose={() => {
+              setShowPlaceOrderModal(false);
+              setPlaceOrderPO(null);
+            }}
+            po={placeOrderPO as unknown as POType}
+            onSuccess={() => {
+              setShowPlaceOrderModal(false);
+              setPlaceOrderPO(null);
+              fetchOrders();
+            }}
+          />
+        )}
+
         <AddVendorModal
           open={showVendorModal}
           onClose={() => setShowVendorModal(false)}
@@ -523,12 +532,14 @@ function PODetailPanel({
   po,
   onClose,
   locations,
-  catalogItems
+  catalogItems,
+  onPlaceOrder
 }: {
   po: PurchaseOrder;
   onClose: () => void;
   locations: Map<string, string>;
   catalogItems: Map<string, any>;
+  onPlaceOrder: (po: PurchaseOrder) => void;
 }) {
   const uomLabels = useUOMLabelMap();
   const [receipts, setReceipts] = useState<Array<{
@@ -767,11 +778,10 @@ function PODetailPanel({
 
             {po.status === 'approved' && (
               <button
-                onClick={() => updateStatus('placed')}
-                disabled={updatingStatus}
-                className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
+                onClick={() => onPlaceOrder(po)}
+                className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
               >
-                {updatingStatus ? 'Updating...' : 'Place Order (Send to Vendor)'}
+                Place Order (Send to Vendor)
               </button>
             )}
 

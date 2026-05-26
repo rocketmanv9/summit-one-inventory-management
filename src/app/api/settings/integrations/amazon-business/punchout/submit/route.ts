@@ -19,6 +19,7 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 const SubmitSchema = z.object({
   punchout_order_id: z.string().uuid(),
   location_id: z.string().uuid(),
+  existing_po_id: z.string().uuid().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
@@ -126,48 +127,67 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   const total = orderLines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
-  // 6. Create internal PO via RPC
-  const poLines = orderLines.map((line) => ({
-    catalog_item_id: null,
-    qty_ordered: line.quantity,
-    unit_cost: line.unitPrice,
-    estimated_unit_cost: line.unitPrice,
-    price_basis: 'confirmed',
-    line_notes: `ASIN: ${line.supplierSku} | SPAID: ${line.spaid}`,
-  }));
-
+  // 6. Use existing PO or create a new internal PO
   let poId: string | null = null;
   let poNumber: string | null = null;
 
-  // Find or create Amazon vendor
-  const { data: vendor } = await sc
-    .from('vendors')
-    .select('id')
-    .eq('tenant_id', ctx.tenantId!)
-    .eq('code', 'AMAZON-BIZ')
-    .limit(1)
-    .maybeSingle();
+  if (body.existing_po_id) {
+    // Use existing PO (called from PlaceOrderModal on an approved PO)
+    const { data: existingPO, error: existingPOError } = await sc
+      .from('purchase_orders')
+      .select('id, po_number')
+      .eq('id', body.existing_po_id)
+      .eq('tenant_id', ctx.tenantId!)
+      .limit(1)
+      .single();
 
-  if (vendor) {
-    const { data: poResult, error: poError } = await sc.rpc('rpc_create_purchase_order', {
-      p_vendor_id: vendor.id,
-      p_po_number: null,
-      p_delivery_method: 'ship',
-      p_needed_by_date: null,
-      p_cost_context: 'yard',
-      p_job_id: null,
-      p_delivery_location_id: body.location_id,
-      p_pickup_location_id: null,
-      p_max_authorized_spend: null,
-      p_vendor_quote_ref: null,
-      p_notes: `Amazon Business cXML Order (punchout session ${order.id})`,
-      p_attachments: [],
-      p_lines: poLines,
-    });
+    if (existingPOError || !existingPO) {
+      throw AppError.notFound('Existing purchase order not found.');
+    }
 
-    if (!poError && poResult) {
-      poId = poResult.po_id;
-      poNumber = poResult.po_number;
+    poId = existingPO.id;
+    poNumber = existingPO.po_number;
+  } else {
+    // Create a new PO (original flow from widget)
+    const poLines = orderLines.map((line) => ({
+      catalog_item_id: null,
+      qty_ordered: line.quantity,
+      unit_cost: line.unitPrice,
+      estimated_unit_cost: line.unitPrice,
+      price_basis: 'confirmed',
+      line_notes: `ASIN: ${line.supplierSku} | SPAID: ${line.spaid}`,
+    }));
+
+    // Find or create Amazon vendor
+    const { data: vendor } = await sc
+      .from('vendors')
+      .select('id')
+      .eq('tenant_id', ctx.tenantId!)
+      .eq('code', 'AMAZON-BIZ')
+      .limit(1)
+      .maybeSingle();
+
+    if (vendor) {
+      const { data: poResult, error: poError } = await sc.rpc('rpc_create_purchase_order', {
+        p_vendor_id: vendor.id,
+        p_po_number: null,
+        p_delivery_method: 'ship',
+        p_needed_by_date: null,
+        p_cost_context: 'yard',
+        p_job_id: null,
+        p_delivery_location_id: body.location_id,
+        p_pickup_location_id: null,
+        p_max_authorized_spend: null,
+        p_vendor_quote_ref: null,
+        p_notes: `Amazon Business cXML Order (punchout session ${order.id})`,
+        p_attachments: [],
+        p_lines: poLines,
+      });
+
+      if (!poError && poResult) {
+        poId = poResult.po_id;
+        poNumber = poResult.po_number;
+      }
     }
   }
 

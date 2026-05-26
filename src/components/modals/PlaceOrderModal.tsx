@@ -12,7 +12,7 @@
 'use client';
 /* eslint-disable react-compiler/react-compiler */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,20 +20,21 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { 
-  AlertCircle, 
-  CheckCircle2, 
-  ExternalLink, 
-  Globe, 
-  Loader2, 
-  Mail, 
-  Phone, 
-  CreditCard, 
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Globe,
+  Loader2,
+  Mail,
+  Phone,
+  CreditCard,
   Truck,
   Copy,
-  Info
+  Info,
+  ShoppingCart
 } from 'lucide-react';
-import { markPOAsOrdered, sendPOEmail, getVendorOrderingGuidance } from '@/lib/api/purchase-orders';
+import { markPOAsOrdered, sendPOEmail, getVendorOrderingGuidance, getPurchaseOrderWithDetails } from '@/lib/api/purchase-orders';
 import { 
   getOrderingModeLabel, 
   getOrderingModeDescription,
@@ -58,12 +59,29 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
   const [guidance, setGuidance] = useState<VendorOrderingGuidance | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<'guidance' | 'confirm'>('guidance');
-  
+
   // Form state for external order tracking
   const [externalOrderNumber, setExternalOrderNumber] = useState('');
   const [placementMethod, setPlacementMethod] = useState<OrderPlacementMethod>('portal');
   const [placementNotes, setPlacementNotes] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
+
+  // Amazon punchout state
+  const [punchoutStep, setPunchoutStep] = useState<'init' | 'waiting' | 'review' | 'submitting'>('init');
+  const [punchoutOrderId, setPunchoutOrderId] = useState<string | null>(null);
+  const [punchoutItems, setPunchoutItems] = useState<Array<{
+    line_number: number;
+    supplier_sku: string;
+    spaid: string;
+    quantity: number;
+    unit_price: number;
+    currency: string;
+    description: string;
+    unit_of_measure: string;
+  }>>([]);
+  const [punchoutTotal, setPunchoutTotal] = useState(0);
+  const [userEmail, setUserEmail] = useState('');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGuidance = async () => {
     if (!po.vendor_id) return;
@@ -86,6 +104,9 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         setPlacementMethod('email');
       } else if (result.data.ordering_mode === 'card_only_internal_po') {
         setPlacementMethod('portal');
+      } else if (result.data.ordering_mode === 'amazon_punchout') {
+        setPlacementMethod('portal');
+        setPunchoutStep('init');
       }
     }
   };
@@ -96,6 +117,141 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
       loadGuidance();
     }
   }, [open, po.vendor_id, loadGuidance]);
+
+  // Cleanup punchout polling on unmount or close
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, []);
+
+  const startPunchout = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // Fetch PO lines to build catalog_items payload
+      const poDetails = await getPurchaseOrderWithDetails(po.id);
+      if (poDetails.error || !poDetails.data?.lines?.length) {
+        toast.error('Failed to load PO details', {
+          description: poDetails.error?.message || 'No line items found on this PO'
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const catalogItems = poDetails.data.lines
+        .filter(line => line.catalog_item_id)
+        .map(line => ({
+          catalog_item_id: line.catalog_item_id!,
+          quantity: line.qty_ordered,
+        }));
+
+      if (catalogItems.length === 0) {
+        toast.error('No catalog items on this PO', {
+          description: 'Amazon punchout requires catalog items with ASIN mappings'
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      const locationId = poDetails.data.delivery_location_id || poDetails.data.pickup_location_id;
+      if (!locationId) {
+        toast.error('No delivery location set on this PO');
+        setIsLoading(false);
+        return;
+      }
+
+      const resp = await fetch('/api/settings/integrations/amazon-business/punchout/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_email: userEmail,
+          location_id: locationId,
+          catalog_items: catalogItems,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(err.error?.message || err.error || 'Failed to start punchout');
+      }
+
+      const result = await resp.json();
+      setPunchoutOrderId(result.data.punchout_order_id);
+      setPunchoutStep('waiting');
+
+      // Open Amazon in new tab
+      window.open(result.data.redirect_url, '_blank');
+
+      // Start polling for cart return
+      pollRef.current = setInterval(async () => {
+        try {
+          const pollResp = await fetch(
+            `/api/settings/integrations/amazon-business/punchout/orders?id=${result.data.punchout_order_id}`
+          );
+          if (pollResp.ok) {
+            const pollResult = await pollResp.json();
+            if (pollResult.data?.status === 'cart_returned') {
+              if (pollRef.current) {
+                clearInterval(pollRef.current);
+                pollRef.current = null;
+              }
+              setPunchoutItems(pollResult.data.poom_items || []);
+              setPunchoutTotal(pollResult.data.poom_total || 0);
+              setPunchoutStep('review');
+            }
+          }
+        } catch {
+          // Polling error — keep retrying
+        }
+      }, 5000);
+    } catch (err: any) {
+      toast.error('Failed to start Amazon punchout', {
+        description: err.message
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [po.id, userEmail]);
+
+  const submitPunchoutOrder = useCallback(async () => {
+    if (!punchoutOrderId) return;
+    setPunchoutStep('submitting');
+
+    try {
+      const poDetails = await getPurchaseOrderWithDetails(po.id);
+      const locationId = poDetails.data?.delivery_location_id || poDetails.data?.pickup_location_id;
+
+      const resp = await fetch('/api/settings/integrations/amazon-business/punchout/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          punchout_order_id: punchoutOrderId,
+          location_id: locationId,
+          existing_po_id: po.id,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(err.error?.message || err.error || 'Failed to submit order');
+      }
+
+      toast.success('Order submitted to Amazon', {
+        description: 'PO has been marked as placed'
+      });
+
+      onSuccess?.();
+      onClose();
+    } catch (err: any) {
+      toast.error('Failed to submit order to Amazon', {
+        description: err.message
+      });
+      setPunchoutStep('review');
+    }
+  }, [punchoutOrderId, po.id, onSuccess, onClose]);
 
   const handleSendEmailPO = async () => {
     setIsLoading(true);
@@ -470,6 +626,124 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
             </div>
           )}
           
+          {/* AMAZON PUNCHOUT */}
+          {orderingMode === 'amazon_punchout' && (
+            <div className="space-y-4">
+              {punchoutStep === 'init' && (
+                <>
+                  <Alert className="bg-orange-50 border-orange-200">
+                    <ShoppingCart className="h-4 w-4 text-orange-600" />
+                    <AlertDescription className="text-orange-800">
+                      <strong>Amazon Business Punchout</strong><br />
+                      You will be redirected to Amazon to review and confirm items.
+                      When done, return here to submit the order.
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="user_email">Your Email (for Amazon session)</Label>
+                    <Input
+                      id="user_email"
+                      type="email"
+                      value={userEmail}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserEmail(e.target.value)}
+                      placeholder="you@company.com"
+                    />
+                  </div>
+
+                  <Button
+                    onClick={startPunchout}
+                    disabled={isLoading || !userEmail}
+                    className="w-full"
+                  >
+                    {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    <ShoppingCart className="h-4 w-4 mr-2" />
+                    Start Amazon Punchout
+                  </Button>
+                </>
+              )}
+
+              {punchoutStep === 'waiting' && (
+                <div className="text-center py-8 space-y-4">
+                  <Loader2 className="h-10 w-10 animate-spin text-orange-500 mx-auto" />
+                  <div>
+                    <div className="font-semibold text-lg">Shopping on Amazon...</div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      Complete your selections on Amazon and click &quot;Submit Cart&quot;.
+                      This page will update automatically.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {punchoutStep === 'review' && (
+                <>
+                  <Alert className="bg-green-50 border-green-200">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <AlertDescription className="text-green-800">
+                      Cart returned from Amazon. Review the items below and submit.
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted">
+                        <tr>
+                          <th className="text-left p-2">Item</th>
+                          <th className="text-left p-2">ASIN</th>
+                          <th className="text-right p-2">Qty</th>
+                          <th className="text-right p-2">Unit Price</th>
+                          <th className="text-right p-2">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {punchoutItems.map((item, idx) => (
+                          <tr key={idx} className="border-t">
+                            <td className="p-2 max-w-[200px] truncate" title={item.description}>
+                              {item.description}
+                            </td>
+                            <td className="p-2 font-mono text-xs">{item.supplier_sku}</td>
+                            <td className="p-2 text-right">{item.quantity}</td>
+                            <td className="p-2 text-right">${item.unit_price.toFixed(2)}</td>
+                            <td className="p-2 text-right font-medium">
+                              ${(item.quantity * item.unit_price).toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t bg-muted/50">
+                          <td colSpan={4} className="p-2 text-right font-semibold">Total</td>
+                          <td className="p-2 text-right font-bold">${punchoutTotal.toFixed(2)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  <Button
+                    onClick={submitPunchoutOrder}
+                    className="w-full"
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Submit Order to Amazon
+                  </Button>
+                </>
+              )}
+
+              {punchoutStep === 'submitting' && (
+                <div className="text-center py-8 space-y-4">
+                  <Loader2 className="h-10 w-10 animate-spin text-orange-500 mx-auto" />
+                  <div>
+                    <div className="font-semibold text-lg">Submitting order to Amazon...</div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      Please wait while the order is processed.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* MIXED */}
           {orderingMode === 'mixed' && (
             <div className="space-y-4">
