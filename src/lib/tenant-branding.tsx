@@ -756,12 +756,18 @@ async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding 
 }
 
 async function fetchBranding(tenantId: string): Promise<TenantBranding | null> {
-  // Try local DB first (admin-saved overrides take precedence)
-  const local = await fetchBrandingFromLocal(tenantId);
-  if (local) return local;
+  // Core is the source of truth for palette colors
+  const core = await fetchBrandingFromCore(tenantId);
 
-  // Fall back to Core (production branding data)
-  return fetchBrandingFromCore(tenantId);
+  // Local DB holds tenant adjustments (theme_config.assignments)
+  const local = await fetchBrandingFromLocal(tenantId);
+
+  if (core && local?.theme_config) {
+    // Merge: Core palette + local assignments
+    return { ...core, theme_config: local.theme_config };
+  }
+
+  return core ?? local ?? null;
 }
 
 // ---------------------------------------------------------------------------
