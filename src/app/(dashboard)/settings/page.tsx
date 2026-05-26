@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SettingsNav } from '@/components/settings/SettingsNav';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
@@ -266,29 +266,7 @@ export default function SettingsPage() {
         description="Configure purchase order numbering and approval rules"
       />
 
-      <div className="mb-6 flex gap-2 border-b pb-3">
-        <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
-          General
-        </span>
-        <Link
-          href="/settings/branding"
-          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
-        >
-          Branding
-        </Link>
-        <Link
-          href="/settings/device-management"
-          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
-        >
-          Device Management
-        </Link>
-        <Link
-          href="/settings/integrations"
-          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
-        >
-          Integrations
-        </Link>
-      </div>
+      <SettingsNav />
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">

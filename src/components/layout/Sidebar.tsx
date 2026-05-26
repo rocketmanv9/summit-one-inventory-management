@@ -19,7 +19,6 @@ import {
   History,
   Wrench,
   HardHat,
-  Plug,
   Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -235,22 +234,10 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-sidebar-border p-4">
         <Link
-          href="/settings/integrations"
-          className={cn(
-            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors mb-2',
-            pathname === '/settings/integrations'
-              ? 'bg-primary text-primary-foreground'
-              : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-          )}
-        >
-          <Plug className="h-4 w-4" />
-          <span>Integrations</span>
-        </Link>
-        <Link
           href="/settings"
           className={cn(
             'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-            pathname === '/settings'
+            pathname.startsWith('/settings')
               ? 'bg-primary text-primary-foreground'
               : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
           )}

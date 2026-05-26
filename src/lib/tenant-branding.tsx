@@ -458,19 +458,48 @@ export function applyCssVariables(b: TenantBranding) {
   setHsl('--border', b.border_color ?? b.border_subtle_color);
   setHsl('--input', b.border_color ?? b.border_subtle_color);
 
+  // --- Button overrides (fall back to primary when not set) ---
+  if (isValidHex(b.button_color)) {
+    setHsl('--btn-bg', b.button_color);
+    setHsl('--btn-fg', b.button_text_color ?? contrastForeground(b.button_color));
+  }
+  if (isValidHex(b.button_hover_color)) setHsl('--btn-hover', b.button_hover_color);
+  if (isValidHex(b.button_active_color)) setHsl('--btn-active', b.button_active_color);
+  if (isValidHex(b.call_to_action_color)) setHsl('--cta', b.call_to_action_color);
+  if (isValidHex(b.call_to_action_hover_color)) setHsl('--cta-hover', b.call_to_action_hover_color);
+  if (isValidHex(b.disabled_color)) setHsl('--disabled', b.disabled_color);
+  if (isValidHex(b.disabled_text_color)) setHsl('--disabled-fg', b.disabled_text_color);
+
+  // --- Primary variant overrides ---
+  if (isValidHex(b.primary_hover_color)) setHsl('--primary-hover', b.primary_hover_color);
+  if (isValidHex(b.primary_active_color)) setHsl('--primary-active', b.primary_active_color);
+  if (isValidHex(b.primary_disabled_color)) setHsl('--primary-disabled', b.primary_disabled_color);
+  if (isValidHex(b.secondary_hover_color)) setHsl('--secondary-hover', b.secondary_hover_color);
+
+  // --- Overlay ---
+  if (isValidHex(b.overlay_color)) setHsl('--overlay', b.overlay_color);
+
   // --- Status colors ---
   if (isValidHex(b.error_color)) {
     setHsl('--destructive', b.error_color);
     setHsl('--destructive-foreground', contrastForeground(b.error_color));
   }
+  if (isValidHex(b.error_hover_color)) setHsl('--destructive-hover', b.error_hover_color);
   if (isValidHex(b.success_color)) {
     setHsl('--success', b.success_color);
     setHsl('--success-foreground', contrastForeground(b.success_color));
   }
+  if (isValidHex(b.success_hover_color)) setHsl('--success-hover', b.success_hover_color);
   if (isValidHex(b.warning_color)) {
     setHsl('--warning', b.warning_color);
     setHsl('--warning-foreground', contrastForeground(b.warning_color));
   }
+  if (isValidHex(b.warning_hover_color)) setHsl('--warning-hover', b.warning_hover_color);
+  if (isValidHex(b.info_color)) {
+    setHsl('--info', b.info_color);
+    setHsl('--info-foreground', contrastForeground(b.info_color));
+  }
+  if (isValidHex(b.info_hover_color)) setHsl('--info-hover', b.info_hover_color);
 
   // --- Sidebar — derived from primary color ---
   if (isValidHex(b.primary_color)) {

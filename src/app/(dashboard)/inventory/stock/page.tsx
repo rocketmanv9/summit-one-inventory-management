@@ -366,20 +366,12 @@ export default function StockBalancesPage() {
           title="Stock Balances"
           description="View current inventory levels by item and location. Example: See how many tons of asphalt mix you have at the main yard vs. Job Site #234, or track rebar quantities across all truck inventories."
           actions={
-            <div className="flex gap-2">
-              <button
-                onClick={() => openAdjustModal(null)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-              >
-                Add Starting Stock
-              </button>
-              <button
-                onClick={fetchStock}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                Refresh
-              </button>
-            </div>
+            <button
+              onClick={fetchStock}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            >
+              Refresh
+            </button>
           }
         />
 

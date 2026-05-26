@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SettingsNav } from '@/components/settings/SettingsNav';
 import { DataTable } from '@/components/ui/DataTable';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
@@ -160,6 +161,8 @@ export default function GuardrailSettingsPage() {
           title="Guardrail Policies"
           description="Configure operational guardrails to prevent inventory mistakes. These policies apply to all stock mutations (adjustments, transfers, receiving)."
         />
+
+        <SettingsNav />
 
         {/* Info Box */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

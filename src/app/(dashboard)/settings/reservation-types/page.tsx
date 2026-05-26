@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SettingsNav } from '@/components/settings/SettingsNav';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { ReservationTypeModal } from '@/components/modals/ReservationTypeModal';
@@ -187,6 +188,8 @@ export default function ReservationTypesSettingsPage() {
             </button>
           }
         />
+
+        <SettingsNav />
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">

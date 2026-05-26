@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SettingsNav } from '@/components/settings/SettingsNav';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { AssignmentTypeModal } from '@/components/modals/AssignmentTypeModal';
@@ -218,6 +219,8 @@ export default function AssignmentTypesSettingsPage() {
             </button>
           }
         />
+
+        <SettingsNav />
 
         {!isAdmin && (
           <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
