@@ -45,8 +45,8 @@ async function loadOnboardingData(token: string) {
     .update({ updated_at: new Date().toISOString() })
     .eq('id', session.id).then(() => {}).catch(() => {});
 
-  // Fetch location + onboarding lines
-  const [locResult, linesResult] = await Promise.all([
+  // Fetch location + onboarding lines + existing stock balances
+  const [locResult, linesResult, stockResult] = await Promise.all([
     inv.from('locations').select('id, name').eq('id', session.location_id).single(),
     inv.from('mobile_onboarding_lines')
       .select('id, catalog_item_id, target_qty, existing_qty')
@@ -54,19 +54,30 @@ async function loadOnboardingData(token: string) {
       .eq('tenant_id', session.tenant_id)
       .order('created_at', { ascending: true })
       .limit(500),
+    inv.from('stock_balances')
+      .select('catalog_item_id, qty_on_hand, qty_reserved, qty_available')
+      .eq('location_id', session.location_id)
+      .eq('tenant_id', session.tenant_id)
+      .gt('qty_on_hand', 0)
+      .order('qty_on_hand', { ascending: false })
+      .limit(200),
   ]);
 
   const location = locResult.data;
   const rawLines = linesResult.data || [];
+  const rawStock = stockResult.data || [];
 
-  // Fetch catalog item details
-  const itemIds = [...new Set(rawLines.map((l: any) => l.catalog_item_id))];
+  // Collect all item IDs we need to look up (from lines + stock balances)
+  const lineItemIds = rawLines.map((l: any) => l.catalog_item_id);
+  const stockItemIds = rawStock.map((s: any) => s.catalog_item_id);
+  const allItemIds = [...new Set([...lineItemIds, ...stockItemIds])];
+
   let items: any[] = [];
-  if (itemIds.length > 0) {
+  if (allItemIds.length > 0) {
     const { data: itemData } = await inv
       .from('catalog_items')
       .select('id, name, sku, barcode')
-      .in('id', itemIds);
+      .in('id', allItemIds);
     items = itemData || [];
   }
 
@@ -75,6 +86,11 @@ async function loadOnboardingData(token: string) {
   const enrichedLines = rawLines.map((line: any) => ({
     ...line,
     catalog_item: itemMap.get(line.catalog_item_id) || null,
+  }));
+
+  const enrichedStock = rawStock.map((sb: any) => ({
+    ...sb,
+    catalog_item: itemMap.get(sb.catalog_item_id) || null,
   }));
 
   // Compute expiry
@@ -93,6 +109,7 @@ async function loadOnboardingData(token: string) {
     session,
     location,
     lines: enrichedLines,
+    stockBalances: enrichedStock,
     timeLeftText,
     isUrgent,
     isSubmitted: session.status === 'submitted',
@@ -121,7 +138,7 @@ export default async function MobileOnboardingPage({
     return <ErrorPage message={result.error as string} />;
   }
 
-  const { session, location, lines, timeLeftText, isUrgent, isSubmitted } = result;
+  const { session, location, lines, stockBalances, timeLeftText, isUrgent, isSubmitted } = result;
 
   // Search catalog items if query provided
   let searchResults: any[] = [];
@@ -134,7 +151,7 @@ export default async function MobileOnboardingPage({
       .from('catalog_items')
       .select('id, name, sku, barcode')
       .eq('tenant_id', session.tenant_id)
-      .eq('is_active', true)
+      .eq('active', true)
       .or(`name.ilike.%${searchQuery}%,sku.ilike.%${searchQuery}%,barcode.ilike.%${searchQuery}%`)
       .limit(20);
     searchResults = found || [];
@@ -280,6 +297,70 @@ export default async function MobileOnboardingPage({
         </div>
       )}
 
+      {/* ── Existing Stock at Location ── */}
+      {stockBalances.length > 0 && !isSubmitted && (
+        <div style={{ padding: '12px 16px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: colors.gray600, marginBottom: '8px' }}>
+            Current Stock at {location?.name || 'Location'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {stockBalances.map((sb: any) => {
+              const alreadyAdded = addedItemIds.has(sb.catalog_item_id);
+              return (
+                <div key={sb.catalog_item_id} style={{
+                  padding: '10px 14px', background: colors.white, borderRadius: '10px',
+                  border: `1px solid ${colors.gray200}`, display: 'flex', alignItems: 'center',
+                  justifyContent: 'space-between', gap: '10px',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px', color: colors.gray900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {sb.catalog_item?.name || 'Unknown'}
+                    </div>
+                    {sb.catalog_item?.sku && (
+                      <div style={{ fontSize: '11px', color: colors.gray500, fontFamily: 'ui-monospace, monospace' }}>
+                        {sb.catalog_item.sku}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: '16px', fontWeight: 700, color: colors.gray900 }}>
+                      {Number(sb.qty_on_hand)}
+                    </div>
+                    {Number(sb.qty_reserved) > 0 && (
+                      <div style={{ fontSize: '11px', color: colors.yellow700 }}>
+                        {Number(sb.qty_reserved)} reserved
+                      </div>
+                    )}
+                  </div>
+                  {!alreadyAdded ? (
+                    <form action={addItemToSession}>
+                      <input type="hidden" name="token" value={token} />
+                      <input type="hidden" name="_bypass" value={bypass} />
+                      <input type="hidden" name="catalog_item_id" value={sb.catalog_item_id} />
+                      <button type="submit" style={{
+                        padding: '5px 12px', background: colors.blue600, color: colors.white,
+                        borderRadius: '8px', fontWeight: 600, fontSize: '12px', border: 'none',
+                        cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}>
+                        Add
+                      </button>
+                    </form>
+                  ) : (
+                    <span style={{
+                      fontSize: '11px', fontWeight: 600, color: colors.green700,
+                      background: colors.green100, padding: '3px 8px', borderRadius: '9999px',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      Added
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Onboarding Items List ── */}
       <div style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         {lines.length > 0 && (
@@ -303,7 +384,7 @@ export default async function MobileOnboardingPage({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
             </svg>
             <p style={{ fontSize: '15px', fontWeight: 500 }}>No items added yet</p>
-            <p style={{ fontSize: '13px', marginTop: '4px' }}>Search for items above or create a new one below</p>
+            <p style={{ fontSize: '13px', marginTop: '4px' }}>Search for items above or add from existing stock</p>
           </div>
         )}
       </div>

@@ -201,7 +201,7 @@ export async function quickCreateItem(formData: FormData) {
       name,
       sku,
       tracking_mode: 'stock',
-      is_active: true,
+      active: true,
       created_by_user_id: session.created_by_user_id,
     })
     .select()
