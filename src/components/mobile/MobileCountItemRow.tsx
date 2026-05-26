@@ -21,10 +21,11 @@ interface CountLine {
 interface MobileCountItemRowProps {
   line: CountLine;
   isBlind: boolean;
+  isInitial?: boolean;
   onRecordCount: (catalogItemId: string, qty: number) => Promise<void>;
 }
 
-export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCountItemRowProps) {
+export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordCount }: MobileCountItemRowProps) {
   const uomLabels = useUOMLabelMap();
   const [value, setValue] = useState(line.qty_counted?.toString() ?? '');
   const [saving, setSaving] = useState(false);
@@ -181,7 +182,7 @@ export function MobileCountItemRow({ line, isBlind, onRecordCount }: MobileCount
       </div>
 
       <div style={inputRow}>
-        {!isBlind && (
+        {!isBlind && !isInitial && (
           <div style={expectedBadge}>
             Exp: <span style={expectedValue}>{line.qty_expected}</span>
             {line.catalog_item?.uom_term_id ? ` ${uomLabels[line.catalog_item.uom_term_id] || ''}` : ''}

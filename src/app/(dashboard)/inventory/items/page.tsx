@@ -14,6 +14,8 @@ import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -59,6 +61,9 @@ export default function ItemsPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [pendingCategoryId, setPendingCategoryId] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+
+  const itemIds = items.map(i => i.id);
+  const { imageMap } = useEntityImages('catalog_item', itemIds);
 
   useEffect(() => {
     fetchItems();
@@ -125,6 +130,14 @@ export default function ItemsPage() {
   };
 
   const columns = [
+    {
+      key: 'photo',
+      header: '',
+      className: 'w-10',
+      render: (row: CatalogItem) => (
+        <EntityImageThumbnail url={imageMap[row.id]} alt={row.name} />
+      ),
+    },
     {
       key: 'name',
       header: 'Name',

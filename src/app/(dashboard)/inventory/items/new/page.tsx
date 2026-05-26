@@ -13,6 +13,7 @@ import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { AddLocationModal } from '@/components/modals/AddLocationModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
@@ -1741,6 +1742,9 @@ function StepSuccess({
                 <> | Barcode: <span className="font-mono font-bold">{result.item_barcode}</span></>
               )}
             </p>
+            <div className="pt-2">
+              <EntityImageUpload entityType="catalog_item" entityId={result.item_id} size="lg" />
+            </div>
           </div>
 
           {result.created_entities.length > 0 && (

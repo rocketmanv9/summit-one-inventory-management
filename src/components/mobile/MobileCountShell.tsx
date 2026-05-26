@@ -10,6 +10,7 @@ interface MobileCountShellProps {
   itemsTotal: number;
   isSubmitted: boolean;
   isSubmitting: boolean;
+  countType?: string;
   onScanClick: () => void;
   onSubmitClick: () => void;
   children: React.ReactNode;
@@ -23,6 +24,7 @@ export function MobileCountShell({
   itemsTotal,
   isSubmitted,
   isSubmitting,
+  countType,
   onScanClick,
   onSubmitClick,
   children,
@@ -224,13 +226,21 @@ export function MobileCountShell({
 
           {/* Progress */}
           <div style={s.progressSection}>
-            <div style={s.progressRow}>
-              <span style={s.progressLabel}>{itemsCounted} of {itemsTotal} counted</span>
-              <span style={s.progressPercent}>{Math.round(progress)}%</span>
-            </div>
-            <div style={s.progressTrack}>
-              <div style={s.progressFill} />
-            </div>
+            {countType === 'initial' ? (
+              <div style={s.progressRow}>
+                <span style={s.progressLabel}>{itemsCounted} items counted</span>
+              </div>
+            ) : (
+              <>
+                <div style={s.progressRow}>
+                  <span style={s.progressLabel}>{itemsCounted} of {itemsTotal} counted</span>
+                  <span style={s.progressPercent}>{Math.round(progress)}%</span>
+                </div>
+                <div style={s.progressTrack}>
+                  <div style={s.progressFill} />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

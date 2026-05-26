@@ -7,7 +7,7 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const CreateCycleCountSchema = z.object({
   location_id: z.string().uuid(),
-  count_type: z.enum(['full', 'partial', 'spot_check']),
+  count_type: z.enum(['full', 'partial', 'spot_check', 'initial']),
   is_blind: z.boolean().optional().default(false),
   scheduled_for: z.string().optional(),
   catalog_item_ids: z.array(z.string().uuid()).nullable().optional(),

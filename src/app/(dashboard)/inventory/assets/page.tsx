@@ -11,6 +11,9 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -58,6 +61,9 @@ export default function AssetsPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
   const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
+
+  const assetIds = assets.map(a => a.id);
+  const { imageMap } = useEntityImages('asset', assetIds);
 
   useEffect(() => {
     fetchAssets();
@@ -115,6 +121,14 @@ export default function AssetsPage() {
   };
 
   const columns = [
+    {
+      key: 'photo',
+      header: '',
+      className: 'w-10',
+      render: (row: Asset) => (
+        <EntityImageThumbnail url={imageMap[row.id]} alt={row.asset_tag} />
+      ),
+    },
     {
       key: 'asset_tag',
       header: 'Asset Tag',
@@ -969,10 +983,13 @@ function AssetAssignModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="p-3 bg-muted/50 rounded-lg">
-            <div className="text-sm text-muted-foreground">Asset</div>
-            <div className="font-medium">{asset.asset_tag}</div>
-            <div className="text-sm">{asset.catalog_item?.name}</div>
+          <div className="p-3 bg-muted/50 rounded-lg flex items-center gap-3">
+            <EntityImageUpload entityType="asset" entityId={asset.id} size="sm" />
+            <div>
+              <div className="text-sm text-muted-foreground">Asset</div>
+              <div className="font-medium">{asset.asset_tag}</div>
+              <div className="text-sm">{asset.catalog_item?.name}</div>
+            </div>
           </div>
 
           {error && (

@@ -22,6 +22,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
@@ -243,24 +244,29 @@ export default function ItemDetailPage() {
             <ArrowLeft className="h-4 w-4" />
             Back to Items
           </button>
-          <PageHeader
-            title={item.name}
-            description={
-              [
-                item.sku && `SKU: ${item.sku}`,
-                item.category_name,
-                (item as any).uom_term_id && `UOM: ${uomLabels[(item as any).uom_term_id] || (item as any).uom_term_id}`,
-                item.tracking_mode,
-              ]
-                .filter(Boolean)
-                .join('  |  ')
-            }
-            actions={
-              <div className="flex items-center gap-2">
-                <StatusChip status={item.active ? 'active' : 'inactive'} />
-              </div>
-            }
-          />
+          <div className="flex items-start gap-4">
+            <EntityImageUpload entityType="catalog_item" entityId={params.id} size="lg" />
+            <div className="flex-1 min-w-0">
+              <PageHeader
+                title={item.name}
+                description={
+                  [
+                    item.sku && `SKU: ${item.sku}`,
+                    item.category_name,
+                    (item as any).uom_term_id && `UOM: ${uomLabels[(item as any).uom_term_id] || (item as any).uom_term_id}`,
+                    item.tracking_mode,
+                  ]
+                    .filter(Boolean)
+                    .join('  |  ')
+                }
+                actions={
+                  <div className="flex items-center gap-2">
+                    <StatusChip status={item.active ? 'active' : 'inactive'} />
+                  </div>
+                }
+              />
+            </div>
+          </div>
         </div>
 
         {/* Low stock warning */}

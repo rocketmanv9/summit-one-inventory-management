@@ -33,6 +33,7 @@ interface CountLine {
 interface MobileCountItemListProps {
   lines: CountLine[];
   isBlind: boolean;
+  isInitial?: boolean;
   highlightItemId?: string | null;
   onRecordCount: (catalogItemId: string, qty: number) => Promise<void>;
   onRecordAssets: (lineId: string, assetIds: string[]) => Promise<void>;
@@ -41,6 +42,7 @@ interface MobileCountItemListProps {
 export function MobileCountItemList({
   lines,
   isBlind,
+  isInitial = false,
   highlightItemId,
   onRecordCount,
   onRecordAssets,
@@ -159,7 +161,7 @@ export function MobileCountItemList({
               {isSerialized ? (
                 <MobileCountAssetRow line={line} onRecordAssets={onRecordAssets} />
               ) : (
-                <MobileCountItemRow line={line} isBlind={isBlind} onRecordCount={onRecordCount} />
+                <MobileCountItemRow line={line} isBlind={isBlind} isInitial={isInitial} onRecordCount={onRecordCount} />
               )}
             </div>
           );

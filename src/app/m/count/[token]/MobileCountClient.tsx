@@ -83,7 +83,15 @@ export function MobileCountClient({
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Initial count search state
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogResults, setCatalogResults] = useState<Array<{ id: string; name: string; sku?: string; barcode?: string; tracking_mode?: string; uom_term_id?: string }>>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [addingItemId, setAddingItemId] = useState<string | null>(null);
+  const catalogSearchRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const isInitial = cycleCount?.count_type === 'initial';
 
   // Only validate client-side if no server-provided data
   useEffect(() => {
@@ -257,6 +265,95 @@ export function MobileCountClient({
     [mobileHeaders, bypassSecret]
   );
 
+  // Search catalog items for initial counts
+  const handleCatalogSearch = useCallback(
+    async (query: string) => {
+      setCatalogSearch(query);
+      if (catalogSearchRef.current) clearTimeout(catalogSearchRef.current);
+
+      if (!query.trim()) {
+        setCatalogResults([]);
+        setIsSearching(false);
+        return;
+      }
+
+      catalogSearchRef.current = setTimeout(async () => {
+        setIsSearching(true);
+        try {
+          const res = await fetch(
+            withBypass(`/api/m/count/search?q=${encodeURIComponent(query.trim())}`, bypassSecret),
+            {
+              headers: {
+                Authorization: `Bearer ${jwt}`,
+                ...bypassHeaders(bypassSecret),
+              },
+            }
+          );
+
+          if (res.ok) {
+            const { data } = await res.json();
+            // Filter out items already in the count
+            const existingIds = new Set(lines.map((l) => l.catalog_item_id));
+            setCatalogResults((data || []).filter((item: any) => !existingIds.has(item.id)));
+          }
+        } catch (err) {
+          console.error('Catalog search error:', err);
+        } finally {
+          setIsSearching(false);
+        }
+      }, 300);
+    },
+    [jwt, bypassSecret, lines]
+  );
+
+  // Add item to initial count
+  const handleAddItem = useCallback(
+    async (catalogItemId: string) => {
+      if (addingItemId) return;
+      setAddingItemId(catalogItemId);
+      try {
+        const res = await fetch(withBypass('/api/m/count/add-item', bypassSecret), {
+          method: 'POST',
+          headers: mobileHeaders(),
+          body: JSON.stringify({ catalog_item_id: catalogItemId }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 401) {
+            setState('error');
+            setErrorMessage('Session expired');
+            return;
+          }
+          throw new Error(data.error || 'Failed to add item');
+        }
+
+        const { data } = await res.json();
+        // Append new line to local state
+        const newLine: CountLine = {
+          id: data.id,
+          catalog_item_id: catalogItemId,
+          catalog_item: data.catalog_item,
+          qty_expected: data.qty_expected ?? 0,
+          qty_counted: null,
+        };
+        setLines((prev) => [...prev, newLine]);
+
+        // Remove from search results
+        setCatalogResults((prev) => prev.filter((item) => item.id !== catalogItemId));
+
+        setHighlightItemId(catalogItemId);
+        setTimeout(() => setHighlightItemId(null), 3000);
+      } catch (err: any) {
+        console.error('Add item error:', err);
+        alert(err.message || 'Failed to add item');
+      } finally {
+        setAddingItemId(null);
+      }
+    },
+    [addingItemId, mobileHeaders, bypassSecret]
+  );
+
   const lookupBarcode = useCallback(
     async (decodedText: string): Promise<string | null> => {
       const authHeaders = {
@@ -291,7 +388,41 @@ export function MobileCountClient({
           return;
         }
 
-        const line = lines.find((l) => l.catalog_item_id === catalogItemId);
+        let line = lines.find((l) => l.catalog_item_id === catalogItemId);
+
+        // For initial counts, auto-add the item if not already in the list
+        if (!line && isInitial) {
+          setScanFeedback('Adding item...');
+          try {
+            const res = await fetch(withBypass('/api/m/count/add-item', bypassSecret), {
+              method: 'POST',
+              headers: mobileHeaders(),
+              body: JSON.stringify({ catalog_item_id: catalogItemId }),
+            });
+
+            if (!res.ok) {
+              setScanFeedback('Failed to add item');
+              setTimeout(() => setScanFeedback(null), 2000);
+              return;
+            }
+
+            const { data } = await res.json();
+            const newLine: CountLine = {
+              id: data.id,
+              catalog_item_id: catalogItemId,
+              catalog_item: data.catalog_item,
+              qty_expected: data.qty_expected ?? 0,
+              qty_counted: null,
+            };
+            setLines((prev) => [...prev, newLine]);
+            line = newLine;
+          } catch {
+            setScanFeedback('Failed to add item');
+            setTimeout(() => setScanFeedback(null), 2000);
+            return;
+          }
+        }
+
         if (!line) {
           setScanFeedback(`Not in count list: ${decodedText}`);
           setTimeout(() => setScanFeedback(null), 2000);
@@ -313,7 +444,7 @@ export function MobileCountClient({
         setTimeout(() => setScanFeedback(null), 2000);
       }
     },
-    [lookupBarcode, lines, handleRecordCount]
+    [lookupBarcode, lines, handleRecordCount, isInitial, bypassSecret, mobileHeaders]
   );
 
   const handleSubmit = useCallback(async () => {
@@ -422,12 +553,105 @@ export function MobileCountClient({
         itemsTotal={lines.length}
         isSubmitted={isSubmitted}
         isSubmitting={isSubmitting}
+        countType={cycleCount?.count_type}
         onScanClick={() => setScannerOpen(true)}
         onSubmitClick={handleSubmit}
       >
+        {/* Catalog search for initial counts */}
+        {isInitial && !isSubmitted && (
+          <div style={{
+            padding: '12px 16px',
+            background: '#fff',
+            borderBottom: '1px solid #e5e7eb',
+          }}>
+            <div style={{ position: 'relative' }}>
+              <div style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                <svg width="16" height="16" fill="none" stroke="#9ca3af" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <input
+                type="search"
+                placeholder="Search catalog to add items..."
+                value={catalogSearch}
+                onChange={(e) => handleCatalogSearch(e.target.value)}
+                style={{
+                  width: '100%',
+                  paddingLeft: '40px',
+                  paddingRight: '16px',
+                  paddingTop: '12px',
+                  paddingBottom: '12px',
+                  background: '#f0f9ff',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  border: '2px solid #bfdbfe',
+                  WebkitAppearance: 'none',
+                  appearance: 'none' as any,
+                }}
+              />
+            </div>
+
+            {/* Search results */}
+            {(isSearching || catalogResults.length > 0) && (
+              <div style={{ marginTop: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                {isSearching && catalogResults.length === 0 && (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+                    Searching...
+                  </div>
+                )}
+                {catalogResults.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      background: '#f9fafb',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>{item.name}</div>
+                      {item.sku && (
+                        <div style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'ui-monospace, monospace' }}>{item.sku}</div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleAddItem(item.id)}
+                      disabled={addingItemId === item.id}
+                      style={{
+                        marginLeft: '8px',
+                        padding: '6px 14px',
+                        background: addingItemId === item.id ? '#9ca3af' : '#2563eb',
+                        color: '#fff',
+                        borderRadius: '8px',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        border: 'none',
+                        cursor: addingItemId === item.id ? 'default' : 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {addingItemId === item.id ? 'Adding...' : '+ Add'}
+                    </button>
+                  </div>
+                ))}
+                {!isSearching && catalogSearch.trim() && catalogResults.length === 0 && (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+                    No items found
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <MobileCountItemList
           lines={lines}
           isBlind={cycleCount?.is_blind || false}
+          isInitial={isInitial}
           highlightItemId={highlightItemId}
           onRecordCount={handleRecordCount}
           onRecordAssets={handleRecordAssets}

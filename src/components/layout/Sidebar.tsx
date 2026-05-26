@@ -84,16 +84,6 @@ const navigation: NavSection[] = [
         icon: Truck,
       },
       {
-        title: 'Vendors',
-        href: '/inventory/vendors',
-        icon: Users,
-      },
-    ],
-  },
-  {
-    title: 'Fleet & Equipment',
-    items: [
-      {
         title: 'Tools',
         href: '/fleet/tools',
         icon: Wrench,
@@ -107,6 +97,11 @@ const navigation: NavSection[] = [
         title: 'Equipment',
         href: '/fleet/equipment',
         icon: HardHat,
+      },
+      {
+        title: 'Vendors',
+        href: '/inventory/vendors',
+        icon: Users,
       },
     ],
   },

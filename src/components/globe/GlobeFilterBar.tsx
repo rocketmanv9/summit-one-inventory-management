@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Filter, Save, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import type { GlobeFilters } from '@/lib/rpc/operations';
 import type { VisibleLayers } from './GlobeVisualization';
+import { useFilterPresets } from '@/hooks/useFilterPresets';
 
 interface GlobeFilterBarProps {
   filters: GlobeFilters;
@@ -17,29 +18,7 @@ interface GlobeFilterBarProps {
   timelineActive: boolean;
 }
 
-// Saved preset shape
-interface FilterPreset {
-  name: string;
-  filters: GlobeFilters;
-  visibleLayers: VisibleLayers;
-  transferStatuses: string[];
-  poStatuses: string[];
-}
-
-const STORAGE_KEY = 'globe-filter-presets';
-
-function loadPresets(): FilterPreset[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePresets(presets: FilterPreset[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
-}
+const LEGACY_STORAGE_KEY = 'globe-filter-presets';
 
 const TRANSFER_STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft', color: 'bg-amber-500' },
@@ -85,15 +64,41 @@ export function GlobeFilterBar({
   onPoStatusChange,
   timelineActive,
 }: GlobeFilterBarProps) {
-  const [presets, setPresets] = useState<FilterPreset[]>([]);
+  const { presets, loading, savePreset, deletePreset } = useFilterPresets();
   const [savingName, setSavingName] = useState('');
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  const migratedRef = useRef(false);
 
-  // Load presets from localStorage on mount
+  // One-time migration: upload localStorage presets to server
   useEffect(() => {
-    setPresets(loadPresets());
-  }, []);
+    if (loading || migratedRef.current) return;
+    migratedRef.current = true;
+    if (presets.length > 0) return; // already have server presets
+    try {
+      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (!raw) return;
+      const legacy = JSON.parse(raw) as Array<{
+        name: string;
+        filters: GlobeFilters;
+        visibleLayers: VisibleLayers;
+        transferStatuses: string[];
+        poStatuses: string[];
+      }>;
+      if (!Array.isArray(legacy) || legacy.length === 0) return;
+      for (const p of legacy) {
+        savePreset(p.name, {
+          filters: p.filters,
+          visibleLayers: p.visibleLayers,
+          transferStatuses: p.transferStatuses,
+          poStatuses: p.poStatuses,
+        });
+      }
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // Ignore migration errors
+    }
+  }, [loading, presets.length, savePreset]);
 
   const updateFilter = (key: keyof GlobeFilters, value: string) => {
     onChange({ ...filters, [key]: value || undefined });
@@ -102,33 +107,22 @@ export function GlobeFilterBar({
   const handleSavePreset = () => {
     const name = savingName.trim();
     if (!name) return;
-    const preset: FilterPreset = {
-      name,
-      filters,
-      visibleLayers,
-      transferStatuses,
-      poStatuses,
-    };
-    const updated = [...presets.filter((p) => p.name !== name), preset];
-    setPresets(updated);
-    savePresets(updated);
+    savePreset(name, { filters, visibleLayers, transferStatuses, poStatuses });
     setSavingName('');
     setShowSaveInput(false);
   };
 
-  const handleLoadPreset = (preset: FilterPreset) => {
-    onChange(preset.filters);
-    for (const [k, v] of Object.entries(preset.visibleLayers) as [keyof VisibleLayers, boolean][]) {
+  const handleLoadPreset = (preset: (typeof presets)[number]) => {
+    onChange(preset.config.filters);
+    for (const [k, v] of Object.entries(preset.config.visibleLayers) as [keyof VisibleLayers, boolean][]) {
       onToggleLayer(k, v);
     }
-    onTransferStatusChange(preset.transferStatuses);
-    onPoStatusChange(preset.poStatuses);
+    onTransferStatusChange(preset.config.transferStatuses);
+    onPoStatusChange(preset.config.poStatuses);
   };
 
-  const handleDeletePreset = (name: string) => {
-    const updated = presets.filter((p) => p.name !== name);
-    setPresets(updated);
-    savePresets(updated);
+  const handleDeletePreset = (id: string) => {
+    deletePreset(id);
   };
 
   return (
@@ -156,7 +150,7 @@ export function GlobeFilterBar({
                 <p className="text-[11px] text-gray-400 italic">No saved filters yet</p>
               )}
               {presets.map((p) => (
-                <div key={p.name} className="flex items-center gap-1">
+                <div key={p.id} className="flex items-center gap-1">
                   <button
                     onClick={() => handleLoadPreset(p)}
                     className="flex-1 text-left text-xs px-2 py-1 rounded hover:bg-gray-100 text-gray-700 truncate"
@@ -165,7 +159,7 @@ export function GlobeFilterBar({
                     {p.name}
                   </button>
                   <button
-                    onClick={() => handleDeletePreset(p.name)}
+                    onClick={() => handleDeletePreset(p.id)}
                     className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
                     title="Delete preset"
                   >

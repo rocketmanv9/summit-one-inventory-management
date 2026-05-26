@@ -7,6 +7,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -52,6 +55,9 @@ export default function FleetVehiclesPage() {
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [notesVehicle, setNotesVehicle] = useState<Vehicle | null>(null);
+
+  const vehicleIds = vehicles.map(v => v.id);
+  const { imageMap } = useEntityImages('vehicle', vehicleIds);
 
   /* ---- Fetching ---- */
 
@@ -146,6 +152,12 @@ export default function FleetVehiclesPage() {
   /* ---- Table config ---- */
 
   const columns = [
+    {
+      key: 'photo',
+      header: '',
+      className: 'w-10',
+      render: (row: Vehicle) => <EntityImageThumbnail url={imageMap[row.id]} alt={row.name} />,
+    },
     {
       key: 'name',
       header: 'Name',
@@ -507,6 +519,9 @@ function NotesModal({
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
         <div className="p-6 space-y-4">
+          <div className="flex justify-center">
+            <EntityImageUpload entityType={entityLabel as any} entityId={item.id} size="md" />
+          </div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}

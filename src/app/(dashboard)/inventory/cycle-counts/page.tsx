@@ -486,7 +486,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         <div>
           <div className="text-xs text-muted-foreground mb-2">Count Type</div>
           <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 capitalize">
-            {cycleCount.count_type.replace('_', ' ')}
+            {cycleCount.count_type === 'initial' ? 'Initial Count' : cycleCount.count_type.replace('_', ' ')}
           </span>
         </div>
 
@@ -502,6 +502,12 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 
             {loadingLines ? (
               <div className="text-center py-8 text-muted-foreground">Loading items...</div>
+            ) : countLines.length === 0 && cycleCount.count_type === 'initial' ? (
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-sm text-blue-800">
+                  No items added yet. Workers will add items from the field using the mobile app.
+                </div>
+              </div>
             ) : countLines.length === 0 ? (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <div className="text-sm text-yellow-800">
@@ -605,11 +611,17 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                           <div className="text-sm">
                             Counted: <span className="font-medium">{line.qty_counted ?? 'Not counted'}</span>
                           </div>
-                          {line.qty_counted !== null && Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01 && (
-                            <span className="text-xs font-medium text-red-600">
-                              Variance: {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
-                              {((line.qty_counted || 0) - line.qty_expected).toFixed(2)} ({(((line.qty_counted || 0) - line.qty_expected) / line.qty_expected * 100).toFixed(1)}%)
+                          {cycleCount.count_type === 'initial' && line.qty_expected === 0 ? (
+                            <span className="text-xs font-medium text-blue-600">
+                              Counted: {line.qty_counted}
                             </span>
+                          ) : (
+                            line.qty_counted !== null && Math.abs((line.qty_counted || 0) - line.qty_expected) > 0.01 && (
+                              <span className="text-xs font-medium text-red-600">
+                                Variance: {((line.qty_counted || 0) - line.qty_expected) >= 0 ? '+' : ''}
+                                {((line.qty_counted || 0) - line.qty_expected).toFixed(2)} ({(((line.qty_counted || 0) - line.qty_expected) / line.qty_expected * 100).toFixed(1)}%)
+                              </span>
+                            )
                           )}
                         </div>
 
@@ -646,6 +658,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                                   }}
                                 >
                                   <option value="">Select reason to accept...</option>
+                                  <option value="initial_stock">Initial stock count</option>
                                   <option value="usage_not_recorded">Usage not recorded</option>
                                   <option value="transfer_not_recorded">Transfer not recorded</option>
                                   <option value="loss_theft">Loss/Theft</option>
@@ -951,13 +964,19 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                                 <div className="text-xs text-blue-700 mt-0.5">
                                   <span className="font-medium">Reason:</span> {formatReason(line.decision_reason)}
                                 </div>
-                                <div className="text-xs text-blue-700 flex items-center gap-2 mt-0.5">
-                                  <span>Stock: {line.qty_expected} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
-                                  <span className={delta < 0 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
-                                    {delta >= 0 ? '+' : ''}{delta}
-                                  </span>
-                                  <span>→ {newQty} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
-                                </div>
+                                {cycleCount.count_type === 'initial' && line.qty_expected === 0 ? (
+                                  <div className="text-xs text-blue-700 flex items-center gap-2 mt-0.5">
+                                    <span>Initial stock: {line.qty_counted} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-blue-700 flex items-center gap-2 mt-0.5">
+                                    <span>Stock: {line.qty_expected} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
+                                    <span className={delta < 0 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
+                                      {delta >= 0 ? '+' : ''}{delta}
+                                    </span>
+                                    <span>→ {newQty} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1206,7 +1225,7 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
           {/* Count Type */}
           <div>
             <label className="block text-sm font-medium mb-2">Count Type</label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setForm({ ...form, count_type: 'full' })}
@@ -1231,6 +1250,18 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
                 <div className="font-medium">Partial Count</div>
                 <div className="text-xs text-muted-foreground mt-1">Selected items</div>
               </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, count_type: 'initial' })}
+                className={`p-4 border-2 rounded-lg text-center transition-all ${
+                  form.count_type === 'initial'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium">Initial Count</div>
+                <div className="text-xs text-muted-foreground mt-1">First count at a new location</div>
+              </button>
             </div>
           </div>
 
@@ -1249,6 +1280,7 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
           </div>
 
           {/* Blind Count Option */}
+          {form.count_type !== 'initial' && (
           <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
             <input
               type="checkbox"
@@ -1266,8 +1298,10 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
               </p>
             </div>
           </div>
+          )}
 
           {/* What to Count */}
+          {form.count_type !== 'initial' && (
           <div>
             <label className="block text-sm font-medium mb-2">What to Count</label>
             <div className="space-y-2">
@@ -1301,6 +1335,7 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
               </label>
             </div>
           </div>
+          )}
 
           {/* Notes */}
           <div>

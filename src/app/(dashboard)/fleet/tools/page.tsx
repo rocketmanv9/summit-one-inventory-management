@@ -9,6 +9,9 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -53,6 +56,9 @@ export default function FleetToolsPage() {
   const [adopting, setAdopting] = useState(false);
   const [notesTool, setNotesTool] = useState<Tool | null>(null);
   const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
+
+  const toolIds = tools.map(t => t.id);
+  const { imageMap } = useEntityImages('tool', toolIds);
 
   /* ---- Fetching ---- */
 
@@ -147,6 +153,12 @@ export default function FleetToolsPage() {
   /* ---- Table config ---- */
 
   const columns = [
+    {
+      key: 'photo',
+      header: '',
+      className: 'w-10',
+      render: (row: Tool) => <EntityImageThumbnail url={imageMap[row.id]} alt={row.name} />,
+    },
     {
       key: 'name',
       header: 'Name',
@@ -513,6 +525,9 @@ function NotesModal({
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
         <div className="p-6 space-y-4">
+          <div className="flex justify-center">
+            <EntityImageUpload entityType={entityLabel as any} entityId={item.id} size="md" />
+          </div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
