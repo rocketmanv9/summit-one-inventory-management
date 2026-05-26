@@ -166,6 +166,19 @@ function darkenHex(hex: string, factor: number): string {
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
+/**
+ * Derive a soft border/input color from a hex value.
+ * Keeps the hue but pushes lightness to ~88% and caps saturation,
+ * producing a subtle tinted gray similar to Tailwind's default borders.
+ */
+function softenForBorder(hex: string): string {
+  const hsl = hexToHslRaw(hex);
+  if (!hsl) return '#d1d5db'; // fallback to gray-300
+  const h = Math.round(hsl.h);
+  const s = Math.min(Math.round(hsl.s * 100), 12);
+  return `${h} ${s}% 88%`;
+}
+
 /** Compute contrast foreground (white or dark) for a given hex background. */
 function contrastForeground(hex: string): string {
   const rgb = hexToRgb(hex);
@@ -528,9 +541,12 @@ export function applyCssVariables(b: TenantBranding) {
   setHsl('--popover', surfaceHex);
   setHsl('--popover-foreground', b.text_color);
 
-  // --- Borders & inputs ---
-  setHsl('--border', borderHex);
-  setHsl('--input', borderHex);
+  // --- Borders & inputs — soften to a subtle tinted gray ---
+  if (isValidHex(borderHex)) {
+    const soft = softenForBorder(borderHex);
+    root.style.setProperty('--border', soft);
+    root.style.setProperty('--input', soft);
+  }
 
   // --- Status colors (always use branding values directly) ---
   if (isValidHex(b.error_color)) {
