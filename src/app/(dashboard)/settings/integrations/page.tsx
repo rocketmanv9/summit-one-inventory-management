@@ -65,6 +65,7 @@ type ConnectionStatus = 'disconnected' | 'loading' | 'connected' | 'error';
 export default function IntegrationsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'amazon' | 'printify'>('amazon');
 
   // ── Printify state ──────────────────────────────────────────────────
   const [printify, setPrintify] = useState<PrintifyStatus | null>(null);
@@ -581,8 +582,39 @@ export default function IntegrationsPage() {
         </div>
       )}
 
+      {/* ── Integration Tabs ── */}
+      <div className="border-b mb-6">
+        <nav className="-mb-px flex gap-6">
+          <button
+            onClick={() => setActiveTab('amazon')}
+            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
+              activeTab === 'amazon'
+                ? 'border-orange-500 text-orange-600'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
+            }`}
+          >
+            <ShoppingCart className="h-4 w-4" />
+            Amazon Business
+            {amazonStatus === 'connected' && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
+          </button>
+          <button
+            onClick={() => setActiveTab('printify')}
+            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
+              activeTab === 'printify'
+                ? 'border-green-500 text-green-600'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
+            }`}
+          >
+            <span className="text-sm font-bold">P</span>
+            Printify
+            {connectionStatus === 'connected' && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
+          </button>
+        </nav>
+      </div>
+
       <div className="max-w-2xl space-y-6">
-        {/* ═══ Printify Connection Card ═══ */}
+        {/* ═══ Printify Tab ═══ */}
+        {activeTab === 'printify' && (<>
         <div className="bg-white rounded-lg border">
           <div className="flex items-center justify-between p-6 border-b">
             <div className="flex items-center gap-4">
@@ -799,8 +831,10 @@ export default function IntegrationsPage() {
             </div>
           </div>
         )}
+        </>)}
 
-        {/* ═══ Amazon Business Connection Card ═══ */}
+        {/* ═══ Amazon Business Tab ═══ */}
+        {activeTab === 'amazon' && (<>
         <div className="bg-white rounded-lg border">
           <div className="flex items-center justify-between p-6 border-b">
             <div className="flex items-center gap-4">
@@ -1258,6 +1292,7 @@ export default function IntegrationsPage() {
             </div>
           </div>
         )}
+        </>)}
       </div>
     </AppShell>
   );
