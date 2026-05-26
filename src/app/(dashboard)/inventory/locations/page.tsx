@@ -381,12 +381,9 @@ function CreateLocationModal({ location, onClose, onCreated, onAddNewType }: { l
         if (!location.last_event_id) {
           throw AppError.badRequest('Missing last_event_id for this location. Please refresh and try again.');
         }
-        // Strip location_type — the DB column is location_type_id (already in form)
-        const { location_type: _lt, ...updatePayload } = base as any;
-        await InventoryRPC.updateLocation(location.id, updatePayload, location.last_event_id);
+        await InventoryRPC.updateLocation(location.id, base, location.last_event_id);
       } else {
-        // Creates need location_type text column populated
-        await InventoryRPC.createLocation({ ...base, location_type: locationTypeName });
+        await InventoryRPC.createLocation(base);
       }
 
       onCreated();

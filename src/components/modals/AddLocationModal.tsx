@@ -72,12 +72,9 @@ export function AddLocationModal({ open, onClose, onSuccess }: AddLocationModalP
     setError(null);
 
     try {
-      // Find the location type name to satisfy the location_type field
-      const locType = locationTypes.find(lt => lt.id === locationTypeId);
       const result = await InventoryRPC.createLocation({
         name: name.trim(),
         location_type_id: locationTypeId,
-        location_type: locType?.name || '',
         address: address.trim() || undefined,
         last_event_id: crypto.randomUUID(),
       });

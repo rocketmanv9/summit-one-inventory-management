@@ -821,7 +821,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null; created_at: string }>>([]);
-  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } | null }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } | null }>>([]);
   const [useFreetextLines, setUseFreetextLines] = useState(false);
 
@@ -1194,7 +1194,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
-  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } | null }>>([]);
   const [vendorItems, setVendorItems] = useState<Array<{ id: string; vendor_sku: string; unit_cost: number; catalog_items?: { id: string; sku: string; name: string } | null }>>([]);
 
   useEffect(() => {

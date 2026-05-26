@@ -1450,7 +1450,6 @@ export type Database = {
           external_ref: Json | null
           id: string
           last_event_id: string | null
-          location_type: string
           location_type_id: string
           name: string
           parent_location_id: string | null
@@ -1466,7 +1465,6 @@ export type Database = {
           external_ref?: Json | null
           id?: string
           last_event_id?: string | null
-          location_type: string
           location_type_id: string
           name: string
           parent_location_id?: string | null
@@ -1482,7 +1480,6 @@ export type Database = {
           external_ref?: Json | null
           id?: string
           last_event_id?: string | null
-          location_type?: string
           location_type_id?: string
           name?: string
           parent_location_id?: string | null
