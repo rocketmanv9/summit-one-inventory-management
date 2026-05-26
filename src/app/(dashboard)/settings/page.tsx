@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { OnboardingQRDialog } from '@/components/onboarding/OnboardingQRDialog';
 
 interface TenantSettings {
   id: string;
@@ -70,6 +73,9 @@ export default function SettingsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorLimits, setVendorLimits] = useState<Record<string, string>>({});
+  const [onboardingLocations, setOnboardingLocations] = useState<Array<{ id: string; name: string }>>([]);
+  const [onboardingLocationId, setOnboardingLocationId] = useState('');
+  const [showOnboardingDialog, setShowOnboardingDialog] = useState(false);
 
   const [form, setForm] = useState<SettingsForm>({
     po_number_format: 'sequential-year',
@@ -96,7 +102,17 @@ export default function SettingsPage() {
     fetchSettings();
     fetchVendors();
     checkAdminStatus();
+    fetchOnboardingLocations();
   }, []);
+
+  const fetchOnboardingLocations = async () => {
+    try {
+      const locations = await InventoryRPC.getLocations({ active: true });
+      setOnboardingLocations((locations || []).map((loc) => ({ id: loc.id, name: loc.name })));
+    } catch (error) {
+      console.error('Error fetching locations:', error);
+    }
+  };
 
   const checkAdminStatus = async () => {
     const token = getStoredAccessToken();
@@ -249,6 +265,30 @@ export default function SettingsPage() {
         title="Tenant Settings"
         description="Configure purchase order numbering and approval rules"
       />
+
+      <div className="mb-6 flex gap-2 border-b pb-3">
+        <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
+          General
+        </span>
+        <Link
+          href="/settings/branding"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Branding
+        </Link>
+        <Link
+          href="/settings/device-management"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Device Management
+        </Link>
+        <Link
+          href="/settings/integrations"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Integrations
+        </Link>
+      </div>
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -596,6 +636,42 @@ export default function SettingsPage() {
 
           </div>
 
+          {/* Inventory Onboarding Section */}
+          <div className="bg-white rounded-lg border p-6 space-y-4">
+            <h3 className="text-lg font-semibold pb-2 border-b">Inventory Onboarding</h3>
+            <p className="text-sm text-gray-600">
+              Set up initial stock at a location using a mobile device. Select a location and generate a QR code
+              that workers can scan to rapidly add items and set quantities.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Location</label>
+                <select
+                  value={onboardingLocationId}
+                  onChange={(e) => setOnboardingLocationId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                  disabled={!isAdmin}
+                >
+                  <option value="">Select a location...</option>
+                  {onboardingLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => setShowOnboardingDialog(true)}
+                disabled={!isAdmin || !onboardingLocationId}
+                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
+                Onboard Inventory
+              </button>
+            </div>
+          </div>
+
           {/* Error/Success Messages */}
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-md">
@@ -638,6 +714,13 @@ export default function SettingsPage() {
           </ul>
         </div>
       </div>
+
+      <OnboardingQRDialog
+        isOpen={showOnboardingDialog}
+        onClose={() => setShowOnboardingDialog(false)}
+        locationId={onboardingLocationId}
+        locationName={onboardingLocations.find((l) => l.id === onboardingLocationId)?.name || ''}
+      />
     </AppShell>
   );
 }

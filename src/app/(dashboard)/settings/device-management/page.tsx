@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -147,6 +148,30 @@ export default function DeviceManagementPage() {
           </Button>
         }
       />
+
+      <div className="mb-6 flex gap-2 border-b pb-3">
+        <Link
+          href="/settings"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          General
+        </Link>
+        <Link
+          href="/settings/branding"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Branding
+        </Link>
+        <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
+          Device Management
+        </span>
+        <Link
+          href="/settings/integrations"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Integrations
+        </Link>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1.95fr]">
         <Card>

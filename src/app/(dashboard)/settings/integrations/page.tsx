@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import NextLink from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
@@ -572,8 +573,31 @@ export default function IntegrationsPage() {
       <PageHeader
         title="Integrations"
         description="Connect third-party services to your organization"
-        backHref="/settings"
       />
+
+      <div className="mb-6 flex gap-2 border-b pb-3">
+        <NextLink
+          href="/settings"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          General
+        </NextLink>
+        <NextLink
+          href="/settings/branding"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Branding
+        </NextLink>
+        <NextLink
+          href="/settings/device-management"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Device Management
+        </NextLink>
+        <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
+          Integrations
+        </span>
+      </div>
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">

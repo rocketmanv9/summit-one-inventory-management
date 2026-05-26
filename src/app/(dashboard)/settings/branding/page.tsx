@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getStoredAccessToken, parseJwtPayload, getTenantIdFromToken } from '@/lib/auth-token';
@@ -284,6 +285,30 @@ export default function BrandingPage() {
         title="Branding Colors"
         description="Customize which colors are used across the UI for your organization"
       />
+
+      <div className="mb-6 flex gap-2 border-b pb-3">
+        <Link
+          href="/settings"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          General
+        </Link>
+        <span className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground">
+          Branding
+        </span>
+        <Link
+          href="/settings/device-management"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Device Management
+        </Link>
+        <Link
+          href="/settings/integrations"
+          className="px-3 py-1.5 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-100"
+        >
+          Integrations
+        </Link>
+      </div>
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
