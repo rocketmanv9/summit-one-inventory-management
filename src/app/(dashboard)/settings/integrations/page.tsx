@@ -221,6 +221,36 @@ export default function IntegrationsPage() {
     if (amazonStatus === 'connected') loadAmazonMappings();
   }, [amazonStatus, loadAmazonMappings]);
 
+  // Poll for punchout cart return (user is shopping on Amazon in another tab)
+  useEffect(() => {
+    const hasActiveSession = punchoutOrders.some((o: any) => o.status === 'punchout_started');
+    if (!hasActiveSession) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${AMAZON_API}/punchout/orders`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const orders = json?.data || [];
+        setPunchoutOrders(orders);
+
+        const returned = orders.find((o: any) => o.status === 'cart_returned' && !punchoutReviewOrder);
+        if (returned) {
+          const detail = await fetch(`${AMAZON_API}/punchout/orders?id=${returned.id}`);
+          const detailJson = await detail.json();
+          if (detailJson?.data) {
+            setPunchoutReviewOrder(detailJson.data);
+            setPunchoutReviewId(returned.id);
+          }
+        }
+      } catch {
+        // Silently fail
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [punchoutOrders, punchoutReviewOrder]);
+
   // ── Printify handlers ───────────────────────────────────────────────
 
   const handleConnect = async (e: React.FormEvent) => {

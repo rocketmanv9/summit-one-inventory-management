@@ -6,7 +6,7 @@
  * estimation for cXML orders will be based on mapped unit prices and
  * pack quantities. Real-time pricing requires the cXML integration guide.
  */
-import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
@@ -24,11 +24,11 @@ const EstimateSchema = z.object({
   location_id: z.string().uuid(),
 });
 
-export const POST = createSessionReadRoute(async ({ session, req }) => {
+export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey }) => {
   const body = EstimateSchema.parse(await req.json());
   const adminClient = getAdminClient();
 
-  const cxmlConfig = await resolveCxmlCredentials(adminClient, session.tenantId!);
+  const cxmlConfig = await resolveCxmlCredentials(adminClient, ctx.tenantId!);
   const prov = (adminClient as any).schema('provisioning');
   const inv = (adminClient as any).schema('inventory');
 
@@ -37,7 +37,7 @@ export const POST = createSessionReadRoute(async ({ session, req }) => {
   const { data: mappings, error: mappingError } = await prov
     .from('provider_item_mappings')
     .select('catalog_item_id, external_product_id, unit_cost, metadata')
-    .eq('tenant_id', session.tenantId!)
+    .eq('tenant_id', ctx.tenantId!)
     .eq('provider_id', cxmlConfig.providerId)
     .in('catalog_item_id', catalogItemIds)
     .limit(100);
@@ -63,7 +63,7 @@ export const POST = createSessionReadRoute(async ({ session, req }) => {
     .from('locations')
     .select('id, name')
     .eq('id', body.location_id)
-    .eq('tenant_id', session.tenantId!)
+    .eq('tenant_id', ctx.tenantId!)
     .limit(1)
     .single();
 
@@ -86,7 +86,7 @@ export const POST = createSessionReadRoute(async ({ session, req }) => {
 
   const subtotal = lineEstimates.reduce((sum, l) => sum + (l.line_total ?? 0), 0);
 
-  return Response.json({
+  return {
     data: {
       estimate: {
         subtotal,
@@ -100,5 +100,7 @@ export const POST = createSessionReadRoute(async ({ session, req }) => {
       location: { id: location.id, name: location.name },
       items_count: lineEstimates.length,
     },
-  });
-}, { serviceName: SERVICE_NAME });
+    status: 200,
+    events: [],
+  };
+}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/cost-estimate' });

@@ -4,58 +4,53 @@
  * POST — receives the PunchOutOrderMessage via browser form POST from Amazon.
  * Amazon auto-submits a form with the POOM in `cxml-urlencoded` or `cxml-base64`.
  *
- * This runs in the user's browser (Amazon redirects here via BrowserFormPost).
- * We parse the POOM, store the cart data, and return an HTML page that redirects
- * the user back to the integrations page with the cart review open.
+ * This runs in the browser tab that was opened for the punchout session.
+ * We parse the POOM, store the cart data, and return a minimal HTML page
+ * telling the user to return to the main Summit One tab. The main tab
+ * polls for cart_returned status and shows the review UI automatically.
  *
- * Tenant context comes from the buyerCookie embedded in the POOM, NOT from a
- * session — this is a cross-site form POST from Amazon's domain.
+ * Tenant context comes from the buyerCookie embedded in the POOM.
  */
-import { createWriteRoute } from '@rocketmanv9/chassis/nextjs';
-import { AppError } from '@rocketmanv9/chassis/errors';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient } from '@/utils/supabase/admin';
 import {
   decodePoomFromFormData,
   parsePunchOutOrderMessage,
 } from '@/lib/integrations/amazon-cxml';
 
-const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
+function htmlPage(title: string, message: string, success: boolean): NextResponse {
+  const color = success ? '#16a34a' : '#dc2626';
+  const bg = success ? '#f0fdf4' : '#fef2f2';
+  const borderColor = success ? '#bbf7d0' : '#fecaca';
+  const icon = success ? '&#10003;' : '&#10007;';
 
-function htmlRedirectPage(url: string, message: string): Response {
-  const html = `<!DOCTYPE html>
+  return new NextResponse(
+    `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="1;url=${url}">
-  <title>Returning to Summit One</title>
+  <title>${title}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f9fafb; }
-    .card { text-align: center; padding: 2rem; background: white; border-radius: 8px; border: 1px solid #e5e7eb; max-width: 400px; }
-    .spinner { width: 24px; height: 24px; border: 3px solid #e5e7eb; border-top: 3px solid #f97316; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    h2 { margin: 0 0 0.5rem; font-size: 1.1rem; color: #111827; }
-    p { margin: 0; color: #6b7280; font-size: 0.875rem; }
-    a { color: #f97316; text-decoration: underline; }
+    body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb}
+    .card{text-align:center;padding:2rem;background:${bg};border-radius:8px;border:1px solid ${borderColor};max-width:420px}
+    .icon{font-size:2rem;color:${color};margin-bottom:.75rem}
+    h2{margin:0 0 .5rem;font-size:1.1rem;color:#111827}
+    p{margin:0;color:#6b7280;font-size:.875rem}
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="spinner"></div>
-    <h2>${message}</h2>
-    <p>Redirecting you back to Summit One...</p>
-    <p style="margin-top: 1rem;"><a href="${url}">Click here if not redirected</a></p>
+    <div class="icon">${icon}</div>
+    <h2>${title}</h2>
+    <p>${message}</p>
   </div>
-  <script>window.location.replace("${url}");</script>
 </body>
-</html>`;
-
-  return new Response(html, {
-    status: 200,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  });
+</html>`,
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  );
 }
 
-export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
+export async function POST(req: NextRequest) {
   const adminClient = getAdminClient();
   const inv = (adminClient as any).schema('inventory');
 
@@ -64,11 +59,11 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
   let poomXml: string;
   try {
     poomXml = decodePoomFromFormData(rawBody);
-  } catch (err: any) {
-    log.warn('amazon.poom.decode_failed', { error: err?.message });
-    return htmlRedirectPage(
-      '/settings/integrations?punchout_error=Could+not+decode+cart+data+from+Amazon',
-      'Something went wrong'
+  } catch {
+    return htmlPage(
+      'Something went wrong',
+      'Could not decode cart data from Amazon. Please close this tab and try again.',
+      false
     );
   }
 
@@ -77,18 +72,12 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
   try {
     poom = parsePunchOutOrderMessage(poomXml);
   } catch (err: any) {
-    log.warn('amazon.poom.parse_failed', { error: err?.message });
-    return htmlRedirectPage(
-      `/settings/integrations?punchout_error=${encodeURIComponent(err?.message || 'Parse error')}`,
-      'Could not read Amazon cart'
+    return htmlPage(
+      'Could not read Amazon cart',
+      `${err?.message || 'Parse error'}. Please close this tab and try again.`,
+      false
     );
   }
-
-  log.info('amazon.poom.received', {
-    buyerCookie: poom.buyerCookie,
-    itemCount: poom.items.length,
-    total: poom.total,
-  });
 
   // 3. Look up the punchout order by buyerCookie
   const { data: order, error: lookupError } = await inv
@@ -99,22 +88,14 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     .single();
 
   if (lookupError || !order) {
-    log.warn('amazon.poom.unknown_cookie', { buyerCookie: poom.buyerCookie });
-    return htmlRedirectPage(
-      '/settings/integrations?punchout_error=Session+not+found.+Please+start+a+new+punchout.',
-      'Session expired'
+    return htmlPage(
+      'Session not found',
+      'This punchout session has expired. Please close this tab and start a new order.',
+      false
     );
   }
 
-  if (order.status !== 'punchout_started') {
-    log.warn('amazon.poom.unexpected_status', { orderId: order.id, currentStatus: order.status });
-  }
-
-  // 4. Validate inbound credentials match the tenant
-  // The POOM's From should be Amazon and To should be the tenant's identity
-  // (We trust the buyerCookie lookup for tenant context; the SPAID is the real auth)
-
-  // 5. Store the POOM data and update status
+  // 4. Store the POOM data and update status
   const poomItems = poom.items.map((item, idx) => ({
     line_number: idx + 1,
     supplier_sku: item.supplierPartId,
@@ -140,30 +121,17 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     .eq('id', order.id);
 
   if (updateError) {
-    log.warn('amazon.poom.store_failed', { orderId: order.id, error: updateError.message });
-    return htmlRedirectPage(
-      '/settings/integrations?punchout_error=Failed+to+save+cart',
-      'Something went wrong'
+    return htmlPage(
+      'Failed to save cart',
+      'An error occurred saving your Amazon cart. Please close this tab and try again.',
+      false
     );
   }
 
-  log.info('amazon.poom.stored', {
-    orderId: order.id,
-    tenantId: order.tenant_id,
-    itemCount: poomItems.length,
-    total: poom.total,
-  });
-
-  // 6. Redirect user to the cart review page
-  return htmlRedirectPage(
-    `/settings/integrations?punchout_review=${order.id}`,
-    `Amazon cart received — ${poomItems.length} item${poomItems.length === 1 ? '' : 's'}`
+  // 5. Return success page — user closes this tab and returns to Summit One
+  return htmlPage(
+    `Amazon cart received — ${poomItems.length} item${poomItems.length === 1 ? '' : 's'}`,
+    'You can close this tab and return to Summit One to review and submit your order.',
+    true
   );
-}, {
-  serviceName: SERVICE_NAME,
-  scope: 'POST /api/webhooks/amazon-business/punchout-return',
-  authenticate: async () => {
-    const supabase = getAdminClient();
-    return { tenantId: 'system', userId: 'amazon-punchout-return', supabase };
-  },
-});
+}
