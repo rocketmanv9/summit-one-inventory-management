@@ -8,7 +8,6 @@ import { getStoredAccessToken, parseJwtPayload, getTenantIdFromToken } from '@/l
 import {
   useTenantBranding,
   applyCssVariables,
-  getAssignments,
   PALETTE_OPTIONS,
   UI_ROLES,
   DEFAULT_ASSIGNMENTS,
@@ -18,7 +17,8 @@ import {
 } from '@/lib/tenant-branding';
 
 export default function BrandingPage() {
-  const { branding } = useTenantBranding();
+  const { branding: providerBranding } = useTenantBranding();
+  const [palette, setPalette] = useState<Record<string, string>>({});
   const [assignments, setAssignments] = useState<ColorAssignments>({ ...DEFAULT_ASSIGNMENTS });
   const [savedAssignments, setSavedAssignments] = useState<ColorAssignments>({ ...DEFAULT_ASSIGNMENTS });
   const [loading, setLoading] = useState(true);
@@ -39,25 +39,30 @@ export default function BrandingPage() {
     fetchBranding();
   }, []);
 
-  // Once the provider branding loads, sync assignments from it
-  useEffect(() => {
-    if (branding && !loading) {
-      const current = getAssignments(branding);
-      setAssignments(current);
-      setSavedAssignments(current);
-    }
-  }, [branding]);
-
   const fetchBranding = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/settings/branding');
       if (!res.ok) throw new Error('Failed to fetch branding');
       const json = await res.json();
-      if (json.data?.theme_config?.assignments) {
-        const saved = { ...DEFAULT_ASSIGNMENTS, ...json.data.theme_config.assignments };
-        setAssignments(saved);
-        setSavedAssignments(saved);
+      const data = json.data;
+
+      if (data) {
+        // Extract palette colors from the API response (Core-merged)
+        const p: Record<string, string> = {};
+        for (const opt of PALETTE_OPTIONS) {
+          if (typeof data[opt.key] === 'string') {
+            p[opt.key] = data[opt.key];
+          }
+        }
+        setPalette(p);
+
+        // Extract saved assignments
+        if (data.theme_config?.assignments) {
+          const saved = { ...DEFAULT_ASSIGNMENTS, ...data.theme_config.assignments };
+          setAssignments(saved);
+          setSavedAssignments(saved);
+        }
       }
     } catch (err) {
       console.error('Error fetching branding:', err);
@@ -66,13 +71,20 @@ export default function BrandingPage() {
     }
   };
 
+  const paletteHex = (key: PaletteKey): string =>
+    palette[key] || (providerBranding as unknown as Record<string, string>)[key] || '#000000';
+
   const applyPreview = useCallback((currentAssignments: ColorAssignments) => {
+    // Build a branding object with the Core palette colors for CSS variable application
     const preview: TenantBranding = {
-      ...branding,
+      ...providerBranding,
+      ...Object.fromEntries(
+        PALETTE_OPTIONS.map((opt) => [opt.key, paletteHex(opt.key)])
+      ),
       theme_config: { assignments: currentAssignments },
     };
     applyCssVariables(preview);
-  }, [branding]);
+  }, [providerBranding, palette]);
 
   const handleAssignmentChange = (roleKey: string, paletteKey: PaletteKey) => {
     const updated = { ...assignments, [roleKey]: paletteKey };
@@ -126,9 +138,6 @@ export default function BrandingPage() {
   };
 
   const hasChanges = JSON.stringify(assignments) !== JSON.stringify(savedAssignments);
-
-  const paletteHex = (key: PaletteKey): string =>
-    (branding as unknown as Record<string, string>)[key] || '#000000';
 
   if (loading) {
     return (
