@@ -18,12 +18,12 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   // Verify location exists and is active
   const { data: location, error: locError } = await inv
     .from('locations')
-    .select('id, name, is_active')
+    .select('id, name, active')
     .eq('id', body.location_id)
     .single();
 
   if (locError || !location) throw AppError.notFound('Location not found');
-  if (!location.is_active) throw AppError.badRequest('Location is not active');
+  if (!location.active) throw AppError.badRequest('Location is not active');
 
   // Generate secure token
   const token = randomBytes(32).toString('base64url');

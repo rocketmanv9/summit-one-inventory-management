@@ -76,7 +76,7 @@ export function OnboardingQRDialog({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to generate session');
+        throw new Error(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to generate session');
       }
 
       const { data } = await res.json();
