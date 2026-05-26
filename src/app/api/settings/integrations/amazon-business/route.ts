@@ -8,7 +8,6 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
-import { validateCxmlConfig } from '@/lib/integrations/amazon-business';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -25,6 +24,37 @@ async function storeSecret(
   await adminClient.rpc('delete_secret_by_name', { secret_name: name });
   await adminClient.rpc('create_secret', { secret: value, name });
   return name;
+}
+
+// ── Vendor auto-provisioning ─────────────────────────────────────────────
+
+async function ensureAmazonVendor(adminClient: any, tenantId: string, idempotencyKey: string): Promise<void> {
+  const sc = (adminClient as any).schema('supply_chain');
+
+  const { data: existing } = await sc
+    .from('vendors')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('code', 'AMAZON-BIZ')
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return;
+
+  await sc
+    .from('vendors')
+    .upsert({
+      tenant_id: tenantId,
+      name: 'Amazon Business',
+      code: 'AMAZON-BIZ',
+      active: true,
+      payment_terms: 'CARD',
+      ordering_mode: 'portal_with_po_ref',
+      notes: 'Auto-created by Amazon Business cXML integration',
+      last_event_id: `amazon-biz-vendor-${idempotencyKey}`,
+    }, { onConflict: 'tenant_id,code' })
+    .select()
+    .single();
 }
 
 // ── GET: Check connection status ─────────────────────────────────────────
@@ -114,12 +144,14 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
 
     if (error) throw AppError.internal(error.message);
 
-    const valid = await validateCxmlConfig(adminClient, ctx.tenantId!);
+    await ensureAmazonVendor(adminClient, ctx.tenantId!, idempotencyKey);
+
+    const configured = !!(body.from_identity && body.shared_secret && body.po_request_url);
 
     return {
       data: {
         connected: true,
-        configured: valid,
+        configured,
         provider_id: existing.id,
       },
       status: 200,
@@ -165,12 +197,14 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
     })
     .eq('id', provider.id);
 
-  const valid = await validateCxmlConfig(adminClient, ctx.tenantId!);
+  await ensureAmazonVendor(adminClient, ctx.tenantId!, idempotencyKey);
+
+  const configured = !!(body.from_identity && body.shared_secret && body.po_request_url);
 
   return {
     data: {
       connected: true,
-      configured: valid,
+      configured,
       provider_id: provider.id,
     },
     status: 201,
