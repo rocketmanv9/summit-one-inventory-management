@@ -9,11 +9,6 @@ const SETTINGS_TABS = [
   { label: 'Branding', href: '/settings/branding' },
   { label: 'Device Management', href: '/settings/device-management' },
   { label: 'Integrations', href: '/settings/integrations' },
-  { label: 'Guardrails', href: '/settings/guardrails' },
-  { label: 'Negative Inventory', href: '/settings/negative-inventory' },
-  { label: 'UOM Conversions', href: '/settings/uom-conversions' },
-  { label: 'Reservation Types', href: '/settings/reservation-types' },
-  { label: 'Assignment Types', href: '/settings/assignment-types' },
 ] as const;
 
 export function SettingsNav() {

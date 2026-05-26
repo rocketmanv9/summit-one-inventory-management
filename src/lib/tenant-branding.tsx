@@ -414,11 +414,76 @@ function parseBrandingPayload(data: unknown): TenantBranding | null {
 }
 
 // ---------------------------------------------------------------------------
+// Color assignment definitions — UI roles that map to palette colors
+// ---------------------------------------------------------------------------
+
+export type PaletteKey =
+  | 'primary_color'
+  | 'secondary_color'
+  | 'tertiary_color'
+  | 'accent_color'
+  | 'text_color'
+  | 'background_color';
+
+export const PALETTE_OPTIONS: { key: PaletteKey; label: string }[] = [
+  { key: 'primary_color', label: 'Primary' },
+  { key: 'secondary_color', label: 'Secondary' },
+  { key: 'tertiary_color', label: 'Tertiary' },
+  { key: 'accent_color', label: 'Accent' },
+  { key: 'text_color', label: 'Text' },
+  { key: 'background_color', label: 'Background' },
+];
+
+export interface UIRole {
+  key: string;
+  label: string;
+  description: string;
+  defaultPaletteKey: PaletteKey;
+}
+
+export const UI_ROLES: UIRole[] = [
+  { key: 'primary_ui', label: 'Primary UI', description: 'Buttons, links, active navigation, focus rings', defaultPaletteKey: 'primary_color' },
+  { key: 'secondary_ui', label: 'Secondary UI', description: 'Subtle buttons, badges, secondary actions', defaultPaletteKey: 'secondary_color' },
+  { key: 'accent', label: 'Accent', description: 'Highlights, call-to-action, accent elements', defaultPaletteKey: 'accent_color' },
+  { key: 'sidebar', label: 'Sidebar', description: 'Sidebar background (darkened automatically)', defaultPaletteKey: 'primary_color' },
+  { key: 'surface', label: 'Cards & Surfaces', description: 'Card backgrounds, popovers, panels', defaultPaletteKey: 'background_color' },
+  { key: 'muted', label: 'Muted / Subtle', description: 'Disabled text, placeholders, muted backgrounds', defaultPaletteKey: 'tertiary_color' },
+  { key: 'border', label: 'Borders', description: 'Input outlines, dividers, table borders', defaultPaletteKey: 'secondary_color' },
+];
+
+export type ColorAssignments = Record<string, PaletteKey>;
+
+export const DEFAULT_ASSIGNMENTS: ColorAssignments = Object.fromEntries(
+  UI_ROLES.map((r) => [r.key, r.defaultPaletteKey]),
+);
+
+/** Read assignments from a TenantBranding's theme_config, with defaults. */
+export function getAssignments(b: TenantBranding): ColorAssignments {
+  const saved = (b.theme_config as Record<string, unknown> | undefined)?.assignments;
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+    return { ...DEFAULT_ASSIGNMENTS, ...(saved as ColorAssignments) };
+  }
+  return { ...DEFAULT_ASSIGNMENTS };
+}
+
+/** Resolve a palette key to its hex value from the branding object. */
+function resolvePaletteHex(b: TenantBranding, key: PaletteKey): string {
+  return (b as unknown as Record<string, string>)[key] || (fallbackBranding as unknown as Record<string, string>)[key] || '#000000';
+}
+
+// ---------------------------------------------------------------------------
 // CSS variable application — maps Core branding → shadcn HSL vars
 // ---------------------------------------------------------------------------
 
 export function applyCssVariables(b: TenantBranding) {
   const root = document.documentElement;
+  const assignments = getAssignments(b);
+
+  /** Resolve a UI role to its assigned palette hex value. */
+  const role = (roleKey: string): string => {
+    const paletteKey = assignments[roleKey];
+    return paletteKey ? resolvePaletteHex(b, paletteKey as PaletteKey) : '#000000';
+  };
 
   const setHsl = (prop: string, hex: string | undefined) => {
     if (isValidHex(hex)) {
@@ -427,107 +492,87 @@ export function applyCssVariables(b: TenantBranding) {
     }
   };
 
-  // --- Primary (from branding primary_color) ---
-  setHsl('--primary', b.primary_color);
-  setHsl('--primary-foreground', b.text_on_primary_color ?? contrastForeground(b.primary_color));
-  setHsl('--ring', b.primary_focus_color ?? b.accent_color);
+  // --- Resolve role assignments ---
+  const primaryHex = role('primary_ui');
+  const secondaryHex = role('secondary_ui');
+  const accentHex = role('accent');
+  const sidebarHex = role('sidebar');
+  const surfaceHex = role('surface');
+  const mutedHex = role('muted');
+  const borderHex = role('border');
 
-  // --- Secondary (from branding secondary_color) ---
-  setHsl('--secondary', b.surface_alt_color ?? b.secondary_color);
-  setHsl('--secondary-foreground', b.text_on_surface_color ?? b.text_color);
+  // --- Primary ---
+  setHsl('--primary', primaryHex);
+  setHsl('--primary-foreground', contrastForeground(primaryHex));
+  setHsl('--ring', accentHex);
 
-  // --- Accent (from branding accent_color) ---
-  setHsl('--accent', b.accent_color);
-  setHsl('--accent-foreground', contrastForeground(b.accent_color));
+  // --- Secondary ---
+  setHsl('--secondary', secondaryHex);
+  setHsl('--secondary-foreground', contrastForeground(secondaryHex));
+
+  // --- Accent ---
+  setHsl('--accent', accentHex);
+  setHsl('--accent-foreground', contrastForeground(accentHex));
 
   // --- Muted ---
-  setHsl('--muted', b.surface_alt_color ?? b.background_color);
-  setHsl('--muted-foreground', b.text_muted_color ?? b.tertiary_color);
+  setHsl('--muted', surfaceHex);
+  setHsl('--muted-foreground', mutedHex);
 
   // --- Background / foreground ---
   setHsl('--background', b.background_color);
   setHsl('--foreground', b.text_color);
 
-  // --- Card / popover (use surface_color or background) ---
-  setHsl('--card', b.surface_color ?? b.background_color);
-  setHsl('--card-foreground', b.text_on_surface_color ?? b.text_color);
-  setHsl('--popover', b.surface_color ?? b.background_color);
-  setHsl('--popover-foreground', b.text_on_surface_color ?? b.text_color);
+  // --- Card / popover ---
+  setHsl('--card', surfaceHex);
+  setHsl('--card-foreground', b.text_color);
+  setHsl('--popover', surfaceHex);
+  setHsl('--popover-foreground', b.text_color);
 
   // --- Borders & inputs ---
-  setHsl('--border', b.border_color ?? b.border_subtle_color);
-  setHsl('--input', b.border_color ?? b.border_subtle_color);
+  setHsl('--border', borderHex);
+  setHsl('--input', borderHex);
 
-  // --- Button overrides (fall back to primary when not set) ---
-  if (isValidHex(b.button_color)) {
-    setHsl('--btn-bg', b.button_color);
-    setHsl('--btn-fg', b.button_text_color ?? contrastForeground(b.button_color));
-  }
-  if (isValidHex(b.button_hover_color)) setHsl('--btn-hover', b.button_hover_color);
-  if (isValidHex(b.button_active_color)) setHsl('--btn-active', b.button_active_color);
-  if (isValidHex(b.call_to_action_color)) setHsl('--cta', b.call_to_action_color);
-  if (isValidHex(b.call_to_action_hover_color)) setHsl('--cta-hover', b.call_to_action_hover_color);
-  if (isValidHex(b.disabled_color)) setHsl('--disabled', b.disabled_color);
-  if (isValidHex(b.disabled_text_color)) setHsl('--disabled-fg', b.disabled_text_color);
-
-  // --- Primary variant overrides ---
-  if (isValidHex(b.primary_hover_color)) setHsl('--primary-hover', b.primary_hover_color);
-  if (isValidHex(b.primary_active_color)) setHsl('--primary-active', b.primary_active_color);
-  if (isValidHex(b.primary_disabled_color)) setHsl('--primary-disabled', b.primary_disabled_color);
-  if (isValidHex(b.secondary_hover_color)) setHsl('--secondary-hover', b.secondary_hover_color);
-
-  // --- Overlay ---
-  if (isValidHex(b.overlay_color)) setHsl('--overlay', b.overlay_color);
-
-  // --- Status colors ---
+  // --- Status colors (always use branding values directly) ---
   if (isValidHex(b.error_color)) {
     setHsl('--destructive', b.error_color);
     setHsl('--destructive-foreground', contrastForeground(b.error_color));
   }
-  if (isValidHex(b.error_hover_color)) setHsl('--destructive-hover', b.error_hover_color);
   if (isValidHex(b.success_color)) {
     setHsl('--success', b.success_color);
     setHsl('--success-foreground', contrastForeground(b.success_color));
   }
-  if (isValidHex(b.success_hover_color)) setHsl('--success-hover', b.success_hover_color);
   if (isValidHex(b.warning_color)) {
     setHsl('--warning', b.warning_color);
     setHsl('--warning-foreground', contrastForeground(b.warning_color));
   }
-  if (isValidHex(b.warning_hover_color)) setHsl('--warning-hover', b.warning_hover_color);
   if (isValidHex(b.info_color)) {
     setHsl('--info', b.info_color);
     setHsl('--info-foreground', contrastForeground(b.info_color));
   }
-  if (isValidHex(b.info_hover_color)) setHsl('--info-hover', b.info_hover_color);
 
-  // --- Sidebar — derived from primary color ---
-  if (isValidHex(b.primary_color)) {
-    const sidebarBg = darkenHex(b.primary_color, 0.85);
-    const sidebarBorder = darkenHex(b.primary_color, 0.75);
-    const sidebarAccent = darkenHex(b.primary_color, 0.70);
+  // --- Sidebar — derived from assigned sidebar color ---
+  if (isValidHex(sidebarHex)) {
+    const sidebarBg = darkenHex(sidebarHex, 0.85);
+    const sidebarBorder = darkenHex(sidebarHex, 0.75);
+    const sidebarAccentBg = darkenHex(sidebarHex, 0.70);
 
     setHsl('--sidebar-background', sidebarBg);
     setHsl('--sidebar-foreground', '#f1f5f9');
     setHsl('--sidebar-border', sidebarBorder);
-    setHsl('--sidebar-accent', sidebarAccent);
+    setHsl('--sidebar-accent', sidebarAccentBg);
     setHsl('--sidebar-accent-foreground', '#f1f5f9');
   }
 
-  // --- Charts — derive from palette ---
-  setHsl('--chart-1', b.primary_color);
-  setHsl('--chart-2', b.accent_color);
+  // --- Charts — derive from resolved palette ---
+  setHsl('--chart-1', primaryHex);
+  setHsl('--chart-2', accentHex);
   if (isValidHex(b.success_color)) setHsl('--chart-3', b.success_color);
   if (isValidHex(b.warning_color)) setHsl('--chart-4', b.warning_color);
   if (isValidHex(b.error_color)) setHsl('--chart-5', b.error_color);
 
   // --- Brandable blue & teal scales ---
-  // Generate a full 50–950 color ramp from the primary color and apply it
-  // to both the --blue-* and --teal-* CSS variables. This means every
-  // existing `bg-blue-600`, `text-blue-700`, `border-teal-400`, etc. class
-  // automatically reflects the tenant's branding without any class renames.
-  if (isValidHex(b.primary_color)) {
-    const scale = generateColorScale(b.primary_color);
+  if (isValidHex(primaryHex)) {
+    const scale = generateColorScale(primaryHex);
     for (const [shade, hsl] of Object.entries(scale)) {
       root.style.setProperty(`--blue-${shade}`, hsl);
       root.style.setProperty(`--teal-${shade}`, hsl);
