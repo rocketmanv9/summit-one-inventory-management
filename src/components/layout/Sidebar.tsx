@@ -22,6 +22,7 @@ import {
   HardHat,
   Plug,
   Globe,
+  Palette,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -258,6 +259,18 @@ export function Sidebar() {
         >
           <Cpu className="h-4 w-4" />
           <span>Device Management</span>
+        </Link>
+        <Link
+          href="/settings/branding"
+          className={cn(
+            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors mb-2',
+            pathname === '/settings/branding'
+              ? 'bg-primary text-primary-foreground'
+              : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          )}
+        >
+          <Palette className="h-4 w-4" />
+          <span>Branding</span>
         </Link>
         <Link
           href="/settings"

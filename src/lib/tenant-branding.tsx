@@ -97,7 +97,7 @@ export interface TenantBranding {
 // Fallback branding
 // ---------------------------------------------------------------------------
 
-const fallbackBranding: TenantBranding = {
+export const fallbackBranding: TenantBranding = {
   tenant_id: '',
   display_name: 'Summit One',
   logo_asset_id: null,
@@ -417,7 +417,7 @@ function parseBrandingPayload(data: unknown): TenantBranding | null {
 // CSS variable application — maps Core branding → shadcn HSL vars
 // ---------------------------------------------------------------------------
 
-function applyCssVariables(b: TenantBranding) {
+export function applyCssVariables(b: TenantBranding) {
   const root = document.documentElement;
 
   const setHsl = (prop: string, hex: string | undefined) => {
@@ -682,12 +682,12 @@ async function fetchBrandingFromLocal(tenantId: string): Promise<TenantBranding 
 }
 
 async function fetchBranding(tenantId: string): Promise<TenantBranding | null> {
-  // Try Core first (production branding data)
-  const core = await fetchBrandingFromCore(tenantId);
-  if (core) return core;
+  // Try local DB first (admin-saved overrides take precedence)
+  const local = await fetchBrandingFromLocal(tenantId);
+  if (local) return local;
 
-  // Fall back to local DB (dev/stage seed data)
-  return fetchBrandingFromLocal(tenantId);
+  // Fall back to Core (production branding data)
+  return fetchBrandingFromCore(tenantId);
 }
 
 // ---------------------------------------------------------------------------
