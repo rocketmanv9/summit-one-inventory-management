@@ -18,10 +18,12 @@ interface PrintifyStatus {
 
 interface AmazonStatus {
   connected: boolean;
+  configured: boolean;
   provider_id?: string;
-  application_id?: string | null;
+  integration_mode?: string;
   sandbox?: boolean;
-  needs_authorization?: boolean;
+  po_request_url_set?: boolean;
+  punchout_urls?: string[];
 }
 
 interface Mapping {
@@ -36,12 +38,26 @@ interface Mapping {
   inventory_unit?: string | null;
 }
 
-interface AmazonProduct {
+interface AmazonItemMapping {
+  id: string;
+  catalog_item_id: string;
+  item_name: string | null;
+  item_sku: string | null;
+  supplier_sku: string;
+  pack_quantity: number;
+  unit_cost: number | null;
+  last_known_price: number | null;
+  price_checked_at: string | null;
+  is_preferred: boolean;
+  active: boolean;
+}
+
+interface ResolvedAsin {
   asin: string;
-  title: string;
-  price?: { amount: number; currency: string };
-  availability?: string;
-  imageUrl?: string;
+  title: string | null;
+  image_url: string | null;
+  price: number | null;
+  product_url: string;
 }
 
 type ConnectionStatus = 'disconnected' | 'loading' | 'connected' | 'error';
@@ -70,39 +86,30 @@ export default function IntegrationsPage() {
   // ── Amazon Business state ───────────────────────────────────────────
   const [amazon, setAmazon] = useState<AmazonStatus | null>(null);
   const [amazonStatus, setAmazonStatus] = useState<ConnectionStatus>('disconnected');
-  const [amazonForm, setAmazonForm] = useState({ application_id: '', client_id: '', client_secret: '', refresh_token: '', sandbox: false });
+  const [amazonForm, setAmazonForm] = useState({ from_identity: '', shared_secret: '', po_request_url: '', punchout_urls: '', sandbox: true });
   const [amazonSaving, setAmazonSaving] = useState(false);
   const [amazonError, setAmazonError] = useState('');
   const [amazonSuccess, setAmazonSuccess] = useState('');
 
-  // Amazon mappings
-  const [amazonMappings, setAmazonMappings] = useState<Mapping[]>([]);
+  // Amazon item mappings (vendor_items-backed)
+  const [amazonMappings, setAmazonMappings] = useState<AmazonItemMapping[]>([]);
   const [amazonMappingsLoading, setAmazonMappingsLoading] = useState(false);
   const [showAmazonAddMapping, setShowAmazonAddMapping] = useState(false);
-  const [newAmazonMapping, setNewAmazonMapping] = useState({ catalog_item_id: '', asin: '', pack_size: '', order_unit: '', inventory_unit: '' });
   const [amazonMappingSaving, setAmazonMappingSaving] = useState(false);
   const [amazonMappingError, setAmazonMappingError] = useState('');
 
-  // Amazon product search
-  const [amazonSearchQuery, setAmazonSearchQuery] = useState('');
-  const [amazonSearchResults, setAmazonSearchResults] = useState<AmazonProduct[]>([]);
-  const [amazonSearching, setAmazonSearching] = useState(false);
+  // ASIN resolve flow
+  const [asinInput, setAsinInput] = useState('');
+  const [asinResolving, setAsinResolving] = useState(false);
+  const [resolvedAsin, setResolvedAsin] = useState<ResolvedAsin | null>(null);
+  const [newMappingForm, setNewMappingForm] = useState({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
 
-  // Handle OAuth callback query params (amazon_success / amazon_error)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const oauthSuccess = params.get('amazon_success');
-    const oauthError = params.get('amazon_error');
-    if (oauthSuccess) {
-      setAmazonSuccess(oauthSuccess);
-      setAmazonStatus('connected');
-      // Clean URL
-      window.history.replaceState({}, '', window.location.pathname);
-    } else if (oauthError) {
-      setAmazonError(oauthError);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
+  // Punchout orders
+  const [punchoutOrders, setPunchoutOrders] = useState<any[]>([]);
+  const [punchoutOrdersLoading, setPunchoutOrdersLoading] = useState(false);
+  const [punchoutReviewId, setPunchoutReviewId] = useState<string | null>(null);
+  const [punchoutReviewOrder, setPunchoutReviewOrder] = useState<any>(null);
+  const [punchoutSubmitting, setPunchoutSubmitting] = useState(false);
 
   // Shared catalog items
   const [catalogItems, setCatalogItems] = useState<Array<{ id: string; label: string }>>([]);
@@ -193,12 +200,12 @@ export default function IntegrationsPage() {
     if (connectionStatus === 'connected') loadMappings();
   }, [connectionStatus, loadMappings]);
 
-  // ── Amazon: load mappings ───────────────────────────────────────────
+  // ── Amazon: load item mappings ──────────────────────────────────────
 
   const loadAmazonMappings = useCallback(async () => {
     setAmazonMappingsLoading(true);
     try {
-      const res = await fetch(`${AMAZON_API}/mappings`);
+      const res = await fetch(`${AMAZON_API}/item-mappings`);
       if (res.ok) {
         const json = await res.json();
         setAmazonMappings(json?.data || []);
@@ -317,10 +324,21 @@ export default function IntegrationsPage() {
     setAmazonSaving(true);
 
     try {
+      const punchoutUrls = amazonForm.punchout_urls
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean);
+
       const res = await fetch(AMAZON_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify(amazonForm),
+        body: JSON.stringify({
+          from_identity: amazonForm.from_identity,
+          shared_secret: amazonForm.shared_secret,
+          po_request_url: amazonForm.po_request_url,
+          punchout_urls: punchoutUrls,
+          sandbox: amazonForm.sandbox,
+        }),
       });
       const json = await res.json();
 
@@ -328,23 +346,13 @@ export default function IntegrationsPage() {
         throw new Error(json?.error?.message || 'Failed to connect');
       }
 
-      // If no refresh_token was provided, credentials are saved — redirect to Amazon OAuth
-      if (json?.data?.needs_authorization) {
-        setAmazonSuccess('Credentials saved. Redirecting to Amazon for authorization...');
-        await loadAmazonStatus();
-        // Redirect to our auth route which redirects to Amazon
-        window.location.href = '/api/settings/integrations/amazon-business/auth';
-        return;
-      }
-
-      setAmazonForm({ application_id: '', client_id: '', client_secret: '', refresh_token: '', sandbox: false });
-      const valid = json?.data?.valid;
-      if (valid) {
-        setAmazonSuccess('Connected to Amazon Business successfully.');
+      setAmazonForm({ from_identity: '', shared_secret: '', po_request_url: '', punchout_urls: '', sandbox: true });
+      if (json?.data?.configured) {
+        setAmazonSuccess('cXML credentials saved and validated. Integration is in test mode.');
         setAmazonStatus('connected');
       } else {
-        setAmazonSuccess('Credentials saved but could not verify connection. Check your credentials.');
-        setAmazonStatus('error');
+        setAmazonSuccess('Credentials saved. Some configuration may be incomplete — check PO Request URL.');
+        setAmazonStatus('connected');
       }
       await loadAmazonStatus();
     } catch (err: unknown) {
@@ -378,38 +386,49 @@ export default function IntegrationsPage() {
     }
   };
 
-  const handleAmazonProductSearch = async () => {
-    if (!amazonSearchQuery.trim()) return;
-    setAmazonSearching(true);
+  const handleResolveAsin = async () => {
+    if (!asinInput.trim()) return;
+    setAsinResolving(true);
+    setResolvedAsin(null);
+    setAmazonMappingError('');
+
     try {
-      const res = await fetch(`${AMAZON_API}/products?q=${encodeURIComponent(amazonSearchQuery)}&limit=10`);
-      if (res.ok) {
-        const json = await res.json();
-        setAmazonSearchResults(json?.data || []);
+      const res = await fetch(`${AMAZON_API}/item-mappings/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input: asinInput }),
+      });
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Could not resolve ASIN');
       }
-    } catch {
-      // Silently fail
+
+      setResolvedAsin(json.data);
+    } catch (err: unknown) {
+      setAmazonMappingError(err instanceof Error ? err.message : 'Could not resolve ASIN');
     } finally {
-      setAmazonSearching(false);
+      setAsinResolving(false);
     }
   };
 
   const handleAmazonAddMapping = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) return;
+    if (!isAdmin || !resolvedAsin) return;
     setAmazonMappingError('');
     setAmazonMappingSaving(true);
 
     try {
-      const res = await fetch(`${AMAZON_API}/mappings`, {
+      const res = await fetch(`${AMAZON_API}/item-mappings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({
-          catalog_item_id: newAmazonMapping.catalog_item_id,
-          asin: newAmazonMapping.asin,
-          ...(newAmazonMapping.pack_size ? { pack_size: Number(newAmazonMapping.pack_size) } : {}),
-          ...(newAmazonMapping.order_unit ? { order_unit: newAmazonMapping.order_unit } : {}),
-          ...(newAmazonMapping.inventory_unit ? { inventory_unit: newAmazonMapping.inventory_unit } : {}),
+          catalog_item_id: newMappingForm.catalog_item_id,
+          asin: resolvedAsin.asin,
+          pack_quantity: Number(newMappingForm.pack_quantity) || 1,
+          last_known_price: resolvedAsin.price ?? undefined,
+          is_preferred: newMappingForm.is_preferred,
+          notes: resolvedAsin.title ?? undefined,
         }),
       });
       const json = await res.json();
@@ -418,10 +437,10 @@ export default function IntegrationsPage() {
         throw new Error(json?.error?.message || 'Failed to save mapping');
       }
 
-      setNewAmazonMapping({ catalog_item_id: '', asin: '', pack_size: '', order_unit: '', inventory_unit: '' });
+      setNewMappingForm({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
+      setResolvedAsin(null);
+      setAsinInput('');
       setShowAmazonAddMapping(false);
-      setAmazonSearchResults([]);
-      setAmazonSearchQuery('');
       await loadAmazonMappings();
     } catch (err: unknown) {
       setAmazonMappingError(err instanceof Error ? err.message : 'Failed to save mapping');
@@ -433,7 +452,7 @@ export default function IntegrationsPage() {
   const handleAmazonDeleteMapping = async (mappingId: string) => {
     if (!isAdmin) return;
     try {
-      await fetch(`${AMAZON_API}/mappings`, {
+      await fetch(`${AMAZON_API}/item-mappings`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ mapping_id: mappingId }),
@@ -441,6 +460,67 @@ export default function IntegrationsPage() {
       await loadAmazonMappings();
     } catch {
       // Silently fail
+    }
+  };
+
+  // ── Punchout order handlers ─────────────────────────────────────────
+
+  const loadPunchoutOrders = useCallback(async () => {
+    setPunchoutOrdersLoading(true);
+    try {
+      const res = await fetch(`${AMAZON_API}/punchout/orders`);
+      if (res.ok) {
+        const json = await res.json();
+        setPunchoutOrders(json?.data || []);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setPunchoutOrdersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (amazonStatus === 'connected') loadPunchoutOrders();
+  }, [amazonStatus, loadPunchoutOrders]);
+
+  // Check for punchout query params (set after POOM return redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reviewId = params.get('punchout_review');
+    const punchoutError = params.get('punchout_error');
+    if (reviewId) {
+      setPunchoutReviewId(reviewId);
+      window.history.replaceState({}, '', window.location.pathname);
+      fetch(`${AMAZON_API}/punchout/orders?id=${reviewId}`)
+        .then((r) => r.json())
+        .then((json) => setPunchoutReviewOrder(json?.data || null))
+        .catch(() => {});
+    }
+    if (punchoutError) {
+      setAmazonError(decodeURIComponent(punchoutError));
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handlePunchoutSubmit = async (orderId: string, locationId: string) => {
+    setPunchoutSubmitting(true);
+    try {
+      const res = await fetch(`${AMAZON_API}/punchout/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ punchout_order_id: orderId, location_id: locationId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error?.message || 'Submission failed');
+      setAmazonSuccess(`Order submitted successfully (PO: ${json?.data?.po_number || 'pending'})`);
+      setPunchoutReviewId(null);
+      setPunchoutReviewOrder(null);
+      await loadPunchoutOrders();
+    } catch (err: unknown) {
+      setAmazonError(err instanceof Error ? err.message : 'Failed to submit order');
+    } finally {
+      setPunchoutSubmitting(false);
     }
   };
 
@@ -710,53 +790,46 @@ export default function IntegrationsPage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
                   <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                  <span>Connected to Amazon Business{amazon.application_id ? <> (App ID: <span className="font-mono font-medium">{amazon.application_id}</span>)</> : ''}</span>
-                  {amazon.sandbox ? (
-                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-300">Sandbox</span>
-                  ) : (
-                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-300">Production</span>
-                  )}
+                  <span>Connected via cXML{amazon.po_request_url_set ? ' — PO Request URL configured' : ''}</span>
+                  <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-300">
+                    {amazon.integration_mode === 'active' ? 'Active' : 'Test Mode'}
+                  </span>
                 </div>
 
                 <details className="group">
-                  <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">Update credentials</summary>
+                  <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">Update cXML credentials</summary>
                   <form onSubmit={handleAmazonConnect} className="mt-3 space-y-3">
-                    <div className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
-                      <div>
-                        <label className="text-sm font-medium">Sandbox Mode</label>
-                        <p className="text-xs text-muted-foreground mt-0.5">Uses Amazon&apos;s test environment with mock data</p>
-                      </div>
-                      <button type="button" role="switch" aria-checked={amazonForm.sandbox}
-                        onClick={() => setAmazonForm({ ...amazonForm, sandbox: !amazonForm.sandbox })}
-                        disabled={!isAdmin}
-                        className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 ${amazonForm.sandbox ? 'bg-yellow-500' : 'bg-gray-200'}`}>
-                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${amazonForm.sandbox ? 'translate-x-4' : 'translate-x-0'}`} />
-                      </button>
-                    </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Application ID</label>
-                      <input type="text" value={amazonForm.application_id}
-                        onChange={(e) => setAmazonForm({ ...amazonForm, application_id: e.target.value })}
-                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                        placeholder="amzn1.application..." disabled={!isAdmin} />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Client ID</label>
-                      <input type="password" value={amazonForm.client_id}
-                        onChange={(e) => setAmazonForm({ ...amazonForm, client_id: e.target.value })}
+                      <label className="block text-sm font-medium mb-1">From Identity</label>
+                      <input type="text" value={amazonForm.from_identity}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, from_identity: e.target.value })}
                         className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                         required disabled={!isAdmin} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Client Secret</label>
-                      <input type="password" value={amazonForm.client_secret}
-                        onChange={(e) => setAmazonForm({ ...amazonForm, client_secret: e.target.value })}
+                      <label className="block text-sm font-medium mb-1">Shared Secret</label>
+                      <input type="password" value={amazonForm.shared_secret}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, shared_secret: e.target.value })}
                         className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                         required disabled={!isAdmin} />
                     </div>
-                    <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret}
+                    <div>
+                      <label className="block text-sm font-medium mb-1">PO Request URL</label>
+                      <input type="url" value={amazonForm.po_request_url}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, po_request_url: e.target.value })}
+                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                        required disabled={!isAdmin} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Punchout URLs</label>
+                      <input type="text" value={amazonForm.punchout_urls}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, punchout_urls: e.target.value })}
+                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                        placeholder="Comma-separated URLs" disabled={!isAdmin} />
+                    </div>
+                    <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.from_identity || !amazonForm.shared_secret || !amazonForm.po_request_url}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm">
-                      {amazonSaving ? 'Saving...' : 'Update & Re-authorize'}
+                      {amazonSaving ? 'Saving...' : 'Update Credentials'}
                     </button>
                   </form>
                 </details>
@@ -768,85 +841,55 @@ export default function IntegrationsPage() {
                   </button>
                 </div>
               </div>
-            ) : amazon?.needs_authorization ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
-                  <Loader2 className="h-4 w-4 flex-shrink-0" />
-                  <span>Credentials saved — authorization with Amazon required</span>
-                </div>
-                <a href="/api/settings/integrations/amazon-business/auth"
-                  className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium flex items-center justify-center gap-2 text-sm">
-                  <ExternalLink className="h-4 w-4" /> Authorize with Amazon
-                </a>
-                <div className="flex items-center gap-3 pt-2 border-t">
-                  <button onClick={handleAmazonDisconnect} disabled={amazonSaving || !isAdmin}
-                    className="px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50 text-sm flex items-center gap-2">
-                    <Unplug className="h-3 w-3" /> Remove Credentials
-                  </button>
-                </div>
-              </div>
             ) : (
               <form onSubmit={handleAmazonConnect} className="space-y-4">
                 <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm space-y-2">
-                  <p className="font-medium text-orange-900">Setup Instructions</p>
+                  <p className="font-medium text-orange-900">cXML Purchasing System Setup</p>
                   <ol className="list-decimal list-inside text-orange-800 space-y-1 text-xs">
-                    <li>Go to the{' '}
-                      <a href="https://sellercentral.amazon.com/sellingpartner/developerconsole" target="_blank" rel="noopener noreferrer"
-                        className="text-primary hover:underline inline-flex items-center gap-1">
-                        Amazon Solution Provider Portal <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </li>
-                    <li>Create a new app — choose <strong>Sandbox</strong> or <strong>Production</strong> as the App Type</li>
-                    <li>Set <strong>OAuth Login URI</strong> and <strong>OAuth Redirect URI</strong> to this app&apos;s domain (see below)</li>
-                    <li>Under Business entities, select <strong>Vendors</strong></li>
-                    <li>Under Roles, select <strong>Inventory and Order Tracking</strong></li>
-                    <li>After creating the app, copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the LWA credentials section</li>
-                    <li>Enter the credentials below, then click <strong>Save &amp; Authorize</strong></li>
+                    <li>Log in to your Amazon Business account and navigate to <strong>Business Settings &gt; Purchasing System</strong></li>
+                    <li>Configure a cXML Punchout connection and note your <strong>From Identity</strong> and <strong>Shared Secret</strong></li>
+                    <li>Copy the <strong>PO Request URL</strong> (where OrderRequest documents are POSTed)</li>
+                    <li>Optionally, note any <strong>Punchout URLs</strong> for catalog browsing</li>
+                    <li>Enter the credentials below to connect</li>
                   </ol>
-                  <div className="mt-2 p-2 bg-white border border-orange-200 rounded text-xs font-mono text-orange-900">
-                    <div><span className="text-orange-600">OAuth Login URI:</span> {typeof window !== 'undefined' ? `${window.location.origin}/api/settings/integrations/amazon-business/auth` : ''}</div>
-                    <div><span className="text-orange-600">Redirect URI:</span> {typeof window !== 'undefined' ? `${window.location.origin}/api/settings/integrations/amazon-business/callback` : ''}</div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
-                  <div>
-                    <label className="text-sm font-medium">Sandbox Mode</label>
-                    <p className="text-xs text-muted-foreground mt-0.5">Uses Amazon&apos;s test environment with mock data</p>
-                  </div>
-                  <button type="button" role="switch" aria-checked={amazonForm.sandbox}
-                    onClick={() => setAmazonForm({ ...amazonForm, sandbox: !amazonForm.sandbox })}
-                    disabled={!isAdmin}
-                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 ${amazonForm.sandbox ? 'bg-yellow-500' : 'bg-gray-200'}`}>
-                    <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${amazonForm.sandbox ? 'translate-x-4' : 'translate-x-0'}`} />
-                  </button>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Application ID</label>
-                  <input type="text" value={amazonForm.application_id}
-                    onChange={(e) => setAmazonForm({ ...amazonForm, application_id: e.target.value })}
+                  <label className="block text-sm font-medium mb-1">From Identity</label>
+                  <input type="text" value={amazonForm.from_identity}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, from_identity: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="amzn1.application..." disabled={!isAdmin} />
-                  <p className="text-xs text-muted-foreground mt-1">Found in your app listing after creation. Used for SP-API authorization.</p>
+                    placeholder="Your cXML From Identity" required disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">Identifies your organization in cXML headers.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Client ID</label>
-                  <input type="password" value={amazonForm.client_id}
-                    onChange={(e) => setAmazonForm({ ...amazonForm, client_id: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="amzn1.application-oa2-client..." required disabled={!isAdmin} />
-                  <p className="text-xs text-muted-foreground mt-1">All credentials are encrypted and stored securely in Vault.</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Client Secret</label>
-                  <input type="password" value={amazonForm.client_secret}
-                    onChange={(e) => setAmazonForm({ ...amazonForm, client_secret: e.target.value })}
+                  <label className="block text-sm font-medium mb-1">Shared Secret</label>
+                  <input type="password" value={amazonForm.shared_secret}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, shared_secret: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
                     required disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">Encrypted and stored securely in Vault. Used to authenticate cXML requests.</p>
                 </div>
-                <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.client_id || !amazonForm.client_secret}
+                <div>
+                  <label className="block text-sm font-medium mb-1">PO Request URL</label>
+                  <input type="url" value={amazonForm.po_request_url}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, po_request_url: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                    placeholder="https://..." required disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">The endpoint where cXML OrderRequest documents will be POSTed.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Punchout URLs <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input type="text" value={amazonForm.punchout_urls}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, punchout_urls: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                    placeholder="https://..., https://..." disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">Comma-separated. Used for catalog browsing sessions.</p>
+                </div>
+                <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.from_identity || !amazonForm.shared_secret || !amazonForm.po_request_url}
                   className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 font-medium flex items-center justify-center gap-2">
-                  {amazonSaving ? (<><Loader2 className="h-4 w-4 animate-spin" />Saving...</>) : (<><ExternalLink className="h-4 w-4" /> Save &amp; Authorize with Amazon</>)}
+                  {amazonSaving ? (<><Loader2 className="h-4 w-4 animate-spin" />Saving...</>) : 'Save cXML Credentials'}
                 </button>
+                <p className="text-xs text-center text-muted-foreground">Integration starts in test mode. Switching to active requires manual configuration.</p>
               </form>
             )}
 
@@ -865,19 +908,19 @@ export default function IntegrationsPage() {
           </div>
         </div>
 
-        {/* Amazon Business ASIN Mappings */}
+        {/* Amazon Business Item Mappings */}
         {amazonStatus === 'connected' && (
           <div className="bg-white rounded-lg border">
             <div className="flex items-center justify-between p-6 border-b">
               <div className="flex items-center gap-3">
                 <Link className="h-5 w-5 text-muted-foreground" />
                 <div>
-                  <h3 className="text-lg font-semibold">Amazon ASIN Mappings</h3>
-                  <p className="text-sm text-muted-foreground">Link catalog items to Amazon products (ASINs) for ordering</p>
+                  <h3 className="text-lg font-semibold">Amazon Product Mappings</h3>
+                  <p className="text-sm text-muted-foreground">Map inventory items to Amazon products (ASINs) for ordering</p>
                 </div>
               </div>
               {isAdmin && (
-                <button onClick={() => setShowAmazonAddMapping(!showAmazonAddMapping)}
+                <button onClick={() => { setShowAmazonAddMapping(!showAmazonAddMapping); setResolvedAsin(null); setAsinInput(''); setAmazonMappingError(''); }}
                   className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm flex items-center gap-1.5">
                   <Plus className="h-3.5 w-3.5" /> Add Mapping
                 </button>
@@ -885,100 +928,88 @@ export default function IntegrationsPage() {
             </div>
             <div className="p-6">
               {showAmazonAddMapping && (
-                <form onSubmit={handleAmazonAddMapping} className="mb-6 p-4 bg-gray-50 border rounded-lg space-y-3">
+                <form onSubmit={handleAmazonAddMapping} className="mb-6 p-4 bg-gray-50 border rounded-lg space-y-4">
+                  {/* Step 1: Paste URL or ASIN */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">Catalog Item</label>
-                    <select value={newAmazonMapping.catalog_item_id}
-                      onChange={(e) => setNewAmazonMapping({ ...newAmazonMapping, catalog_item_id: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white"
-                      required disabled={!isAdmin}>
-                      <option value="">Select a catalog item...</option>
-                      {catalogItems.map((item) => (
-                        <option key={item.id} value={item.id}>{item.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Amazon Product Search */}
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Search Amazon Products</label>
+                    <label className="block text-sm font-medium mb-1">Amazon Product URL or ASIN</label>
                     <div className="flex gap-2">
-                      <input type="text" value={amazonSearchQuery}
-                        onChange={(e) => setAmazonSearchQuery(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAmazonProductSearch(); } }}
+                      <input type="text" value={asinInput}
+                        onChange={(e) => { setAsinInput(e.target.value); setResolvedAsin(null); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleResolveAsin(); } }}
                         className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                        placeholder="Search by keyword..." disabled={!isAdmin} />
-                      <button type="button" onClick={handleAmazonProductSearch} disabled={amazonSearching || !amazonSearchQuery.trim()}
+                        placeholder="Paste amazon.com/dp/B07XYZ1234 or just B07XYZ1234" disabled={!isAdmin} />
+                      <button type="button" onClick={handleResolveAsin} disabled={asinResolving || !asinInput.trim()}
                         className="px-3 py-2 border rounded-md hover:bg-gray-50 disabled:opacity-50 text-sm flex items-center gap-1.5">
-                        {amazonSearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-                        Search
+                        {asinResolving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                        Resolve
                       </button>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">Paste a full Amazon product URL or a 10-character ASIN. We&apos;ll extract and verify it.</p>
                   </div>
 
-                  {/* Search Results */}
-                  {amazonSearchResults.length > 0 && (
-                    <div className="max-h-48 overflow-y-auto border rounded-md bg-white divide-y">
-                      {amazonSearchResults.map((p) => (
-                        <button key={p.asin} type="button"
-                          onClick={() => setNewAmazonMapping({ ...newAmazonMapping, asin: p.asin })}
-                          className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center justify-between ${
-                            newAmazonMapping.asin === p.asin ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
-                          }`}>
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium truncate">{p.title}</div>
-                            <div className="text-xs text-muted-foreground font-mono">ASIN: {p.asin}</div>
-                          </div>
-                          {p.price && (
-                            <span className="ml-2 text-xs font-medium text-green-700 whitespace-nowrap">
-                              ${p.price.amount.toFixed(2)}
-                            </span>
+                  {/* Step 2: Confirmation preview */}
+                  {resolvedAsin && (
+                    <div className="p-3 border rounded-lg bg-white space-y-3">
+                      <div className="flex items-start gap-3">
+                        {resolvedAsin.image_url && (
+                          <img src={resolvedAsin.image_url} alt="" className="w-16 h-16 object-contain rounded border bg-white flex-shrink-0" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm">{resolvedAsin.title || 'Product details not available'}</div>
+                          <div className="text-xs text-muted-foreground font-mono mt-1">ASIN: {resolvedAsin.asin}</div>
+                          {resolvedAsin.price && (
+                            <div className="text-sm font-medium text-green-700 mt-1">${resolvedAsin.price.toFixed(2)}</div>
                           )}
-                        </button>
-                      ))}
+                          <a href={resolvedAsin.product_url} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline inline-flex items-center gap-1 mt-1">
+                            View on Amazon <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                        <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
+                      </div>
+
+                      {/* Step 3: Select inventory item + pack qty */}
+                      <div className="border-t pt-3 space-y-3">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Inventory Item</label>
+                          <select value={newMappingForm.catalog_item_id}
+                            onChange={(e) => setNewMappingForm({ ...newMappingForm, catalog_item_id: e.target.value })}
+                            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white"
+                            required disabled={!isAdmin}>
+                            <option value="">Select an inventory item...</option>
+                            {catalogItems.map((item) => (
+                              <option key={item.id} value={item.id}>{item.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-sm font-medium mb-1">Pack Quantity <span className="text-red-500">*</span></label>
+                            <input type="number" min="1" value={newMappingForm.pack_quantity}
+                              onChange={(e) => setNewMappingForm({ ...newMappingForm, pack_quantity: e.target.value })}
+                              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                              required disabled={!isAdmin} />
+                            <p className="text-xs text-muted-foreground mt-1">How many of your inventory units are in one Amazon unit? Amazon often sells in case packs (e.g., 12-pack = 12).</p>
+                          </div>
+                          <div className="flex items-end pb-8">
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                              <input type="checkbox" checked={newMappingForm.is_preferred}
+                                onChange={(e) => setNewMappingForm({ ...newMappingForm, is_preferred: e.target.checked })}
+                                className="rounded border-gray-300 text-primary focus:ring-primary" disabled={!isAdmin} />
+                              Preferred supplier
+                            </label>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  <div>
-                    <label className="block text-sm font-medium mb-1">ASIN</label>
-                    <input type="text" value={newAmazonMapping.asin}
-                      onChange={(e) => setNewAmazonMapping({ ...newAmazonMapping, asin: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                      placeholder="e.g., B07XYZ1234" required disabled={!isAdmin} />
-                    <p className="text-xs text-muted-foreground mt-1">Select from search results above or enter an ASIN directly.</p>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Pack Size</label>
-                      <input type="number" min="1" value={newAmazonMapping.pack_size}
-                        onChange={(e) => setNewAmazonMapping({ ...newAmazonMapping, pack_size: e.target.value })}
-                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                        placeholder="e.g., 12" disabled={!isAdmin} />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Order Unit</label>
-                      <input type="text" value={newAmazonMapping.order_unit}
-                        onChange={(e) => setNewAmazonMapping({ ...newAmazonMapping, order_unit: e.target.value })}
-                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                        placeholder="e.g., case" disabled={!isAdmin} />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Inventory Unit</label>
-                      <input type="text" value={newAmazonMapping.inventory_unit}
-                        onChange={(e) => setNewAmazonMapping({ ...newAmazonMapping, inventory_unit: e.target.value })}
-                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                        placeholder="e.g., each" disabled={!isAdmin} />
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Pack size and unit conversions help calculate correct order quantities (e.g., 1 case = 12 each).</p>
-
                   <div className="flex items-center gap-2">
-                    <button type="submit" disabled={amazonMappingSaving}
+                    <button type="submit" disabled={amazonMappingSaving || !resolvedAsin || !newMappingForm.catalog_item_id}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm">
                       {amazonMappingSaving ? 'Saving...' : 'Save Mapping'}
                     </button>
-                    <button type="button" onClick={() => { setShowAmazonAddMapping(false); setAmazonMappingError(''); setAmazonSearchResults([]); setAmazonSearchQuery(''); }}
+                    <button type="button" onClick={() => { setShowAmazonAddMapping(false); setAmazonMappingError(''); setResolvedAsin(null); setAsinInput(''); }}
                       className="px-4 py-2 border rounded-md hover:bg-gray-50 text-sm">Cancel</button>
                   </div>
                   {amazonMappingError && (
@@ -989,7 +1020,7 @@ export default function IntegrationsPage() {
                 </form>
               )}
 
-              {/* Amazon Mappings Table */}
+              {/* Mappings Table */}
               {amazonMappingsLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -997,32 +1028,52 @@ export default function IntegrationsPage() {
               ) : amazonMappings.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Link className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">No ASIN mappings yet.</p>
-                  <p className="text-xs mt-1">Add mappings to link catalog items to Amazon products for procurement ordering.</p>
+                  <p className="text-sm">No product mappings yet.</p>
+                  <p className="text-xs mt-1">Map your inventory items to Amazon products to enable procurement ordering.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 font-medium text-muted-foreground">Catalog Item</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Inventory Item</th>
                         <th className="pb-2 font-medium text-muted-foreground">ASIN</th>
-                        <th className="pb-2 font-medium text-muted-foreground">Pack</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Pack Qty</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Price</th>
                         <th className="pb-2 font-medium text-muted-foreground w-10"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {amazonMappings.map((m) => (
-                        <tr key={m.id} className="border-b last:border-0">
-                          <td className="py-2.5">{m.catalog_item_label}</td>
-                          <td className="py-2.5 font-mono text-xs">{m.external_product_id}</td>
-                          <td className="py-2.5 text-xs text-muted-foreground">
-                            {m.pack_size ? `${m.pack_size} ${m.inventory_unit || 'ea'}/${m.order_unit || 'pack'}` : '—'}
+                        <tr key={m.id} className={`border-b last:border-0 ${!m.active ? 'opacity-50' : ''}`}>
+                          <td className="py-2.5">
+                            <div>{m.item_name || m.catalog_item_id}</div>
+                            {m.item_sku && <div className="text-xs text-muted-foreground font-mono">{m.item_sku}</div>}
+                            {m.is_preferred && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 mt-0.5">Preferred</span>}
+                          </td>
+                          <td className="py-2.5">
+                            <a href={`https://www.amazon.com/dp/${m.supplier_sku}`} target="_blank" rel="noopener noreferrer"
+                              className="font-mono text-xs text-primary hover:underline inline-flex items-center gap-1">
+                              {m.supplier_sku} <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </td>
+                          <td className="py-2.5 text-xs">{m.pack_quantity}</td>
+                          <td className="py-2.5 text-xs">
+                            {m.last_known_price != null ? (
+                              <div>
+                                <span className="font-medium">${Number(m.last_known_price).toFixed(2)}</span>
+                                {m.price_checked_at && (
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {new Date(m.price_checked_at).toLocaleDateString()}
+                                  </div>
+                                )}
+                              </div>
+                            ) : '—'}
                           </td>
                           <td className="py-2.5">
                             {isAdmin && (
                               <button onClick={() => handleAmazonDeleteMapping(m.id)}
-                                className="p-1 text-muted-foreground hover:text-red-600" title="Delete mapping">
+                                className="p-1 text-muted-foreground hover:text-red-600" title="Remove mapping">
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             )}
@@ -1036,8 +1087,175 @@ export default function IntegrationsPage() {
             </div>
           </div>
         )}
+
+        {/* Amazon Business Punchout Orders */}
+        {amazonStatus === 'connected' && (
+          <div className="bg-white rounded-lg border">
+            <div className="flex items-center justify-between p-6 border-b">
+              <div className="flex items-center gap-3">
+                <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <h3 className="text-lg font-semibold">Punchout Orders</h3>
+                  <p className="text-sm text-muted-foreground">Amazon Business cXML punchout order sessions</p>
+                </div>
+              </div>
+              <button onClick={loadPunchoutOrders} disabled={punchoutOrdersLoading}
+                className="px-3 py-1.5 border rounded-md hover:bg-gray-50 disabled:opacity-50 text-sm">
+                {punchoutOrdersLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            <div className="p-6">
+              {/* Cart Review Modal (shown after POOM return) */}
+              {punchoutReviewOrder && (
+                <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-orange-900">Amazon Cart Ready for Submission</h4>
+                    <PunchoutStatusBadge status={punchoutReviewOrder.status} />
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="pb-2 font-medium text-orange-800">ASIN</th>
+                          <th className="pb-2 font-medium text-orange-800">Description</th>
+                          <th className="pb-2 font-medium text-orange-800">Qty</th>
+                          <th className="pb-2 font-medium text-orange-800">Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(punchoutReviewOrder.poom_items || []).map((item: any, idx: number) => (
+                          <tr key={idx} className="border-b last:border-0">
+                            <td className="py-2 font-mono text-xs">{item.supplier_sku}</td>
+                            <td className="py-2 text-xs truncate max-w-48">{item.description || '—'}</td>
+                            <td className="py-2 text-xs">{item.quantity}</td>
+                            <td className="py-2 text-xs font-medium">${Number(item.unit_price).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {punchoutReviewOrder.poom_total && (
+                    <div className="text-right font-semibold text-orange-900">
+                      Total: ${Number(punchoutReviewOrder.poom_total).toFixed(2)}
+                    </div>
+                  )}
+                  {punchoutReviewOrder.status === 'cart_returned' && (
+                    <div className="space-y-3 pt-2 border-t border-orange-200">
+                      {punchoutReviewOrder.shipping_address && (
+                        <div className="text-xs text-orange-800">
+                          <span className="font-medium">Ship to:</span>{' '}
+                          {punchoutReviewOrder.shipping_address.name}, {punchoutReviewOrder.shipping_address.address_line_1}, {punchoutReviewOrder.shipping_address.city}, {punchoutReviewOrder.shipping_address.state} {punchoutReviewOrder.shipping_address.postal_code}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => {
+                            const locationId = punchoutReviewOrder.metadata?.location_id;
+                            if (!locationId) { setAmazonError('No delivery location set for this order. Please start a new punchout session.'); return; }
+                            handlePunchoutSubmit(punchoutReviewOrder.id, locationId);
+                          }}
+                          disabled={punchoutSubmitting}
+                          className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 text-sm font-medium">
+                          {punchoutSubmitting ? 'Submitting...' : 'Submit Order to Amazon'}
+                        </button>
+                        <button onClick={() => { setPunchoutReviewId(null); setPunchoutReviewOrder(null); }}
+                          className="px-4 py-2 border rounded-md hover:bg-gray-50 text-sm">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Orders Table */}
+              {punchoutOrdersLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : punchoutOrders.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No punchout orders yet.</p>
+                  <p className="text-xs mt-1">Punchout orders are created when you approve a replenishment suggestion for an Amazon-sourced item.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-2 font-medium text-muted-foreground">Date</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Status</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Items</th>
+                        <th className="pb-2 font-medium text-muted-foreground">Total</th>
+                        <th className="pb-2 font-medium text-muted-foreground w-20"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {punchoutOrders.map((o: any) => (
+                        <tr key={o.id} className="border-b last:border-0">
+                          <td className="py-2.5 text-xs">{new Date(o.created_at).toLocaleDateString()}</td>
+                          <td className="py-2.5"><PunchoutStatusBadge status={o.status} /></td>
+                          <td className="py-2.5 text-xs">{(o.items || []).length} items</td>
+                          <td className="py-2.5 text-xs font-medium">
+                            {o.total_cost != null ? `$${Number(o.total_cost).toFixed(2)}` : o.poom_total != null ? `$${Number(o.poom_total).toFixed(2)}` : '—'}
+                          </td>
+                          <td className="py-2.5">
+                            {o.status === 'cart_returned' && (
+                              <button
+                                onClick={async () => {
+                                  const res = await fetch(`${AMAZON_API}/punchout/orders?id=${o.id}`);
+                                  const json = await res.json();
+                                  if (json?.data) {
+                                    setPunchoutReviewOrder(json.data);
+                                    setPunchoutReviewId(o.id);
+                                  }
+                                }}
+                                className="px-2 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700">
+                                Review
+                              </button>
+                            )}
+                            {o.error_message && (
+                              <span className="text-xs text-red-600" title={o.error_message}>Error</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
+  );
+}
+
+function PunchoutStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    pending: 'bg-gray-100 text-gray-700',
+    punchout_started: 'bg-blue-100 text-blue-700',
+    cart_returned: 'bg-orange-100 text-orange-700',
+    submitted: 'bg-green-100 text-green-700',
+    confirmed: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700',
+    failed: 'bg-red-100 text-red-700',
+  };
+  const labels: Record<string, string> = {
+    pending: 'Pending',
+    punchout_started: 'Shopping',
+    cart_returned: 'Cart Ready',
+    submitted: 'Submitted',
+    confirmed: 'Confirmed',
+    rejected: 'Rejected',
+    failed: 'Failed',
+  };
+  return (
+    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${styles[status] || 'bg-gray-100 text-gray-700'}`}>
+      {labels[status] || status}
+    </span>
   );
 }
 

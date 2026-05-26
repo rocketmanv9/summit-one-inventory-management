@@ -1,18 +1,16 @@
 /**
  * Amazon Business Cost Estimate API
- * POST — estimate cost for items + location without placing an order
+ * POST — estimate cost for items + location
+ *
+ * Stubbed: the SP-API cart-based cost estimation has been removed. Cost
+ * estimation for cXML orders will be based on mapped unit prices and
+ * pack quantities. Real-time pricing requires the cXML integration guide.
  */
-import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
+import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
-import {
-  resolveAmazonBusinessConfig,
-  createCart,
-  addCartItems,
-  getCostEstimate,
-  type AmazonShippingAddress,
-} from '@/lib/integrations/amazon-business';
+import { resolveCxmlCredentials, roundToPackQuantity } from '@/lib/integrations/amazon-business';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -26,89 +24,81 @@ const EstimateSchema = z.object({
   location_id: z.string().uuid(),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
+export const POST = createSessionReadRoute(async ({ session, req }) => {
   const body = EstimateSchema.parse(await req.json());
   const adminClient = getAdminClient();
 
-  // Resolve Amazon config
-  const config = await resolveAmazonBusinessConfig(adminClient, ctx.tenantId!);
+  const cxmlConfig = await resolveCxmlCredentials(adminClient, session.tenantId!);
   const prov = (adminClient as any).schema('provisioning');
   const inv = (adminClient as any).schema('inventory');
 
-  // Resolve ASIN mappings
   const catalogItemIds = body.items.map((i) => i.catalog_item_id);
 
   const { data: mappings, error: mappingError } = await prov
     .from('provider_item_mappings')
-    .select('catalog_item_id, external_product_id')
-    .eq('tenant_id', ctx.tenantId!)
-    .eq('provider_id', config.providerId)
+    .select('catalog_item_id, external_product_id, unit_cost, metadata')
+    .eq('tenant_id', session.tenantId!)
+    .eq('provider_id', cxmlConfig.providerId)
     .in('catalog_item_id', catalogItemIds)
     .limit(100);
 
   if (mappingError) throw AppError.internal(mappingError.message);
 
-  const mappingMap = new Map<string, string>(
-    (mappings || []).map((m: any) => [m.catalog_item_id, m.external_product_id])
+  const mappingMap = new Map<string, { supplierSku: string; unitCost: number | null; packQuantity: number }>(
+    (mappings || []).map((m: any) => [m.catalog_item_id, {
+      supplierSku: m.external_product_id,
+      unitCost: m.unit_cost,
+      packQuantity: m.metadata?.pack_size ?? 1,
+    }])
   );
 
   const unmapped = body.items.filter((i) => !mappingMap.has(i.catalog_item_id));
   if (unmapped.length > 0) {
     throw AppError.badRequest(
-      `No Amazon ASIN mapping for items: ${unmapped.map((i) => i.catalog_item_id).join(', ')}`
+      `No supplier SKU mapping for items: ${unmapped.map((i) => i.catalog_item_id).join(', ')}`
     );
   }
 
-  // Load location
   const { data: location, error: locError } = await inv
     .from('locations')
-    .select('id, name, address_line_1, address_line_2, city, state, postal_code, country')
+    .select('id, name')
     .eq('id', body.location_id)
-    .eq('tenant_id', ctx.tenantId!)
+    .eq('tenant_id', session.tenantId!)
     .limit(1)
     .single();
 
   if (locError || !location) throw AppError.notFound('Delivery location not found');
 
-  if (!location.address_line_1 || !location.city || !location.state || !location.postal_code) {
-    throw AppError.badRequest(
-      `Location "${location.name}" is missing structured address fields. Update in Inventory > Locations.`
-    );
-  }
-
-  const shippingAddress: AmazonShippingAddress = {
-    name: location.name,
-    address_line_1: location.address_line_1,
-    address_line_2: location.address_line_2 || undefined,
-    city: location.city,
-    state: location.state,
-    postal_code: location.postal_code,
-    country: location.country || 'US',
-  };
-
-  // Create temp cart + add items + get estimate
-  const cartItems = body.items.map((item) => ({
-    asin: mappingMap.get(item.catalog_item_id)!,
-    quantity: item.qty,
-  }));
-
-  const cartId = await createCart(config);
-  await addCartItems(config, cartId, cartItems);
-  const estimate = await getCostEstimate(config, cartId, shippingAddress);
-
-  log.info('amazon.cost_estimate.fetched', {
-    cartId,
-    itemCount: cartItems.length,
-    total: estimate.total,
+  const lineEstimates = body.items.map((item) => {
+    const mapping = mappingMap.get(item.catalog_item_id)!;
+    const roundedQty = roundToPackQuantity(item.qty, mapping.packQuantity);
+    const lineTotal = mapping.unitCost ? mapping.unitCost * roundedQty : null;
+    return {
+      catalog_item_id: item.catalog_item_id,
+      supplier_sku: mapping.supplierSku,
+      requested_qty: item.qty,
+      order_qty: roundedQty,
+      pack_quantity: mapping.packQuantity,
+      unit_price: mapping.unitCost,
+      line_total: lineTotal,
+    };
   });
 
-  return {
+  const subtotal = lineEstimates.reduce((sum, l) => sum + (l.line_total ?? 0), 0);
+
+  return Response.json({
     data: {
-      estimate,
+      estimate: {
+        subtotal,
+        shipping: null,
+        tax: null,
+        total: null,
+        currency: 'USD',
+        note: 'Estimate based on mapped unit prices. Shipping and tax are not available until cXML order submission is implemented.',
+        items: lineEstimates,
+      },
       location: { id: location.id, name: location.name },
-      items_count: cartItems.length,
+      items_count: lineEstimates.length,
     },
-    status: 200,
-    events: [],
-  };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/cost-estimate' });
+  });
+}, { serviceName: SERVICE_NAME });

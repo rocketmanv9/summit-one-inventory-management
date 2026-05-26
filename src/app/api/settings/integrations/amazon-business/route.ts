@@ -1,21 +1,21 @@
 /**
- * Amazon Business Integration API
- * GET  — check if Amazon Business is connected
- * POST — connect/update Amazon Business credentials
+ * Amazon Business cXML Integration API
+ * GET  — check if Amazon Business cXML is configured
+ * POST — save/update cXML credentials (From Identity, Shared Secret, URLs)
  * DELETE — disconnect Amazon Business
  */
 import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
-import { validateConnection } from '@/lib/integrations/amazon-business';
+import { validateCxmlConfig } from '@/lib/integrations/amazon-business';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 // ── Vault helpers ────────────────────────────────────────────────────────
 
 function secretName(tenantId: string, providerId: string, key: string): string {
-  return `amazon-biz-${key}-${tenantId}-${providerId}`;
+  return `amazon-cxml-${key}-${tenantId}-${providerId}`;
 }
 
 async function storeSecret(
@@ -27,17 +27,6 @@ async function storeSecret(
   return name;
 }
 
-async function resolveSecret(adminClient: any, ref: string): Promise<string> {
-  const { data } = await adminClient
-    .from('decrypted_secrets')
-    .select('decrypted_secret')
-    .eq('name', ref)
-    .limit(1)
-    .single();
-  if (!data?.decrypted_secret) throw AppError.internal('Secret not found in vault');
-  return data.decrypted_secret;
-}
-
 // ── GET: Check connection status ─────────────────────────────────────────
 
 export const GET = createSessionReadRoute(async ({ session }) => {
@@ -46,7 +35,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
 
   const { data } = await prov
     .from('providers')
-    .select('id, display_name, provider_key, provider_type, config, is_active, last_event_id')
+    .select('id, display_name, provider_key, provider_type, config, is_active, integration_mode, last_event_id')
     .eq('tenant_id', session.tenantId!)
     .eq('provider_type', 'procurement_marketplace')
     .like('provider_key', 'amazon-business%')
@@ -54,32 +43,37 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     .maybeSingle();
 
   if (!data) {
-    return Response.json({ data: { connected: false, needs_authorization: false } });
+    return Response.json({ data: { connected: false, configured: false } });
   }
+
+  const hasCredentials = !!(data.config?.from_identity_ref && data.config?.shared_secret_ref);
+  const hasPoUrl = !!data.config?.po_request_url;
 
   return Response.json({
     data: {
-      connected: data.is_active,
+      connected: data.is_active && hasCredentials,
+      configured: hasCredentials && hasPoUrl,
       provider_id: data.id,
-      application_id: data.config?.application_id || null,
-      sandbox: data.config?.sandbox || false,
-      needs_authorization: !!(data.config?.client_id_ref && !data.config?.refresh_token_ref),
+      integration_mode: data.integration_mode ?? 'test',
+      sandbox: data.config?.sandbox ?? true,
+      po_request_url_set: hasPoUrl,
+      punchout_urls: data.config?.punchout_urls ?? [],
       last_event_id: data.last_event_id,
     },
   });
 }, { serviceName: SERVICE_NAME });
 
-// ── POST: Connect or update Amazon Business ──────────────────────────────
+// ── POST: Save or update cXML credentials ────────────────────────────────
 
 const ConnectSchema = z.object({
-  application_id: z.string().min(1).optional(),
-  client_id: z.string().min(1),
-  client_secret: z.string().min(1),
-  refresh_token: z.string().min(1).optional().or(z.literal('')).transform(v => v || undefined),
-  sandbox: z.boolean().optional(),
+  from_identity: z.string().min(1),
+  shared_secret: z.string().min(1),
+  po_request_url: z.string().url(),
+  punchout_urls: z.array(z.string().url()).optional().default([]),
+  sandbox: z.boolean().optional().default(true),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey }) => {
   const body = ConnectSchema.parse(await req.json());
   const adminClient = getAdminClient();
   const prov = (adminClient as any).schema('provisioning');
@@ -95,58 +89,45 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     .maybeSingle();
 
   if (existing) {
-    // Update existing — store client_id + client_secret always
-    const clientIdRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'client-id', body.client_id);
-    const clientSecretRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'client-secret', body.client_secret);
+    const fromIdentityRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'from-identity', body.from_identity);
+    const sharedSecretRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'shared-secret', body.shared_secret);
 
-    // Only store refresh_token if provided (otherwise keep existing ref)
-    let refreshTokenRef = existing.config?.refresh_token_ref;
-    if (body.refresh_token) {
-      refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'refresh-token', body.refresh_token);
-    }
-
-    const hasRefreshToken = !!refreshTokenRef;
     const config = {
       ...existing.config,
-      application_id: body.application_id || existing.config?.application_id,
-      sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
-      client_id_ref: clientIdRef,
-      client_secret_ref: clientSecretRef,
-      ...(refreshTokenRef ? { refresh_token_ref: refreshTokenRef } : {}),
+      sandbox: body.sandbox,
+      from_identity_ref: fromIdentityRef,
+      shared_secret_ref: sharedSecretRef,
+      po_request_url: body.po_request_url,
+      punchout_urls: body.punchout_urls,
     };
+
+    // Remove stale OAuth refs if they exist from the old SP-API integration
+    delete config.client_id_ref;
+    delete config.client_secret_ref;
+    delete config.refresh_token_ref;
+    delete config.application_id;
 
     const { error } = await prov
       .from('providers')
-      .update({ config, is_active: hasRefreshToken, last_event_id: idempotencyKey })
+      .update({ config, is_active: true, last_event_id: idempotencyKey })
       .eq('id', existing.id);
 
     if (error) throw AppError.internal(error.message);
 
-    // Validate connection only if we have all three credentials
-    let valid = false;
-    if (body.refresh_token) {
-      valid = await validateConnection({
-        clientId: body.client_id,
-        clientSecret: body.client_secret,
-        refreshToken: body.refresh_token,
-        sandbox: body.sandbox ?? existing.config?.sandbox ?? false,
-      });
-    }
+    const valid = await validateCxmlConfig(adminClient, ctx.tenantId!);
 
     return {
       data: {
-        connected: hasRefreshToken,
-        valid,
+        connected: true,
+        configured: valid,
         provider_id: existing.id,
-        needs_authorization: !hasRefreshToken,
       },
       status: 200,
-      events: [{ event_name: 'integration.updated', payload: { provider: 'amazon-business' }, last_event_id: idempotencyKey }],
+      events: [{ event_name: 'integration.updated', payload: { provider: 'amazon-business', mechanism: 'cxml' }, last_event_id: idempotencyKey }],
     };
   }
 
-  // Create new — provider starts inactive until refresh_token is obtained via OAuth
-  const hasRefreshToken = !!body.refresh_token;
+  // Create new provider — always starts in test mode
   const { data: provider, error } = await prov
     .from('providers')
     .upsert({
@@ -154,10 +135,15 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       provider_key: 'amazon-business-main',
       display_name: 'Amazon Business',
       provider_type: 'procurement_marketplace',
-      config: { application_id: body.application_id, sandbox: body.sandbox ?? false },
+      config: {
+        sandbox: body.sandbox,
+        po_request_url: body.po_request_url,
+        punchout_urls: body.punchout_urls,
+      },
       capabilities: ['procurement', 'marketplace'],
       priority: 100,
-      is_active: hasRefreshToken,
+      is_active: true,
+      integration_mode: 'test',
       last_event_id: idempotencyKey,
     }, { onConflict: 'last_event_id' })
     .select()
@@ -165,47 +151,30 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (error) throw AppError.internal(error.message);
 
-  // Store secrets in Vault
-  const clientIdRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'client-id', body.client_id);
-  const clientSecretRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'client-secret', body.client_secret);
-
-  let refreshTokenRef: string | undefined;
-  if (body.refresh_token) {
-    refreshTokenRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'refresh-token', body.refresh_token);
-  }
+  const fromIdentityRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'from-identity', body.from_identity);
+  const sharedSecretRef = await storeSecret(adminClient, ctx.tenantId!, provider.id, 'shared-secret', body.shared_secret);
 
   await prov
     .from('providers')
     .update({
       config: {
         ...provider.config,
-        client_id_ref: clientIdRef,
-        client_secret_ref: clientSecretRef,
-        ...(refreshTokenRef ? { refresh_token_ref: refreshTokenRef } : {}),
+        from_identity_ref: fromIdentityRef,
+        shared_secret_ref: sharedSecretRef,
       },
     })
     .eq('id', provider.id);
 
-  // Validate connection only if we have all credentials
-  let valid = false;
-  if (body.refresh_token) {
-    valid = await validateConnection({
-      clientId: body.client_id,
-      clientSecret: body.client_secret,
-      refreshToken: body.refresh_token,
-      sandbox: body.sandbox ?? false,
-    });
-  }
+  const valid = await validateCxmlConfig(adminClient, ctx.tenantId!);
 
   return {
     data: {
-      connected: hasRefreshToken,
-      valid,
+      connected: true,
+      configured: valid,
       provider_id: provider.id,
-      needs_authorization: !hasRefreshToken,
     },
     status: 201,
-    events: [{ event_name: 'integration.created', payload: { provider: 'amazon-business' }, last_event_id: idempotencyKey }],
+    events: [{ event_name: 'integration.created', payload: { provider: 'amazon-business', mechanism: 'cxml' }, last_event_id: idempotencyKey }],
   };
 }, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business' });
 
@@ -229,8 +198,10 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
 
   if (!existing) throw AppError.notFound('No Amazon Business connection found');
 
-  // Clean up secrets from Vault
+  // Clean up all secrets from Vault (both old OAuth refs and new cXML refs)
   const refs = [
+    existing.config?.from_identity_ref,
+    existing.config?.shared_secret_ref,
     existing.config?.client_id_ref,
     existing.config?.client_secret_ref,
     existing.config?.refresh_token_ref,
@@ -239,7 +210,6 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
     await adminClient.rpc('delete_secret_by_name', { secret_name: ref });
   }
 
-  // Delete the provider record entirely so UI returns to credential entry
   await prov
     .from('providers')
     .delete()

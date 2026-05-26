@@ -1,33 +1,25 @@
 /**
- * Amazon Business API Client
+ * Amazon Business cXML Integration
  *
- * Standalone HTTP client for Amazon Business integration.
- * Handles OAuth token management (LWA), product search, cart/order placement,
- * and config resolution from Vault.
+ * Per-tenant cXML credentials (From Identity, Shared Secret, Punchout URLs,
+ * PO Request URL). Orders are cXML OrderRequests POSTed to the tenant's
+ * PO request URL. Actual cXML document format is stubbed pending the
+ * Amazon Business integration guide.
  */
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-export interface AmazonBusinessConfig {
-  clientId: string;
-  clientSecret: string;
-  refreshToken: string;
-  applicationId?: string;
-  sandbox?: boolean;
+export interface CxmlCredentials {
+  fromIdentity: string;
+  sharedSecret: string;
+  punchoutUrls: string[];
+  poRequestUrl: string;
+  sandbox: boolean;
 }
 
-export interface AmazonProduct {
-  asin: string;
-  title: string;
-  price?: { amount: number; currency: string };
-  availability?: string;
-  imageUrl?: string;
-  [key: string]: unknown;
-}
-
-export interface AmazonShippingAddress {
+export interface ShippingAddress {
   name: string;
   address_line_1: string;
   address_line_2?: string;
@@ -37,330 +29,77 @@ export interface AmazonShippingAddress {
   country: string;
 }
 
-export interface AmazonCartItem {
-  asin: string;
+export interface OrderLineItem {
+  supplier_sku: string;
   quantity: number;
+  unit_price?: number;
+  description?: string;
+  pack_quantity: number;
 }
 
-export interface AmazonCostEstimate {
-  subtotal: number;
-  shipping: number;
-  tax: number;
-  total: number;
-  currency: string;
-  items: Array<{ asin: string; unit_price: number; quantity: number; line_total: number }>;
+export interface PlaceOrderRequest {
+  credentials: CxmlCredentials;
+  lineItems: OrderLineItem[];
+  shipTo: ShippingAddress;
+  poReferenceNumber: string;
 }
 
-export interface AmazonOrder {
-  amazon_order_id: string;
-  cart_id?: string;
-  status: string;
-  items: AmazonCartItem[];
-  shipping_address: AmazonShippingAddress;
-  cost_estimate?: AmazonCostEstimate;
-  total_cost?: number;
-  tracking_info?: {
-    carrier?: string;
-    tracking_number?: string;
-    estimated_delivery?: string;
-  };
-  [key: string]: unknown;
+export interface PlaceOrderResult {
+  externalOrderId: string;
+  status: 'submitted' | 'pending';
+  submittedAt: string;
 }
 
-// ── Token Management ───────────────────────────────────────────────────
+// ── Pack Quantity Rounding ─────────────────────────────────────────────
 
-const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
-
-function getBaseUrl(sandbox?: boolean): string {
-  return sandbox
-    ? 'https://sandbox.na.business-api.amazon.com'
-    : 'https://na.business-api.amazon.com';
+export function roundToPackQuantity(requestedQty: number, packQuantity: number): number {
+  if (packQuantity <= 1) return Math.max(1, Math.ceil(requestedQty));
+  return Math.ceil(requestedQty / packQuantity) * packQuantity;
 }
 
-interface CachedToken {
-  accessToken: string;
-  expiresAt: number;
-}
-
-const tokenCache = new Map<string, CachedToken>();
+// ── Stubbed Order Placement ───────────────────────────────────────────
 
 /**
- * Refresh the LWA access token. Caches with ~55min TTL.
+ * Place an order via cXML OrderRequest.
+ *
+ * Currently a stub — the actual cXML document format will be implemented
+ * once the Amazon Business cXML integration guide is provided. The
+ * OrderRequest will POST to `credentials.poRequestUrl` with the From
+ * Identity + Shared Secret in the cXML header and one ItemOut per line
+ * keyed by supplier_sku (ASIN) + quantity + ship-to.
  */
-export async function refreshAccessToken(config: AmazonBusinessConfig): Promise<string> {
-  const cacheKey = `${config.clientId}:${config.refreshToken.slice(-8)}`;
-  const cached = tokenCache.get(cacheKey);
-
-  if (cached && Date.now() < cached.expiresAt) {
-    return cached.accessToken;
+export async function placeOrder(request: PlaceOrderRequest): Promise<PlaceOrderResult> {
+  if (!request.credentials.poRequestUrl) {
+    throw AppError.badRequest('PO Request URL is not configured. Update cXML credentials in Settings > Integrations.');
   }
 
-  const res = await fetch(LWA_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      refresh_token: config.refreshToken,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon LWA token refresh failed (${res.status}): ${body}`);
+  if (request.lineItems.length === 0) {
+    throw AppError.badRequest('Order must contain at least one line item.');
   }
 
-  const data = await res.json();
-  const accessToken = data.access_token as string;
-  const expiresIn = (data.expires_in as number) || 3600;
-
-  // Cache with 5-minute buffer
-  tokenCache.set(cacheKey, {
-    accessToken,
-    expiresAt: Date.now() + (expiresIn - 300) * 1000,
-  });
-
-  return accessToken;
+  // TODO: Build and POST cXML OrderRequest document.
+  // Waiting on Amazon Business cXML integration guide PDF.
+  throw AppError.internal(
+    'cXML OrderRequest submission is not yet implemented. ' +
+    'The integration is in test mode — order document format pending Amazon Business integration guide.'
+  );
 }
 
-// ── HTTP Helper ────────────────────────────────────────────────────────
-
-async function amazonBusinessFetch(
-  config: AmazonBusinessConfig,
-  path: string,
-  options: RequestInit = {},
-  retries = 3
-): Promise<Response> {
-  const accessToken = await refreshAccessToken(config);
-  const url = `${getBaseUrl(config.sandbox)}${path}`;
-
-  for (let attempt = 0; attempt < retries; attempt++) {
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'x-amz-user-email': '', // Required header — populated at call site if needed
-        ...options.headers,
-      },
-    });
-
-    // Retry on 429 with exponential backoff
-    if (res.status === 429 && attempt < retries - 1) {
-      const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      continue;
-    }
-
-    return res;
-  }
-
-  // Should not reach here, but TypeScript needs it
-  throw AppError.internal('Amazon Business API: max retries exceeded');
-}
-
-// ── API Functions ──────────────────────────────────────────────────────
-
-/** Search for products on Amazon Business */
-export async function searchProducts(
-  config: AmazonBusinessConfig,
-  query: string,
-  limit = 20
-): Promise<AmazonProduct[]> {
-  const params = new URLSearchParams({ keywords: query, pageSize: String(limit) });
-  const res = await amazonBusinessFetch(config, `/products/search?${params}`);
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon product search failed (${res.status}): ${body}`);
-  }
-
-  const data = await res.json();
-  return (data.products || data.items || []).map((p: any) => ({
-    asin: p.asin || p.ASIN,
-    title: p.title || p.itemName || '',
-    price: p.price ? { amount: p.price.amount, currency: p.price.currency || 'USD' } : undefined,
-    availability: p.availability || p.availabilityType,
-    imageUrl: p.imageUrl || p.mainImageUrl,
-  }));
-}
-
-/** Get a single product by ASIN */
-export async function getProduct(
-  config: AmazonBusinessConfig,
-  asin: string
-): Promise<AmazonProduct> {
-  const res = await amazonBusinessFetch(config, `/products/${asin}`);
-
-  if (!res.ok) {
-    throw AppError.internal(`Amazon product lookup failed for ${asin}: ${res.status}`);
-  }
-
-  const p = await res.json();
-  return {
-    asin: p.asin || p.ASIN || asin,
-    title: p.title || p.itemName || '',
-    price: p.price ? { amount: p.price.amount, currency: p.price.currency || 'USD' } : undefined,
-    availability: p.availability || p.availabilityType,
-    imageUrl: p.imageUrl || p.mainImageUrl,
-  };
-}
-
-/** Create an empty cart */
-export async function createCart(
-  config: AmazonBusinessConfig
-): Promise<string> {
-  const res = await amazonBusinessFetch(config, '/purchasing/carts', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon cart creation failed (${res.status}): ${body}`);
-  }
-
-  const data = await res.json();
-  return data.cartId || data.id;
-}
-
-/** Add items to cart */
-export async function addCartItems(
-  config: AmazonBusinessConfig,
-  cartId: string,
-  items: AmazonCartItem[]
-): Promise<void> {
-  const res = await amazonBusinessFetch(config, `/purchasing/carts/${cartId}/items`, {
-    method: 'POST',
-    body: JSON.stringify({ items: items.map((i) => ({ asin: i.asin, quantity: i.quantity })) }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon add cart items failed (${res.status}): ${body}`);
-  }
-}
-
-/** Get cost estimate for a cart + shipping address */
-export async function getCostEstimate(
-  config: AmazonBusinessConfig,
-  cartId: string,
-  address: AmazonShippingAddress
-): Promise<AmazonCostEstimate> {
-  const res = await amazonBusinessFetch(config, `/purchasing/carts/${cartId}/cost-estimate`, {
-    method: 'POST',
-    body: JSON.stringify({ shippingAddress: address }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon cost estimate failed (${res.status}): ${body}`);
-  }
-
-  const data = await res.json();
-  return {
-    subtotal: data.subtotal?.amount ?? 0,
-    shipping: data.shipping?.amount ?? 0,
-    tax: data.tax?.amount ?? 0,
-    total: data.total?.amount ?? 0,
-    currency: data.total?.currency || 'USD',
-    items: (data.items || []).map((i: any) => ({
-      asin: i.asin,
-      unit_price: i.unitPrice?.amount ?? 0,
-      quantity: i.quantity ?? 0,
-      line_total: i.lineTotal?.amount ?? 0,
-    })),
-  };
-}
-
-/** Place an order from a cart */
-export async function placeOrder(
-  config: AmazonBusinessConfig,
-  cartId: string,
-  address: AmazonShippingAddress,
-  externalId: string
-): Promise<{ orderId: string; status: string }> {
-  const res = await amazonBusinessFetch(config, `/purchasing/carts/${cartId}/place-order`, {
-    method: 'POST',
-    body: JSON.stringify({
-      shippingAddress: address,
-      externalReferenceId: externalId,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => 'unknown error');
-    throw AppError.internal(`Amazon order placement failed (${res.status}): ${body}`);
-  }
-
-  const data = await res.json();
-  return {
-    orderId: data.orderId || data.amazonOrderId || data.id,
-    status: data.status || 'submitted',
-  };
-}
-
-/** Check order status */
-export async function getOrderStatus(
-  config: AmazonBusinessConfig,
-  orderId: string
-): Promise<{ status: string; trackingInfo?: AmazonOrder['tracking_info'] }> {
-  const res = await amazonBusinessFetch(config, `/purchasing/orders/${orderId}`);
-
-  if (!res.ok) {
-    throw AppError.internal(`Amazon order status check failed for ${orderId}: ${res.status}`);
-  }
-
-  const data = await res.json();
-  return {
-    status: data.status || 'unknown',
-    trackingInfo: data.tracking ? {
-      carrier: data.tracking.carrier,
-      tracking_number: data.tracking.trackingNumber,
-      estimated_delivery: data.tracking.estimatedDelivery,
-    } : undefined,
-  };
-}
-
-/** Validate connection by refreshing token and performing a test search */
-export async function validateConnection(
-  config: AmazonBusinessConfig
-): Promise<boolean> {
-  try {
-    await refreshAccessToken(config);
-    // Try a minimal search to verify API access
-    const params = new URLSearchParams({ keywords: 'test', pageSize: '1' });
-    const accessToken = await refreshAccessToken(config);
-    const res = await fetch(`${getBaseUrl(config.sandbox)}/products/search?${params}`, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-// ── Config Resolver ────────────────────────────────────────────────────
+// ── Config Resolution ─────────────────────────────────────────────────
 
 /**
- * Loads the Amazon Business provider record for a tenant and resolves
- * all three secrets (client_id, client_secret, refresh_token) from Vault.
- * Returns a ready-to-use AmazonBusinessConfig.
+ * Loads the Amazon Business provider for a tenant and resolves cXML
+ * credentials from Vault. Returns ready-to-use CxmlCredentials.
  */
-export async function resolveAmazonBusinessConfig(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function resolveCxmlCredentials(
   adminClient: any,
   tenantId: string
-): Promise<AmazonBusinessConfig & { providerId: string }> {
+): Promise<CxmlCredentials & { providerId: string; integrationMode: string }> {
   const prov = (adminClient as any).schema('provisioning');
 
   const { data: provider } = await prov
     .from('providers')
-    .select('id, config, is_active')
+    .select('id, config, is_active, integration_mode')
     .eq('tenant_id', tenantId)
     .eq('provider_type', 'procurement_marketplace')
     .like('provider_key', 'amazon-business%')
@@ -372,15 +111,13 @@ export async function resolveAmazonBusinessConfig(
     throw AppError.badRequest('Amazon Business is not connected. Configure it in Settings > Integrations.');
   }
 
-  const clientIdRef = provider.config?.client_id_ref;
-  const clientSecretRef = provider.config?.client_secret_ref;
-  const refreshTokenRef = provider.config?.refresh_token_ref;
+  const fromIdentityRef = provider.config?.from_identity_ref;
+  const sharedSecretRef = provider.config?.shared_secret_ref;
 
-  if (!clientIdRef || !clientSecretRef || !refreshTokenRef) {
-    throw AppError.internal('Amazon Business provider config is incomplete (missing secret references)');
+  if (!fromIdentityRef || !sharedSecretRef) {
+    throw AppError.internal('Amazon Business provider config is incomplete (missing cXML credential references)');
   }
 
-  // Resolve all three secrets from Vault
   const resolveSecret = async (ref: string): Promise<string> => {
     const { data } = await adminClient
       .from('decrypted_secrets')
@@ -394,18 +131,35 @@ export async function resolveAmazonBusinessConfig(
     return data.decrypted_secret;
   };
 
-  const [clientId, clientSecret, refreshToken] = await Promise.all([
-    resolveSecret(clientIdRef),
-    resolveSecret(clientSecretRef),
-    resolveSecret(refreshTokenRef),
+  const [fromIdentity, sharedSecret] = await Promise.all([
+    resolveSecret(fromIdentityRef),
+    resolveSecret(sharedSecretRef),
   ]);
 
   return {
-    clientId,
-    clientSecret,
-    refreshToken,
-    applicationId: provider.config?.application_id,
-    sandbox: provider.config?.sandbox ?? false,
+    fromIdentity,
+    sharedSecret,
+    punchoutUrls: provider.config?.punchout_urls ?? [],
+    poRequestUrl: provider.config?.po_request_url ?? '',
+    sandbox: provider.config?.sandbox ?? true,
     providerId: provider.id,
+    integrationMode: provider.integration_mode ?? 'test',
   };
+}
+
+/**
+ * Validates that a provider has complete cXML configuration.
+ * Does not call any external service — just checks that all required
+ * credential refs and URLs are present.
+ */
+export async function validateCxmlConfig(
+  adminClient: any,
+  tenantId: string
+): Promise<boolean> {
+  try {
+    const creds = await resolveCxmlCredentials(adminClient, tenantId);
+    return !!(creds.fromIdentity && creds.sharedSecret && creds.poRequestUrl);
+  } catch {
+    return false;
+  }
 }

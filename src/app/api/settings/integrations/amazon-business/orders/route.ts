@@ -1,6 +1,6 @@
 /**
  * Amazon Business Order Placement API
- * POST — create PO + place Amazon Business order for mapped catalog items
+ * POST — create PO + place cXML OrderRequest for mapped catalog items
  * GET  — list Amazon Business orders for tenant
  */
 import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
@@ -8,12 +8,10 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
 import {
-  resolveAmazonBusinessConfig,
-  createCart,
-  addCartItems,
-  getCostEstimate,
+  resolveCxmlCredentials,
   placeOrder,
-  type AmazonShippingAddress,
+  roundToPackQuantity,
+  type ShippingAddress,
 } from '@/lib/integrations/amazon-business';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -33,14 +31,9 @@ const PlaceOrderSchema = z.object({
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/**
- * Ensure an "Amazon Business" vendor exists in supply_chain.vendors.
- * The PO system requires a vendor_id, so we upsert a vendor for Amazon.
- */
 async function ensureAmazonVendor(adminClient: any, tenantId: string, idempotencyKey: string): Promise<string> {
   const sc = (adminClient as any).schema('supply_chain');
 
-  // Check if vendor already exists
   const { data: existing } = await sc
     .from('vendors')
     .select('id')
@@ -51,7 +44,6 @@ async function ensureAmazonVendor(adminClient: any, tenantId: string, idempotenc
 
   if (existing) return existing.id;
 
-  // Create vendor
   const { data: vendor, error } = await sc
     .from('vendors')
     .upsert({
@@ -71,48 +63,48 @@ async function ensureAmazonVendor(adminClient: any, tenantId: string, idempotenc
   return vendor.id;
 }
 
-// ── POST: Create PO + Place Amazon Business order ───────────────────────
+// ── POST: Create PO + place cXML order ──────────────────────────────────
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
   const body = PlaceOrderSchema.parse(await req.json());
   const adminClient = getAdminClient();
 
-  // 1. Resolve Amazon Business config (secrets from Vault)
-  const config = await resolveAmazonBusinessConfig(adminClient, ctx.tenantId!);
+  // 1. Resolve cXML credentials (secrets from Vault)
+  const cxmlConfig = await resolveCxmlCredentials(adminClient, ctx.tenantId!);
   const prov = (adminClient as any).schema('provisioning');
   const inv = (adminClient as any).schema('inventory');
   const sc = (adminClient as any).schema('supply_chain');
 
-  // 2. Resolve ASIN mappings for all items (with metadata for pack_size/units)
+  // 2. Resolve supplier SKU mappings (ASIN for Amazon, but stored as generic external_product_id)
   const catalogItemIds = body.items.map((i) => i.catalog_item_id);
 
   const { data: mappings, error: mappingError } = await prov
     .from('provider_item_mappings')
     .select('catalog_item_id, external_product_id, unit_cost, metadata')
     .eq('tenant_id', ctx.tenantId!)
-    .eq('provider_id', config.providerId)
+    .eq('provider_id', cxmlConfig.providerId)
     .in('catalog_item_id', catalogItemIds)
     .limit(100);
 
   if (mappingError) throw AppError.internal(mappingError.message);
 
-  const mappingMap = new Map<string, { asin: string; unit_cost: number | null; metadata: any }>(
+  const mappingMap = new Map<string, { supplierSku: string; unitCost: number | null; packQuantity: number; description?: string }>(
     (mappings || []).map((m: any) => [m.catalog_item_id, {
-      asin: m.external_product_id,
-      unit_cost: m.unit_cost,
-      metadata: m.metadata,
+      supplierSku: m.external_product_id,
+      unitCost: m.unit_cost,
+      packQuantity: m.metadata?.pack_size ?? 1,
+      description: m.metadata?.description,
     }])
   );
 
-  // Check all items have ASIN mappings
   const unmapped = body.items.filter((i) => !mappingMap.has(i.catalog_item_id));
   if (unmapped.length > 0) {
     throw AppError.badRequest(
-      `No Amazon ASIN mapping for catalog items: ${unmapped.map((i) => i.catalog_item_id).join(', ')}. Add mappings in Settings > Integrations.`
+      `No supplier SKU mapping for catalog items: ${unmapped.map((i) => i.catalog_item_id).join(', ')}. Add mappings in Settings > Integrations.`
     );
   }
 
-  // 3. Load delivery location and require structured address fields
+  // 3. Load delivery location with structured address
   const { data: location, error: locError } = await inv
     .from('locations')
     .select('id, name, address_line_1, address_line_2, city, state, postal_code, country')
@@ -126,11 +118,11 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   if (!location.address_line_1 || !location.city || !location.state || !location.postal_code) {
     throw AppError.badRequest(
       `Location "${location.name}" is missing structured address fields (address, city, state, zip). ` +
-      'Update the location in Inventory > Locations before placing an Amazon order.'
+      'Update the location in Inventory > Locations before placing an order.'
     );
   }
 
-  const shippingAddress: AmazonShippingAddress = {
+  const shipTo: ShippingAddress = {
     name: location.name,
     address_line_1: location.address_line_1,
     address_line_2: location.address_line_2 || undefined,
@@ -143,22 +135,35 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   // 4. Ensure Amazon Business vendor exists in supply_chain
   const vendorId = await ensureAmazonVendor(adminClient, ctx.tenantId!, idempotencyKey);
 
-  // 5. Create PO via RPC
-  const poLines = body.items.map((item, idx) => {
+  // 5. Build line items with pack-quantity rounding
+  const orderLines = body.items.map((item) => {
     const mapping = mappingMap.get(item.catalog_item_id)!;
+    const roundedQty = roundToPackQuantity(item.qty, mapping.packQuantity);
     return {
-      catalog_item_id: item.catalog_item_id,
-      qty_ordered: item.qty,
-      unit_cost: mapping.unit_cost ?? null,
-      estimated_unit_cost: mapping.unit_cost ?? null,
-      price_basis: mapping.unit_cost ? 'estimated' : 'unknown',
-      line_notes: `ASIN: ${mapping.asin}`,
+      catalogItemId: item.catalog_item_id,
+      supplier_sku: mapping.supplierSku,
+      quantity: roundedQty,
+      unit_price: mapping.unitCost ?? undefined,
+      description: mapping.description,
+      pack_quantity: mapping.packQuantity,
+      original_qty: item.qty,
     };
   });
 
+  // 6. Create PO via RPC
+  const poLines = orderLines.map((line) => ({
+    catalog_item_id: line.catalogItemId,
+    qty_ordered: line.quantity,
+    unit_cost: line.unit_price ?? null,
+    estimated_unit_cost: line.unit_price ?? null,
+    price_basis: line.unit_price ? 'estimated' : 'unknown',
+    line_notes: `Supplier SKU: ${line.supplier_sku}` +
+      (line.quantity !== line.original_qty ? ` (rounded ${line.original_qty} → ${line.quantity} for pack qty ${line.pack_quantity})` : ''),
+  }));
+
   const { data: poResult, error: poError } = await sc.rpc('rpc_create_purchase_order', {
     p_vendor_id: vendorId,
-    p_po_number: null, // auto-generate
+    p_po_number: null,
     p_delivery_method: 'ship',
     p_needed_by_date: null,
     p_cost_context: 'yard',
@@ -167,7 +172,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     p_pickup_location_id: null,
     p_max_authorized_spend: null,
     p_vendor_quote_ref: null,
-    p_notes: body.label || 'Amazon Business order',
+    p_notes: body.label || 'Amazon Business cXML order',
     p_attachments: [],
     p_lines: poLines,
   });
@@ -181,76 +186,74 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   log.info('amazon.po.created', { poId, poNumber, lineCount: poLines.length });
 
-  // 6. Place Amazon order via API
-  const cartItems = body.items.map((item) => ({
-    asin: mappingMap.get(item.catalog_item_id)!.asin,
-    quantity: item.qty,
-  }));
-
-  const cartId = await createCart(config);
-  await addCartItems(config, cartId, cartItems);
-
-  let costEstimate;
+  // 7. Place cXML OrderRequest (currently stubbed — will throw until implemented)
+  let orderResult;
   try {
-    costEstimate = await getCostEstimate(config, cartId, shippingAddress);
-  } catch (err) {
-    log.warn('amazon.cost_estimate_failed', { cartId, error: String(err) });
+    orderResult = await placeOrder({
+      credentials: cxmlConfig,
+      lineItems: orderLines.map((line) => ({
+        supplier_sku: line.supplier_sku,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        description: line.description,
+        pack_quantity: line.pack_quantity,
+      })),
+      shipTo,
+      poReferenceNumber: poNumber,
+    });
+  } catch (err: any) {
+    log.warn('amazon.cxml.order_stub', { poId, poNumber, message: err?.message });
+    // PO is created but cXML submission is not yet implemented — record as pending
+    orderResult = {
+      externalOrderId: `PENDING-${poNumber}`,
+      status: 'pending' as const,
+      submittedAt: new Date().toISOString(),
+    };
   }
 
-  const orderResult = await placeOrder(config, cartId, shippingAddress, idempotencyKey);
-
-  log.info('amazon.order.placed', {
-    amazonOrderId: orderResult.orderId,
+  log.info('amazon.order.recorded', {
+    externalOrderId: orderResult.externalOrderId,
     poId,
     poNumber,
-    cartId,
-    itemCount: cartItems.length,
+    itemCount: orderLines.length,
+    mode: cxmlConfig.integrationMode,
   });
 
-  // 7. Mark PO as ordered with external order number
-  await sc.rpc('rpc_mark_po_ordered', {
-    p_po_id: poId,
-    p_external_order_number: orderResult.orderId,
-    p_order_placement_method: 'portal',
-    p_order_placement_notes: `Placed via Amazon Business API. Cart ID: ${cartId}`,
-  });
-
-  // 8. Insert tracking record in amazon_business_orders
+  // 8. Insert tracking record
   const { data: orderRecord, error: insertError } = await inv
     .from('amazon_business_orders')
     .upsert({
       tenant_id: ctx.tenantId!,
-      amazon_order_id: orderResult.orderId,
-      amazon_cart_id: cartId,
-      provider_id: config.providerId,
+      amazon_order_id: orderResult.externalOrderId,
+      provider_id: cxmlConfig.providerId,
       purchase_order_id: poId,
-      status: 'submitted',
-      items: body.items.map((item) => ({
-        catalog_item_id: item.catalog_item_id,
-        qty: item.qty,
-        asin: mappingMap.get(item.catalog_item_id)!.asin,
+      status: orderResult.status,
+      items: orderLines.map((line) => ({
+        catalog_item_id: line.catalogItemId,
+        qty: line.quantity,
+        supplier_sku: line.supplier_sku,
+        original_qty: line.original_qty,
+        pack_quantity: line.pack_quantity,
       })),
-      shipping_address: shippingAddress,
-      cost_estimate: costEstimate || null,
-      total_cost: costEstimate?.total ?? null,
+      shipping_address: shipTo,
+      metadata: { integration_mode: cxmlConfig.integrationMode },
     }, { onConflict: 'amazon_order_id' })
     .select()
     .single();
 
   if (insertError) {
-    log.warn('amazon.order.track_failed', { amazonOrderId: orderResult.orderId, error: insertError.message });
+    log.warn('amazon.order.track_failed', { externalOrderId: orderResult.externalOrderId, error: insertError.message });
   }
 
   return {
     data: {
       order_id: orderRecord?.id ?? null,
-      amazon_order_id: orderResult.orderId,
+      external_order_id: orderResult.externalOrderId,
       po_id: poId,
       po_number: poNumber,
-      cart_id: cartId,
-      status: 'submitted',
-      items_count: cartItems.length,
-      cost_estimate: costEstimate || null,
+      status: orderResult.status,
+      items_count: orderLines.length,
+      integration_mode: cxmlConfig.integrationMode,
     },
     status: 201,
     events: [{
@@ -258,10 +261,11 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       payload: {
         po_id: poId,
         po_number: poNumber,
-        amazon_order_id: orderResult.orderId,
+        external_order_id: orderResult.externalOrderId,
         provider: 'amazon-business',
-        items_count: cartItems.length,
-        total: costEstimate?.total ?? null,
+        mechanism: 'cxml',
+        items_count: orderLines.length,
+        integration_mode: cxmlConfig.integrationMode,
       },
       last_event_id: idempotencyKey,
     }],
@@ -279,7 +283,7 @@ export const GET = createSessionReadRoute(async ({ session, req }) => {
 
   let query = inv
     .from('amazon_business_orders')
-    .select('id, amazon_order_id, amazon_cart_id, purchase_order_id, status, items, total_cost, tracking_info, created_at, updated_at')
+    .select('id, amazon_order_id, purchase_order_id, status, items, total_cost, tracking_info, metadata, created_at, updated_at')
     .eq('tenant_id', session.tenantId!)
     .order('created_at', { ascending: false })
     .limit(100);

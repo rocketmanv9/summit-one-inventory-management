@@ -70,8 +70,31 @@ export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }
               onClick={async () => {
                 setCreatingPO(item.catalog_item_id);
                 try {
-                  // This would need an alert_id in real usage; shown as placeholder
-                  alert(`Draft PO suggestion: Order ${Math.round(item.suggested_order_qty)} ${item.sku} from ${item.preferred_vendor_name || 'preferred vendor'}`);
+                  const isAmazon = item.preferred_vendor_name?.toLowerCase().includes('amazon');
+                  if (isAmazon) {
+                    const email = prompt('Enter your email for the Amazon punchout session:');
+                    if (!email) return;
+                    const locationId = prompt('Enter your delivery location ID (from Inventory > Locations):');
+                    if (!locationId) return;
+                    const res = await fetch('/api/settings/integrations/amazon-business/punchout/start', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+                      body: JSON.stringify({
+                        user_email: email,
+                        location_id: locationId,
+                        catalog_items: [{ catalog_item_id: item.catalog_item_id, quantity: Math.round(item.suggested_order_qty) }],
+                        suggestion_ids: [item.catalog_item_id],
+                      }),
+                    });
+                    const json = await res.json();
+                    if (json?.data?.redirect_url) {
+                      window.open(json.data.redirect_url, '_blank');
+                    } else {
+                      alert(json?.error?.message || 'Failed to start punchout session.');
+                    }
+                  } else {
+                    alert(`Draft PO suggestion: Order ${Math.round(item.suggested_order_qty)} ${item.sku} from ${item.preferred_vendor_name || 'preferred vendor'}`);
+                  }
                 } finally {
                   setCreatingPO(null);
                 }

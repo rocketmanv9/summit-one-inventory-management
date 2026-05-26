@@ -1,34 +1,26 @@
 /**
  * Amazon Business Product Search API
- * GET — proxy to Amazon Product Search API for mapping UI
+ * GET — search Amazon catalog for supplier SKU mapping
+ *
+ * Stubbed: the SP-API product search proxy has been removed. Product lookup
+ * for ASIN mapping will use Amazon Business's Punchout catalog or manual entry.
+ * This route remains as a placeholder for future catalog search integration.
  */
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
-import { getAdminClient } from '@/utils/supabase/admin';
-import { resolveAmazonBusinessConfig, searchProducts } from '@/lib/integrations/amazon-business';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-export const GET = createSessionReadRoute(async ({ session, req }) => {
+export const GET = createSessionReadRoute(async ({ req }) => {
   const url = new URL(req.url);
   const query = url.searchParams.get('q') || '';
-  const limit = Math.min(Number(url.searchParams.get('limit') || '20'), 50);
 
   if (!query.trim()) {
     return Response.json({ data: [], total: 0 });
   }
 
-  const adminClient = getAdminClient();
-  const config = await resolveAmazonBusinessConfig(adminClient, session.tenantId!);
-  const products = await searchProducts(config, query, limit);
-
   return Response.json({
-    data: products.map((p) => ({
-      asin: p.asin,
-      title: p.title,
-      price: p.price,
-      availability: p.availability,
-      imageUrl: p.imageUrl,
-    })),
-    total: products.length,
+    data: [],
+    total: 0,
+    message: 'Product search is not yet available via cXML integration. Use Amazon Business Punchout or enter ASINs manually when creating mappings.',
   });
 }, { serviceName: SERVICE_NAME });
