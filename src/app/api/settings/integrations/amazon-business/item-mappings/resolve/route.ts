@@ -69,7 +69,7 @@ export const POST = createSessionReadRoute(async ({ req }) => {
 
       const priceMatch = html.match(/"priceAmount"\s*:\s*"?([\d.]+)"?/i)
         || html.match(/class="a-price-whole"[^>]*>([\d,]+)</)
-        || html.match(/<span[^>]*class="[^"]*priceToPay[^"]*"[^>]*>.*?\$([\d,.]+)/s);
+        || html.match(/<span[^>]*class="[^"]*priceToPay[^"]*"[^>]*>[^$]*\$([\d,.]+)/);
       if (priceMatch) {
         const parsed = parseFloat(priceMatch[1].replace(/,/g, ''));
         if (!isNaN(parsed) && parsed > 0) price = parsed;
