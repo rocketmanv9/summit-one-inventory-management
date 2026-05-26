@@ -55,8 +55,9 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       data: {
         order_id: order.id,
         amazon_order_id: order.amazon_order_id,
+        previous_status: order.status,
         current_status: order.status,
-        message: 'No updates provided',
+        tracking_info: null,
       },
       status: 200,
       events: [],
