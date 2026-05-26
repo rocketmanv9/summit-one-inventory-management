@@ -22,7 +22,8 @@ export const GET = createReadRoute(async ({ req, log }) => {
 
   const searchTerm = `%${q.trim()}%`;
 
-  const { data, error } = await supabase
+  const inv = (supabase as any).schema('inventory');
+  const { data, error } = await inv
     .from('catalog_items')
     .select('id, name, sku, barcode, tracking_mode, uom_term_id')
     .or(`name.ilike.${searchTerm},sku.ilike.${searchTerm},barcode.eq.${q.trim()}`)
