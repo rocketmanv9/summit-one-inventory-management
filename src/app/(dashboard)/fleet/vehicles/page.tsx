@@ -10,6 +10,7 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
+import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -267,7 +268,9 @@ export default function FleetVehiclesPage() {
           }
         />
 
-        {/* Tabs */}
+        <AssetFleetTabs />
+
+        {/* Sub-tabs */}
         <div className="flex gap-2 border-b">
           <button
             onClick={() => setActiveTab('my-vehicles')}

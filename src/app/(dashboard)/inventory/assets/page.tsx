@@ -14,6 +14,7 @@ import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
+import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -300,6 +301,8 @@ export default function AssetsPage() {
             </div>
           }
         />
+
+        <AssetFleetTabs />
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
