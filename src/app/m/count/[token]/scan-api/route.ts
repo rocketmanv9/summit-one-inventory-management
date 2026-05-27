@@ -71,7 +71,7 @@ export async function POST(
   }
 
   // Get the count line
-  const { data: line } = await inv
+  let { data: line } = await inv
     .from('cycle_count_lines')
     .select('id, qty_counted, catalog_item_id')
     .eq('cycle_count_id', session.cycle_count_id)
@@ -79,8 +79,30 @@ export async function POST(
     .eq('tenant_id', session.tenant_id)
     .single();
 
+  // For initial counts, auto-add the item if it exists in the catalog but not in the count
   if (!line) {
-    return Response.json({ error: `Not in count list: ${lookupCode}` }, { status: 404 });
+    const { data: cc } = await inv
+      .from('cycle_counts')
+      .select('count_type')
+      .eq('id', session.cycle_count_id)
+      .single();
+
+    if (cc?.count_type === 'initial') {
+      const { data: addedLine, error: addError } = await inv.rpc('rpc_inv_cycle_count_add_line', {
+        p_cycle_count_id: session.cycle_count_id,
+        p_catalog_item_id: catalogItemId,
+        p_tenant_id: session.tenant_id,
+        p_last_event_id: crypto.randomUUID(),
+      });
+
+      if (addError || !addedLine) {
+        return Response.json({ error: addError?.message || 'Failed to add item to count' }, { status: 500 });
+      }
+
+      line = { id: addedLine.id, qty_counted: null, catalog_item_id: catalogItemId };
+    } else {
+      return Response.json({ error: `Not in count list: ${lookupCode}` }, { status: 404 });
+    }
   }
 
   // Get item name
@@ -109,5 +131,6 @@ export async function POST(
   return Response.json({
     itemName: item?.name || lookupCode,
     newQty,
+    added: true,
   });
 }
