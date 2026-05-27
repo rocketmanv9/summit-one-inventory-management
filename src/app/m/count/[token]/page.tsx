@@ -39,10 +39,26 @@ async function loadCountData(token: string) {
   ]);
 
   const cc = ccResult.data;
-  const rawLines = linesResult.data || [];
+  let rawLines = linesResult.data || [];
   const countedAssets = assetLinesResult.data || [];
 
   if (!cc) return { error: 'Cycle count not found.' };
+
+  // Hydrate empty initial counts from stock_balances
+  if (cc.count_type === 'initial' && rawLines.length === 0 && cc.status === 'in_progress') {
+    await inv.rpc('rpc_inv_cycle_count_hydrate_initial', {
+      p_cycle_count_id: session.cycle_count_id,
+      p_tenant_id: session.tenant_id,
+    });
+    // Re-fetch lines after hydration
+    const { data: hydratedLines } = await inv
+      .from('cycle_count_lines')
+      .select('id, catalog_item_id, location_id, qty_expected, qty_counted, variance, line_number')
+      .eq('cycle_count_id', session.cycle_count_id)
+      .eq('tenant_id', session.tenant_id)
+      .limit(500);
+    rawLines = hydratedLines || [];
+  }
 
   // Fetch location + catalog items in parallel
   const itemIds = [...new Set(rawLines.map((l: any) => l.catalog_item_id))];
