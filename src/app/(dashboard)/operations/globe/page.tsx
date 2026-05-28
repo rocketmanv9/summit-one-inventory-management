@@ -14,7 +14,7 @@ import { TimelineReviewButton } from '@/components/globe/TimelineReviewButton';
 import { TimelineReviewOverlay } from '@/components/globe/TimelineReviewOverlay';
 import { Loader2 } from 'lucide-react';
 import type { GlobePoint, GlobeArc, VisibleLayers } from '@/components/globe/GlobeVisualization';
-import type { GlobeFilters } from '@/lib/rpc/operations';
+import type { GlobeFilters, GlobeData } from '@/lib/rpc/operations';
 
 const GlobeVisualization = dynamic(
   () => import('@/components/globe/GlobeVisualization').then((mod) => mod.GlobeVisualization),
@@ -30,7 +30,16 @@ function deriveTimeRange(data: { transfers: { created_at: string }[]; purchaseOr
   return { start: new Date(Math.min(...dates)), end: new Date(Math.max(...dates)) };
 }
 
+/** Wrap entire page in MapProvider so useMap() works inside child hooks */
 export default function OperationsGlobePage() {
+  return (
+    <MapProvider>
+      <GlobePageContent />
+    </MapProvider>
+  );
+}
+
+function GlobePageContent() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [filters, setFilters] = useState<GlobeFilters>({});
@@ -66,7 +75,7 @@ export default function OperationsGlobePage() {
     poStatuses,
   );
 
-  // AI Timeline Review
+  // AI Timeline Review — useMap() inside this hook now has MapProvider context
   const review = useTimelineReview(data);
   const reviewActive = review.state !== 'idle';
 
@@ -160,39 +169,37 @@ export default function OperationsGlobePage() {
             </div>
           )}
 
-          <MapProvider>
-            {filteredData && (
-              <GlobeVisualization
-                id="globe-map"
-                data={filteredData}
-                visibleLayers={visibleLayers}
-                onPointClick={handlePointClick}
-                onArcClick={handleArcClick}
-                width={dimensions.width}
-                height={dimensions.height}
-              />
-            )}
-
-            <TimelineReviewButton
-              state={review.state}
-              error={review.error}
-              eventCount={reviewEventCount}
-              onStart={review.start}
-              onStop={review.stop}
+          {filteredData && (
+            <GlobeVisualization
+              id="globe-map"
+              data={filteredData}
+              visibleLayers={visibleLayers}
+              onPointClick={handlePointClick}
+              onArcClick={handleArcClick}
+              width={dimensions.width}
+              height={dimensions.height}
             />
+          )}
 
-            <TimelineReviewOverlay
-              state={review.state}
-              currentStop={review.currentStop}
-              currentIndex={review.currentIndex}
-              totalStops={review.stops.length}
-              onPause={review.pause}
-              onResume={review.resume}
-              onNext={review.next}
-              onPrev={review.prev}
-              onStop={review.stop}
-            />
-          </MapProvider>
+          <TimelineReviewButton
+            state={review.state}
+            error={review.error}
+            eventCount={reviewEventCount}
+            onStart={review.start}
+            onStop={review.stop}
+          />
+
+          <TimelineReviewOverlay
+            state={review.state}
+            currentStop={review.currentStop}
+            currentIndex={review.currentIndex}
+            totalStops={review.stops.length}
+            onPause={review.pause}
+            onResume={review.resume}
+            onNext={review.next}
+            onPrev={review.prev}
+            onStop={review.stop}
+          />
 
           <GlobeTimeline
             active={timelineActive}
