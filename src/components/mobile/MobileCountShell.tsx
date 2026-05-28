@@ -13,6 +13,8 @@ interface MobileCountShellProps {
   countType?: string;
   onScanClick: () => void;
   onSubmitClick: () => void;
+  /** Rendered between header and scrollable content — outside the scroll container */
+  toolbar?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -27,6 +29,7 @@ export function MobileCountShell({
   countType,
   onScanClick,
   onSubmitClick,
+  toolbar,
   children,
 }: MobileCountShellProps) {
   const [timeLeft, setTimeLeft] = useState('');
@@ -244,6 +247,9 @@ export function MobileCountShell({
           </div>
         </div>
       </div>
+
+      {/* Toolbar (outside scroll container so buttons respond to touch) */}
+      {toolbar}
 
       {/* Content */}
       <div style={s.content}>

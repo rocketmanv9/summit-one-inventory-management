@@ -572,9 +572,7 @@ export function MobileCountClient({
         countType={cycleCount?.count_type}
         onScanClick={() => setScannerOpen(true)}
         onSubmitClick={handleSubmit}
-      >
-        {/* Catalog search for initial counts */}
-        {isInitial && !isSubmitted && (
+        toolbar={isInitial && !isSubmitted ? (
           <div style={{
             padding: '12px 16px',
             background: '#fff',
@@ -743,8 +741,8 @@ export function MobileCountClient({
               </button>
             </div>
           </div>
-        )}
-
+        ) : undefined}
+      >
         <MobileCountItemList
           lines={lines}
           isBlind={cycleCount?.is_blind || false}
