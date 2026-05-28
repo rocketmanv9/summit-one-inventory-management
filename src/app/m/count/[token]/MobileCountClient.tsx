@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams } from 'next/navigation';
 import { MobileCountShell } from '@/components/mobile/MobileCountShell';
 import { MobileCountItemList } from '@/components/mobile/MobileCountItemList';
@@ -98,6 +99,7 @@ export function MobileCountClient({
   const [showCatalogBrowser, setShowCatalogBrowser] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [categories, setCategories] = useState<CategoryItem[]>(initialData?.categories || []);
+  const [mounted, setMounted] = useState(false);
 
   // Initial count search state
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -108,6 +110,8 @@ export function MobileCountClient({
 
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const isInitial = cycleCount?.count_type === 'initial';
+
+  useEffect(() => setMounted(true), []);
 
   // Only validate client-side if no server-provided data
   useEffect(() => {
@@ -665,8 +669,12 @@ export function MobileCountClient({
               display: 'flex',
               gap: '8px',
               marginTop: '10px',
+              position: 'relative',
+              zIndex: 5,
             }}>
               <button
+                type="button"
+                className="m-btn"
                 onClick={() => setShowAddItem(true)}
                 style={{
                   flex: 1,
@@ -675,7 +683,7 @@ export function MobileCountClient({
                   justifyContent: 'center',
                   gap: '6px',
                   padding: '10px 8px',
-                  background: '#f0fdf4',
+                  background: showAddItem ? '#dcfce7' : '#f0fdf4',
                   border: '1.5px solid #86efac',
                   borderRadius: '10px',
                   fontSize: '12px',
@@ -692,6 +700,8 @@ export function MobileCountClient({
                 New Item
               </button>
               <button
+                type="button"
+                className="m-btn"
                 onClick={() => setShowCatalogBrowser(true)}
                 style={{
                   flex: 1,
@@ -700,7 +710,7 @@ export function MobileCountClient({
                   justifyContent: 'center',
                   gap: '6px',
                   padding: '10px 8px',
-                  background: '#eff6ff',
+                  background: showCatalogBrowser ? '#dbeafe' : '#eff6ff',
                   border: '1.5px solid #93c5fd',
                   borderRadius: '10px',
                   fontSize: '12px',
@@ -716,6 +726,8 @@ export function MobileCountClient({
                 Browse
               </button>
               <button
+                type="button"
+                className="m-btn"
                 onClick={() => setShowAddCategory(true)}
                 style={{
                   flex: 1,
@@ -724,7 +736,7 @@ export function MobileCountClient({
                   justifyContent: 'center',
                   gap: '6px',
                   padding: '10px 8px',
-                  background: '#fefce8',
+                  background: showAddCategory ? '#fef9c3' : '#fefce8',
                   border: '1.5px solid #fde047',
                   borderRadius: '10px',
                   fontSize: '12px',
@@ -761,8 +773,8 @@ export function MobileCountClient({
         scanFeedback={scanFeedback}
       />
 
-      {/* Catalog management overlays (initial counts only) */}
-      {isInitial && (
+      {/* Catalog management overlays — portaled to body to avoid mobile stacking context issues */}
+      {isInitial && mounted && createPortal(
         <>
           <MobileAddItemSheet
             isOpen={showAddItem}
@@ -809,7 +821,8 @@ export function MobileCountClient({
             jwt={jwt}
             bypassSecret={bypassSecret}
           />
-        </>
+        </>,
+        document.body,
       )}
     </>
   );
