@@ -16,6 +16,7 @@ interface GlobeFilterBarProps {
   poStatuses: string[];
   onPoStatusChange: (statuses: string[]) => void;
   timelineActive: boolean;
+  reviewActive?: boolean;
 }
 
 const LEGACY_STORAGE_KEY = 'globe-filter-presets';
@@ -63,6 +64,7 @@ export function GlobeFilterBar({
   poStatuses,
   onPoStatusChange,
   timelineActive,
+  reviewActive,
 }: GlobeFilterBarProps) {
   const { presets, loading, savePreset, deletePreset } = useFilterPresets();
   const [savingName, setSavingName] = useState('');
@@ -133,7 +135,7 @@ export function GlobeFilterBar({
         <span className="text-sm font-semibold text-gray-800">Map Filters</span>
       </div>
 
-      <div className="px-4 py-3 space-y-4 flex-1">
+      <div className={`px-4 py-3 space-y-4 flex-1 transition-opacity ${reviewActive ? 'opacity-50 pointer-events-none' : ''}`}>
         {/* Saved Presets */}
         <div>
           <button

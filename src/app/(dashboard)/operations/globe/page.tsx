@@ -2,12 +2,16 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { MapProvider } from 'react-map-gl/mapbox';
 import { AppShell } from '@/components/layout/AppShell';
 import { useGlobeData } from '@/hooks/useGlobeData';
 import { useTimelineFilter } from '@/hooks/useTimelineFilter';
+import { useTimelineReview } from '@/hooks/useTimelineReview';
 import { GlobeFilterBar } from '@/components/globe/GlobeFilterBar';
 import { GlobeTimeline } from '@/components/globe/GlobeTimeline';
 import { GlobeDetailPanel } from '@/components/globe/GlobeDetailPanel';
+import { TimelineReviewButton } from '@/components/globe/TimelineReviewButton';
+import { TimelineReviewOverlay } from '@/components/globe/TimelineReviewOverlay';
 import { Loader2 } from 'lucide-react';
 import type { GlobePoint, GlobeArc, VisibleLayers } from '@/components/globe/GlobeVisualization';
 import type { GlobeFilters } from '@/lib/rpc/operations';
@@ -61,6 +65,16 @@ export default function OperationsGlobePage() {
     transferStatuses,
     poStatuses,
   );
+
+  // AI Timeline Review
+  const review = useTimelineReview(data);
+  const reviewActive = review.state !== 'idle';
+
+  // Count of reviewable events for the button
+  const reviewEventCount = useMemo(() => {
+    if (!data) return 0;
+    return data.transfers.length + data.purchaseOrders.length;
+  }, [data]);
 
   // Observe the map container (not the full page) for sizing
   useEffect(() => {
@@ -123,6 +137,7 @@ export default function OperationsGlobePage() {
           poStatuses={poStatuses}
           onPoStatusChange={setPoStatuses}
           timelineActive={timelineActive}
+          reviewActive={reviewActive}
         />
 
         {/* Right map area */}
@@ -145,16 +160,39 @@ export default function OperationsGlobePage() {
             </div>
           )}
 
-          {filteredData && (
-            <GlobeVisualization
-              data={filteredData}
-              visibleLayers={visibleLayers}
-              onPointClick={handlePointClick}
-              onArcClick={handleArcClick}
-              width={dimensions.width}
-              height={dimensions.height}
+          <MapProvider>
+            {filteredData && (
+              <GlobeVisualization
+                id="globe-map"
+                data={filteredData}
+                visibleLayers={visibleLayers}
+                onPointClick={handlePointClick}
+                onArcClick={handleArcClick}
+                width={dimensions.width}
+                height={dimensions.height}
+              />
+            )}
+
+            <TimelineReviewButton
+              state={review.state}
+              error={review.error}
+              eventCount={reviewEventCount}
+              onStart={review.start}
+              onStop={review.stop}
             />
-          )}
+
+            <TimelineReviewOverlay
+              state={review.state}
+              currentStop={review.currentStop}
+              currentIndex={review.currentIndex}
+              totalStops={review.stops.length}
+              onPause={review.pause}
+              onResume={review.resume}
+              onNext={review.next}
+              onPrev={review.prev}
+              onStop={review.stop}
+            />
+          </MapProvider>
 
           <GlobeTimeline
             active={timelineActive}
@@ -162,9 +200,10 @@ export default function OperationsGlobePage() {
             timeRange={timeRange}
             currentTime={currentTime}
             onTimeChange={setCurrentTime}
+            disabled={reviewActive}
           />
 
-          {stats && (
+          {stats && !reviewActive && (
             <div className="absolute bottom-4 left-4 z-10 flex gap-3">
               {visibleLayers.locations && <StatBadge label="Locations" count={stats.locations} color="bg-blue-500" />}
               {visibleLayers.vendors && <StatBadge label="Vendors" count={stats.vendors} color="bg-green-500" />}

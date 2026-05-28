@@ -9,6 +9,7 @@ interface GlobeTimelineProps {
   timeRange: { start: Date; end: Date } | null;
   currentTime: Date | null;
   onTimeChange: (time: Date | null) => void;
+  disabled?: boolean;
 }
 
 const SPEED_OPTIONS = [1, 2, 5, 10] as const;
@@ -24,6 +25,7 @@ export function GlobeTimeline({
   timeRange,
   currentTime,
   onTimeChange,
+  disabled,
 }: GlobeTimelineProps) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<number>(1);
@@ -159,7 +161,7 @@ export function GlobeTimeline({
   };
 
   return (
-    <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 px-4 py-3 w-[460px] max-w-[calc(100%-2rem)]">
+    <div className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-10 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg border border-gray-200 px-4 py-3 w-[460px] max-w-[calc(100%-2rem)] transition-opacity ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="flex items-center gap-3">
         {/* Toggle */}
         <button

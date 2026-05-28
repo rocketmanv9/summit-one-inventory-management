@@ -39,6 +39,7 @@ export type VisibleLayers = {
 };
 
 interface GlobeVisualizationProps {
+  id?: string;
   data: GlobeData;
   visibleLayers: VisibleLayers;
   onPointClick?: (point: GlobePoint) => void;
@@ -153,6 +154,7 @@ const poLinesLayer = {
 } satisfies LayerProps;
 
 export function GlobeVisualization({
+  id,
   data,
   visibleLayers,
   onPointClick,
@@ -381,6 +383,7 @@ export function GlobeVisualization({
 
   return (
     <MapboxMap
+      id={id}
       mapboxAccessToken={MAPBOX_TOKEN}
       initialViewState={{
         latitude: 39.8,
