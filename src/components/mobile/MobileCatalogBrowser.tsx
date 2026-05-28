@@ -160,7 +160,7 @@ export function MobileCatalogBrowser({
       position: 'fixed',
       inset: 0,
       background: '#f3f4f6',
-      zIndex: 40,
+      zIndex: 9999,
       display: 'flex',
       flexDirection: 'column',
       paddingTop: 'env(safe-area-inset-top, 0px)',

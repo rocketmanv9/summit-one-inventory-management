@@ -182,7 +182,7 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
       </div>
 
       <div style={inputRow}>
-        {!isBlind && !isInitial && (
+        {!isBlind && (isInitial ? line.qty_expected > 0 : true) && (
           <div style={expectedBadge}>
             Exp: <span style={expectedValue}>{line.qty_expected}</span>
             {line.catalog_item?.uom_term_id ? ` ${uomLabels[line.catalog_item.uom_term_id] || ''}` : ''}

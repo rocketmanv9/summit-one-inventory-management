@@ -80,7 +80,7 @@ export function MobileAddCategoryModal({
       position: 'fixed',
       inset: 0,
       background: 'rgba(0,0,0,0.5)',
-      zIndex: 50,
+      zIndex: 9999,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',

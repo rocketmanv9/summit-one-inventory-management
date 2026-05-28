@@ -51,8 +51,8 @@ function ChatBotInner() {
     }
   }, [isOpen, mounted]);
 
-  // Hide on /ai page or before mount
-  if (!mounted || pathname === '/ai') return null;
+  // Hide on /ai page, mobile count pages, or before mount
+  if (!mounted || pathname === '/ai' || pathname?.startsWith('/m/')) return null;
 
   // Expanded — show the ChatBot window
   if (isOpen) {
