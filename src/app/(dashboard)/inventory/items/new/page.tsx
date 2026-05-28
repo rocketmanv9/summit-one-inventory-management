@@ -16,7 +16,7 @@ import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
-import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
+import { useUOMTerms, useUOMLabelMap, useGVTerms, useGVLabelMap } from '@/hooks/useGVTerms';
 import {
   ArrowLeft,
   ArrowRight,
@@ -54,6 +54,9 @@ interface WizardState {
   tracking_mode: 'stock' | 'serialized' | 'both';
   reorder_point: string;
   base_sku: string;
+  material_term_id: string;
+  product_term_id: string;
+  quality_tier_term_id: string;
 
   // Step 1b: Variants
   has_variants: boolean;
@@ -109,6 +112,9 @@ const defaultState: WizardState = {
   tracking_mode: 'stock',
   reorder_point: '',
   base_sku: '',
+  material_term_id: '',
+  product_term_id: '',
+  quality_tier_term_id: '',
   has_variants: false,
   variant_dimensions: [],
   variant_options: {},
@@ -148,6 +154,14 @@ export default function NewItemWizardPage() {
   // GV dynamic UOM terms
   const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const uomLabels = useUOMLabelMap();
+
+  // GV material classification terms
+  const { terms: materialTerms, loading: materialLoading } = useGVTerms('materials');
+  const { terms: productTerms, loading: productLoading } = useGVTerms('material_product');
+  const { terms: tierTerms, loading: tierLoading } = useGVTerms('quality_tier');
+  const materialLabels = useGVLabelMap('materials');
+  const productLabels = useGVLabelMap('material_product');
+  const tierLabels = useGVLabelMap('quality_tier');
 
   // Inline create modals
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -373,6 +387,19 @@ export default function NewItemWizardPage() {
         idempotency_key: idempotencyKey,
       });
 
+      // Update material classification term IDs (not part of the wizard RPC)
+      const hasTermIds = form.material_term_id || form.product_term_id || form.quality_tier_term_id;
+      if (hasTermIds) {
+        const { createBrowserAuthedClient: createClient } = await import('@/supabase/client');
+        const supaClient = createClient();
+        const inv = (supaClient as any).schema('inventory');
+        await inv.from('catalog_items').update({
+          material_term_id: form.material_term_id || null,
+          product_term_id: form.product_term_id || null,
+          quality_tier_term_id: form.quality_tier_term_id || null,
+        }).eq('id', res.item_id);
+      }
+
       // Apply per-variant initial stock if variants were created and qty was specified
       if (skipParentStock && form.initial_qty && form.location_id) {
         const variantsEntity = res.created_entities?.find((e: any) => e.type === 'variants') as any;
@@ -561,6 +588,12 @@ export default function NewItemWizardPage() {
             onDismissSuggestedCategory={() => setAiSuggestedCategory(null)}
             uomTerms={uomTerms}
             uomLoading={uomLoading}
+            materialTerms={materialTerms}
+            materialLoading={materialLoading}
+            productTerms={productTerms}
+            productLoading={productLoading}
+            tierTerms={tierTerms}
+            tierLoading={tierLoading}
           />
         )}
         {step === 1 && (
@@ -587,6 +620,9 @@ export default function NewItemWizardPage() {
             vendors={vendors}
             locations={locations}
             buildAssetList={buildAssetList}
+            materialLabels={materialLabels}
+            productLabels={productLabels}
+            tierLabels={tierLabels}
           />
         )}
         {step === 4 && result && (
@@ -677,6 +713,12 @@ function StepBasics({
   onDismissSuggestedCategory,
   uomTerms,
   uomLoading,
+  materialTerms,
+  materialLoading,
+  productTerms,
+  productLoading,
+  tierTerms,
+  tierLoading,
 }: {
   form: WizardState;
   setForm: React.Dispatch<React.SetStateAction<WizardState>>;
@@ -692,9 +734,18 @@ function StepBasics({
   onDismissSuggestedCategory: () => void;
   uomTerms: { term_id: string; label: string }[];
   uomLoading: boolean;
+  materialTerms: { term_id: string; label: string }[];
+  materialLoading: boolean;
+  productTerms: { term_id: string; label: string }[];
+  productLoading: boolean;
+  tierTerms: { term_id: string; label: string }[];
+  tierLoading: boolean;
 }) {
   const selectedCategory = categories.find(c => c.id === form.category_id);
   const isAttributeBased = selectedCategory?.sku_mode === 'attribute_based';
+  const [classificationOpen, setClassificationOpen] = useState(
+    !!(form.material_term_id || form.product_term_id || form.quality_tier_term_id)
+  );
 
   return (
     <Card>
@@ -811,6 +862,87 @@ function StepBasics({
               >
                 Dismiss
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* Material Classification (collapsible) */}
+        <div className="rounded-md border">
+          <button
+            type="button"
+            onClick={() => setClassificationOpen(!classificationOpen)}
+            className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              Material Classification
+              {(form.material_term_id || form.product_term_id || form.quality_tier_term_id) && (
+                <Check className="h-3 w-3 text-green-600" />
+              )}
+            </span>
+            {classificationOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {classificationOpen && (
+            <div className="px-4 pb-4 space-y-4 border-t pt-3">
+              <p className="text-xs text-muted-foreground">
+                Optionally classify this item by material type, product, and quality tier.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="wiz-material">Material</Label>
+                <select
+                  id="wiz-material"
+                  value={form.material_term_id}
+                  onChange={(e) => updateForm('material_term_id', e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  disabled={materialLoading}
+                >
+                  <option value="">-- None --</option>
+                  {materialLoading ? (
+                    <option>Loading...</option>
+                  ) : (
+                    materialTerms.map((t) => (
+                      <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wiz-product">Product Type</Label>
+                <select
+                  id="wiz-product"
+                  value={form.product_term_id}
+                  onChange={(e) => updateForm('product_term_id', e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  disabled={productLoading}
+                >
+                  <option value="">-- None --</option>
+                  {productLoading ? (
+                    <option>Loading...</option>
+                  ) : (
+                    productTerms.map((t) => (
+                      <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wiz-tier">Quality Tier</Label>
+                <select
+                  id="wiz-tier"
+                  value={form.quality_tier_term_id}
+                  onChange={(e) => updateForm('quality_tier_term_id', e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  disabled={tierLoading}
+                >
+                  <option value="">-- None --</option>
+                  {tierLoading ? (
+                    <option>Loading...</option>
+                  ) : (
+                    tierTerms.map((t) => (
+                      <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                    ))
+                  )}
+                </select>
+              </div>
             </div>
           )}
         </div>
@@ -1316,6 +1448,8 @@ function StepSupply({
   const uomLabels = useUOMLabelMap();
   const [vendorOpen, setVendorOpen] = useState(!!form.vendor_id);
   const [stockOpen, setStockOpen] = useState(!!form.location_id);
+  const selectedVendor = vendors.find(v => v.id === form.vendor_id);
+  const isAmazonVendor = selectedVendor?.code === 'AMAZON-BIZ';
 
   return (
     <Card>
@@ -1371,14 +1505,31 @@ function StepSupply({
               {form.vendor_id && (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="wiz-vendor-sku">Vendor SKU / Part Number</Label>
+                    <Label htmlFor="wiz-vendor-sku">
+                      {isAmazonVendor ? 'Amazon ASIN' : 'Vendor SKU / Part Number'}
+                    </Label>
                     <Input
                       id="wiz-vendor-sku"
                       value={form.vendor_sku}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('vendor_sku', e.target.value)}
-                      placeholder="Vendor's part number for this item"
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        let val = e.target.value;
+                        if (isAmazonVendor) val = val.toUpperCase();
+                        updateForm('vendor_sku', val);
+                      }}
+                      placeholder={isAmazonVendor ? 'e.g., B08N5WRWNW' : "Vendor's part number for this item"}
                       className="font-mono"
+                      maxLength={isAmazonVendor ? 10 : undefined}
                     />
+                    {isAmazonVendor && (
+                      <p className="text-xs text-muted-foreground">
+                        Enter the 10-character Amazon ASIN (e.g., B08N5WRWNW). This will be used as the vendor SKU for Amazon Business ordering.
+                      </p>
+                    )}
+                    {isAmazonVendor && form.vendor_sku && !/^[A-Z0-9]{10}$/.test(form.vendor_sku) && (
+                      <p className="text-xs text-amber-600">
+                        ASIN should be exactly 10 alphanumeric characters.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -1516,12 +1667,18 @@ function StepReview({
   vendors,
   locations,
   buildAssetList,
+  materialLabels,
+  productLabels,
+  tierLabels,
 }: {
   form: WizardState;
   categories: ItemCategoryRow[];
   vendors: Vendor[];
   locations: Location[];
   buildAssetList: () => Array<{ asset_tag: string; serial_number?: string }> | null;
+  materialLabels: Record<string, string>;
+  productLabels: Record<string, string>;
+  tierLabels: Record<string, string>;
 }) {
   const uomLabels = useUOMLabelMap();
   const category = categories.find(c => c.id === form.category_id);
@@ -1566,6 +1723,33 @@ function StepReview({
             )}
           </div>
         </div>
+
+        {/* Material Classification */}
+        {(form.material_term_id || form.product_term_id || form.quality_tier_term_id) && (
+          <div className="rounded-md border p-4 space-y-2">
+            <h4 className="text-sm font-semibold">Material Classification</h4>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+              {form.material_term_id && (
+                <>
+                  <span className="text-muted-foreground">Material</span>
+                  <span>{materialLabels[form.material_term_id] || '-'}</span>
+                </>
+              )}
+              {form.product_term_id && (
+                <>
+                  <span className="text-muted-foreground">Product Type</span>
+                  <span>{productLabels[form.product_term_id] || '-'}</span>
+                </>
+              )}
+              {form.quality_tier_term_id && (
+                <>
+                  <span className="text-muted-foreground">Quality Tier</span>
+                  <span>{tierLabels[form.quality_tier_term_id] || '-'}</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Variants */}
         {form.has_variants && form.variant_dimensions.length > 0 && (
@@ -1628,7 +1812,9 @@ function StepReview({
               <span className="font-medium">{vendor.name}</span>
               {form.vendor_sku && (
                 <>
-                  <span className="text-muted-foreground">Vendor SKU</span>
+                  <span className="text-muted-foreground">
+                    {vendor.code === 'AMAZON-BIZ' ? 'ASIN' : 'Vendor SKU'}
+                  </span>
                   <span className="font-mono">{form.vendor_sku}</span>
                 </>
               )}

@@ -70,9 +70,33 @@ export function useVendorTypeTerms() {
   return useGVTerms('vendor_type');
 }
 
+/** Material terms from the GV `materials` domain */
+export function useMaterialTerms() {
+  return useGVTerms('materials');
+}
+
+/** Material product terms from the GV `material_product` domain */
+export function useMaterialProductTerms() {
+  return useGVTerms('material_product');
+}
+
+/** Quality tier terms from the GV `quality_tier` domain */
+export function useQualityTierTerms() {
+  return useGVTerms('quality_tier');
+}
+
 /** Returns a term_id → label lookup map for UOM terms */
 export function useUOMLabelMap(): Record<string, string> {
   const { terms } = useUOMTerms();
+  return useMemo(
+    () => Object.fromEntries(terms.map((t) => [t.term_id, t.label])),
+    [terms]
+  );
+}
+
+/** Returns a term_id → label lookup map for any GV domain */
+export function useGVLabelMap(domain: string): Record<string, string> {
+  const { terms } = useGVTerms(domain);
   return useMemo(
     () => Object.fromEntries(terms.map((t) => [t.term_id, t.label])),
     [terms]
