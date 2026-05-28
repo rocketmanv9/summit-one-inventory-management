@@ -6,6 +6,9 @@ import { MobileCountShell } from '@/components/mobile/MobileCountShell';
 import { MobileCountItemList } from '@/components/mobile/MobileCountItemList';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { MobileSessionExpired } from '@/components/mobile/MobileSessionExpired';
+import { MobileAddItemSheet } from '@/components/mobile/MobileAddItemSheet';
+import { MobileCatalogBrowser } from '@/components/mobile/MobileCatalogBrowser';
+import { MobileAddCategoryModal } from '@/components/mobile/MobileAddCategoryModal';
 
 interface CycleCountMeta {
   id: string;
@@ -40,11 +43,18 @@ interface CountLine {
   counted_assets?: Array<{ asset_id: string }>;
 }
 
+interface CategoryItem {
+  id: string;
+  name: string;
+  sku_prefix?: string;
+}
+
 interface InitialData {
   jwt: string;
   expires_at: string;
   cycle_count: CycleCountMeta;
   lines: CountLine[];
+  categories?: CategoryItem[];
 }
 
 function bypassHeaders(secret: string): Record<string, string> {
@@ -82,6 +92,12 @@ export function MobileCountClient({
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Catalog management overlays (initial counts only)
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [showCatalogBrowser, setShowCatalogBrowser] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [categories, setCategories] = useState<CategoryItem[]>(initialData?.categories || []);
 
   // Initial count search state
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -645,6 +661,87 @@ export function MobileCountClient({
                 )}
               </div>
             )}
+
+            {/* Action toolbar */}
+            <div style={{
+              display: 'flex',
+              gap: '8px',
+              marginTop: '10px',
+            }}>
+              <button
+                onClick={() => setShowAddItem(true)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '10px 8px',
+                  background: '#f0fdf4',
+                  border: '1.5px solid #86efac',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#15803d',
+                  cursor: 'pointer',
+                  WebkitTapHighlightColor: 'transparent',
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                New Item
+              </button>
+              <button
+                onClick={() => setShowCatalogBrowser(true)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '10px 8px',
+                  background: '#eff6ff',
+                  border: '1.5px solid #93c5fd',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#1d4ed8',
+                  cursor: 'pointer',
+                  WebkitTapHighlightColor: 'transparent',
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+                Browse
+              </button>
+              <button
+                onClick={() => setShowAddCategory(true)}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '10px 8px',
+                  background: '#fefce8',
+                  border: '1.5px solid #fde047',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#a16207',
+                  cursor: 'pointer',
+                  WebkitTapHighlightColor: 'transparent',
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                </svg>
+                Category
+              </button>
+            </div>
           </div>
         )}
 
@@ -665,6 +762,57 @@ export function MobileCountClient({
         continuous
         scanFeedback={scanFeedback}
       />
+
+      {/* Catalog management overlays (initial counts only) */}
+      {isInitial && (
+        <>
+          <MobileAddItemSheet
+            isOpen={showAddItem}
+            onClose={() => setShowAddItem(false)}
+            onItemCreated={(countLine, newCategory) => {
+              if (countLine) {
+                setLines((prev) => [...prev, countLine]);
+                setHighlightItemId(countLine.catalog_item_id);
+                setTimeout(() => setHighlightItemId(null), 3000);
+              }
+              if (newCategory) {
+                setCategories((prev) =>
+                  prev.some((c) => c.id === newCategory.id) ? prev : [...prev, newCategory].sort((a, b) => a.name.localeCompare(b.name))
+                );
+              }
+            }}
+            jwt={jwt}
+            bypassSecret={bypassSecret}
+            categories={categories}
+          />
+
+          <MobileCatalogBrowser
+            isOpen={showCatalogBrowser}
+            onClose={() => setShowCatalogBrowser(false)}
+            onItemAdded={(newLine) => {
+              setLines((prev) => [...prev, newLine]);
+              setHighlightItemId(newLine.catalog_item_id);
+              setTimeout(() => setHighlightItemId(null), 3000);
+            }}
+            jwt={jwt}
+            bypassSecret={bypassSecret}
+            existingItemIds={new Set(lines.map((l) => l.catalog_item_id))}
+            categories={categories}
+          />
+
+          <MobileAddCategoryModal
+            isOpen={showAddCategory}
+            onClose={() => setShowAddCategory(false)}
+            onCategoryCreated={(cat) => {
+              setCategories((prev) =>
+                [...prev, cat].sort((a, b) => a.name.localeCompare(b.name))
+              );
+            }}
+            jwt={jwt}
+            bypassSecret={bypassSecret}
+          />
+        </>
+      )}
     </>
   );
 }

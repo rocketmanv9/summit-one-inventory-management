@@ -60,15 +60,17 @@ async function loadCountData(token: string) {
     rawLines = hydratedLines || [];
   }
 
-  // Fetch location + catalog items in parallel
+  // Fetch location + catalog items + categories in parallel
   const itemIds = [...new Set(rawLines.map((l: any) => l.catalog_item_id))];
-  const [locationResult, itemsResult] = await Promise.all([
+  const [locationResult, itemsResult, categoriesResult] = await Promise.all([
     cc.location_id ? inv.from('locations').select('id, name').eq('id', cc.location_id).single() : Promise.resolve({ data: null }),
     itemIds.length > 0 ? inv.from('catalog_items').select('id, name, sku, barcode, tracking_mode, uom_term_id, parent_item_id, variant_attributes').in('id', itemIds) : Promise.resolve({ data: [] }),
+    cc.count_type === 'initial' ? inv.from('item_categories').select('id, name, sku_prefix').order('name', { ascending: true }).limit(200) : Promise.resolve({ data: [] }),
   ]);
 
   const location = locationResult.data;
   const items: any[] = itemsResult.data || [];
+  const categories: any[] = categoriesResult.data || [];
 
   // Asset details for serialized items
   const serializedItemIds = items.filter((i: any) => i.tracking_mode === 'serialized').map((i: any) => i.id);
@@ -121,6 +123,7 @@ async function loadCountData(token: string) {
         location: location || null,
       },
       lines: enrichedLines,
+      categories: cc.count_type === 'initial' ? categories : undefined,
     },
   };
 }
