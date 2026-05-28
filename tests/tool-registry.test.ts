@@ -2,7 +2,7 @@
  * Tool Registry Tests
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock the OpenAI import
 vi.mock('openai', () => ({ default: class {} }));

@@ -29,6 +29,10 @@ export interface ShippingAddress {
   country: string;
 }
 
+/**
+ * @deprecated Use the punchout flow instead (POST /api/settings/integrations/amazon-business/punchout/submit).
+ * Direct ordering without a punchout session is impossible — Amazon cXML requires SPAID from the session.
+ */
 export interface OrderLineItem {
   supplier_sku: string;
   quantity: number;
@@ -37,6 +41,10 @@ export interface OrderLineItem {
   pack_quantity: number;
 }
 
+/**
+ * @deprecated Use the punchout flow instead (POST /api/settings/integrations/amazon-business/punchout/submit).
+ * Direct ordering without a punchout session is impossible — Amazon cXML requires SPAID from the session.
+ */
 export interface PlaceOrderRequest {
   credentials: CxmlCredentials;
   lineItems: OrderLineItem[];
@@ -44,6 +52,10 @@ export interface PlaceOrderRequest {
   poReferenceNumber: string;
 }
 
+/**
+ * @deprecated Use the punchout flow instead (POST /api/settings/integrations/amazon-business/punchout/submit).
+ * Direct ordering without a punchout session is impossible — Amazon cXML requires SPAID from the session.
+ */
 export interface PlaceOrderResult {
   externalOrderId: string;
   status: 'submitted' | 'pending';
@@ -60,13 +72,13 @@ export function roundToPackQuantity(requestedQty: number, packQuantity: number):
 // ── Stubbed Order Placement ───────────────────────────────────────────
 
 /**
- * Place an order via cXML OrderRequest.
+ * @deprecated Direct cXML ordering is not possible — Amazon requires SupplierPartAuxiliaryID (SPAID)
+ * which can only come from a punchout session. Use the punchout flow instead:
+ *   1. POST /api/settings/integrations/amazon-business/punchout/start
+ *   2. User shops on Amazon and returns via POOM webhook
+ *   3. POST /api/settings/integrations/amazon-business/punchout/submit
  *
- * Currently a stub — the actual cXML document format will be implemented
- * once the Amazon Business cXML integration guide is provided. The
- * OrderRequest will POST to `credentials.poRequestUrl` with the From
- * Identity + Shared Secret in the cXML header and one ItemOut per line
- * keyed by supplier_sku (ASIN) + quantity + ship-to.
+ * See PlaceOrderModal for the full UI flow.
  */
 export async function placeOrder(request: PlaceOrderRequest): Promise<PlaceOrderResult> {
   if (!request.credentials.poRequestUrl) {
@@ -77,11 +89,9 @@ export async function placeOrder(request: PlaceOrderRequest): Promise<PlaceOrder
     throw AppError.badRequest('Order must contain at least one line item.');
   }
 
-  // TODO: Build and POST cXML OrderRequest document.
-  // Waiting on Amazon Business cXML integration guide PDF.
-  throw AppError.internal(
-    'cXML OrderRequest submission is not yet implemented. ' +
-    'The integration is in test mode — order document format pending Amazon Business integration guide.'
+  throw AppError.badRequest(
+    'Direct cXML ordering is not supported. Amazon Business requires a punchout session ' +
+    '(SupplierPartAuxiliaryID). Use the punchout flow via Purchasing > Place Order instead.'
   );
 }
 

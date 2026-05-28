@@ -3,6 +3,7 @@
  */
 
 import { generateEmbedding } from '../embeddings';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClientLike = any;
@@ -38,7 +39,7 @@ export async function processEmbeddingQueue(
     try {
       const embedding = await generateEmbedding(item.content);
 
-      if (embedding.length === 0) throw new Error('Empty embedding returned');
+      if (embedding.length === 0) throw AppError.internal('Empty embedding returned');
 
       // Update the source entity with the embedding
       if (item.entity_type.startsWith('chunk:')) {

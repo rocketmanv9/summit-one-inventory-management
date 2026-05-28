@@ -234,8 +234,8 @@ describe('Blank Response Prevention', () => {
     const serverToolsSrc = await import('fs').then(fs =>
       fs.readFileSync('src/lib/ai/server-tools.ts', 'utf8')
     );
-    expect(serverToolsSrc).toContain('Online vendor search failed');
-    expect(serverToolsSrc).toContain('add vendors manually');
+    expect(serverToolsSrc).toContain('Web search failed, trying catalog fallback');
+    expect(serverToolsSrc).toContain('add a vendor named');
   });
 });
 

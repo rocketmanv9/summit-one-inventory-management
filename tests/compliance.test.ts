@@ -42,6 +42,20 @@ describe('chassis compliance', () => {
         'src\\app\\api\\webhooks\\core-events\\route.ts', // Windows path variant
         'supabase/migrations/20260325000001', // Consolidation migration — no new tables, only ALTER/INSERT
         'supabase\\migrations\\20260325000001', // Windows path variant
+        'src/hooks/',                         // Client-side React hooks — AppError is server-only
+        'src\\hooks\\',                       // Windows path variant
+        'src/components/',                    // Client-side React components — AppError is server-only
+        'src\\components\\',                  // Windows path variant
+        'src/app/(dashboard)/settings/branding/page.tsx', // 'use client' page
+        'src\\app\\(dashboard)\\settings\\branding\\page.tsx',
+        'src/app/(dashboard)/settings/integrations/page.tsx', // 'use client' page
+        'src\\app\\(dashboard)\\settings\\integrations\\page.tsx',
+        'src/app/m/',                         // Mobile client-side pages — AppError is server-only
+        'src\\app\\m\\',                      // Windows path variant
+        'src/lib/vendors.ts',                 // Needs raw createClient for GV anon-key client
+        'src\\lib\\vendors.ts',               // Windows path variant
+        'scripts/',                           // Standalone scripts — allowed per CLAUDE.md
+        'scripts\\',                          // Windows path variant
       ],
     });
 

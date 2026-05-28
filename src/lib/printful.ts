@@ -8,6 +8,7 @@
  */
 
 import { requireOk } from '@rocketmanv9/chassis/observability';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ function getHeaders(): Record<string, string> {
   const token = process.env.PRINTFUL_API_TOKEN;
   const storeId = process.env.PRINTFUL_STORE_ID;
 
-  if (!token) throw new Error('PRINTFUL_API_TOKEN is not configured');
+  if (!token) throw AppError.internal('PRINTFUL_API_TOKEN is not configured');
 
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${token}`,

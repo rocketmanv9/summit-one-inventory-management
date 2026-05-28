@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createVendorCatalogClient, createTenantVendorClient } from '@rocketmanv9/chassis/vendors';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { VendorCatalogClient, TenantVendorClient } from '@rocketmanv9/chassis/vendors';
 
 /**
@@ -22,7 +23,7 @@ export function getCatalogClient(): VendorCatalogClient {
 function getGVAdminClient() {
   const url = process.env.GV_SUPABASE_URL;
   const key = process.env.GV_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('GV_SUPABASE_URL / GV_SUPABASE_ANON_KEY not set');
+  if (!url || !key) throw AppError.internal('GV_SUPABASE_URL / GV_SUPABASE_ANON_KEY not set');
   return createClient(url, key);
 }
 
