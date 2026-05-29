@@ -65,7 +65,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     data: {
       session_id: data.id,
       token: data.token,
-      url: `/m/count/${data.token}${process.env.VERCEL_AUTOMATION_BYPASS_SECRET ? `?x-vercel-protection-bypass=${process.env.VERCEL_AUTOMATION_BYPASS_SECRET}` : ''}`,
+      // x-vercel-set-bypass-cookie=true tells Vercel's edge to set its OWN bypass
+      // cookie on first load, so the browser carries it on subsequent /_next/static
+      // chunk requests. Without it, the HTML loads but JS chunks are 401'd by
+      // deployment protection and React never hydrates (page loads but is frozen).
+      url: `/m/count/${data.token}${process.env.VERCEL_AUTOMATION_BYPASS_SECRET ? `?x-vercel-protection-bypass=${process.env.VERCEL_AUTOMATION_BYPASS_SECRET}&x-vercel-set-bypass-cookie=true` : ''}`,
       expires_at: data.expires_at,
     },
     status: 201,

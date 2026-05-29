@@ -139,6 +139,10 @@ export default async function MobileCountPage({
 }) {
   const { token } = await params;
   const sp = await searchParams;
+  // Used by MobileCountClient to bypass deployment protection on its API fetches.
+  // The static JS chunks are bypassed separately via Vercel's own cookie, which it
+  // sets when the page URL carries x-vercel-set-bypass-cookie=true (see the URL
+  // built in the mobile-session route).
   const bypass = (sp['x-vercel-protection-bypass'] as string) || process.env.VERCEL_AUTOMATION_BYPASS_SECRET || '';
 
   const result = await loadCountData(token);
@@ -147,15 +151,7 @@ export default async function MobileCountPage({
     return <ErrorPage message={result.error as string} />;
   }
 
-  return (
-    <>
-      {/* Set bypass cookie so JS chunks load through deployment protection */}
-      {bypass && (
-        <script dangerouslySetInnerHTML={{ __html: `document.cookie="x-vercel-protection-bypass=${bypass};path=/;secure;samesite=lax;max-age=86400";` }} />
-      )}
-      <MobileCountClient bypassSecret={bypass} initialData={result.initialData} />
-    </>
-  );
+  return <MobileCountClient bypassSecret={bypass} initialData={result.initialData} />;
 }
 
 function ErrorPage({ message }: { message: string }) {
