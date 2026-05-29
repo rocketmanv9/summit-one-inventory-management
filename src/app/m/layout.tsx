@@ -86,21 +86,19 @@ input[type="search"]::-webkit-search-decoration {
 }
 
 /* ── Interactive states ── */
+/* No transform on :active — mobile Safari cancels click events when the
+   touch target moves between touchstart and touchend. Opacity-only feedback. */
 .m-btn:active:not(:disabled) {
-  transform: scale(0.97);
-  opacity: 0.9;
-}
-.m-btn-save:active:not(:disabled) {
-  transform: scale(0.95);
   opacity: 0.85;
 }
+.m-btn-save:active:not(:disabled) {
+  opacity: 0.8;
+}
 .m-btn-submit:active:not(:disabled) {
-  transform: scale(0.98);
-  opacity: 0.9;
+  opacity: 0.85;
 }
 .m-asset-btn:active:not(:disabled) {
-  transform: scale(0.98);
-  opacity: 0.92;
+  opacity: 0.88;
 }
 .m-input-qty:focus {
   border-color: #3b82f6 !important;
