@@ -79,10 +79,17 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan, continuous, sca
       if (cancelled || !containerRef.current) return;
 
       const scannerId = 'barcode-scanner-region';
-      // Ensure the container div exists
+      // Ensure the container div exists. It must fill the video area with an
+      // explicit size — html5-qrcode sizes the <video> from this element's
+      // dimensions, and a flex-centered parent collapses an empty child to 0x0,
+      // which renders a black (but live) camera feed on iOS Safari.
       if (!document.getElementById(scannerId)) {
         const div = document.createElement('div');
         div.id = scannerId;
+        div.style.position = 'absolute';
+        div.style.inset = '0';
+        div.style.width = '100%';
+        div.style.height = '100%';
         containerRef.current.appendChild(div);
       }
 
@@ -241,6 +248,18 @@ export function BarcodeScannerOverlay({ isOpen, onClose, onScan, continuous, sca
 
   return (
     <div style={s.overlay}>
+      {/* html5-qrcode injects its own <video> with inline sizing; force it to
+          cover the scanner region so iOS Safari paints the feed. (Leave the
+          library's hidden decoding <canvas> alone.) */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        #barcode-scanner-region { width: 100% !important; height: 100% !important; }
+        #barcode-scanner-region video {
+          width: 100% !important;
+          height: 100% !important;
+          object-fit: cover !important;
+          display: block !important;
+        }
+      ` }} />
       <div style={s.topBar}>
         <span style={s.topBarTitle}>Scan Barcode</span>
         <button onClick={handleClose} style={s.closeBtn}>
