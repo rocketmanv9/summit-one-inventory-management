@@ -206,8 +206,10 @@ export async function getVendorDefaults(
 export async function getPurchaseOrderWithDetails(
   poId: string
 ): Promise<{ data: PurchaseOrderWithDetails | null; error: Error | null }> {
-  const supabase = createBrowserAuthedClient().schema('supply_chain');
-  
+  const client = createBrowserAuthedClient();
+  const supabase = client.schema('supply_chain');
+  const inventory = client.schema('inventory');
+
   try {
     // Fetch PO header
     const { data: po, error: poError } = await supabase
@@ -247,16 +249,16 @@ export async function getPurchaseOrderWithDetails(
     let pickup_location = null;
     
     if (po.delivery_location_id) {
-      const { data: locData } = await supabase
+      const { data: locData } = await inventory
         .from('locations')
         .select('id, name, type')
         .eq('id', po.delivery_location_id)
         .single();
       delivery_location = locData;
     }
-    
+
     if (po.pickup_location_id) {
-      const { data: locData } = await supabase
+      const { data: locData } = await inventory
         .from('locations')
         .select('id, name, type')
         .eq('id', po.pickup_location_id)
