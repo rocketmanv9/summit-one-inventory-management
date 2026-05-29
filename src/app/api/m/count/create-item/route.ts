@@ -26,15 +26,19 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
 
   const inv = (supabase as any).schema('inventory');
 
-  // Resolve UOM term_id from label if needed
+  // Resolve UOM term_id. catalog_items.uom_term_id is NOT NULL, so we must end
+  // up with a value — fall back to the provided label, then to 'EA' (each).
   let uomTermId = body.uom_term_id || null;
-  if (!uomTermId && body.unit_of_measure) {
+  if (!uomTermId) {
     try {
       const gv = await getTenantGVClient(session.tenantId);
-      uomTermId = await gv.resolveTermId(session.tenantId, 'uom', body.unit_of_measure, true);
+      uomTermId = await gv.resolveTermId(session.tenantId, 'uom', body.unit_of_measure || 'EA', true);
     } catch (e) {
       log.warn('mobile_count.uom_resolve_failed', { uom: body.unit_of_measure, error: (e as Error).message });
     }
+  }
+  if (!uomTermId) {
+    throw AppError.badRequest('Could not determine a unit of measure for this item. Pick or type one and try again.');
   }
 
   // Create new category if requested
@@ -45,6 +49,7 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
       .upsert({
         name: body.new_category_name,
         tenant_id: session.tenantId,
+        last_event_id: `${idempotencyKey}-cat`,
       }, { onConflict: 'tenant_id,name' })
       .select('id')
       .single();
@@ -56,26 +61,25 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
     categoryId = cat.id;
   }
 
-  // Generate SKU
-  let sku: string | null = null;
-  if (body.sku_prefix) {
-    const prefix = body.sku_prefix.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
-    // Find next sequential number for this prefix
-    const { data: existing } = await inv
-      .from('catalog_items')
-      .select('sku')
-      .ilike('sku', `${prefix}-%`)
-      .order('sku', { ascending: false })
-      .limit(1);
+  // Generate SKU. catalog_items.sku is NOT NULL, so always produce one: use the
+  // provided prefix, else derive from the item name, else a generic 'ITM'.
+  const prefix =
+    (body.sku_prefix || body.name || 'ITM').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || 'ITM';
+  // Find next sequential number for this prefix
+  const { data: existing } = await inv
+    .from('catalog_items')
+    .select('sku')
+    .ilike('sku', `${prefix}-%`)
+    .order('sku', { ascending: false })
+    .limit(1);
 
-    let seq = 1;
-    if (existing && existing.length > 0) {
-      const lastSku = existing[0].sku as string;
-      const match = lastSku.match(/-(\d+)$/);
-      if (match) seq = parseInt(match[1], 10) + 1;
-    }
-    sku = `${prefix}-${String(seq).padStart(4, '0')}`;
+  let seq = 1;
+  if (existing && existing.length > 0) {
+    const lastSku = existing[0].sku as string;
+    const match = lastSku.match(/-(\d+)$/);
+    if (match) seq = parseInt(match[1], 10) + 1;
   }
+  const sku = `${prefix}-${String(seq).padStart(4, '0')}`;
 
   // Create catalog item
   const { data: item, error: itemError } = await inv
@@ -88,6 +92,7 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
       uom_term_id: uomTermId,
       tracking_mode: body.tracking_mode,
       tenant_id: session.tenantId,
+      last_event_id: idempotencyKey,
     })
     .select('id, name, sku, barcode, tracking_mode, uom_term_id, category_id')
     .single();

@@ -10,6 +10,7 @@ import { MobileSessionExpired } from '@/components/mobile/MobileSessionExpired';
 import { MobileAddItemSheet } from '@/components/mobile/MobileAddItemSheet';
 import { MobileCatalogBrowser } from '@/components/mobile/MobileCatalogBrowser';
 import { MobileAddCategoryModal } from '@/components/mobile/MobileAddCategoryModal';
+import { apiErrorMessage } from '@/lib/api-error';
 
 interface CycleCountMeta {
   id: string;
@@ -162,7 +163,7 @@ export function MobileCountClient({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Session invalid (${res.status})`);
+        throw new Error(apiErrorMessage(data, `Session invalid (${res.status})`));
       }
 
       const { data } = await res.json();
@@ -233,7 +234,7 @@ export function MobileCountClient({
             setErrorMessage('Session expired');
             return;
           }
-          throw new Error(data.error || 'Failed to record count');
+          throw new Error(apiErrorMessage(data, 'Failed to record count'));
         }
 
         setLines((prev) =>
@@ -264,7 +265,7 @@ export function MobileCountClient({
             setErrorMessage('Session expired');
             return;
           }
-          throw new Error(data.error || 'Failed to record assets');
+          throw new Error(apiErrorMessage(data, 'Failed to record assets'));
         }
 
         setLines((prev) =>
@@ -345,7 +346,7 @@ export function MobileCountClient({
             setErrorMessage('Session expired');
             return;
           }
-          throw new Error(data.error || 'Failed to add item');
+          throw new Error(apiErrorMessage(data, 'Failed to add item'));
         }
 
         const { data } = await res.json();
@@ -495,7 +496,7 @@ export function MobileCountClient({
           setErrorMessage('Session expired');
           return;
         }
-        alert(data.error || 'Failed to submit count');
+        alert(apiErrorMessage(data, 'Failed to submit count'));
         return;
       }
 

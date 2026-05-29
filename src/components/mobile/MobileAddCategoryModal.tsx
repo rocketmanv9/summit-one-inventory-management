@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type CSSProperties } from 'react';
+import { apiErrorMessage } from '@/lib/api-error';
 
 interface MobileAddCategoryModalProps {
   isOpen: boolean;
@@ -60,7 +61,7 @@ export function MobileAddCategoryModal({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to create category');
+        throw new Error(apiErrorMessage(data, 'Failed to create category'));
       }
 
       const { data } = await res.json();

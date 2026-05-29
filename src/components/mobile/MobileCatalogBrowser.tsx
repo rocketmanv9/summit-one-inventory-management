@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, type CSSProperties } from 'react';
+import { apiErrorMessage } from '@/lib/api-error';
 
 interface CatalogItem {
   id: string;
@@ -123,7 +124,7 @@ export function MobileCatalogBrowser({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to add item');
+        throw new Error(apiErrorMessage(data, 'Failed to add item'));
       }
 
       const { data } = await res.json();

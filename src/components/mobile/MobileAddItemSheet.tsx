@@ -2,6 +2,7 @@
 
 import { useState, useRef, type CSSProperties } from 'react';
 import { validateImageFile, resizeImage } from '@/lib/image-utils';
+import { apiErrorMessage } from '@/lib/api-error';
 
 interface Category {
   id: string;
@@ -124,7 +125,7 @@ export function MobileAddItemSheet({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'AI suggestion failed');
+        throw new Error(apiErrorMessage(data, 'AI suggestion failed'));
       }
 
       const { suggestion } = await res.json();
@@ -207,7 +208,7 @@ export function MobileAddItemSheet({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to create item');
+        throw new Error(apiErrorMessage(data, 'Failed to create item'));
       }
 
       const { data } = await res.json();

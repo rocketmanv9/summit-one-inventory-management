@@ -235,7 +235,8 @@ export default async function MobileScanPage({
       });
       var data = await res.json();
       if (!res.ok || data.error) {
-        showToast(data.error || 'Request failed', true);
+        var errMsg = (data.error && (data.error.message || (typeof data.error === 'string' ? data.error : null))) || 'Request failed';
+        showToast(errMsg, true);
       } else {
         showToast(data.itemName + ' \\u2192 ' + data.newQty, false);
         scanCount++;

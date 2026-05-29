@@ -23,6 +23,7 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
       name: body.name,
       sku_prefix: body.sku_prefix || null,
       tenant_id: session.tenantId,
+      last_event_id: idempotencyKey,
     }, { onConflict: 'tenant_id,name' })
     .select('id, name, sku_prefix')
     .single();
