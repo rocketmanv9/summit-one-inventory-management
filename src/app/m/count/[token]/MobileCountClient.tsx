@@ -669,8 +669,6 @@ export function MobileCountClient({
               display: 'flex',
               gap: '8px',
               marginTop: '10px',
-              position: 'relative',
-              zIndex: 5,
             }}>
               <button
                 type="button"

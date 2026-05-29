@@ -148,13 +148,13 @@ export default async function MobileCountPage({
   }
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#f3f4f6' }}>
+    <>
       {/* Set bypass cookie so JS chunks load through deployment protection */}
       {bypass && (
         <script dangerouslySetInnerHTML={{ __html: `document.cookie="x-vercel-protection-bypass=${bypass};path=/;secure;samesite=lax;max-age=86400";` }} />
       )}
       <MobileCountClient bypassSecret={bypass} initialData={result.initialData} />
-    </div>
+    </>
   );
 }
 

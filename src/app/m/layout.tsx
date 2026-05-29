@@ -42,6 +42,9 @@ button, input[type="submit"] {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
@@ -49,6 +52,9 @@ button, input[type="submit"] {
   margin: 0;
   outline: none;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 button:focus-visible {
   outline: 2px solid #3b82f6;
@@ -126,7 +132,7 @@ export default function MobileLayout({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: embeddedCSS }} />
-      <div style={{ minHeight: '100dvh', background: '#f3f4f6' }}>
+      <div style={{ height: '100dvh', background: '#f3f4f6', overflow: 'hidden' }}>
         {children}
       </div>
     </>

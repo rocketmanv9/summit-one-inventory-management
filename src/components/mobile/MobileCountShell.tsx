@@ -70,10 +70,11 @@ export function MobileCountShell({
 
   const s: Record<string, CSSProperties> = {
     wrapper: {
-      minHeight: '100dvh',
+      height: '100dvh',
       background: '#f3f4f6',
       display: 'flex',
       flexDirection: 'column',
+      overflow: 'hidden',
     },
     header: {
       background: '#fff',
@@ -153,6 +154,8 @@ export function MobileCountShell({
     content: {
       flex: 1,
       overflowY: 'auto' as const,
+      minHeight: 0,
+      WebkitOverflowScrolling: 'touch',
     },
     footer: {
       position: 'sticky' as const,
