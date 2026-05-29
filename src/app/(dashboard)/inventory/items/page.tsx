@@ -649,7 +649,10 @@ function CreateItemModal({
         body: JSON.stringify({ input: asinInput.trim() }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error?.message || 'Failed to resolve ASIN');
+      if (!res.ok) {
+        setAmazonError(json.error?.message || 'Failed to resolve ASIN');
+        return;
+      }
       setResolvedAsin(json.data);
     } catch (err: any) {
       setAmazonError(err.message);
@@ -676,7 +679,10 @@ function CreateItemModal({
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error?.message || 'Failed to save mapping');
+      if (!res.ok) {
+        setAmazonError(json.error?.message || 'Failed to save mapping');
+        return;
+      }
       // Update local state with saved mapping
       setAmazonMapping({
         id: json.data.id,
@@ -709,7 +715,8 @@ function CreateItemModal({
       });
       if (!res.ok) {
         const json = await res.json();
-        throw new Error(json.error?.message || 'Failed to remove mapping');
+        setAmazonError(json.error?.message || 'Failed to remove mapping');
+        return;
       }
       setAmazonMapping(null);
       setAsinInput('');
