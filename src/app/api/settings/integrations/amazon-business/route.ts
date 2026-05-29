@@ -49,7 +49,7 @@ async function ensureAmazonVendor(adminClient: any, tenantId: string, idempotenc
       code: 'AMAZON-BIZ',
       active: true,
       payment_terms: 'CARD',
-      ordering_mode: 'portal_with_po_ref',
+      ordering_mode: 'amazon_punchout',
       notes: 'Auto-created by Amazon Business cXML integration',
       last_event_id: `amazon-biz-vendor-${idempotencyKey}`,
     }, { onConflict: 'tenant_id,code' })

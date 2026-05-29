@@ -85,26 +85,59 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
 
   const loadGuidance = async () => {
     if (!po.vendor_id) return;
-    
+
     const result = await getVendorOrderingGuidance(po.vendor_id);
     if (result.data) {
-      setGuidance(result.data);
-      
+      let effectiveMode = result.data.ordering_mode;
+
+      // If vendor is amazon_punchout, check whether ALL PO line items
+      // actually have ASIN mappings. If not, fall back to portal mode.
+      if (effectiveMode === 'amazon_punchout') {
+        try {
+          const [poDetails, mappingsRes] = await Promise.all([
+            getPurchaseOrderWithDetails(po.id),
+            fetch('/api/settings/integrations/amazon-business/item-mappings'),
+          ]);
+
+          const catalogItemIds = (poDetails.data?.lines || [])
+            .filter((l: any) => l.catalog_item_id)
+            .map((l: any) => l.catalog_item_id);
+
+          if (catalogItemIds.length > 0 && mappingsRes.ok) {
+            const mappingsJson = await mappingsRes.json();
+            const mappedIds = new Set(
+              (mappingsJson.data || []).map((m: any) => m.catalog_item_id)
+            );
+            const allMapped = catalogItemIds.every((id: string) => mappedIds.has(id));
+            if (!allMapped) {
+              effectiveMode = 'portal_with_po_ref';
+            }
+          } else if (catalogItemIds.length === 0) {
+            effectiveMode = 'portal_with_po_ref';
+          }
+        } catch {
+          // If mapping check fails, fall back to portal
+          effectiveMode = 'portal_with_po_ref';
+        }
+      }
+
+      setGuidance({ ...result.data, ordering_mode: effectiveMode });
+
       // Set defaults from guidance
       if (result.data.po_email) {
         setRecipientEmail(result.data.po_email);
       }
-      
+
       // Set placement method based on ordering mode
-      if (result.data.ordering_mode === 'portal_with_po_ref') {
+      if (effectiveMode === 'portal_with_po_ref') {
         setPlacementMethod('portal');
-      } else if (result.data.ordering_mode === 'phone_with_po_ref') {
+      } else if (effectiveMode === 'phone_with_po_ref') {
         setPlacementMethod('phone');
-      } else if (result.data.ordering_mode === 'email_po') {
+      } else if (effectiveMode === 'email_po') {
         setPlacementMethod('email');
-      } else if (result.data.ordering_mode === 'card_only_internal_po') {
+      } else if (effectiveMode === 'card_only_internal_po') {
         setPlacementMethod('portal');
-      } else if (result.data.ordering_mode === 'amazon_punchout') {
+      } else if (effectiveMode === 'amazon_punchout') {
         setPlacementMethod('portal');
         setPunchoutStep('init');
       }

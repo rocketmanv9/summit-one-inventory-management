@@ -481,6 +481,32 @@ function CreateItemModal({
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
   const [levelsSaving, setLevelsSaving] = useState(false);
 
+  // Amazon Business mapping state (edit mode only)
+  const [amazonConnected, setAmazonConnected] = useState(false);
+  const [amazonMapping, setAmazonMapping] = useState<{
+    id: string;
+    vendor_sku: string;
+    pack_size: number;
+    unit_cost: number | null;
+    last_known_price: number | null;
+    is_preferred: boolean;
+    notes: string | null;
+  } | null>(null);
+  const [amazonLoading, setAmazonLoading] = useState(false);
+  const [asinInput, setAsinInput] = useState('');
+  const [asinResolving, setAsinResolving] = useState(false);
+  const [resolvedAsin, setResolvedAsin] = useState<{
+    asin: string;
+    title: string | null;
+    image_url: string | null;
+    price: number | null;
+    product_url: string;
+  } | null>(null);
+  const [amazonPackQty, setAmazonPackQty] = useState('1');
+  const [amazonPreferred, setAmazonPreferred] = useState(false);
+  const [amazonSaving, setAmazonSaving] = useState(false);
+  const [amazonError, setAmazonError] = useState('');
+
   // Initial stock state (for new items only)
   const [initialStockLocation, setInitialStockLocation] = useState('');
   const [initialStockQty, setInitialStockQty] = useState('');
@@ -565,6 +591,137 @@ function CreateItemModal({
 
     loadLevels();
   }, [isEditing, item?.id]);
+
+  // Load Amazon Business integration status + mapping for this item
+  useEffect(() => {
+    if (!isEditing || !item?.id) return;
+
+    async function loadAmazon() {
+      setAmazonLoading(true);
+      try {
+        // Check if Amazon Business is connected
+        const statusRes = await fetch('/api/settings/integrations/amazon-business');
+        const statusJson = await statusRes.json();
+        if (!statusJson.data?.connected) {
+          setAmazonConnected(false);
+          return;
+        }
+        setAmazonConnected(true);
+
+        // Fetch mappings and find one for this item
+        const mappingsRes = await fetch('/api/settings/integrations/amazon-business/item-mappings');
+        const mappingsJson = await mappingsRes.json();
+        const match = (mappingsJson.data || []).find(
+          (m: any) => m.catalog_item_id === item!.id
+        );
+        if (match) {
+          setAmazonMapping({
+            id: match.id,
+            vendor_sku: match.vendor_sku,
+            pack_size: Number(match.pack_size) || 1,
+            unit_cost: match.unit_cost,
+            last_known_price: match.last_known_price,
+            is_preferred: match.is_preferred ?? false,
+            notes: match.notes,
+          });
+          setAmazonPackQty(String(Number(match.pack_size) || 1));
+          setAmazonPreferred(match.is_preferred ?? false);
+        }
+      } catch (err) {
+        console.error('Error loading Amazon status:', err);
+      } finally {
+        setAmazonLoading(false);
+      }
+    }
+
+    loadAmazon();
+  }, [isEditing, item?.id]);
+
+  const handleResolveAsin = async () => {
+    if (!asinInput.trim()) return;
+    setAsinResolving(true);
+    setAmazonError('');
+    setResolvedAsin(null);
+    try {
+      const res = await fetch('/api/settings/integrations/amazon-business/item-mappings/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({ input: asinInput.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to resolve ASIN');
+      setResolvedAsin(json.data);
+    } catch (err: any) {
+      setAmazonError(err.message);
+    } finally {
+      setAsinResolving(false);
+    }
+  };
+
+  const handleSaveAmazonMapping = async () => {
+    const asin = resolvedAsin?.asin || amazonMapping?.vendor_sku;
+    if (!asin || !item?.id) return;
+    setAmazonSaving(true);
+    setAmazonError('');
+    try {
+      const res = await fetch('/api/settings/integrations/amazon-business/item-mappings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({
+          catalog_item_id: item.id,
+          asin,
+          pack_quantity: Number(amazonPackQty) || 1,
+          is_preferred: amazonPreferred,
+          last_known_price: resolvedAsin?.price ?? amazonMapping?.last_known_price ?? undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || 'Failed to save mapping');
+      // Update local state with saved mapping
+      setAmazonMapping({
+        id: json.data.id,
+        vendor_sku: asin,
+        pack_size: Number(amazonPackQty) || 1,
+        unit_cost: json.data.unit_cost,
+        last_known_price: resolvedAsin?.price ?? amazonMapping?.last_known_price ?? null,
+        is_preferred: amazonPreferred,
+        notes: json.data.notes,
+      });
+      setResolvedAsin(null);
+      setAsinInput('');
+    } catch (err: any) {
+      setAmazonError(err.message);
+    } finally {
+      setAmazonSaving(false);
+    }
+  };
+
+  const handleRemoveAmazonMapping = async () => {
+    if (!amazonMapping?.id) return;
+    if (!confirm('Remove Amazon ASIN mapping for this item?')) return;
+    setAmazonSaving(true);
+    setAmazonError('');
+    try {
+      const res = await fetch('/api/settings/integrations/amazon-business/item-mappings', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({ mapping_id: amazonMapping.id }),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error?.message || 'Failed to remove mapping');
+      }
+      setAmazonMapping(null);
+      setAsinInput('');
+      setResolvedAsin(null);
+      setAmazonPackQty('1');
+      setAmazonPreferred(false);
+    } catch (err: any) {
+      setAmazonError(err.message);
+    } finally {
+      setAmazonSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (isEditing) return;
@@ -1112,6 +1269,214 @@ function CreateItemModal({
               )}
             </div>
           </div>
+
+          {/* Amazon Business Mapping (edit mode only) */}
+          {isEditing && (
+            <div className="border-t pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <h4 className="text-sm font-semibold">Amazon Business</h4>
+                {amazonConnected ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Connected
+                  </span>
+                ) : !amazonLoading ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">
+                    Not Connected
+                  </span>
+                ) : null}
+              </div>
+
+              {amazonLoading && (
+                <p className="text-xs text-muted-foreground">Loading Amazon mapping...</p>
+              )}
+
+              {!amazonLoading && !amazonConnected && (
+                <p className="text-xs text-muted-foreground">
+                  Connect Amazon Business in{' '}
+                  <a href="/settings/integrations" className="text-blue-600 hover:underline">Settings &gt; Integrations</a>{' '}
+                  to link products by ASIN.
+                </p>
+              )}
+
+              {amazonError && (
+                <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600 mb-3">
+                  {amazonError}
+                </div>
+              )}
+
+              {/* Existing mapping display */}
+              {!amazonLoading && amazonConnected && amazonMapping && !resolvedAsin && (
+                <div className="rounded-md border p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">ASIN:</span>
+                      <a
+                        href={`https://www.amazon.com/dp/${amazonMapping.vendor_sku}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-mono text-blue-600 hover:underline"
+                      >
+                        {amazonMapping.vendor_sku}
+                      </a>
+                      {amazonMapping.is_preferred && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">
+                          Preferred
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRemoveAmazonMapping}
+                      disabled={amazonSaving}
+                      className="text-xs text-red-600 hover:text-red-800 font-medium"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="flex gap-4 text-xs text-muted-foreground">
+                    <span>Pack Qty: {amazonMapping.pack_size}</span>
+                    {amazonMapping.last_known_price != null && (
+                      <span>Price: ${amazonMapping.last_known_price.toFixed(2)}</span>
+                    )}
+                  </div>
+
+                  {/* Inline edit pack qty / preferred */}
+                  <div className="flex items-center gap-3 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-medium">Pack Qty</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={amazonPackQty}
+                        onChange={(e) => setAmazonPackQty(e.target.value)}
+                        className="w-16 px-1.5 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px]">
+                      <input
+                        type="checkbox"
+                        checked={amazonPreferred}
+                        onChange={(e) => setAmazonPreferred(e.target.checked)}
+                        className="rounded border-gray-300"
+                      />
+                      Preferred
+                    </label>
+                    {(Number(amazonPackQty) !== amazonMapping.pack_size || amazonPreferred !== amazonMapping.is_preferred) && (
+                      <button
+                        type="button"
+                        onClick={handleSaveAmazonMapping}
+                        disabled={amazonSaving}
+                        className="px-2 py-1 text-[11px] font-semibold bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {amazonSaving ? 'Saving...' : 'Update'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Add new mapping form */}
+              {!amazonLoading && amazonConnected && !amazonMapping && !resolvedAsin && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Link an Amazon product to this item by pasting an Amazon URL or ASIN.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={asinInput}
+                      onChange={(e) => setAsinInput(e.target.value)}
+                      placeholder="Paste Amazon URL or ASIN..."
+                      className="flex-1 px-2 py-1.5 border rounded-md text-sm"
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleResolveAsin(); } }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleResolveAsin}
+                      disabled={asinResolving || !asinInput.trim()}
+                      className="px-3 py-1.5 text-xs font-semibold bg-gray-800 text-white rounded-md hover:bg-gray-900 disabled:opacity-50"
+                    >
+                      {asinResolving ? 'Resolving...' : 'Resolve'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Resolved ASIN preview + confirm */}
+              {amazonConnected && resolvedAsin && (
+                <div className="rounded-md border p-3 space-y-3">
+                  <div className="flex gap-3">
+                    {resolvedAsin.image_url && (
+                      <img
+                        src={resolvedAsin.image_url}
+                        alt={resolvedAsin.title || resolvedAsin.asin}
+                        className="w-12 h-12 object-contain rounded border"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      {resolvedAsin.title && (
+                        <p className="text-xs font-medium truncate">{resolvedAsin.title}</p>
+                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <a
+                          href={resolvedAsin.product_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs font-mono text-blue-600 hover:underline"
+                        >
+                          {resolvedAsin.asin}
+                        </a>
+                        {resolvedAsin.price != null && (
+                          <span className="text-xs text-muted-foreground">${resolvedAsin.price.toFixed(2)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-medium">Pack Qty</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={amazonPackQty}
+                        onChange={(e) => setAmazonPackQty(e.target.value)}
+                        className="w-16 px-1.5 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px]">
+                      <input
+                        type="checkbox"
+                        checked={amazonPreferred}
+                        onChange={(e) => setAmazonPreferred(e.target.checked)}
+                        className="rounded border-gray-300"
+                      />
+                      Preferred
+                    </label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setResolvedAsin(null); setAsinInput(''); }}
+                      className="flex-1 px-3 py-1.5 text-xs border text-gray-700 rounded-md hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAmazonMapping}
+                      disabled={amazonSaving}
+                      className="flex-1 px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {amazonSaving ? 'Saving...' : 'Link Product'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex gap-3 pt-4">
             <button
