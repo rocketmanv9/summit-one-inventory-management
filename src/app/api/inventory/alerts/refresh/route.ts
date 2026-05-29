@@ -22,10 +22,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data: { refreshed: true, alerts_count: itemsBelowPar?.length || 0 },
     status: 200,
-    events: [{
-      event_name: 'alerts.refreshed',
-      payload: { count: itemsBelowPar?.length || 0 },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/alerts/refresh' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/alerts/refresh' });

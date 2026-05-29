@@ -40,6 +40,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data,
     status: 201,
-    events: [{ event_name: 'item_category.created', payload: data, last_event_id: idempotencyKey }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/categories' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/categories' });

@@ -26,10 +26,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data: data || { method: body.method },
     status: 200,
-    events: [{
-      event_name: 'abc_classification.calculated',
-      payload: { method: body.method },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/abc-classification/calculate' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/abc-classification/calculate' });

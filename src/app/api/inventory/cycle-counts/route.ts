@@ -37,17 +37,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data: { id: data },
     status: 201,
-    events: [{
-      event_name: 'cycle_count.started',
-      payload: {
-        cycle_count_id: data,
-        location_id: body.location_id,
-        count_type: body.count_type,
-      },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
-}, { bodySchema: 'raw',
+}, { bodySchema: 'raw', emissionOwner: 'trigger',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/inventory/cycle-counts',
 });

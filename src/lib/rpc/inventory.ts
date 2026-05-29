@@ -6,6 +6,7 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
+import { apiWrite } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
 
@@ -541,76 +542,59 @@ export const InventoryRPC = {
    * Table: inventory.location_types
    */
   async createLocationType(payload: LocationTypeInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: LocationTypeInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('location_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create location type: ${error.message}`);
+    // Migrated to chassis route (idempotency + server-side validation; the
+    // location_types DB trigger owns event emission). Return shape preserved.
+    const { id, name, description, code } = payload as LocationTypeInsertPayload & { id?: string };
+    void id;
+    const res = await apiWrite('/api/inventory/location-types', 'POST', { name, description, code });
+    const json = await res.json();
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to create location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
+    return json.data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
   },
 
   /**
    * Delete a location type with optimistic concurrency control
    */
   async deleteLocationType(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('location_types')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete location type: ${error.message}`);
+    const res = await apiWrite(`/api/inventory/location-types/${id}`, 'DELETE', {
+      expected_last_event_id: lastEventId,
+    });
+    const json = await res.json();
+    if (res.status === 409) {
+      throw AppError.conflict(json.error?.message || 'Location type was updated by someone else. Please refresh and try again.');
     }
-    if (!data) {
-      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to delete location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id'>;
+    return json.data as Pick<LocationTypeRow, 'id'>;
   },
 
   /**
    * Update a location type with optimistic concurrency control
    */
   async updateLocationType(id: string, updates: LocationTypeUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as LocationTypeUpdatePayload & {
       id?: string;
       created_at?: string;
       tenant_id?: string;
       last_event_id?: string;
     };
+    void _id; void created_at; void tenant_id; void last_event_id;
 
-    const { data, error } = await supabase
-      .from('location_types')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update location type: ${error.message}`);
+    const res = await apiWrite(`/api/inventory/location-types/${id}`, 'PATCH', {
+      ...safeUpdates,
+      expected_last_event_id: lastEventId,
+    });
+    const json = await res.json();
+    if (res.status === 409) {
+      throw AppError.conflict(json.error?.message || 'Location type was updated by someone else. Please refresh and try again.');
     }
-    if (!data) {
-      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to update location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
+    return json.data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
   },
 
   /**

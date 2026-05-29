@@ -81,9 +81,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data,
     status: 201,
-    events: [{ event_name: 'catalog_item.created', payload: data, last_event_id: idempotencyKey }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/items' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/items' });
 
 export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = await req.json();
@@ -115,6 +115,6 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, i
   return {
     data,
     status: 200,
-    events: [{ event_name: 'catalog_item.updated', payload: data, last_event_id: idempotencyKey }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/items' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/items' });

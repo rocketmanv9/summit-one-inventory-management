@@ -40,10 +40,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data: data || { movement_id: movementId },
     status: 200,
-    events: [{
-      event_name: 'movement.reversed',
-      payload: { movement_id: movementId, reason: body.reason_code },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/movements/:id/reverse' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/movements/:id/reverse' });

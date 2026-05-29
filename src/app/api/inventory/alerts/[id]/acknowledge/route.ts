@@ -30,10 +30,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   return {
     data: data || { alert_id: alertId },
     status: 200,
-    events: [{
-      event_name: 'alert.acknowledged',
-      payload: { alert_id: alertId },
-      last_event_id: idempotencyKey,
-    }],
+    events: [],
   };
-}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/alerts/:id/acknowledge' });
+}, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/alerts/:id/acknowledge' });
