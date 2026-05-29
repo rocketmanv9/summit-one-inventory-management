@@ -81,7 +81,7 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
       last_event_id: idempotencyKey,
     }],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/m/count/record-asset',
   authenticate: async (req: Request) => {

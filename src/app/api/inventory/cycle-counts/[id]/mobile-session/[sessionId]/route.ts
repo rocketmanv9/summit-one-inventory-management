@@ -42,4 +42,4 @@ export const DELETE = createSessionWriteRoute(async ({ req, log, supabase, idemp
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/cycle-counts/:id/mobile-session/:sessionId' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/cycle-counts/:id/mobile-session/:sessionId' });

@@ -25,7 +25,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   }
 
   throw AppError.badRequest(`Unknown workflow: ${body.workflow}`);
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/ai/workflows',
 });

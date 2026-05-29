@@ -150,7 +150,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     // fails with "system" tenant_id on unauthenticated write routes (UUID column).
     events: [],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/m/count/sessions/:token/validate',
   authenticate: async () => {

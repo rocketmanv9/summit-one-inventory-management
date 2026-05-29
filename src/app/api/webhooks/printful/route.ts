@@ -118,7 +118,7 @@ export const POST = createWriteRoute(
       }],
     };
   },
-  {
+  { bodySchema: 'raw',
     serviceName: SERVICE_NAME,
     scope: 'POST /api/webhooks/printful',
     authenticate: async () => {

@@ -141,4 +141,4 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, supabase, id
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/branding' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/branding' });

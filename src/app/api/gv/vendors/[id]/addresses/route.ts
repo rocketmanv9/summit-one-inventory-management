@@ -41,4 +41,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log }) => {
   log.info('vendor_address.created', { vendorId, addressId: address.id });
 
   return { data: address, status: 201, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/gv/vendors/[id]/addresses' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/gv/vendors/[id]/addresses' });

@@ -8,8 +8,8 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // expense tracking belongs in the inventory service. See docs/accounting-expenses-parked.md.
 export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   throw AppError.notFound('Accounting expenses API is not enabled in the inventory service');
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/accounting/expenses/:id' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/accounting/expenses/:id' });
 
 export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   throw AppError.notFound('Accounting expenses API is not enabled in the inventory service');
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/accounting/expenses/:id' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/accounting/expenses/:id' });

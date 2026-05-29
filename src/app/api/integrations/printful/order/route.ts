@@ -176,7 +176,7 @@ export const POST = createSessionWriteRoute(
       }],
     };
   },
-  {
+  { bodySchema: 'raw',
     serviceName: SERVICE_NAME,
     scope: 'POST /api/integrations/printful/order',
   }

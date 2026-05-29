@@ -41,4 +41,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   // GV service emits its own events — no local outbox events needed for this proxy route
   return { data: tool, status: 201, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/gv/tools' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/gv/tools' });

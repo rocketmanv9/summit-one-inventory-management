@@ -35,4 +35,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log }) => {
     status: 200,
     events: [], // GV emits its own outbox events
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/gv/terms/resolve' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/gv/terms/resolve' });

@@ -103,4 +103,4 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
     status: 200,
     events: [],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/cost-estimate' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/cost-estimate' });

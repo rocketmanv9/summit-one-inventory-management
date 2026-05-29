@@ -55,4 +55,4 @@ export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, 
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/operations/globe/presets/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/operations/globe/presets/[id]' });

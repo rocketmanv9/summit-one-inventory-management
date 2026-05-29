@@ -38,4 +38,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log }) => {
   log.info('vendor_contact.created', { vendorId, contactId: contact.id });
 
   return { data: contact, status: 201, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/gv/vendors/[id]/contacts' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/gv/vendors/[id]/contacts' });

@@ -32,4 +32,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/inventory/abc-classification/calculate' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/abc-classification/calculate' });

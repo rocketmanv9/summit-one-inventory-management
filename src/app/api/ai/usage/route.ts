@@ -182,4 +182,4 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, supabase, log, id
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/ai/usage' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/ai/usage' });

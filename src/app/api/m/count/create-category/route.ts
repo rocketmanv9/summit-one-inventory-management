@@ -47,7 +47,7 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
       last_event_id: idempotencyKey,
     }],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/m/count/create-category',
   authenticate: async (req: Request) => {

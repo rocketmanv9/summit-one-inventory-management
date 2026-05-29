@@ -57,4 +57,4 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, i
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/cycle-counts/:id/lines/:lineId' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/cycle-counts/:id/lines/:lineId' });

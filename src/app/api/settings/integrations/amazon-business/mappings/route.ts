@@ -126,7 +126,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/mappings' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/mappings' });
 
 // ── DELETE: Remove mapping ───────────────────────────────────────────────
 
@@ -157,4 +157,4 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
       last_event_id: idempotencyKey,
     }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/amazon-business/mappings' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/amazon-business/mappings' });

@@ -50,7 +50,7 @@ export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempo
     status: 200,
     events: [{ event_name: 'catalog_item.updated', payload: data, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/items/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/items/[id]' });
 
 export const DELETE = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
   const id = extractId(req);
@@ -68,4 +68,4 @@ export const DELETE = createSessionWriteRoute(async ({ req, log, supabase, idemp
     status: 200,
     events: [{ event_name: 'catalog_item.deleted', payload: { id }, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/items/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/items/[id]' });

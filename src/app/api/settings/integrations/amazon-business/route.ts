@@ -210,7 +210,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
     status: 201,
     events: [{ event_name: 'integration.created', payload: { provider: 'amazon-business', mechanism: 'cxml' }, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business' });
 
 // ── DELETE: Disconnect Amazon Business ───────────────────────────────────
 
@@ -254,4 +254,4 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
     status: 200,
     events: [{ event_name: 'integration.disconnected', payload: { provider: 'amazon-business' }, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/amazon-business' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/amazon-business' });

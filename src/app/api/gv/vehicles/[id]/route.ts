@@ -62,7 +62,7 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req }) => {
     // GV service emits its own events — no local outbox events needed
     events: [],
   };
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vehicles/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vehicles/[id]' });
 
 /**
  * DELETE /api/gv/vehicles/:id
@@ -81,4 +81,4 @@ export const DELETE = createSessionWriteRoute(async ({ ctx, req }) => {
     // GV service emits its own events — no local outbox events needed
     events: [],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vehicles/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vehicles/[id]' });

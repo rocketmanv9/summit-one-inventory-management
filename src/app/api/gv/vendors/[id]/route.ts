@@ -57,7 +57,7 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log }) => {
 
   // GV service emits its own events — no local outbox events needed for this proxy route
   return { data: vendor, status: 200, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vendors/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vendors/[id]' });
 
 /**
  * DELETE /api/gv/vendors/:id
@@ -74,4 +74,4 @@ export const DELETE = createSessionWriteRoute(async ({ ctx, req, log }) => {
 
   // GV service emits its own events — no local outbox events needed for this proxy route
   return { data: { id, deleted: true }, status: 200, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vendors/[id]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vendors/[id]' });

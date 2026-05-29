@@ -68,7 +68,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       last_event_id: idempotencyKey,
     }],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/inventory/images/delete',
 });

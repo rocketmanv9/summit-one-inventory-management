@@ -153,7 +153,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     status: 201,
     events: [{ event_name: 'integration.created', payload: { provider: 'printify' }, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/printify' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/printify' });
 
 // ── DELETE: Disconnect Printify ─────────────────────────────────────
 
@@ -185,7 +185,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, log, idempotenc
     status: 200,
     events: [{ event_name: 'integration.disconnected', payload: { provider: 'printify' }, last_event_id: idempotencyKey }],
   };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/printify' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/settings/integrations/printify' });
 
 // ── Validate Printify credentials ───────────────────────────────────
 

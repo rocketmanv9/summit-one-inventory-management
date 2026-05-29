@@ -24,7 +24,7 @@ export const POST = createSessionWriteRoute(async ({ req }) => {
     'POST /api/settings/integrations/amazon-business/punchout/start → shop on Amazon → ' +
     'POST /api/settings/integrations/amazon-business/punchout/submit'
   );
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/orders' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/orders' });
 
 // ── GET: List Amazon Business orders ─────────────────────────────────────
 

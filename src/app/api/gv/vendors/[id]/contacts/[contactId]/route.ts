@@ -41,7 +41,7 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log }) => {
   log.info('vendor_contact.updated', { vendorId, contactId });
 
   return { data: contact, status: 200, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vendors/[id]/contacts/[contactId]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/gv/vendors/[id]/contacts/[contactId]' });
 
 /**
  * DELETE /api/gv/vendors/:id/contacts/:contactId
@@ -57,4 +57,4 @@ export const DELETE = createSessionWriteRoute(async ({ ctx, req, log }) => {
   log.info('vendor_contact.deleted', { vendorId, contactId });
 
   return { data: { id: contactId, deleted: true }, status: 200, events: [] };
-}, { serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vendors/[id]/contacts/[contactId]' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/gv/vendors/[id]/contacts/[contactId]' });

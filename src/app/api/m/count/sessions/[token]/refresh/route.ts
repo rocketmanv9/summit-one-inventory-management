@@ -48,7 +48,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     status: 200,
     events: [],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/m/count/sessions/:token/refresh',
   authenticate: async () => {

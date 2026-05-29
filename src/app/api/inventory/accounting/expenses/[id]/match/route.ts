@@ -10,4 +10,4 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // See docs/accounting-expenses-parked.md.
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   throw AppError.notFound('Accounting expenses API is not enabled in the inventory service');
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/inventory/accounting/expenses/:id/match' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/accounting/expenses/:id/match' });
