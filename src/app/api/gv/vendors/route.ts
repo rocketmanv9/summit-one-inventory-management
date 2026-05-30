@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
-import { getTenantVendorClient } from '@/lib/vendors';
+import { getTenantVendorClient, createCustomVendor } from '@/lib/vendors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -30,13 +30,14 @@ const CreateVendorSchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
-export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, req, log }) => {
   const body = CreateVendorSchema.parse(await req.json());
 
-  const client = await getTenantVendorClient(ctx.tenantId);
-  const vendor = await client.create(body);
+  // Via the SECURITY DEFINER RPC — reliable tenant context under GV's pooled
+  // PostgREST (the SDK's set_claim + insert split across connections and fails RLS).
+  const vendor = await createCustomVendor(ctx.tenantId, body);
 
-  log.info('vendor.created', { vendorId: vendor.id });
+  log.info('vendor.created', { vendorId: vendor?.id });
 
   // GV service emits its own events — no local outbox events needed for this proxy route
   return { data: vendor, status: 201, events: [] };
