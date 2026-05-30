@@ -399,36 +399,14 @@ export const InventoryRPC = {
    * The trigger_catalog_item_events trigger handles outbox emission on UPDATE.
    */
   async reassignCatalogItemsCategory(oldCategoryId: string, newCategoryId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    // Fetch items to get their last_event_id for OCC
-    const { data: items, error: fetchError } = await supabase
-      .from('catalog_items')
-      .select('id, last_event_id')
-      .eq('category_id', oldCategoryId);
-
-    if (fetchError) {
-      throw AppError.internal(`Failed to fetch category items for reassignment: ${fetchError.message}`);
-    }
-
-    if (!items || items.length === 0) return;
-
-    for (const item of items) {
-      const { data: updated, error } = await supabase
-        .from('catalog_items')
-        .update({ category_id: newCategoryId })
-        .eq('id', item.id)
-        .eq('last_event_id', item.last_event_id)
-        .select('id')
-        .maybeSingle();
-
-      if (error) {
-        throw AppError.internal(`Failed to reassign catalog item ${item.id}: ${error.message}`);
-      }
-      if (!updated) {
-        throw AppError.conflict(`Concurrent modification detected on catalog item ${item.id} (OCC conflict)`);
-      }
-    }
+    // Routed through the chassis write route — the loop + per-row OCC now runs
+    // server-side (idempotent, tenant-scoped). Trigger owns event emission.
+    await writeJson(
+      '/api/inventory/items/reassign-category',
+      'POST',
+      { old_category_id: oldCategoryId, new_category_id: newCategoryId },
+      'Failed to reassign catalog items',
+    );
   },
 
   /**
@@ -619,7 +597,6 @@ export const InventoryRPC = {
    * Update a catalog item with optimistic concurrency control
    */
   async updateCatalogItem(id: string, updates: CatalogItemUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as CatalogItemUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -627,45 +604,27 @@ export const InventoryRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('catalog_items')
-      .update({ ...safeUpdates, last_event_id: lastEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update catalog item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route. expected_last_event_id drives
+    // the version guard server-side; 409 → AppError.conflict (preserved UX).
+    return writeJson<Pick<CatalogItemRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/items/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Catalog item was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete a catalog item with optimistic concurrency control
    */
   async deleteCatalogItem(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('catalog_items')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete catalog item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<CatalogItemRow, 'id'>;
+    // Routed through the chassis OCC delete route (expected_last_event_id guard).
+    return writeJson<Pick<CatalogItemRow, 'id'>>(
+      `/api/inventory/items/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Catalog item was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -806,73 +765,22 @@ export const InventoryRPC = {
    * Create asset
    */
   async createAsset(payload: AssetInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: AssetInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data: existingAsset, error: existingError } = await supabase
-      .from('assets')
-      .select('id, last_event_id, status')
-      .eq('asset_tag', insertPayload.asset_tag)
-      .maybeSingle();
-
-    if (existingError) {
-      throw AppError.internal(`Failed to check existing asset: ${existingError.message}`);
-    }
-
-    if (existingAsset && existingAsset.status !== 'retired') {
-      throw AppError.conflict('An asset with this tag already exists. Edit the existing asset or choose a different tag.');
-    }
-
-    if (existingAsset && existingAsset.status === 'retired') {
-      const nextEventId = crypto.randomUUID();
-      const updatePayload: AssetUpdatePayload = {
-        ...insertPayload,
-        status: insertPayload.status ?? 'available',
-        last_event_id: nextEventId,
-      };
-      delete (updatePayload as AssetUpdatePayload & { tenant_id?: string }).tenant_id;
-
-      let updateQuery = supabase
-        .from('assets')
-        .update(updatePayload)
-        .eq('id', existingAsset.id);
-
-      if (existingAsset.last_event_id) {
-        updateQuery = updateQuery.eq('last_event_id', existingAsset.last_event_id);
-      }
-
-      const { data: restored, error: restoreError } = await updateQuery
-        .select('id, last_event_id')
-        .single();
-
-      if (restoreError) {
-        throw AppError.internal(`Failed to restore asset: ${restoreError.message}`);
-      }
-
-      return restored as Pick<AssetRow, 'id' | 'last_event_id'>;
-    }
-
-    const { data, error } = await supabase
-      .from('assets')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create asset: ${error.message}`);
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis write route — the create-or-restore-retired
+    // logic now runs server-side (idempotent, tenant-scoped). The route stamps
+    // last_event_id; trigger_asset_events owns emission.
+    const { last_event_id, tenant_id, ...fields } = payload as AssetInsertPayload & { tenant_id?: string };
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/assets',
+      'POST',
+      fields,
+      'Failed to create asset',
+    );
   },
 
   /**
    * Update asset with optimistic concurrency control
    */
   async updateAsset(id: string, updates: AssetUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as AssetUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -880,46 +788,26 @@ export const InventoryRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('assets')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update asset: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route.
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assets/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Asset was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete asset with optimistic concurrency control
    */
   async deleteAsset(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const nextEventId = crypto.randomUUID();
-    const { data, error } = await supabase
-      .from('assets')
-      .update({ status: 'retired', last_event_id: nextEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete asset: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Soft-delete (retire) routed through the chassis OCC delete route.
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assets/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Asset was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -1322,138 +1210,34 @@ export const InventoryRPC = {
    * Update transfer and lines with optimistic concurrency control
    */
   async updateTransfer(transferId: string, transferLastEventId: string, payload: TransferUpdatePayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    const { data: header, error: headerError } = await supabase
-      .from('transfers')
-      .update({
+    // Routed through the chassis write route — the header + line-reconciliation
+    // sequence (with per-row OCC) now runs server-side under the idempotency
+    // guard. transfer/transfer_line triggers own emission.
+    await writeJson(
+      `/api/inventory/transfers/${transferId}`,
+      'PATCH',
+      {
+        expected_last_event_id: transferLastEventId,
         from_location_id: payload.from_location_id,
         to_location_id: payload.to_location_id,
         notes: payload.notes,
-      })
-      .eq('id', transferId)
-      .eq('last_event_id', transferLastEventId)
-      .select('id')
-      .single();
-
-    if (headerError) {
-      throw AppError.internal(`Failed to update transfer: ${headerError.message}`);
-    }
-    if (!header) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
-
-    const { data: existingLines, error: existingError } = await supabase
-      .from('transfer_lines')
-      .select('id, last_event_id')
-      .eq('transfer_id', transferId);
-
-    if (existingError) {
-      throw AppError.internal(`Failed to load transfer lines: ${existingError.message}`);
-    }
-
-    const existing = existingLines || [];
-    const incomingIds = new Set(payload.lines.filter(line => line.id).map(line => line.id as string));
-
-    for (const line of existing) {
-      if (!incomingIds.has(line.id)) {
-        const { error: deleteError } = await supabase
-          .from('transfer_lines')
-          .delete()
-          .eq('id', line.id)
-          .eq('last_event_id', line.last_event_id);
-
-        if (deleteError) {
-          throw AppError.internal(`Failed to delete transfer line: ${deleteError.message}`);
-        }
-      }
-    }
-
-    for (let index = 0; index < payload.lines.length; index += 1) {
-      const line = payload.lines[index];
-      const lineNumber = index + 1;
-
-      if (line.id) {
-        if (!line.last_event_id) {
-          throw AppError.badRequest('Missing last_event_id for transfer line. Please refresh and try again.');
-        }
-
-        const { error: lineError } = await supabase
-          .from('transfer_lines')
-          .update({
-            catalog_item_id: line.catalog_item_id,
-            qty: line.qty,
-            line_number: lineNumber,
-          })
-          .eq('id', line.id)
-          .eq('last_event_id', line.last_event_id);
-
-        if (lineError) {
-          throw AppError.internal(`Failed to update transfer line: ${lineError.message}`);
-        }
-      } else {
-        const { error: insertError } = await supabase
-          .from('transfer_lines')
-          .insert({
-            transfer_id: transferId,
-            catalog_item_id: line.catalog_item_id,
-            qty: line.qty,
-            line_number: lineNumber,
-            last_event_id: crypto.randomUUID(),
-          });
-
-        if (insertError) {
-          throw AppError.internal(`Failed to add transfer line: ${insertError.message}`);
-        }
-      }
-    }
+        lines: payload.lines,
+      },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Ship transfer (draft -> in_transit)
    */
   async shipTransfer(transferId: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    const { data: lines, error: lineError } = await supabase
-      .from('transfer_lines')
-      .select('id, qty, last_event_id')
-      .eq('transfer_id', transferId);
-
-    if (lineError) {
-      throw AppError.internal(`Failed to load transfer lines: ${lineError.message}`);
-    }
-
-    if (!lines || lines.length === 0) {
-      throw AppError.notFound('No transfer lines found. Please refresh and try again.');
-    }
-
-    for (const line of lines) {
-      const { error: updateError } = await supabase
-        .from('transfer_lines')
-        .update({ qty_shipped: line.qty })
-        .eq('id', line.id)
-        .eq('last_event_id', line.last_event_id);
-
-      if (updateError) {
-        throw AppError.internal(`Failed to ship transfer line: ${updateError.message}`);
-      }
-    }
-
-    const { data, error } = await supabase
-      .from('transfers')
-      .update({ status: 'in_transit', initiated_at: new Date().toISOString() })
-      .eq('id', transferId)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to ship transfer: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
+    // Routed through the chassis write route (per-line qty_shipped + header flip).
+    await writeJson(
+      `/api/inventory/transfers/${transferId}/ship`,
+      'POST',
+      { expected_last_event_id: lastEventId },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -1509,21 +1293,13 @@ export const InventoryRPC = {
    * Cancel transfer (draft -> cancelled)
    */
   async cancelTransfer(transferId: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('transfers')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-      .eq('id', transferId)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to cancel transfer: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
+    // Routed through the chassis write route (header status → cancelled, OCC).
+    await writeJson(
+      `/api/inventory/transfers/${transferId}/cancel`,
+      'POST',
+      { expected_last_event_id: lastEventId },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**

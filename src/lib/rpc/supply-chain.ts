@@ -285,73 +285,22 @@ export const SupplyChainRPC = {
    * Table: supply_chain.vendors
    */
   async createVendor(payload: VendorInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const insertPayload: VendorInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data: existingByName, error: existingError } = await supabase
-      .from('vendors')
-      .select('id, last_event_id, active')
-      .eq('name', insertPayload.name)
-      .maybeSingle();
-
-    if (existingError) {
-      throw AppError.internal(`Failed to check existing vendor: ${existingError.message}`);
-    }
-
-    if (existingByName?.active) {
-      throw AppError.conflict('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
-    }
-
-    if (existingByName && !existingByName.active) {
-      const nextEventId = crypto.randomUUID();
-      const updatePayload: VendorUpdatePayload = {
-        ...insertPayload,
-        active: true,
-        last_event_id: nextEventId,
-      };
-      delete (updatePayload as VendorUpdatePayload & { tenant_id?: string }).tenant_id;
-
-      let updateQuery = supabase
-        .from('vendors')
-        .update(updatePayload)
-        .eq('id', existingByName.id);
-
-      if (existingByName.last_event_id) {
-        updateQuery = updateQuery.eq('last_event_id', existingByName.last_event_id);
-      }
-
-      const { data: restored, error: restoreError } = await updateQuery
-        .select('id, last_event_id')
-        .single();
-
-      if (restoreError) {
-        throw AppError.internal(`Failed to restore vendor: ${restoreError.message}`);
-      }
-
-      return restored as Pick<VendorRow, 'id' | 'last_event_id'>;
-    }
-
-    const { data, error } = await supabase
-      .from('vendors')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create vendor: ${error.message}`);
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis write route — the create-or-restore-inactive
+    // logic now runs server-side (idempotent, tenant-scoped). The route stamps
+    // last_event_id; trigger_vendor_events owns emission.
+    const { last_event_id, tenant_id, ...fields } = payload as VendorInsertPayload & { tenant_id?: string };
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/vendors',
+      'POST',
+      fields,
+      'Failed to create vendor',
+    );
   },
 
   /**
    * Update a vendor with optimistic concurrency control
    */
   async updateVendor(id: string, updates: VendorUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -359,46 +308,26 @@ export const SupplyChainRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('vendors')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update vendor: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route.
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendors/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Vendor was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete a vendor with optimistic concurrency control
    */
   async deleteVendor(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const nextEventId = crypto.randomUUID();
-    const { data, error } = await supabase
-      .from('vendors')
-      .update({ active: false, last_event_id: nextEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete vendor: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Soft-delete (deactivate) routed through the chassis OCC delete route.
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendors/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Vendor was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**

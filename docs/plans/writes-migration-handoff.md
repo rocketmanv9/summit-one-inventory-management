@@ -1,32 +1,37 @@
 # Writes → Chassis Routes Migration — HANDOFF / CONTINUATION
 
-**Read this first to resume the migration after a /compact or fresh session.**
-Goal: move the remaining direct browser→Postgres writes (`InventoryRPC.*` /
+**STATUS: COMPLETE (2026-05-30).** All 15 tables migrated, verified (tsc/build/107
+tests/compliance + stage-DB logic tests), and the work is on branch **stage**.
+This doc is kept as the record of what was done + traps for anyone touching these paths.
+
+Goal was: move the direct browser→Postgres writes (`InventoryRPC.*` /
 `SupplyChainRPC.*`) onto chassis route factories for idempotency + server-side
-zod validation. Branch: **stage**. Commit + push each table/wave.
+zod validation.
 
-## Status (as of 2026-05-30)
+## Status
 
-**DONE + verified + pushed (11 tables):** location_types, item_categories,
+**DONE + verified + pushed (all 15 tables):** location_types, item_categories,
 assignment_types, reservation_types, uom_conversions, locations, vendor_items,
-negative_inventory_config, guardrail_policies, sku_settings, inventory_levels.
-Plus: double-emit fix (emissionOwner:'trigger' on 14 routes) and a real bug fix
-(vendor_items writes now hit the real `supply_chain` table, not the inventory VIEW).
-Commits on stage: d552eb7, 4f234e1, 8e15ed5, a2ce224, 260f453 (+ earlier 93394d1 = chassis 2.0.0 adoption).
+negative_inventory_config, guardrail_policies, sku_settings, inventory_levels,
+**catalog_items, assets, vendors (supply_chain), transfers**.
+Plus: double-emit fix (emissionOwner:'trigger'), vendor_items VIEW→real-table fix,
+and a real DB bug fix: `emit_catalog_item_event()` had no DELETE branch, so hard-
+deleting a catalog item raised a NOT NULL violation on events_outbox.event_type
+(migration `20260530000001_fix_catalog_item_delete_event.sql`, applied to stage).
 
-**REMAINING (4 high-risk tables):**
-1. **catalog_items** — `updateCatalogItem`/`deleteCatalogItem` (~line 628/710 in src/lib/rpc/inventory.ts).
-   TRAP: the existing `items/[id]` route does a PLAIN update (no version check); the RPC uses OCC
-   (`.eq('last_event_id', lastEventId)`). Must add OCC to items/[id] PATCH (or new route) or you LOSE
-   optimistic concurrency. Also `reassignCatalogItemsCategory` (bulk update) needs a route. `createCatalogItem`
-   already uses `rpc_create_catalog_item` (leave it).
-2. **assets** — createAsset/updateAsset/deleteAsset (~src/lib/rpc/inventory.ts). TRAP: createAsset does a
-   SECONDARY write (an update near line ~947 in addition to the insert). assignAsset/returnAsset use RPCs (leave).
-3. **vendors** (supply_chain) — createVendor/updateVendor/deleteVendor in src/lib/rpc/supply-chain.ts. TRAP:
-   createVendor has a secondary update. No supply-chain vendor route exists yet — create under /api/inventory/vendors-sc or similar.
-4. **transfers** — updateTransfer (4 writes: header + delete lines + update lines + insert lines), shipTransfer
-   (loop), cancelTransfer, in src/lib/rpc/inventory.ts (~line 1431+). DO LAST. Needs a real stage-DB
-   transactional test. createTransfer/receive* use RPCs (leave).
+**Final wave (catalog_items, assets, vendors, transfers) — what was built:**
+1. **catalog_items** — `items/[id]` PATCH/DELETE upgraded to OCC (expected_last_event_id);
+   new `items/reassign-category` route runs the bulk reassign loop server-side with per-row OCC.
+   createCatalogItem still uses `rpc_create_catalog_item`.
+2. **assets** — new `assets` POST (create-or-restore-retired) + `assets/[id]` PATCH (OCC) / DELETE
+   (soft retire, OCC). TRAP HANDLED: POST sets `tenant_id: ctx.tenantId` explicitly —
+   auto_inject_tenant_id() REFUSES to inject under the service-role client and raises.
+3. **vendors** (supply_chain) — new `vendors` POST (create-or-restore-inactive, explicit tenant_id) +
+   `vendors/[id]` PATCH (OCC) / DELETE (deactivate, OCC). Targets `supply_chain` schema.
+4. **transfers** — `transfers/[id]` PATCH (header + line reconciliation, per-row OCC),
+   `transfers/[id]/ship`, `transfers/[id]/cancel`. TRAP HANDLED: new transfer_lines need explicit
+   tenant_id (no inject trigger on that table) — taken from the parent transfer's tenant_id.
+   createTransfer/receive*/undo/reversal still use RPCs.
 
 ## The proven pattern (replicate it)
 
