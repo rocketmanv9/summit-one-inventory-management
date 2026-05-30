@@ -1,6 +1,8 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { z } from 'zod';
+import { createRoute } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -25,3 +27,16 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   return Response.json({ data });
 }, { serviceName: SERVICE_NAME });
+
+export const POST = createRoute({
+  schema: 'inventory',
+  table: 'assignment_types',
+  bodySchema: z.object({
+    type_key: z.string().min(1),
+    display_name: z.string().min(1),
+    description: z.string().nullish(),
+    icon: z.string().nullish(),
+    sort_order: z.number().default(100),
+    requires_id: z.boolean().default(true),
+  }),
+});

@@ -251,6 +251,24 @@ export interface AdjustInventoryResult {
   override_logged?: boolean;
 }
 
+/**
+ * Shared write-through helper for methods migrated onto chassis routes.
+ * Preserves the prior return shape (json.data) and 409 → AppError.conflict
+ * (optimistic-concurrency) behavior.
+ */
+async function writeJson<T = unknown>(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body: unknown,
+  errMsg: string,
+): Promise<T> {
+  const res = await apiWrite(url, method, body);
+  const json = await res.json().catch(() => ({} as any));
+  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg);
+  if (!res.ok) throw AppError.internal(json.error?.message || errMsg);
+  return json.data as T;
+}
+
 export const InventoryRPC = {
   /**
    * Issue inventory (release from location)
@@ -437,86 +455,32 @@ export const InventoryRPC = {
    * Table: inventory.item_categories
    */
   async createItemCategory(payload: ItemCategoryInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: ItemCategoryInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create category: ${error.message}`);
-    }
-
-    return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
+    const { last_event_id, ...rest } = payload as ItemCategoryInsertPayload & { last_event_id?: string };
+    void last_event_id;
+    return writeJson<Pick<ItemCategoryRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/categories', 'POST', rest, 'Failed to create category');
   },
 
   /**
    * Update an item category with optimistic concurrency control
    */
   async updateItemCategory(id: string, updates: ItemCategoryUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as ItemCategoryUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string;
     };
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update category: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
+    void _id; void created_at; void tenant_id; void last_event_id;
+    return writeJson<Pick<ItemCategoryRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/categories/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update category');
   },
 
   /**
    * Delete an item category with optimistic concurrency control
    */
   async deleteItemCategory(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    const { error: skuError } = await supabase
-      .from('sku_settings')
-      .delete()
-      .eq('category_id', id);
-
-    if (skuError) {
-      throw AppError.internal(`Failed to delete category SKU settings: ${skuError.message}`);
-    }
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete category: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<ItemCategoryRow, 'id'>;
+    return writeJson<Pick<ItemCategoryRow, 'id'>>(
+      `/api/inventory/categories/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete category');
   },
 
   /**
@@ -774,28 +738,15 @@ export const InventoryRPC = {
     sort_order?: number;
     requires_id?: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      type_key: payload.type_key,
-      display_name: payload.display_name,
-      description: payload.description ?? null,
-      icon: payload.icon ?? null,
-      sort_order: payload.sort_order ?? 100,
-      requires_id: payload.requires_id ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create assignment type: ${error.message}`);
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/assignment-types', 'POST', {
+        type_key: payload.type_key,
+        display_name: payload.display_name,
+        description: payload.description ?? null,
+        icon: payload.icon ?? null,
+        sort_order: payload.sort_order ?? 100,
+        requires_id: payload.requires_id ?? true,
+      }, 'Failed to create assignment type');
   },
 
   /**
@@ -809,46 +760,18 @@ export const InventoryRPC = {
     requires_id?: boolean;
     is_active?: boolean;
   }, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .update({ ...updates, last_event_id: crypto.randomUUID() })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update assignment type: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assignment-types/${id}`, 'PATCH',
+      { ...updates, expected_last_event_id: lastEventId }, 'Failed to update assignment type');
   },
 
   /**
    * Delete an assignment type with optimistic concurrency control
    */
   async deleteAssignmentType(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete assignment type: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id'>>(
+      `/api/inventory/assignment-types/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete assignment type');
   },
 
   /**
@@ -2160,29 +2083,14 @@ export const InventoryRPC = {
     sort_order?: number;
     is_active?: boolean;
   }) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      tenant_id: tenantId,
-      type_key: payload.type_key,
-      display_name: payload.display_name,
-      description: payload.description ?? null,
-      sort_order: payload.sort_order ?? 0,
-      is_active: payload.is_active ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/reservation-types', 'POST', {
+        type_key: payload.type_key,
+        display_name: payload.display_name,
+        description: payload.description ?? null,
+        sort_order: payload.sort_order ?? 0,
+        is_active: payload.is_active ?? true,
+      }, 'Failed to create reservation type');
   },
 
   /**
@@ -2194,47 +2102,16 @@ export const InventoryRPC = {
     sort_order?: number;
     is_active?: boolean;
   }) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const updatePayload = {
-      ...updates,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .update(updatePayload)
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/reservation-types/${id}`, 'PATCH', updates, 'Failed to update reservation type');
   },
 
   /**
    * Delete reservation type
    */
   async deleteReservationType(id: string) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .delete()
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id'>>(
+      `/api/inventory/reservation-types/${id}`, 'DELETE', {}, 'Failed to delete reservation type');
   },
 
   // ==========================================================================
@@ -2277,49 +2154,22 @@ export const InventoryRPC = {
     conversion_factor: number;
     is_bidirectional?: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      from_uom_term_id: payload.from_uom_term_id,
-      to_uom_term_id: payload.to_uom_term_id,
-      conversion_factor: payload.conversion_factor,
-      is_bidirectional: payload.is_bidirectional ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('uom_conversions')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create UOM conversion: ${error.message}`);
-    }
-
-    return data as { id: string; last_event_id: string };
+    return writeJson<{ id: string; last_event_id: string }>(
+      '/api/inventory/uom-conversions', 'POST', {
+        from_uom_term_id: payload.from_uom_term_id,
+        to_uom_term_id: payload.to_uom_term_id,
+        conversion_factor: payload.conversion_factor,
+        is_bidirectional: payload.is_bidirectional ?? true,
+      }, 'Failed to create UOM conversion');
   },
 
   /**
    * Delete a UOM conversion with OCC
    */
   async deleteUomConversion(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('uom_conversions')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete UOM conversion: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('UOM conversion was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as { id: string };
+    return writeJson<{ id: string }>(
+      `/api/inventory/uom-conversions/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete UOM conversion');
   },
 
   /**
