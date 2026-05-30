@@ -265,7 +265,15 @@ async function writeJson<T = unknown>(
   const res = await apiWrite(url, method, body);
   const json = await res.json().catch(() => ({} as any));
   if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg);
-  if (!res.ok) throw AppError.internal(json.error?.message || errMsg);
+  if (!res.ok) {
+    // Surface zod field errors (chassis returns details.errors: [{path,message}])
+    // so a generic "Validation failed" tells the user which field is wrong.
+    const fieldErrs = json.error?.details?.errors;
+    const detail = Array.isArray(fieldErrs) && fieldErrs.length
+      ? ` — ${fieldErrs.map((e: any) => `${e.path || 'field'}: ${e.message}`).join('; ')}`
+      : '';
+    throw AppError.internal((json.error?.message || errMsg) + detail);
+  }
   return json.data as T;
 }
 

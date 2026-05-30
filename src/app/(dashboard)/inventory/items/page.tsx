@@ -803,6 +803,10 @@ function CreateItemModal({
 
   const buildLevelPayload = (catalogItemId: string, includeEmpty: boolean) => {
     return levels
+      // Drop rows without a real location — the inventory-levels route requires
+      // a non-empty location_id, and a blank row would fail validation and block
+      // the whole item save.
+      .filter((level) => !!level.location_id)
       .filter((level) => includeEmpty || level.reorder_point !== null || level.target_stock !== null)
       .map((level) => ({
         catalog_item_id: catalogItemId,
