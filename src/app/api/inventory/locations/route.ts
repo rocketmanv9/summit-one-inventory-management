@@ -1,6 +1,8 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { z } from 'zod';
+import { createRoute } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -26,3 +28,12 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   return Response.json({ data });
 }, { serviceName: SERVICE_NAME });
+
+// Permissive body (name required); preserves the prior client behavior of
+// forwarding the location payload. Returns the joined row the page renders.
+export const POST = createRoute({
+  schema: 'inventory',
+  table: 'locations',
+  returning: '*, location_type:location_type_id(name)',
+  bodySchema: z.object({ name: z.string().min(1) }).passthrough(),
+});

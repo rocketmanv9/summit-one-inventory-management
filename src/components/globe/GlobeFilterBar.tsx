@@ -1,10 +1,23 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Filter, Save, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
+import {
+  Filter,
+  Save,
+  Trash2,
+  ChevronDown,
+  RotateCcw,
+  Check,
+  Bookmark,
+  Layers as LayersIcon,
+  Truck,
+  ShoppingCart,
+  CalendarDays,
+  Info,
+} from 'lucide-react';
 import type { GlobeFilters } from '@/lib/rpc/operations';
 import type { VisibleLayers } from './GlobeVisualization';
-import { useFilterPresets } from '@/hooks/useFilterPresets';
+import { useFilterPresets, type FilterPresetConfig } from '@/hooks/useFilterPresets';
 
 interface GlobeFilterBarProps {
   filters: GlobeFilters;
@@ -48,10 +61,69 @@ const LAYER_OPTIONS: { key: keyof VisibleLayers; label: string; color: string }[
   { key: 'pos', label: 'Purchase Orders', color: 'bg-purple-500' },
 ];
 
+const ALL_LAYERS_ON: VisibleLayers = { locations: true, vendors: true, transfers: true, pos: true };
+
 function toggleStatus(statuses: string[], value: string): string[] {
   return statuses.includes(value)
     ? statuses.filter((s) => s !== value)
     : [...statuses, value];
+}
+
+/** Stable serialization so we can detect which saved preset matches the current view. */
+function serializeConfig(c: FilterPresetConfig): string {
+  return JSON.stringify({
+    filters: Object.fromEntries(
+      Object.entries(c.filters)
+        .filter(([, v]) => v != null && v !== '')
+        .sort(([a], [b]) => a.localeCompare(b)),
+    ),
+    visibleLayers: LAYER_OPTIONS.map((l) => Boolean(c.visibleLayers[l.key])),
+    transferStatuses: [...c.transferStatuses].sort(),
+    poStatuses: [...c.poStatuses].sort(),
+  });
+}
+
+/** Collapsible section with an icon, title, and a summary badge of what's active. */
+function Section({
+  icon,
+  title,
+  badge,
+  badgeActive,
+  defaultOpen = false,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  badge?: string;
+  badgeActive?: boolean;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 transition-colors"
+      >
+        <span className="text-gray-400">{icon}</span>
+        <span className="text-sm font-medium text-gray-800 flex-1 text-left">{title}</span>
+        {badge && (
+          <span
+            className={`text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
+              badgeActive ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'
+            }`}
+          >
+            {badge}
+          </span>
+        )}
+        <ChevronDown
+          className={`h-4 w-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && <div className="px-3 pb-3 pt-1 border-t border-gray-100">{children}</div>}
+    </div>
+  );
 }
 
 export function GlobeFilterBar({
@@ -69,7 +141,6 @@ export function GlobeFilterBar({
   const { presets, loading, savePreset, deletePreset } = useFilterPresets();
   const [savingName, setSavingName] = useState('');
   const [showSaveInput, setShowSaveInput] = useState(false);
-  const [presetsOpen, setPresetsOpen] = useState(false);
   const migratedRef = useRef(false);
 
   // One-time migration: upload localStorage presets to server
@@ -123,90 +194,164 @@ export function GlobeFilterBar({
     onPoStatusChange(preset.config.poStatuses);
   };
 
-  const handleDeletePreset = (id: string) => {
-    deletePreset(id);
+  const handleResetAll = () => {
+    onChange({});
+    onTransferStatusChange([]);
+    onPoStatusChange([]);
+    for (const opt of LAYER_OPTIONS) onToggleLayer(opt.key, true);
   };
 
+  // --- Derived summary state ---
+  const layersOn = LAYER_OPTIONS.filter((o) => visibleLayers[o.key]).length;
+  const dateActive = Boolean(filters.date_from || filters.date_to);
+  const transfersAll = transferStatuses.length === 0;
+  const posAll = poStatuses.length === 0;
+
+  const currentSerialized = useMemo(
+    () => serializeConfig({ filters, visibleLayers, transferStatuses, poStatuses }),
+    [filters, visibleLayers, transferStatuses, poStatuses],
+  );
+  const activePresetId = useMemo(
+    () => presets.find((p) => serializeConfig(p.config) === currentSerialized)?.id ?? null,
+    [presets, currentSerialized],
+  );
+
+  const activeFilterCount =
+    (layersOn < LAYER_OPTIONS.length ? 1 : 0) +
+    (!transfersAll ? 1 : 0) +
+    (!posAll ? 1 : 0) +
+    (dateActive ? 1 : 0);
+
   return (
-    <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full overflow-y-auto">
+    <div className="w-80 flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col h-full overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 sticky top-0 bg-white z-10">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 sticky top-0 bg-gray-50 z-10">
         <Filter className="h-4 w-4 text-gray-500" />
         <span className="text-sm font-semibold text-gray-800">Map Filters</span>
+        {activeFilterCount > 0 && (
+          <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-white">
+            {activeFilterCount}
+          </span>
+        )}
+        <button
+          onClick={handleResetAll}
+          disabled={activeFilterCount === 0}
+          className="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="Reset all filters"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Reset
+        </button>
       </div>
 
-      <div className={`px-4 py-3 space-y-4 flex-1 transition-opacity ${reviewActive ? 'opacity-50 pointer-events-none' : ''}`}>
-        {/* Saved Presets */}
-        <div>
-          <button
-            onClick={() => setPresetsOpen(!presetsOpen)}
-            className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-2 hover:text-gray-800"
-          >
-            {presetsOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            Saved Filters
-          </button>
+      <div
+        className={`px-3 py-3 space-y-3 flex-1 transition-opacity ${
+          reviewActive ? 'opacity-50 pointer-events-none' : ''
+        }`}
+      >
+        {/* Saved Filters — prominent card at the top */}
+        <div className="border border-gray-200 rounded-lg bg-white p-3 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <Bookmark className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium text-gray-800 flex-1">Saved Filters</span>
+            {presets.length > 0 && (
+              <span className="text-[11px] text-gray-400">{presets.length}</span>
+            )}
+          </div>
 
-          {presetsOpen && (
-            <div className="space-y-1.5 mb-2">
-              {presets.length === 0 && (
-                <p className="text-[11px] text-gray-400 italic">No saved filters yet</p>
-              )}
-              {presets.map((p) => (
-                <div key={p.id} className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleLoadPreset(p)}
-                    className="flex-1 text-left text-xs px-2 py-1 rounded hover:bg-gray-100 text-gray-700 truncate"
-                    title={`Load "${p.name}"`}
+          {/* Preset list */}
+          {presets.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">
+              No saved filters yet — set up the map below, then save the view.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {presets.map((p) => {
+                const isActive = p.id === activePresetId;
+                return (
+                  <div
+                    key={p.id}
+                    className={`group flex items-center gap-1 rounded-md border transition-colors ${
+                      isActive
+                        ? 'border-primary/40 bg-primary/5'
+                        : 'border-transparent hover:bg-gray-50'
+                    }`}
                   >
-                    {p.name}
-                  </button>
-                  <button
-                    onClick={() => handleDeletePreset(p.id)}
-                    className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
-                    title="Delete preset"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-
-              {showSaveInput ? (
-                <div className="flex gap-1 mt-1">
-                  <input
-                    autoFocus
-                    value={savingName}
-                    onChange={(e) => setSavingName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSavePreset(); if (e.key === 'Escape') setShowSaveInput(false); }}
-                    placeholder="Preset name..."
-                    className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <button
-                    onClick={handleSavePreset}
-                    disabled={!savingName.trim()}
-                    className="px-2 py-1 text-xs bg-primary text-white rounded hover:bg-primary/90 disabled:opacity-40"
-                  >
-                    Save
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowSaveInput(true)}
-                  className="flex items-center gap-1 text-xs text-primary hover:underline mt-1"
-                >
-                  <Save className="h-3 w-3" />
-                  Save current filters
-                </button>
-              )}
+                    <button
+                      onClick={() => handleLoadPreset(p)}
+                      className="flex-1 flex items-center gap-1.5 text-left text-sm px-2 py-1.5 text-gray-700 truncate"
+                      title={`Load "${p.name}"`}
+                    >
+                      {isActive ? (
+                        <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                      ) : (
+                        <span className="w-3.5 flex-shrink-0" />
+                      )}
+                      <span className="truncate">{p.name}</span>
+                    </button>
+                    <button
+                      onClick={() => deletePreset(p.id)}
+                      className="p-1.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title={`Delete "${p.name}"`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
+          )}
+
+          {/* Save current view */}
+          {showSaveInput ? (
+            <div className="flex gap-1.5">
+              <input
+                autoFocus
+                value={savingName}
+                onChange={(e) => setSavingName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSavePreset();
+                  if (e.key === 'Escape') {
+                    setShowSaveInput(false);
+                    setSavingName('');
+                  }
+                }}
+                placeholder="Name this view…"
+                className="flex-1 text-sm px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button
+                onClick={handleSavePreset}
+                disabled={!savingName.trim()}
+                className="px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowSaveInput(true)}
+              className="w-full flex items-center justify-center gap-1.5 text-sm font-medium text-primary border border-dashed border-primary/40 rounded-md py-1.5 hover:bg-primary/5"
+            >
+              <Save className="h-4 w-4" />
+              Save current view
+            </button>
           )}
         </div>
 
         {/* Layers */}
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">Show on Map</label>
-          <div className="space-y-1.5">
+        <Section
+          icon={<LayersIcon className="h-4 w-4" />}
+          title="Show on Map"
+          badge={`${layersOn}/${LAYER_OPTIONS.length}`}
+          badgeActive={layersOn < LAYER_OPTIONS.length}
+          defaultOpen
+        >
+          <div className="space-y-1 pt-1">
             {LAYER_OPTIONS.map((opt) => (
-              <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label
+                key={opt.key}
+                className="flex items-center gap-2.5 text-sm text-gray-700 cursor-pointer py-0.5"
+              >
                 <input
                   type="checkbox"
                   checked={visibleLayers[opt.key]}
@@ -218,30 +363,43 @@ export function GlobeFilterBar({
               </label>
             ))}
           </div>
-        </div>
+        </Section>
 
         {/* Transfer Statuses */}
-        <div className="border-t border-gray-100 pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-medium text-gray-600">Transfer Status</label>
+        <Section
+          icon={<Truck className="h-4 w-4" />}
+          title="Transfer Status"
+          badge={transfersAll ? 'All' : `${transferStatuses.length}/${TRANSFER_STATUS_OPTIONS.length}`}
+          badgeActive={!transfersAll}
+        >
+          <div className="flex justify-end pt-1">
             <button
-              onClick={() => onTransferStatusChange(
-                transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? [] : TRANSFER_STATUS_OPTIONS.map((s) => s.value)
-              )}
-              className="text-[10px] text-primary hover:underline"
+              onClick={() =>
+                onTransferStatusChange(
+                  transferStatuses.length === TRANSFER_STATUS_OPTIONS.length
+                    ? []
+                    : TRANSFER_STATUS_OPTIONS.map((s) => s.value),
+                )
+              }
+              className="text-xs text-primary hover:underline"
             >
-              {transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? 'None' : 'All'}
+              {transferStatuses.length === TRANSFER_STATUS_OPTIONS.length ? 'Clear all' : 'Select all'}
             </button>
           </div>
           <div className="space-y-1">
             {TRANSFER_STATUS_OPTIONS.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label
+                key={opt.value}
+                className="flex items-center gap-2.5 text-sm text-gray-700 cursor-pointer py-0.5"
+              >
                 <input
                   type="checkbox"
                   checked={transferStatuses.length === 0 || transferStatuses.includes(opt.value)}
                   onChange={() => {
                     if (transferStatuses.length === 0) {
-                      onTransferStatusChange(TRANSFER_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
+                      onTransferStatusChange(
+                        TRANSFER_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value),
+                      );
                     } else {
                       onTransferStatusChange(toggleStatus(transferStatuses, opt.value));
                     }
@@ -249,34 +407,47 @@ export function GlobeFilterBar({
                   className="rounded border-gray-300 text-primary focus:ring-primary"
                 />
                 <span className={`w-2 h-2 rounded-full ${opt.color}`} />
-                <span className="text-xs">{opt.label}</span>
+                {opt.label}
               </label>
             ))}
           </div>
-        </div>
+        </Section>
 
         {/* PO Statuses */}
-        <div className="border-t border-gray-100 pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-medium text-gray-600">PO Status</label>
+        <Section
+          icon={<ShoppingCart className="h-4 w-4" />}
+          title="PO Status"
+          badge={posAll ? 'All' : `${poStatuses.length}/${PO_STATUS_OPTIONS.length}`}
+          badgeActive={!posAll}
+        >
+          <div className="flex justify-end pt-1">
             <button
-              onClick={() => onPoStatusChange(
-                poStatuses.length === PO_STATUS_OPTIONS.length ? [] : PO_STATUS_OPTIONS.map((s) => s.value)
-              )}
-              className="text-[10px] text-primary hover:underline"
+              onClick={() =>
+                onPoStatusChange(
+                  poStatuses.length === PO_STATUS_OPTIONS.length
+                    ? []
+                    : PO_STATUS_OPTIONS.map((s) => s.value),
+                )
+              }
+              className="text-xs text-primary hover:underline"
             >
-              {poStatuses.length === PO_STATUS_OPTIONS.length ? 'None' : 'All'}
+              {poStatuses.length === PO_STATUS_OPTIONS.length ? 'Clear all' : 'Select all'}
             </button>
           </div>
           <div className="space-y-1">
             {PO_STATUS_OPTIONS.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label
+                key={opt.value}
+                className="flex items-center gap-2.5 text-sm text-gray-700 cursor-pointer py-0.5"
+              >
                 <input
                   type="checkbox"
                   checked={poStatuses.length === 0 || poStatuses.includes(opt.value)}
                   onChange={() => {
                     if (poStatuses.length === 0) {
-                      onPoStatusChange(PO_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value));
+                      onPoStatusChange(
+                        PO_STATUS_OPTIONS.map((s) => s.value).filter((v) => v !== opt.value),
+                      );
                     } else {
                       onPoStatusChange(toggleStatus(poStatuses, opt.value));
                     }
@@ -284,78 +455,71 @@ export function GlobeFilterBar({
                   className="rounded border-gray-300 text-primary focus:ring-primary"
                 />
                 <span className={`w-2 h-2 rounded-full ${opt.color}`} />
-                <span className="text-xs">{opt.label}</span>
+                {opt.label}
               </label>
             ))}
           </div>
-        </div>
+        </Section>
 
         {/* Date Range */}
-        <div className="border-t border-gray-100 pt-3">
-          <label className="block text-xs font-medium text-gray-600 mb-2">Date Range</label>
-          <div className="space-y-2">
+        <Section
+          icon={<CalendarDays className="h-4 w-4" />}
+          title="Date Range"
+          badge={dateActive ? 'Set' : undefined}
+          badgeActive={dateActive}
+        >
+          {timelineActive && (
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-md px-2 py-1.5 mt-1">
+              Date range is controlled by the timeline while it&apos;s active.
+            </p>
+          )}
+          <div className="space-y-2 pt-1">
             <div>
-              <label className="block text-[10px] text-gray-500 mb-0.5">From</label>
+              <label className="block text-xs text-gray-500 mb-1">From</label>
               <input
                 type="date"
                 value={filters.date_from || ''}
                 onChange={(e) => updateFilter('date_from', e.target.value)}
                 disabled={timelineActive}
-                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
             <div>
-              <label className="block text-[10px] text-gray-500 mb-0.5">To</label>
+              <label className="block text-xs text-gray-500 mb-1">To</label>
               <input
                 type="date"
                 value={filters.date_to || ''}
                 onChange={(e) => updateFilter('date_to', e.target.value)}
                 disabled={timelineActive}
-                className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           </div>
-        </div>
+        </Section>
 
         {/* Legend */}
-        <div className="border-t border-gray-100 pt-3">
-          <div className="text-xs font-medium text-gray-600 mb-2">Legend</div>
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-3 rounded-full bg-blue-500" />
-              Yard / Warehouse
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-3 rounded-full bg-orange-500" />
-              Job Site
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-3 rounded-full bg-indigo-500" />
-              Plant
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-3 rounded-full bg-green-500" />
-              Vendor
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-1 rounded-full bg-amber-500" />
-              Transfer (Draft)
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-1 rounded-full bg-blue-500" />
-              Transfer (In Transit)
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-1 rounded-full bg-green-500" />
-              Transfer (Completed)
-            </div>
-            <div className="flex items-center gap-2 text-xs text-gray-600">
-              <span className="w-3 h-1 rounded-full bg-purple-500" />
-              Purchase Order
-            </div>
+        <Section icon={<Info className="h-4 w-4" />} title="Legend">
+          <div className="space-y-1.5 pt-1">
+            <LegendRow color="bg-blue-500" label="Yard / Warehouse" />
+            <LegendRow color="bg-orange-500" label="Job Site" />
+            <LegendRow color="bg-indigo-500" label="Plant" />
+            <LegendRow color="bg-green-500" label="Vendor" />
+            <LegendRow color="bg-amber-500" label="Transfer (Draft)" line />
+            <LegendRow color="bg-blue-500" label="Transfer (In Transit)" line />
+            <LegendRow color="bg-green-500" label="Transfer (Completed)" line />
+            <LegendRow color="bg-purple-500" label="Purchase Order" line />
           </div>
-        </div>
+        </Section>
       </div>
+    </div>
+  );
+}
+
+function LegendRow({ color, label, line }: { color: string; label: string; line?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-gray-600">
+      <span className={`${line ? 'w-3 h-1' : 'w-3 h-3'} rounded-full ${color}`} />
+      {label}
     </div>
   );
 }

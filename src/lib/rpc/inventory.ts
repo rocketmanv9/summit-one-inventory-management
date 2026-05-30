@@ -1900,78 +1900,31 @@ export const InventoryRPC = {
   async createLocation(
     payload: LocationInsertPayload
   ) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: LocationInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
+    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...rest } = payload as LocationInsertPayload & {
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string; location_type?: unknown;
     };
-
-    const { data, error } = await supabase
-      .from('locations')
-      .insert(insertPayload)
-      .select('*, location_type:location_type_id(name), last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create location: ${error.message}`);
-    }
-
-    return data;
+    void _id; void created_at; void tenant_id; void last_event_id; void location_type;
+    return writeJson<any>('/api/inventory/locations', 'POST', rest, 'Failed to create location');
   },
 
   /**
    * Update a location with optimistic concurrency control
    */
   async updateLocation(id: string, updates: LocationUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...restUpdates } = updates as LocationUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
-      location_type?: unknown;
+    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...safeUpdates } = updates as LocationUpdatePayload & {
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string; location_type?: unknown;
     };
-    const safeUpdates = { ...restUpdates };
-
-    const { data, error } = await supabase
-      .from('locations')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('*, location_type:location_type_id(name), last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update location: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
-    }
-
-    return data;
+    void _id; void created_at; void tenant_id; void last_event_id; void location_type;
+    return writeJson<any>(`/api/inventory/locations/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update location');
   },
 
   /**
    * Delete a location with optimistic concurrency control
    */
   async deleteLocation(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('locations')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete location: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
-    }
-
-    return data;
+    return writeJson<any>(`/api/inventory/locations/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete location');
   },
 
   /**
