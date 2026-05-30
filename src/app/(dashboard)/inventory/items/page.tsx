@@ -16,6 +16,7 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMTerms, useUOMLabelMap, useGVTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -826,9 +827,8 @@ function CreateItemModal({
           : form.base_sku;
       const autoSku = buildSkuForCategory();
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: form.name,
-        sku: categoryMode === 'manual' ? autoSku : null,
         description: form.description || null,
         category_id: form.category_id || null,
         uom_term_id: form.uom_term_id || null,
@@ -839,6 +839,16 @@ function CreateItemModal({
         product_term_id: form.product_term_id || null,
         quality_tier_term_id: form.quality_tier_term_id || null,
       };
+
+      // SKU handling: `sku` is NOT NULL. For a manual-mode category we send the
+      // entered/built SKU. On create (non-manual) we send null so the RPC
+      // generates one. On EDIT (non-manual) we must NOT send sku at all —
+      // otherwise we'd null out the existing value and hit the NOT NULL constraint.
+      if (categoryMode === 'manual') {
+        payload.sku = autoSku;
+      } else if (!isEditing) {
+        payload.sku = null;
+      }
 
       let catalogItemId = item?.id;
 
@@ -944,6 +954,18 @@ function CreateItemModal({
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
               {error}
+            </div>
+          )}
+
+          {isEditing && item?.id && (
+            <div className="flex flex-col items-center gap-1 pb-3 border-b">
+              <EntityImageUpload
+                entityType="catalog_item"
+                entityId={item.id}
+                size="lg"
+                generateContext={{ name: form.name, description: form.description }}
+              />
+              <span className="text-xs text-muted-foreground">Item Photo — upload, or generate with AI</span>
             </div>
           )}
 
