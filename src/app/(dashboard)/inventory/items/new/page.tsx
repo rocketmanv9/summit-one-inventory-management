@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -173,6 +173,18 @@ export default function NewItemWizardPage() {
   const [aiFilled, setAiFilled] = useState(false);
   const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
   const [aiSuggestedSkuPrefix, setAiSuggestedSkuPrefix] = useState<string | null>(null);
+
+  // Per-variant starting stock: qty keyed by a stable combo signature.
+  // Empty entry → falls back to the master form.initial_qty. Lives here (lifted)
+  // because handleSubmit consumes it; the per-variant UI is in StepSupply.
+  const [variantQtys, setVariantQtys] = useState<Record<string, string>>({});
+
+  // Stable signature for a created variant's attributes (must match the combo
+  // keys built in StepSupply via buildVariantCombos).
+  const variantKeyFromAttrs = useCallback((attrs: Record<string, unknown> | null | undefined) => {
+    const dims = form.variant_dimensions.filter((d) => (form.variant_options[d] || []).length > 0);
+    return dims.map((d) => String((attrs || {})[d] ?? '')).join('||');
+  }, [form.variant_dimensions, form.variant_options]);
 
   // Print labels dialog
   const [showLabelDialog, setShowLabelDialog] = useState(false);
@@ -400,8 +412,11 @@ export default function NewItemWizardPage() {
         }).eq('id', res.item_id);
       }
 
-      // Apply per-variant initial stock if variants were created and qty was specified
-      if (skipParentStock && form.initial_qty && form.location_id) {
+      // Apply per-variant initial stock if variants were created. Each variant
+      // gets its own quantity (variantQtys), falling back to the master default.
+      const defaultQty = form.initial_qty ? Number(form.initial_qty) : 0;
+      const anyVariantQty = Object.values(variantQtys).some((v) => v && Number(v) > 0);
+      if (skipParentStock && form.location_id && (defaultQty > 0 || anyVariantQty)) {
         const variantsEntity = res.created_entities?.find((e: any) => e.type === 'variants') as any;
         const variantIds: string[] = variantsEntity?.variant_ids || [];
         if (variantIds.length > 0) {
@@ -409,13 +424,24 @@ export default function NewItemWizardPage() {
           const supa = createBrowserAuthedClient();
           const inv = (supa as any).schema('inventory');
 
-          for (const variantId of variantIds) {
-            const eventKey = `wiz-vstk-${variantId}-${idempotencyKey}`;
-            // Create stock movement for each variant
+          // Fetch the created variants so we can map each one's quantity by its
+          // attribute signature (robust against ordering differences).
+          const { data: variantRows } = await inv
+            .from('catalog_items')
+            .select('id, variant_attributes')
+            .in('id', variantIds);
+
+          for (const variant of (variantRows || [])) {
+            const key = variantKeyFromAttrs(variant.variant_attributes);
+            const raw = variantQtys[key];
+            const qty = raw !== undefined && raw !== '' ? Number(raw) : defaultQty;
+            if (!qty || qty <= 0) continue;
+
+            const eventKey = `wiz-vstk-${variant.id}-${idempotencyKey}`;
             await inv.from('stock_movements').upsert({
-              catalog_item_id: variantId,
+              catalog_item_id: variant.id,
               location_id: form.location_id,
-              quantity_delta: Number(form.initial_qty),
+              quantity_delta: qty,
               movement_type: 'adjusted',
               unit_cost: form.initial_cost ? Number(form.initial_cost) : null,
               reason: 'initial_stock',
@@ -611,6 +637,8 @@ export default function NewItemWizardPage() {
             updateForm={updateForm}
             onAddVendor={() => setShowVendorModal(true)}
             onAddLocation={() => setShowLocationModal(true)}
+            variantQtys={variantQtys}
+            setVariantQtys={setVariantQtys}
           />
         )}
         {step === 3 && (
@@ -1437,6 +1465,8 @@ function StepSupply({
   updateForm,
   onAddVendor,
   onAddLocation,
+  variantQtys,
+  setVariantQtys,
 }: {
   form: WizardState;
   vendors: Vendor[];
@@ -1444,12 +1474,38 @@ function StepSupply({
   updateForm: (field: keyof WizardState, value: string) => void;
   onAddVendor: () => void;
   onAddLocation: () => void;
+  variantQtys: Record<string, string>;
+  setVariantQtys: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
   const uomLabels = useUOMLabelMap();
   const [vendorOpen, setVendorOpen] = useState(!!form.vendor_id);
   const [stockOpen, setStockOpen] = useState(!!form.location_id);
   const selectedVendor = vendors.find(v => v.id === form.vendor_id);
   const isAmazonVendor = selectedVendor?.code === 'AMAZON-BIZ';
+
+  // Ordered variant combos, mirroring inventory.generate_variant_combos so each
+  // row maps to a created variant by its attribute signature (= combo.key).
+  const variantCombos = useMemo(() => {
+    if (!form.has_variants) return [] as { key: string; label: string; attributes: Record<string, string> }[];
+    const dims = form.variant_dimensions.filter((d) => (form.variant_options[d] || []).length > 0);
+    if (dims.length === 0) return [];
+    let acc: { attributes: Record<string, string>; vals: string[] }[] = [{ attributes: {}, vals: [] }];
+    for (const d of dims) {
+      const opts = form.variant_options[d] || [];
+      const next: typeof acc = [];
+      for (const c of acc) {
+        for (const o of opts) {
+          next.push({ attributes: { ...c.attributes, [d]: o }, vals: [...c.vals, o] });
+        }
+      }
+      acc = next;
+    }
+    return acc.map((c) => ({
+      key: dims.map((d) => c.attributes[d]).join('||'),
+      label: c.vals.join(' / '),
+      attributes: c.attributes,
+    }));
+  }, [form.has_variants, form.variant_dimensions, form.variant_options]);
 
   return (
     <Card>
@@ -1594,7 +1650,7 @@ function StepSupply({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="wiz-qty">
-                      {form.has_variants ? 'Qty per Variant *' : 'Quantity *'}
+                      {form.has_variants && variantCombos.length > 0 ? 'Default Qty per Variant' : (form.has_variants ? 'Qty per Variant *' : 'Quantity *')}
                     </Label>
                     <Input
                       id="wiz-qty"
@@ -1602,7 +1658,7 @@ function StepSupply({
                       min="0"
                       value={form.initial_qty}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm('initial_qty', e.target.value)}
-                      placeholder={form.has_variants ? 'Qty for each variant' : 'Initial stock quantity'}
+                      placeholder={form.has_variants ? 'Applies to variants left blank' : 'Initial stock quantity'}
                     />
                   </div>
 
@@ -1621,18 +1677,68 @@ function StepSupply({
                 </div>
               )}
 
-              {form.location_id && form.initial_qty && (
+              {/* Per-variant starting stock — set an individual quantity for each
+                  variant. Blank rows fall back to the Default Qty above. */}
+              {form.location_id && form.has_variants && variantCombos.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Starting Stock per Variant</Label>
+                    {form.initial_qty && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const filled: Record<string, string> = {};
+                          for (const c of variantCombos) filled[c.key] = form.initial_qty;
+                          setVariantQtys(filled);
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Fill all with {form.initial_qty}
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto rounded-md border divide-y">
+                    {variantCombos.map((c) => (
+                      <div key={c.key} className="flex items-center gap-3 px-3 py-1.5">
+                        <span className="flex-1 text-sm font-mono text-gray-700 truncate" title={c.label}>{c.label}</span>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={variantQtys[c.key] ?? ''}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            setVariantQtys((prev) => ({ ...prev, [c.key]: e.target.value }))
+                          }
+                          placeholder={form.initial_qty || '0'}
+                          className="w-28 h-8"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {variantCombos.length} variant{variantCombos.length !== 1 ? 's' : ''}. Leave a row blank to use the default ({form.initial_qty || '0'}).
+                  </p>
+                </div>
+              )}
+
+              {form.location_id && (form.initial_qty || (form.has_variants && variantCombos.some(c => variantQtys[c.key]))) && (
                 <div className="rounded-md border border-dashed border-blue-200 bg-blue-50/60 p-3 text-sm">
                   <div className="text-xs font-semibold uppercase tracking-wide text-blue-600">Ledger Preview</div>
-                  {form.has_variants ? (() => {
-                    const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
-                    const variantTotal = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
-                    const totalUnits = variantTotal * Number(form.initial_qty || 0);
+                  {form.has_variants && variantCombos.length > 0 ? (() => {
+                    const defaultQty = Number(form.initial_qty || 0);
+                    const totalUnits = variantCombos.reduce((sum, c) => {
+                      const raw = variantQtys[c.key];
+                      const q = raw !== undefined && raw !== '' ? Number(raw) : defaultQty;
+                      return sum + (q > 0 ? q : 0);
+                    }, 0);
+                    const stocked = variantCombos.filter((c) => {
+                      const raw = variantQtys[c.key];
+                      const q = raw !== undefined && raw !== '' ? Number(raw) : defaultQty;
+                      return q > 0;
+                    }).length;
                     return (
                       <p className="mt-1 text-blue-900">
-                        <span className="font-mono font-bold">{form.initial_qty}</span> {uomLabels[form.uom_term_id] || 'EA'}
-                        {' '}&times; <span className="font-mono font-bold">{variantTotal}</span> variant{variantTotal !== 1 ? 's' : ''}
-                        {' '}= <span className="font-mono font-bold">{totalUnits}</span> total units
+                        <span className="font-mono font-bold">{totalUnits}</span> {uomLabels[form.uom_term_id] || 'EA'} total
+                        {' '}across <span className="font-mono font-bold">{stocked}</span> of {variantCombos.length} variant{variantCombos.length !== 1 ? 's' : ''}
                         {form.initial_cost && (
                           <> at <span className="font-mono font-bold">${Number(form.initial_cost).toFixed(2)}</span>/unit</>
                         )}{' '}
