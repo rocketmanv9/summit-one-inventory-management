@@ -1,8 +1,8 @@
 'use client';
 
-import { useRef, useCallback } from 'react';
-import { Camera, X, Loader2, ImagePlus } from 'lucide-react';
-import { resizeImage, validateImageFile } from '@/lib/image-utils';
+import { useRef, useCallback, useState } from 'react';
+import { Camera, X, Loader2, ImagePlus, Sparkles } from 'lucide-react';
+import { resizeImage, validateImageFile, dataUrlToFile } from '@/lib/image-utils';
 import { useEntityImage } from '@/hooks/useEntityImage';
 
 type EntityType = 'catalog_item' | 'asset' | 'tool' | 'vehicle' | 'equipment';
@@ -12,6 +12,11 @@ interface EntityImageUploadProps {
   entityId: string | null;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
+  /**
+   * When provided, shows a "Generate with AI" button (while no image exists)
+   * that creates a product image from the name/description and attaches it.
+   */
+  generateContext?: { name: string; description?: string };
 }
 
 const sizeClasses = {
@@ -25,9 +30,37 @@ export function EntityImageUpload({
   entityId,
   size = 'md',
   className = '',
+  generateContext,
 }: EntityImageUploadProps) {
   const { imageUrl, loading, uploading, upload, remove } = useEntityImage(entityType, entityId);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+
+  const handleGenerate = useCallback(async () => {
+    if (!generateContext?.name?.trim() || generating) return;
+    setGenerating(true);
+    setGenError(null);
+    try {
+      const res = await fetch('/api/ai/item-image/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: generateContext.name, description: generateContext.description || '' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Generation failed' }));
+        throw new Error(err.error || 'Generation failed');
+      }
+      const { image_data } = await res.json();
+      // Re-encode the generated PNG to a resized JPEG, then attach via the hook.
+      const jpegDataUrl = await resizeImage(dataUrlToFile(image_data, 'ai-image.png'));
+      await upload(jpegDataUrl);
+    } catch (err: any) {
+      setGenError(err.message || 'Generation failed');
+    } finally {
+      setGenerating(false);
+    }
+  }, [generateContext, generating, upload]);
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,10 +96,12 @@ export function EntityImageUpload({
   if (!entityId) return null;
 
   const sizeClass = sizeClasses[size];
-  const isLoading = loading || uploading;
+  const isLoading = loading || uploading || generating;
+  const showGenerate = !!generateContext?.name?.trim() && !imageUrl;
 
   return (
-    <div className={`relative inline-block ${className}`}>
+    <div className={`inline-flex flex-col items-start gap-1.5 ${className}`}>
+    <div className="relative inline-block">
       <input
         ref={fileInputRef}
         type="file"
@@ -128,6 +163,21 @@ export function EntityImageUpload({
           )}
         </button>
       )}
+    </div>
+
+    {showGenerate && (
+      <button
+        type="button"
+        onClick={handleGenerate}
+        disabled={isLoading}
+        className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-600 hover:text-purple-700 disabled:opacity-50"
+        title="Generate a product image with AI"
+      >
+        {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+        {generating ? 'Generating…' : 'Generate with AI'}
+      </button>
+    )}
+    {genError && <span className="text-[11px] text-red-600 max-w-[10rem]">{genError}</span>}
     </div>
   );
 }

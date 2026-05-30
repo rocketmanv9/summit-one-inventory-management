@@ -3,6 +3,8 @@
  * Used by EntityImageUpload component and ImageAttachment component.
  */
 
+import { AppError } from '@rocketmanv9/chassis/errors';
+
 export const MAX_RAW_SIZE = 16 * 1024 * 1024; // 16MB raw file limit
 export const MAX_DIMENSION = 1024;
 export const JPEG_QUALITY = 0.85;
@@ -19,6 +21,20 @@ export function validateImageFile(file: File): string | null {
     return `File too large (max ${MAX_RAW_SIZE / 1024 / 1024}MB)`;
   }
   return null;
+}
+
+/**
+ * Convert a base64 data URL (e.g. an AI-generated PNG) into a File so it can be
+ * run through resizeImage()/validateImageFile() and uploaded like a picked file.
+ */
+export function dataUrlToFile(dataUrl: string, filename = 'image.png'): File {
+  const match = dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (!match) throw AppError.badRequest('Invalid image data URL');
+  const mime = match[1];
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
 }
 
 /**

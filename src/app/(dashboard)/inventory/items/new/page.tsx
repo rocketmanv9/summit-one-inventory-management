@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -14,6 +14,7 @@ import { AddLocationModal } from '@/components/modals/AddLocationModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
+import { resizeImage, validateImageFile } from '@/lib/image-utils';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { useUOMTerms, useUOMLabelMap, useGVTerms, useGVLabelMap } from '@/hooks/useGVTerms';
@@ -38,6 +39,7 @@ import {
   ChevronDown,
   ChevronUp,
   Tags,
+  Camera,
 } from 'lucide-react';
 import type { Database } from 'types/supabase';
 
@@ -171,6 +173,7 @@ export default function NewItemWizardPage() {
   // AI suggestion state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiFilled, setAiFilled] = useState(false);
+  const [aiImageLoading, setAiImageLoading] = useState(false);
   const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
   const [aiSuggestedSkuPrefix, setAiSuggestedSkuPrefix] = useState<string | null>(null);
 
@@ -294,6 +297,60 @@ export default function NewItemWizardPage() {
       setAiLoading(false);
     }
   }, [form.name, aiLoading, categories]);
+
+  // Identify an item from a photo and auto-fill the form (name + fields).
+  const handleAiImageAnalyze = useCallback(async (file: File) => {
+    if (aiImageLoading) return;
+    const validationError = validateImageFile(file);
+    if (validationError) { setError(validationError); return; }
+
+    setAiImageLoading(true);
+    setError('');
+    try {
+      const imageData = await resizeImage(file);
+      const res = await fetch('/api/ai/item-image/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_data: imageData,
+          existing_categories: categories.map(c => ({ id: c.id, name: c.name, sku_prefix: c.sku_prefix })),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Image analysis failed' }));
+        setError(err.error || 'Image analysis failed');
+        return;
+      }
+
+      const { suggestion } = await res.json();
+      setForm(prev => ({
+        ...prev,
+        name: suggestion.name || prev.name,
+        description: suggestion.description || prev.description,
+        uom_term_id: suggestion.uom_term_id || prev.uom_term_id,
+        tracking_mode: suggestion.tracking_mode || prev.tracking_mode,
+        reorder_point: suggestion.reorder_point != null ? String(suggestion.reorder_point) : prev.reorder_point,
+        base_sku: suggestion.sku_prefix || prev.base_sku,
+        category_id: suggestion.category_id || prev.category_id,
+        has_variants: suggestion.has_variants ?? prev.has_variants,
+        variant_dimensions: suggestion.has_variants && Array.isArray(suggestion.variant_dimensions) && suggestion.variant_dimensions.length > 0
+          ? suggestion.variant_dimensions
+          : prev.variant_dimensions,
+        variant_options: suggestion.has_variants && suggestion.variant_options && Object.keys(suggestion.variant_options).length > 0
+          ? suggestion.variant_options
+          : prev.variant_options,
+      }));
+      if (suggestion.new_category_name && !suggestion.category_id) {
+        setAiSuggestedCategory(suggestion.new_category_name);
+        setAiSuggestedSkuPrefix(suggestion.sku_prefix || null);
+      }
+      setAiFilled(true);
+    } catch {
+      setError('Failed to analyze image. Try again.');
+    } finally {
+      setAiImageLoading(false);
+    }
+  }, [aiImageLoading, categories]);
 
   // ── SKU Preview ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -608,6 +665,8 @@ export default function NewItemWizardPage() {
             updateFormDirect={updateFormDirect}
             onAddCategory={() => setShowCategoryModal(true)}
             onAiSuggest={handleAiSuggest}
+            onAiImageAnalyze={handleAiImageAnalyze}
+            aiImageLoading={aiImageLoading}
             aiLoading={aiLoading}
             aiFilled={aiFilled}
             aiSuggestedCategory={aiSuggestedCategory}
@@ -735,6 +794,8 @@ function StepBasics({
   updateFormDirect,
   onAddCategory,
   onAiSuggest,
+  onAiImageAnalyze,
+  aiImageLoading,
   aiLoading,
   aiFilled,
   aiSuggestedCategory,
@@ -756,6 +817,8 @@ function StepBasics({
   updateFormDirect: <K extends keyof WizardState>(field: K, value: WizardState[K]) => void;
   onAddCategory: () => void;
   onAiSuggest: () => void;
+  onAiImageAnalyze: (file: File) => void;
+  aiImageLoading: boolean;
   aiLoading: boolean;
   aiFilled: boolean;
   aiSuggestedCategory: string | null;
@@ -774,6 +837,7 @@ function StepBasics({
   const [classificationOpen, setClassificationOpen] = useState(
     !!(form.material_term_id || form.product_term_id || form.quality_tier_term_id)
   );
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <Card>
@@ -826,6 +890,29 @@ function StepBasics({
               Fields auto-filled by AI. Review and adjust as needed.
             </p>
           )}
+
+          {/* Identify from a photo — vision model fills name + the rest. */}
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) onAiImageAnalyze(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => photoInputRef.current?.click()}
+            disabled={aiImageLoading}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-700 disabled:opacity-50"
+          >
+            {aiImageLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+            {aiImageLoading ? 'Identifying from photo…' : 'Or identify from a photo'}
+          </button>
         </div>
 
         <div className="space-y-2">
@@ -2034,8 +2121,13 @@ function StepSuccess({
                 <> | Barcode: <span className="font-mono font-bold">{result.item_barcode}</span></>
               )}
             </p>
-            <div className="pt-2">
-              <EntityImageUpload entityType="catalog_item" entityId={result.item_id} size="lg" />
+            <div className="pt-2 flex justify-center">
+              <EntityImageUpload
+                entityType="catalog_item"
+                entityId={result.item_id}
+                size="lg"
+                generateContext={{ name: result.created_entities.find((e) => e.type === 'item')?.name || '' }}
+              />
             </div>
           </div>
 

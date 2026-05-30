@@ -245,7 +245,12 @@ export default function ItemDetailPage() {
             Back to Items
           </button>
           <div className="flex items-start gap-4">
-            <EntityImageUpload entityType="catalog_item" entityId={params.id} size="lg" />
+            <EntityImageUpload
+              entityType="catalog_item"
+              entityId={params.id}
+              size="lg"
+              generateContext={{ name: item.name, description: (item as any).description || '' }}
+            />
             <div className="flex-1 min-w-0">
               <PageHeader
                 title={item.name}
