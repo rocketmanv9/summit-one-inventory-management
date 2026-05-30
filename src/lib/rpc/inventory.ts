@@ -584,14 +584,7 @@ export const InventoryRPC = {
    * Table: inventory.sku_settings
    */
   async upsertSkuSettings(payload: SkuSettingsInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { error } = await supabase
-      .from('sku_settings')
-      .upsert(payload, { onConflict: 'category_id' });
-
-    if (error) {
-      throw AppError.internal(`Failed to update SKU settings: ${error.message}`);
-    }
+    await writeJson('/api/inventory/sku-settings', 'POST', payload, 'Failed to update SKU settings');
   },
 
   /**
@@ -698,14 +691,7 @@ export const InventoryRPC = {
    * Table: inventory.inventory_levels
    */
   async upsertInventoryLevels(payload: InventoryLevelInsertPayload[]) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { error } = await supabase
-      .from('inventory_levels')
-      .upsert(payload, { onConflict: 'catalog_item_id,location_id' });
-
-    if (error) {
-      throw AppError.internal(`Failed to save inventory levels: ${error.message}`);
-    }
+    await writeJson('/api/inventory/inventory-levels', 'POST', payload, 'Failed to save inventory levels');
   },
 
   /**
@@ -2472,51 +2458,22 @@ export const InventoryRPC = {
     catalog_item_id?: string | null;
     allow_negative: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      scope: payload.scope,
-      category_id: payload.category_id ?? null,
-      catalog_item_id: payload.catalog_item_id ?? null,
-      allow_negative: payload.allow_negative,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('negative_inventory_config')
-      .upsert(insertPayload, {
-        onConflict: 'tenant_id,scope,COALESCE(category_id,\'00000000-0000-0000-0000-000000000000\'::uuid),COALESCE(catalog_item_id,\'00000000-0000-0000-0000-000000000000\'::uuid)',
-      })
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to save negative inventory config: ${error.message}`);
-    }
-
-    return data as { id: string; last_event_id: string };
+    return writeJson<{ id: string; last_event_id: string }>(
+      '/api/inventory/negative-inventory', 'POST', {
+        scope: payload.scope,
+        category_id: payload.category_id ?? null,
+        catalog_item_id: payload.catalog_item_id ?? null,
+        allow_negative: payload.allow_negative,
+      }, 'Failed to save negative inventory config');
   },
 
   /**
    * Delete negative inventory config with OCC
    */
   async deleteNegativeInventoryConfig(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('negative_inventory_config')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete negative inventory config: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Config was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as { id: string };
+    return writeJson<{ id: string }>(
+      `/api/inventory/negative-inventory/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete negative inventory config');
   },
 
   /**
@@ -2839,28 +2796,12 @@ export const InventoryRPC = {
     uom_mismatch_policy: string;
     require_override_reason: boolean;
   }): Promise<any> {
-    const tenantId = getTenantIdFromToken(getStoredAccessToken() || '');
-    if (!tenantId) throw AppError.unauthorized('No tenant ID');
-
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('guardrail_policies')
-      .upsert({
-        tenant_id: tenantId,
-        over_receipt_policy: params.over_receipt_policy,
-        over_receipt_threshold_pct: params.over_receipt_threshold_pct,
-        uom_mismatch_policy: params.uom_mismatch_policy,
-        require_override_reason: params.require_override_reason,
-        last_event_id: crypto.randomUUID(),
-      }, { onConflict: 'tenant_id' })
-      .select()
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to save guardrail policies: ${error.message}`);
-    }
-
-    return data;
+    return writeJson('/api/inventory/guardrail-policies', 'POST', {
+      over_receipt_policy: params.over_receipt_policy,
+      over_receipt_threshold_pct: params.over_receipt_threshold_pct,
+      uom_mismatch_policy: params.uom_mismatch_policy,
+      require_override_reason: params.require_override_reason,
+    }, 'Failed to save guardrail policies');
   },
 
   /**
