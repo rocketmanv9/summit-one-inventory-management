@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
 import {
   Filter,
-  Save,
   Trash2,
   ChevronDown,
   RotateCcw,
   Check,
   Bookmark,
+  BookmarkPlus,
+  Sparkles,
   Layers as LayersIcon,
   Truck,
   ShoppingCart,
@@ -250,48 +251,69 @@ export function GlobeFilterBar({
         }`}
       >
         {/* Saved Filters — prominent card at the top */}
-        <div className="border border-gray-200 rounded-lg bg-white p-3 space-y-2.5">
+        <div className="rounded-xl border border-gray-200 bg-gradient-to-b from-white to-gray-50/60 p-3 space-y-3 shadow-sm">
           <div className="flex items-center gap-2">
-            <Bookmark className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-gray-800 flex-1">Saved Filters</span>
+            <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-sm">
+              <Bookmark className="h-4 w-4 text-white" />
+            </div>
+            <span className="text-sm font-semibold text-gray-800 flex-1">Saved Filters</span>
             {presets.length > 0 && (
-              <span className="text-[11px] text-gray-400">{presets.length}</span>
+              <span className="text-[11px] font-medium text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">
+                {presets.length}
+              </span>
             )}
           </div>
 
           {/* Preset list */}
           {presets.length === 0 ? (
-            <p className="text-xs text-gray-400 italic">
-              No saved filters yet — set up the map below, then save the view.
-            </p>
+            <div className="flex flex-col items-center text-center gap-1.5 py-4 px-2 rounded-lg border border-dashed border-gray-200 bg-gray-50/50">
+              <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
+                <BookmarkPlus className="h-5 w-5 text-primary/70" />
+              </div>
+              <p className="text-xs font-medium text-gray-500">No saved filters yet</p>
+              <p className="text-[11px] text-gray-400 leading-snug">
+                Set up the map below, then save it for one-click access.
+              </p>
+            </div>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {presets.map((p) => {
                 const isActive = p.id === activePresetId;
                 return (
                   <div
                     key={p.id}
-                    className={`group flex items-center gap-1 rounded-md border transition-colors ${
+                    className={`group relative flex items-center rounded-lg border px-1 transition-all ${
                       isActive
-                        ? 'border-primary/40 bg-primary/5'
-                        : 'border-transparent hover:bg-gray-50'
+                        ? 'border-primary/30 bg-primary/5 shadow-sm ring-1 ring-primary/10'
+                        : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
                     }`}
                   >
                     <button
                       onClick={() => handleLoadPreset(p)}
-                      className="flex-1 flex items-center gap-1.5 text-left text-sm px-2 py-1.5 text-gray-700 truncate"
+                      className="flex-1 flex items-center gap-2 text-left text-sm px-2 py-2 text-gray-700 truncate"
                       title={`Load "${p.name}"`}
                     >
-                      {isActive ? (
-                        <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />
-                      ) : (
-                        <span className="w-3.5 flex-shrink-0" />
+                      <span
+                        className={`flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-md ${
+                          isActive ? 'bg-primary text-white' : 'bg-gray-100 text-gray-400'
+                        }`}
+                      >
+                        {isActive ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Bookmark className="h-3 w-3" />
+                        )}
+                      </span>
+                      <span className="truncate font-medium">{p.name}</span>
+                      {isActive && (
+                        <span className="ml-auto flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary bg-primary/10 rounded-full px-1.5 py-0.5">
+                          Active
+                        </span>
                       )}
-                      <span className="truncate">{p.name}</span>
                     </button>
                     <button
                       onClick={() => deletePreset(p.id)}
-                      className="p-1.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="flex-shrink-0 p-1.5 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
                       title={`Delete "${p.name}"`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -304,35 +326,42 @@ export function GlobeFilterBar({
 
           {/* Save current view */}
           {showSaveInput ? (
-            <div className="flex gap-1.5">
-              <input
-                autoFocus
-                value={savingName}
-                onChange={(e) => setSavingName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSavePreset();
-                  if (e.key === 'Escape') {
-                    setShowSaveInput(false);
-                    setSavingName('');
-                  }
-                }}
-                placeholder="Name this view…"
-                className="flex-1 text-sm px-2.5 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <button
-                onClick={handleSavePreset}
-                disabled={!savingName.trim()}
-                className="px-3 py-1.5 text-sm font-medium bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-40"
-              >
-                Save
-              </button>
+            <div className="space-y-1.5">
+              <div className="flex gap-1.5">
+                <input
+                  autoFocus
+                  value={savingName}
+                  onChange={(e) => setSavingName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSavePreset();
+                    if (e.key === 'Escape') {
+                      setShowSaveInput(false);
+                      setSavingName('');
+                    }
+                  }}
+                  placeholder="Name this view…"
+                  className="flex-1 text-sm px-2.5 py-2 border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                />
+                <button
+                  onClick={handleSavePreset}
+                  disabled={!savingName.trim()}
+                  className="px-3 py-2 text-sm font-medium bg-primary text-white rounded-lg shadow-sm hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 px-0.5">
+                Press <kbd className="font-sans font-medium text-gray-500">Enter</kbd> to save,
+                {' '}
+                <kbd className="font-sans font-medium text-gray-500">Esc</kbd> to cancel
+              </p>
             </div>
           ) : (
             <button
               onClick={() => setShowSaveInput(true)}
-              className="w-full flex items-center justify-center gap-1.5 text-sm font-medium text-primary border border-dashed border-primary/40 rounded-md py-1.5 hover:bg-primary/5"
+              className="group w-full flex items-center justify-center gap-1.5 text-sm font-medium text-white rounded-lg py-2 bg-gradient-to-r from-primary to-primary/80 shadow-sm hover:shadow-md hover:brightness-105 active:scale-[0.99] transition-all"
             >
-              <Save className="h-4 w-4" />
+              <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
               Save current view
             </button>
           )}

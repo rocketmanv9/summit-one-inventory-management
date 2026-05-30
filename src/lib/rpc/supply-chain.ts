@@ -6,8 +6,18 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { apiWrite } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
+
+/** Write-through helper for methods migrated onto chassis routes (preserves return shape + 409). */
+async function writeJson<T = unknown>(url: string, method: 'POST' | 'PATCH' | 'DELETE', body: unknown, errMsg: string): Promise<T> {
+  const res = await apiWrite(url, method, body);
+  const json = await res.json().catch(() => ({} as any));
+  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg);
+  if (!res.ok) throw AppError.internal(json.error?.message || errMsg);
+  return json.data as T;
+}
 
 type VendorRow = Database['supply_chain']['Tables']['vendors']['Row'];
 type VendorInsert = Database['supply_chain']['Tables']['vendors']['Insert'];
@@ -464,76 +474,32 @@ export const SupplyChainRPC = {
    * Create a vendor item mapping
    */
   async createVendorItem(payload: VendorItemInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const insertPayload: VendorItemInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create vendor item: ${error.message}`);
-    }
-
-    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+    const { last_event_id, ...rest } = payload as VendorItemInsertPayload & { last_event_id?: string };
+    void last_event_id;
+    return writeJson<Pick<VendorItemRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/vendor-items', 'POST', rest, 'Failed to create vendor item');
   },
 
   /**
    * Update a vendor item mapping with optimistic concurrency control
    */
   async updateVendorItem(id: string, updates: VendorItemUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorItemUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string;
     };
-
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update vendor item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+    void _id; void created_at; void tenant_id; void last_event_id;
+    return writeJson<Pick<VendorItemRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendor-items/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update vendor item');
   },
 
   /**
    * Delete a vendor item mapping with optimistic concurrency control
    */
   async deleteVendorItem(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete vendor item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorItemRow, 'id'>;
+    return writeJson<Pick<VendorItemRow, 'id'>>(
+      `/api/inventory/vendor-items/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete vendor item');
   },
 
   /**

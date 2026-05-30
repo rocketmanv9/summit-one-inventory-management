@@ -35,9 +35,11 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = await req.json();
-  const inv = (supabase as any).schema('inventory');
+  // vendor_items is a VIEW in `inventory`; the real table is in `supply_chain`.
+  const sc = (supabase as any).schema('supply_chain');
 
-  const { data, error } = await inv.from('vendor_items').upsert(body).select().single();
+  const { data, error } = await sc.from('vendor_items')
+    .upsert({ ...body, last_event_id: idempotencyKey }).select().single();
 
   if (error) {
     log.error('vendor_item.create_failed', { error: error.message });
