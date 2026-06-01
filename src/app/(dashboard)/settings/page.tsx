@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Sparkles, Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SettingsNav } from '@/components/settings/SettingsNav';
@@ -69,6 +70,9 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexMsg, setReindexMsg] = useState('');
+  const [reindexErr, setReindexErr] = useState('');
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorLimits, setVendorLimits] = useState<Record<string, string>>({});
   const [form, setForm] = useState<SettingsForm>({
@@ -211,6 +215,40 @@ export default function SettingsPage() {
       setError('Failed to update settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReindex = async () => {
+    if (!isAdmin || reindexing) return;
+    setReindexing(true);
+    setReindexErr('');
+    setReindexMsg('');
+    try {
+      const res = await fetch('/api/ai/reindex', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `reindex-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error?.message || `Request failed (${res.status})`);
+      }
+      const d = json.data || json;
+      const remaining = d.itemsRemaining
+        ? ` (${d.itemsRemaining} still pending — run again)`
+        : '';
+      setReindexMsg(
+        `Done — embedded ${d.itemsEmbedded ?? 0} item(s)${remaining}; linked ` +
+          `${d.relationships?.supplied_by ?? 0} supplier and ${d.relationships?.stored_at ?? 0} location relationships.`
+      );
+    } catch (e: any) {
+      setReindexErr(e?.message || 'Reindex failed. Please try again.');
+    } finally {
+      setReindexing(false);
     }
   };
 
@@ -628,6 +666,55 @@ export default function SettingsPage() {
             )}
           </div>
         </form>
+
+        {/* AI Assistant Panel */}
+        <div className="mt-6 bg-white rounded-lg border p-6">
+          <h3 className="text-lg font-semibold pb-2 border-b flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-teal-600" />
+            AI Assistant (Isabelle)
+          </h3>
+          <p className="text-sm text-gray-600 mt-3">
+            Rebuild Isabelle&apos;s search knowledge: generate item embeddings (powers semantic
+            search) and refresh the ontology of items, vendors, locations, and their
+            supplier/storage relationships. Run this after adding or importing items so
+            &quot;find me something like…&quot; and substitute lookups work.
+          </p>
+
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              type="button"
+              onClick={handleReindex}
+              disabled={!isAdmin || reindexing}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {reindexing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Reindexing…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Reindex AI Knowledge
+                </>
+              )}
+            </button>
+            {!isAdmin && (
+              <span className="text-sm text-gray-500">Admin access required.</span>
+            )}
+          </div>
+
+          {reindexMsg && (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+              <p className="text-sm text-green-800">{reindexMsg}</p>
+            </div>
+          )}
+          {reindexErr && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-800">{reindexErr}</p>
+            </div>
+          )}
+        </div>
 
         {/* Info Box */}
         <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
