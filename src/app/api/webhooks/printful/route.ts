@@ -35,7 +35,7 @@ export const POST = createWriteRoute(
     // Look up the apparel order by its ID (external_id = apparel_orders.id)
     const { data: apparelOrder, error: lookupErr } = await inv
       .from('apparel_orders')
-      .select('id, tenant_id, status')
+      .select('id, tenant_id, status, notes')
       .eq('id', externalId)
       .limit(1)
       .single();

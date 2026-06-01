@@ -70,7 +70,7 @@ export default function StockMovementsPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to reverse movement'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to reverse movement'}`);
         return;
       }
 

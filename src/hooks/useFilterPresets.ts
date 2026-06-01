@@ -71,6 +71,8 @@ export function useFilterPresets() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          // Write route requires an idempotency key, else 400 (save silently failed).
+          'X-Idempotency-Key': crypto.randomUUID(),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
@@ -99,7 +101,10 @@ export function useFilterPresets() {
       const token = await getAuthToken();
       const res = await fetch(`${API_BASE}/${id}`, {
         method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          'X-Idempotency-Key': crypto.randomUUID(),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         credentials: 'include',
       });
       if (!res.ok) throw new Error('Failed to delete preset');

@@ -77,7 +77,7 @@ export function useEntityImage(entityType: EntityType, entityId: string | null):
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-        throw new Error(err.error || 'Upload failed');
+        throw new Error(err.error?.message || err.error || 'Upload failed');
       }
 
       const json = await res.json();
@@ -110,7 +110,7 @@ export function useEntityImage(entityType: EntityType, entityId: string | null):
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Delete failed' }));
-        throw new Error(err.error || 'Delete failed');
+        throw new Error(err.error?.message || err.error || 'Delete failed');
       }
 
       setImageUrl(null);

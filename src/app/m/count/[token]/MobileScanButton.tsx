@@ -16,7 +16,7 @@ export function MobileScanButton({ token }: { token: string }) {
       return;
     }
 
-    const newQty = (result.currentQty ?? 0) + 1;
+    const newQty = Number(result.currentQty ?? 0) + 1;
     const recordResult = await scanRecord(token, result.catalogItemId!, newQty);
     if (recordResult.error) {
       setFeedback(`Error: ${recordResult.error}`);

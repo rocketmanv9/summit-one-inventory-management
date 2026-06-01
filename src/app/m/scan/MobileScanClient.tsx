@@ -46,7 +46,8 @@ export function MobileScanClient({ bypassSecret }: { bypassSecret: string }) {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) {
-          setError(json.message || 'Not found');
+          // chassis error envelope is { error: { message } }, not { message }
+          setError(json.error?.message || json.message || 'Not found');
           return;
         }
         setResult(json.data);

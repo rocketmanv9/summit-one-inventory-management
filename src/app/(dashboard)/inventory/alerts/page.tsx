@@ -97,10 +97,11 @@ export default function ReorderAlertsPage() {
       const result = await res.json();
 
       if (res.ok) {
-        alert(`Alerts updated! Created: ${result.created}, Updated: ${result.updated}, Dismissed: ${result.dismissed}`);
+        const count = result.data?.alerts_count;
+        alert(count != null ? `Alerts refreshed — ${count} active alert${count === 1 ? '' : 's'}.` : 'Alerts refreshed.');
         fetchAlerts();
       } else {
-        alert(`Error: ${result.error || 'Failed to refresh alerts'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to refresh alerts'}`);
       }
     } catch (error) {
       console.error('Error refreshing alerts:', error);
@@ -116,7 +117,7 @@ export default function ReorderAlertsPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to acknowledge alert'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to acknowledge alert'}`);
         return;
       }
 
@@ -140,7 +141,7 @@ export default function ReorderAlertsPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to dismiss alert'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to dismiss alert'}`);
         return;
       }
 

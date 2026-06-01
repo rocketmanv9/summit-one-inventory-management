@@ -805,7 +805,7 @@ function AddressFormModal({
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw AppError.internal(errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} address`);
+        throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} address`);
       }
       onComplete();
     } catch (err: any) {
@@ -965,7 +965,7 @@ function ContactFormModal({
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw AppError.internal(errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} contact`);
+        throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} contact`);
       }
       onComplete();
     } catch (err: any) {
@@ -1104,7 +1104,7 @@ function AddCustomVendorModal({
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
-        throw AppError.internal(errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} vendor`);
+        throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} vendor`);
       }
       onComplete();
     } catch (err: any) {

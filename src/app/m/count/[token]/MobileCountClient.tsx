@@ -321,7 +321,7 @@ export function MobileCountClient({
               counted_assets: counted.some((c) => c.asset_id === asset.id)
                 ? counted
                 : [...counted, { asset_id: asset.id }],
-              qty_counted: data.qty_counted ?? ((l.qty_counted ?? 0) + 1),
+              qty_counted: data.qty_counted ?? (Number(l.qty_counted ?? 0) + 1),
             };
           })
         );
@@ -505,7 +505,9 @@ export function MobileCountClient({
           return;
         }
 
-        const newQty = (line.qty_counted ?? 0) + 1;
+        // qty_counted arrives as a numeric STRING from the validate route; coerce
+        // or "3" + 1 becomes "31" and the record route (z.number()) 400s.
+        const newQty = Number(line.qty_counted ?? 0) + 1;
         await handleRecordCount(catalogItemId, newQty);
 
         const itemName = line.catalog_item?.name || line.catalog_item?.sku || decodedText;

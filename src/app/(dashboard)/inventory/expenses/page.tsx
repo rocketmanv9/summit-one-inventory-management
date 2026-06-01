@@ -62,7 +62,7 @@ export default function AccountingExpensesPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to match expense'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to match expense'}`);
         return;
       }
 
@@ -88,7 +88,7 @@ export default function AccountingExpensesPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to update expense'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to update expense'}`);
         return;
       }
 
@@ -112,7 +112,7 @@ export default function AccountingExpensesPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to dispute expense'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to dispute expense'}`);
         return;
       }
 

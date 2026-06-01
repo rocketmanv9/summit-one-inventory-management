@@ -112,8 +112,9 @@ export async function POST(
     .eq('id', catalogItemId)
     .single();
 
-  // Increment qty
-  const newQty = (line.qty_counted ?? 0) + 1;
+  // Increment qty (qty_counted is numeric → arrives as a string; coerce so the
+  // second scan doesn't concatenate "1"+1 = "11").
+  const newQty = Number(line.qty_counted ?? 0) + 1;
 
   const { error: updateError } = await inv
     .from('cycle_count_lines')

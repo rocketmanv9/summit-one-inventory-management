@@ -59,10 +59,12 @@ export default function ABCClassificationPage() {
       const result = await res.json();
 
       if (res.ok) {
-        alert(`Classification complete!\nClass A: ${result.class_a}\nClass B: ${result.class_b}\nClass C: ${result.class_c}`);
+        const d = result.data || {};
+        const parts = [d.class_a != null ? `A: ${d.class_a}` : null, d.class_b != null ? `B: ${d.class_b}` : null, d.class_c != null ? `C: ${d.class_c}` : null].filter(Boolean);
+        alert(parts.length ? `Classification complete!\n${parts.join('  ')}` : 'Classification complete!');
         fetchClassification();
       } else {
-        alert(`Error: ${result.error || 'Failed to calculate classification'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to calculate classification'}`);
       }
     } catch (error) {
       console.error('Error calculating classification:', error);

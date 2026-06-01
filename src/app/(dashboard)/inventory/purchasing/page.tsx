@@ -92,13 +92,15 @@ export default function PurchasingPage() {
     }
   };
 
+  // qty_ordered/qty_received/unit_cost are Postgres numeric → arrive as strings via
+  // PostgREST; coerce with Number() before any arithmetic (string + string concatenates).
   const calculateTotal = (po: PurchaseOrder) => {
-    return po.purchase_order_lines?.reduce((sum, line) => sum + (line.qty_ordered * line.unit_cost), 0) || 0;
+    return po.purchase_order_lines?.reduce((sum, line) => sum + (Number(line.qty_ordered) * Number(line.unit_cost || 0)), 0) || 0;
   };
 
   const calculateProgress = (po: PurchaseOrder) => {
-    const totalQty = po.purchase_order_lines?.reduce((sum, line) => sum + line.qty_ordered, 0) || 0;
-    const receivedQty = po.purchase_order_lines?.reduce((sum, line) => sum + line.qty_received, 0) || 0;
+    const totalQty = po.purchase_order_lines?.reduce((sum, line) => sum + Number(line.qty_ordered), 0) || 0;
+    const receivedQty = po.purchase_order_lines?.reduce((sum, line) => sum + Number(line.qty_received), 0) || 0;
     return totalQty > 0 ? Math.round((receivedQty / totalQty) * 100) : 0;
   };
 
@@ -676,7 +678,7 @@ function PODetailPanel({
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Unit Cost</div>
-                      <div className="font-mono">${line.unit_cost.toFixed(2)}</div>
+                      <div className="font-mono">${Number(line.unit_cost || 0).toFixed(2)}</div>
                     </div>
                   </div>
                 </div>

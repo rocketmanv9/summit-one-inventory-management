@@ -71,7 +71,13 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   const inv = (supabase as any).schema('inventory');
 
-  const { data, error } = await inv.from('catalog_items').upsert(body).select().single();
+  // catalog_items.last_event_id is NOT NULL with no default/trigger — stamp it
+  // (and tenant_id) so a direct POST doesn't hit a NOT NULL violation.
+  const { data, error } = await inv
+    .from('catalog_items')
+    .upsert({ ...body, tenant_id: ctx.tenantId, last_event_id: idempotencyKey })
+    .select()
+    .single();
 
   if (error) {
     log.error('catalog_item.create_failed', { error: error.message });
