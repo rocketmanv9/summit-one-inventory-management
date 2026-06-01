@@ -220,7 +220,12 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
 
       const resp = await fetch('/api/settings/integrations/amazon-business/punchout/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Write routes (createSessionWriteRoute) require an idempotency key,
+          // else they 400 with "Missing Idempotency-Key header".
+          'X-Idempotency-Key': crypto.randomUUID(),
+        },
         body: JSON.stringify({
           user_email: userEmail,
           location_id: locationId,
@@ -298,7 +303,10 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
 
       const resp = await fetch('/api/settings/integrations/amazon-business/punchout/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': crypto.randomUUID(),
+        },
         body: JSON.stringify({
           punchout_order_id: punchoutOrderId,
           location_id: locationId,
