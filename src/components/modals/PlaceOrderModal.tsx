@@ -83,7 +83,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
   const [userEmail, setUserEmail] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadGuidance = async () => {
+  const loadGuidance = useCallback(async () => {
     if (!po.vendor_id) return;
 
     const result = await getVendorOrderingGuidance(po.vendor_id);
@@ -142,7 +142,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         setPunchoutStep('init');
       }
     }
-  };
+  }, [po.id, po.vendor_id]);
 
   // Load vendor guidance when modal opens
   useEffect(() => {

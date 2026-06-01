@@ -251,7 +251,7 @@ export async function getPurchaseOrderWithDetails(
     if (po.delivery_location_id) {
       const { data: locData } = await inventory
         .from('locations')
-        .select('id, name, type')
+        .select('id, name')
         .eq('id', po.delivery_location_id)
         .single();
       delivery_location = locData;
@@ -260,7 +260,7 @@ export async function getPurchaseOrderWithDetails(
     if (po.pickup_location_id) {
       const { data: locData } = await inventory
         .from('locations')
-        .select('id, name, type')
+        .select('id, name')
         .eq('id', po.pickup_location_id)
         .single();
       pickup_location = locData;
