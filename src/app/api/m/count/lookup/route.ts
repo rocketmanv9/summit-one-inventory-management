@@ -26,9 +26,11 @@ export const GET = createReadRoute(async ({ req, log }) => {
   let catalogItem: any = null;
   let asset: any = null;
 
-  // Search by barcode or SKU in catalog_items
+  // Search by barcode or SKU in catalog_items. NOTE: catalog_items lives in the
+  // `inventory` schema — querying via `supabase` (default `public`) finds nothing,
+  // so use `inv`. maybeSingle() avoids erroring when there's no exact match.
   if (barcode || sku) {
-    let query = supabase
+    let query = inv
       .from('catalog_items')
       .select('id, name, sku, barcode, tracking_mode, uom_term_id');
 
@@ -38,27 +40,27 @@ export const GET = createReadRoute(async ({ req, log }) => {
       query = query.eq('sku', sku);
     }
 
-    const { data } = await query.limit(1).single();
+    const { data } = await query.limit(1).maybeSingle();
     catalogItem = data;
   }
 
-  // Search by asset tag in assets
+  // Search by asset tag in assets (also in the `inventory` schema)
   if (assetTag) {
-    const { data } = await supabase
+    const { data } = await inv
       .from('assets')
       .select('id, asset_tag, serial_number, status, catalog_item_id, location_id')
       .or(`asset_tag.eq.${assetTag},serial_number.eq.${assetTag}`)
       .limit(1)
-      .single();
+      .maybeSingle();
     asset = data;
 
     // Also fetch the catalog item for this asset
     if (asset?.catalog_item_id) {
-      const { data: item } = await supabase
+      const { data: item } = await inv
         .from('catalog_items')
         .select('id, name, sku, barcode, tracking_mode, uom_term_id')
         .eq('id', asset.catalog_item_id)
-        .single();
+        .maybeSingle();
       catalogItem = item;
     }
   }
