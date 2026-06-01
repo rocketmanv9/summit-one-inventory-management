@@ -68,45 +68,29 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
     created = true;
   }
 
-  // Record (or re-affirm) this asset as present on the line. Correlated by
-  // line_number within the cycle count (cycle_count_asset_lines has no line FK).
-  const { data: existingRow } = await inv
+  // Record this asset as present on the line. Idempotent via the unique
+  // (cycle_count_id, asset_id) constraint — re-scanning just re-affirms it.
+  const { error: upsertError } = await inv
     .from('cycle_count_asset_lines')
-    .select('id')
-    .eq('tenant_id', session.tenantId)
-    .eq('cycle_count_id', session.cycleCountId)
-    .eq('line_number', line.line_number)
-    .eq('asset_id', asset.id)
-    .maybeSingle();
-
-  if (existingRow) {
-    await inv
-      .from('cycle_count_asset_lines')
-      .update({ counted_present: true, scanned_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', existingRow.id);
-  } else {
-    const { error: insertError } = await inv
-      .from('cycle_count_asset_lines')
-      .insert({
-        tenant_id: session.tenantId,
-        cycle_count_id: session.cycleCountId,
-        line_number: line.line_number,
-        asset_id: asset.id,
-        expected_present: false,
-        counted_present: true,
-        scanned_at: new Date().toISOString(),
-        last_event_id: `cc_asset_${idempotencyKey}`,
-      });
-    if (insertError) throw AppError.internal(insertError.message);
-  }
+    .upsert({
+      tenant_id: session.tenantId,
+      cycle_count_id: session.cycleCountId,
+      cycle_count_line_id: line.id,
+      line_number: line.line_number,
+      asset_id: asset.id,
+      expected_present: false,
+      counted_present: true,
+      scanned_at: new Date().toISOString(),
+      last_event_id: `cc_asset_${idempotencyKey}`,
+    }, { onConflict: 'cycle_count_id,asset_id' });
+  if (upsertError) throw AppError.internal(upsertError.message);
 
   // qty_counted = number of present assets recorded for this line.
   const { count } = await inv
     .from('cycle_count_asset_lines')
     .select('id', { count: 'exact', head: true })
     .eq('tenant_id', session.tenantId)
-    .eq('cycle_count_id', session.cycleCountId)
-    .eq('line_number', line.line_number)
+    .eq('cycle_count_line_id', line.id)
     .eq('counted_present', true);
 
   await inv

@@ -59,7 +59,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
       .limit(500),
     inv
       .from('cycle_count_asset_lines')
-      .select('id, line_number, asset_id, counted_present')
+      .select('id, line_number, cycle_count_line_id, asset_id, counted_present')
       .eq('cycle_count_id', session.cycle_count_id)
       .eq('tenant_id', session.tenant_id)
       .limit(500),
@@ -104,6 +104,21 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     }
   }
 
+  // Also surface assets that were scanned-in during the count (recorded in
+  // cycle_count_asset_lines) but aren't in the snapshot — otherwise discovered
+  // serials wouldn't render on reload. Merge them into assetDetails.
+  const knownAssetIds = new Set(assetDetails.map((a: any) => a.id));
+  const extraAssetIds = [...new Set(
+    countedAssets.map((ca: any) => ca.asset_id).filter((id: string) => id && !knownAssetIds.has(id))
+  )];
+  if (extraAssetIds.length > 0) {
+    const { data: extra } = await inv
+      .from('assets')
+      .select('id, asset_tag, serial_number, status, catalog_item_id')
+      .in('id', extraAssetIds);
+    if (extra) assetDetails = [...assetDetails, ...extra];
+  }
+
   // Fetch parent item names for variants
   const parentIds = [...new Set(items.filter((i: any) => i.parent_item_id).map((i: any) => i.parent_item_id))];
   let parentNameMap = new Map<string, string>();
@@ -120,7 +135,7 @@ export const POST = createWriteRoute(async ({ req, log, idempotencyKey }) => {
     const lineAssets = assetDetails
       .filter((a: any) => a.catalog_item_id === line.catalog_item_id);
     const lineCounted = countedAssets
-      .filter((ca: any) => ca.line_number === line.line_number && ca.counted_present);
+      .filter((ca: any) => ca.cycle_count_line_id === line.id && ca.counted_present);
     return {
       ...line,
       catalog_item: item ? { ...item, parent_name: parentName } : null,

@@ -20,14 +20,18 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
   // Verify line belongs to this cycle count
   const { data: line, error: lineError } = await inv
     .from('cycle_count_lines')
-    .select('id, cycle_count_id')
+    .select('id, cycle_count_id, line_number')
     .eq('id', body.line_id)
     .eq('cycle_count_id', session.cycleCountId)
-    .single();
+    .eq('tenant_id', session.tenantId)
+    .maybeSingle();
 
   if (lineError || !line) throw AppError.notFound('Count line not found');
 
-  // Clear existing counted assets for this line
+  // Replace the set of present assets for this line. cycle_count_asset_lines uses
+  // cycle_count_line_id + counted_present + last_event_id (the older code wrote to
+  // nonexistent columns cycle_count_line_id was missing/`found`, and omitted
+  // last_event_id, so this never worked).
   await inv
     .from('cycle_count_asset_lines')
     .delete()
@@ -37,12 +41,17 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
 
   // Insert new counted assets
   if (body.asset_ids.length > 0) {
+    const now = new Date().toISOString();
     const rows = body.asset_ids.map((assetId) => ({
       tenant_id: session.tenantId,
       cycle_count_id: session.cycleCountId,
       cycle_count_line_id: body.line_id,
+      line_number: line.line_number,
       asset_id: assetId,
-      found: true,
+      expected_present: true,
+      counted_present: true,
+      scanned_at: now,
+      last_event_id: `${idempotencyKey}-${assetId}`,
     }));
 
     const { error: insertError } = await inv
