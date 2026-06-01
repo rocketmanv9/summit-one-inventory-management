@@ -8,6 +8,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -25,6 +26,10 @@ interface Vendor {
   is_custom: boolean;
   tags: string[] | null;
   metadata?: Record<string, unknown> | null;
+  code?: string | null;
+  // 'gv' = global-values catalog vendor (editable here); 'supply_chain' =
+  // inventory/PO + integration vendor (e.g. Amazon Business) shown read-only.
+  __source?: 'gv' | 'supply_chain';
 }
 
 interface VendorAddress {
@@ -92,7 +97,38 @@ export default function VendorsPage() {
       const res = await fetch('/api/gv/vendors');
       if (!res.ok) throw AppError.internal('Failed to fetch vendors');
       const json = await res.json();
-      setVendors(json.data || []);
+      const gvVendors: Vendor[] = (json.data || []).map((v: Vendor) => ({ ...v, __source: 'gv' as const }));
+
+      // Also surface supply_chain / integration vendors (e.g. Amazon Business)
+      // so they appear here too. These live in a different system, so they're
+      // shown read-only (no GV edit/remove). Dedupe by name against GV vendors.
+      let merged = gvVendors;
+      try {
+        const scList = await SupplyChainRPC.getVendors();
+        const gvNames = new Set(gvVendors.map((v) => v.name.toLowerCase()));
+        const scMapped: Vendor[] = (scList || [])
+          .filter((v: any) => v.active && !gvNames.has((v.name || '').toLowerCase()))
+          .map((v: any) => ({
+            id: v.id,
+            name: v.name,
+            vendor_type_id: null,
+            account_number: null,
+            payment_terms: v.payment_terms ?? null,
+            description: null,
+            notes: v.notes ?? null,
+            is_active: !!v.active,
+            is_custom: false,
+            tags: null,
+            metadata: null,
+            code: v.code ?? null,
+            __source: 'supply_chain' as const,
+          }));
+        merged = [...gvVendors, ...scMapped];
+      } catch (scErr) {
+        console.error('Error fetching supply-chain vendors:', scErr);
+      }
+
+      setVendors(merged);
     } catch (err) {
       console.error('Error fetching vendors:', err);
     } finally {
@@ -211,11 +247,13 @@ export default function VendorsPage() {
       header: 'Source',
       render: (row: Vendor) => (
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-          row.is_custom
-            ? 'bg-purple-100 text-purple-800'
-            : 'bg-blue-100 text-blue-800'
+          row.__source === 'supply_chain'
+            ? 'bg-amber-100 text-amber-800'
+            : row.is_custom
+              ? 'bg-purple-100 text-purple-800'
+              : 'bg-blue-100 text-blue-800'
         }`}>
-          {row.is_custom ? 'Custom' : 'Catalog'}
+          {row.__source === 'supply_chain' ? (row.code === 'AMAZON-BIZ' ? 'Amazon' : 'Integration') : (row.is_custom ? 'Custom' : 'Catalog')}
         </span>
       ),
     },
@@ -239,6 +277,10 @@ export default function VendorsPage() {
       key: 'actions',
       header: '',
       render: (row: Vendor) => (
+        row.__source === 'supply_chain' ? (
+          // Read-only here — managed via Settings → Integrations / supply chain.
+          <span className="text-xs text-muted-foreground italic">Managed in Integrations</span>
+        ) : (
         <div className="flex gap-2">
           <button
             onClick={(e) => { e.stopPropagation(); setDetailVendorId(row.id); }}
@@ -265,6 +307,7 @@ export default function VendorsPage() {
             Remove
           </button>
         </div>
+        )
       ),
     },
   ];
