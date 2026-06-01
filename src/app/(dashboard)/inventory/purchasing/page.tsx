@@ -1082,13 +1082,13 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                         type="text"
                         value={line.item_description}
                         onChange={(e) => updateLine(index, 'item_description', e.target.value)}
-                        className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                         placeholder="Item description..."
                       />
                       <select
                         value={line.uom_term_id}
                         onChange={(e) => updateLine(index, 'uom_term_id', e.target.value)}
-                        className="w-24 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                        className="w-24 shrink-0 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
                       >
                         <option value="">UOM</option>
                         {uomLoading ? (
@@ -1114,7 +1114,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                         };
                         setForm({ ...form, lines: newLines });
                       }}
-                      className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                       disabled={!form.vendor_id}
                     >
                       <option value="">Select an item...</option>
@@ -1129,7 +1129,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                     type="number"
                     value={line.qty}
                     onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                    className="w-20 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-20 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Qty"
                     min="1"
                   />
@@ -1137,7 +1137,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                     type="number"
                     value={line.unit_cost}
                     onChange={(e) => updateLine(index, 'unit_cost', e.target.value)}
-                    className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-24 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="$/unit"
                     step="0.01"
                     min="0"
@@ -1410,7 +1410,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                         updateLine(index, 'unit_cost', selectedItem.unit_cost.toString());
                       }
                     }}
-                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     disabled={!form.vendor_id}
                   >
                     <option value="">Select an item...</option>
@@ -1424,7 +1424,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                     type="number"
                     value={line.qty}
                     onChange={(e) => updateLine(index, 'qty', e.target.value)}
-                    className="w-20 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-20 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Qty"
                     min="1"
                   />
@@ -1432,7 +1432,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                     type="number"
                     value={line.unit_cost}
                     onChange={(e) => updateLine(index, 'unit_cost', e.target.value)}
-                    className="w-24 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="w-24 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="$/unit"
                     step="0.01"
                     min="0"

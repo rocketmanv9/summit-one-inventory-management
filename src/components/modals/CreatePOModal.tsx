@@ -702,6 +702,8 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
   const [itemType, setItemType] = useState<'catalog' | 'freetext'>(
     line.catalog_item_id ? 'catalog' : 'freetext'
   );
+  // Keep the raw typed quantity so decimals / leading zeros aren't wiped mid-entry
+  const [qtyStr, setQtyStr] = useState(line.qty_ordered ? String(line.qty_ordered) : '');
   
   const lineTotal = line.unit_cost 
     ? line.qty_ordered * line.unit_cost 
@@ -833,31 +835,36 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
       </div>
       
       {/* Quantity & Pricing */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Label className="text-sm">Quantity *</Label>
-            <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
-              <input
-                type="checkbox"
-                checked={line.is_approximate_qty || false}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ is_approximate_qty: e.target.checked })}
-                className="rounded"
-              />
-              ~approx
-            </label>
-          </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="space-y-1.5">
+          <Label className="text-sm">Quantity *</Label>
           <Input
             type="number"
             min="0"
             step="0.01"
-            value={line.qty_ordered || ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ qty_ordered: parseFloat(e.target.value) || 0 })}
+            inputMode="decimal"
+            value={qtyStr}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const raw = e.target.value;
+              setQtyStr(raw);
+              const n = parseFloat(raw);
+              onChange({ qty_ordered: Number.isFinite(n) ? n : 0 });
+            }}
             placeholder="0.00"
+            className="h-10"
           />
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={line.is_approximate_qty || false}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ is_approximate_qty: e.target.checked })}
+              className="rounded"
+            />
+            ~approximate
+          </label>
         </div>
-        
-        <div className="space-y-2">
+
+        <div className="space-y-1.5">
           <Label className="text-sm">Unit Price</Label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
@@ -865,20 +872,24 @@ function LineItemInput({ line, index, onChange, onRemove, vendorItems, loadingVe
               type="number"
               min="0"
               step="0.01"
-              className="pl-7"
-              value={line.unit_cost || ''}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ 
-                unit_cost: parseFloat(e.target.value) || undefined,
-                price_basis: 'fixed'
-              })}
+              inputMode="decimal"
+              className="pl-7 h-10"
+              value={line.unit_cost ?? ''}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                const n = parseFloat(e.target.value);
+                onChange({
+                  unit_cost: Number.isFinite(n) ? n : undefined,
+                  price_basis: 'fixed',
+                });
+              }}
               placeholder="0.00"
             />
           </div>
         </div>
-        
-        <div className="space-y-2">
+
+        <div className="space-y-1.5">
           <Label className="text-sm">Line Total</Label>
-          <div className="h-10 px-3 py-2 bg-muted rounded-md text-sm font-medium">
+          <div className="h-10 flex items-center px-3 bg-muted rounded-md text-sm font-medium">
             {lineTotal !== null ? `$${lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'TBD'}
           </div>
         </div>
