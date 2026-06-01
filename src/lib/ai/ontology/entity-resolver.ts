@@ -62,7 +62,7 @@ async function tryExactMatch(
   // Check common entity tables by name
   const tables: Array<{ table: string; type: string; nameCol: string; schema: string }> = [
     { table: 'catalog_items', type: 'item', nameCol: 'name', schema: 'inventory' },
-    { table: 'vendors', type: 'vendor', nameCol: 'name', schema: 'inventory' },
+    { table: 'vendors', type: 'vendor', nameCol: 'name', schema: 'supply_chain' },
     { table: 'locations', type: 'location', nameCol: 'name', schema: 'inventory' },
     { table: 'assets', type: 'asset', nameCol: 'name', schema: 'inventory' },
   ];

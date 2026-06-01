@@ -15,6 +15,10 @@ function inv(supabase: SupabaseClientLike) {
   return supabase.schema('inventory');
 }
 
+function sc(supabase: SupabaseClientLike) {
+  return supabase.schema('supply_chain');
+}
+
 // ─── Core Entity Types ───────────────────────────────────────────────
 
 const CORE_ENTITY_TYPES = [
@@ -90,8 +94,8 @@ export async function seedAliasesFromExistingData(
     }
   }
 
-  // Seed vendor aliases
-  const { data: vendors } = await inv(supabase)
+  // Seed vendor aliases (vendors live in supply_chain, not inventory)
+  const { data: vendors } = await sc(supabase)
     .from('vendors')
     .select('id, name, code')
     .eq('tenant_id', tenantId)
@@ -142,4 +146,86 @@ export async function seedAliasesFromExistingData(
   }
 
   return counts;
+}
+
+/**
+ * Derive ontology relationships from existing operational data so that
+ * query_relationships / find_substitutes have real edges to traverse:
+ *   - supplied_by: item -> vendor (from vendor_items)
+ *   - stored_at:   item -> location (from stock_balances with stock on hand)
+ *
+ * Idempotent: prior derived edges (metadata.derived = true) are cleared before
+ * re-inserting, so this can run repeatedly without creating duplicates.
+ */
+export async function deriveRelationships(
+  supabase: SupabaseClientLike,
+  tenantId: string
+): Promise<{ supplied_by: number; stored_at: number }> {
+  const i = inv(supabase);
+
+  // Clear previously-derived edges so re-runs stay idempotent.
+  await i
+    .from('ontology_relationships')
+    .delete()
+    .eq('tenant_id', tenantId)
+    .eq('metadata->>derived', 'true');
+
+  const rows: Array<Record<string, any>> = [];
+
+  // supplied_by: item -> vendor
+  const { data: vendorItems } = await i
+    .from('vendor_items')
+    .select('catalog_item_id, vendor_id, is_preferred')
+    .eq('tenant_id', tenantId)
+    .limit(5000);
+  const seenSupplied = new Set<string>();
+  for (const row of vendorItems || []) {
+    if (!row.catalog_item_id || !row.vendor_id) continue;
+    const key = `${row.catalog_item_id}:${row.vendor_id}`;
+    if (seenSupplied.has(key)) continue;
+    seenSupplied.add(key);
+    rows.push({
+      tenant_id: tenantId,
+      source_type: 'item',
+      source_id: row.catalog_item_id,
+      relation: 'supplied_by',
+      target_type: 'vendor',
+      target_id: row.vendor_id,
+      confidence: row.is_preferred ? 1.0 : 0.8,
+      metadata: { derived: true, source: 'vendor_items' },
+    });
+  }
+
+  // stored_at: item -> location
+  const { data: balances } = await i
+    .from('stock_balances')
+    .select('catalog_item_id, location_id, qty_on_hand')
+    .eq('tenant_id', tenantId)
+    .gt('qty_on_hand', 0)
+    .limit(5000);
+  const seenStored = new Set<string>();
+  let storedCount = 0;
+  for (const row of balances || []) {
+    if (!row.catalog_item_id || !row.location_id) continue;
+    const key = `${row.catalog_item_id}:${row.location_id}`;
+    if (seenStored.has(key)) continue;
+    seenStored.add(key);
+    storedCount++;
+    rows.push({
+      tenant_id: tenantId,
+      source_type: 'item',
+      source_id: row.catalog_item_id,
+      relation: 'stored_at',
+      target_type: 'location',
+      target_id: row.location_id,
+      confidence: 1.0,
+      metadata: { derived: true, source: 'stock_balances' },
+    });
+  }
+
+  if (rows.length > 0) {
+    await i.from('ontology_relationships').insert(rows);
+  }
+
+  return { supplied_by: seenSupplied.size, stored_at: storedCount };
 }

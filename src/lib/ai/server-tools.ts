@@ -7,6 +7,7 @@
  * and ultimately to the client.
  */
 
+import { AppError } from '@rocketmanv9/chassis/errors';
 import type { AiDataDisplay } from './types';
 import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
@@ -100,9 +101,35 @@ export async function executeServerTool(
   ctx: ServerToolContext
 ): Promise<ServerToolResult> {
   const toolStart = Date.now();
-  const result = await executeServerToolInner(toolName, params, ctx);
-  result.durationMs = Date.now() - toolStart;
-  return result;
+  try {
+    const result = await executeServerToolInner(toolName, params, ctx);
+    result.durationMs = Date.now() - toolStart;
+    return result;
+  } catch (err: any) {
+    // Surface failures honestly. Without this, a thrown DB/permission error
+    // could otherwise be reported by the model as a confident (but empty)
+    // answer — "she lies politely". Tell the user something went wrong instead.
+    const message = err?.message || 'Unknown error';
+    console.error(`[server-tools] ${toolName} failed:`, message);
+    return {
+      text: `I ran into a problem running ${toolName}: ${message}. The data may be unavailable right now — please try again, and let an admin know if it keeps happening.`,
+      dataDisplay: { displayType: 'metric', label: 'Tool Error', value: toolName },
+      durationMs: Date.now() - toolStart,
+    };
+  }
+}
+
+/**
+ * Unwrap a Supabase query result on a PRIMARY data fetch: if Postgres returned
+ * an error, throw so the executor surfaces an honest failure rather than
+ * letting the tool report empty data as a confident answer. Do NOT use for
+ * secondary "does this already exist?" lookups, where empty is a valid result.
+ */
+export function unwrap<T>(result: { data: T; error: any }, label: string): T {
+  if (result.error) {
+    throw AppError.internal(`${label}: ${result.error.message || String(result.error)}`);
+  }
+  return result.data;
 }
 
 async function executeServerToolInner(
@@ -3372,16 +3399,8 @@ async function purchasingAssistant(
   const inv = inventorySchema(ctx.supabase);
 
   // Step 1: Get reorder suggestions (items below reorder point)
-  const { data: reorderItems, error: reorderError } = await inv
-    .rpc('rpc_report_reorder_suggestions')
-    .limit(50);
-  if (reorderError) {
-    return {
-      text: `Failed to fetch reorder suggestions: ${reorderError.message}`,
-      dataDisplay: { displayType: 'metric', label: 'Reorder Status', value: 'Error' },
-    };
-  }
-  const shortages = reorderItems || [];
+  const shortages =
+    (unwrap(await inv.rpc('rpc_report_reorder_suggestions').limit(50), 'reorder suggestions') as any[]) || [];
 
   if (shortages.length === 0) {
     return {
