@@ -8,7 +8,6 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
-import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -94,41 +93,12 @@ export default function VendorsPage() {
   const fetchVendors = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/gv/vendors');
+      // Unified: the tenant's own vendors live in supply_chain.vendors (used by
+      // items/POs). GV is just the browse catalog (the Catalog tab + adopt).
+      const res = await fetch('/api/inventory/vendors');
       if (!res.ok) throw AppError.internal('Failed to fetch vendors');
       const json = await res.json();
-      const gvVendors: Vendor[] = (json.data || []).map((v: Vendor) => ({ ...v, __source: 'gv' as const }));
-
-      // Also surface supply_chain / integration vendors (e.g. Amazon Business)
-      // so they appear here too. These live in a different system, so they're
-      // shown read-only (no GV edit/remove). Dedupe by name against GV vendors.
-      let merged = gvVendors;
-      try {
-        const scList = await SupplyChainRPC.getVendors();
-        const gvNames = new Set(gvVendors.map((v) => v.name.toLowerCase()));
-        const scMapped: Vendor[] = (scList || [])
-          .filter((v: any) => v.active && !gvNames.has((v.name || '').toLowerCase()))
-          .map((v: any) => ({
-            id: v.id,
-            name: v.name,
-            vendor_type_id: null,
-            account_number: null,
-            payment_terms: v.payment_terms ?? null,
-            description: null,
-            notes: v.notes ?? null,
-            is_active: !!v.active,
-            is_custom: false,
-            tags: null,
-            metadata: null,
-            code: v.code ?? null,
-            __source: 'supply_chain' as const,
-          }));
-        merged = [...gvVendors, ...scMapped];
-      } catch (scErr) {
-        console.error('Error fetching supply-chain vendors:', scErr);
-      }
-
-      setVendors(merged);
+      setVendors(json.data || []);
     } catch (err) {
       console.error('Error fetching vendors:', err);
     } finally {
@@ -172,7 +142,7 @@ export default function VendorsPage() {
     if (!confirm(`Remove "${vendor.name}" from your vendors?`)) return;
 
     try {
-      const res = await fetch(`/api/gv/vendors/${vendor.id}`, {
+      const res = await fetch(`/api/inventory/vendors/${vendor.id}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
@@ -189,7 +159,7 @@ export default function VendorsPage() {
     setAdopting(true);
 
     try {
-      const res = await fetch('/api/gv/vendors/adopt', {
+      const res = await fetch('/api/inventory/vendors/adopt', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -247,13 +217,9 @@ export default function VendorsPage() {
       header: 'Source',
       render: (row: Vendor) => (
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-          row.__source === 'supply_chain'
-            ? 'bg-amber-100 text-amber-800'
-            : row.is_custom
-              ? 'bg-purple-100 text-purple-800'
-              : 'bg-blue-100 text-blue-800'
+          row.code === 'AMAZON-BIZ' ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'
         }`}>
-          {row.__source === 'supply_chain' ? (row.code === 'AMAZON-BIZ' ? 'Amazon' : 'Integration') : (row.is_custom ? 'Custom' : 'Catalog')}
+          {row.code === 'AMAZON-BIZ' ? 'Amazon' : 'Vendor'}
         </span>
       ),
     },
@@ -277,10 +243,6 @@ export default function VendorsPage() {
       key: 'actions',
       header: '',
       render: (row: Vendor) => (
-        row.__source === 'supply_chain' ? (
-          // Read-only here — managed via Settings → Integrations / supply chain.
-          <span className="text-xs text-muted-foreground italic">Managed in Integrations</span>
-        ) : (
         <div className="flex gap-2">
           <button
             onClick={(e) => { e.stopPropagation(); setDetailVendorId(row.id); }}
@@ -307,7 +269,6 @@ export default function VendorsPage() {
             Remove
           </button>
         </div>
-        )
       ),
     },
   ];
@@ -504,7 +465,7 @@ export default function VendorsPage() {
           <NotesModal
             item={notesVendor}
             entityLabel="vendor"
-            endpoint={`/api/gv/vendors/${notesVendor.id}`}
+            endpoint={`/api/inventory/vendors/${notesVendor.id}`}
             onClose={() => setNotesVendor(null)}
             onSaved={() => { setNotesVendor(null); fetchVendors(); }}
           />
@@ -544,7 +505,7 @@ function VendorDetailModal({
   const fetchVendor = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/gv/vendors/${vendorId}`);
+      const res = await fetch(`/api/inventory/vendors/${vendorId}`);
       if (!res.ok) throw AppError.internal('Failed to fetch vendor');
       const json = await res.json();
       setVendor(json.data || null);
@@ -560,7 +521,7 @@ function VendorDetailModal({
   const handleDeleteAddress = async (addressId: string) => {
     if (!confirm('Delete this address?')) return;
     try {
-      const res = await fetch(`/api/gv/vendors/${vendorId}/addresses/${addressId}`, {
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/addresses/${addressId}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
@@ -575,7 +536,7 @@ function VendorDetailModal({
   const handleDeleteContact = async (contactId: string) => {
     if (!confirm('Delete this contact?')) return;
     try {
-      const res = await fetch(`/api/gv/vendors/${vendorId}/contacts/${contactId}`, {
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/contacts/${contactId}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
@@ -832,8 +793,8 @@ function AddressFormModal({
 
     try {
       const url = isEdit
-        ? `/api/gv/vendors/${vendorId}/addresses/${address!.id}`
-        : `/api/gv/vendors/${vendorId}/addresses`;
+        ? `/api/inventory/vendors/${vendorId}/addresses/${address!.id}`
+        : `/api/inventory/vendors/${vendorId}/addresses`;
       const method = isEdit ? 'PATCH' : 'POST';
 
       const res = await fetch(url, {
@@ -992,8 +953,8 @@ function ContactFormModal({
 
     try {
       const url = isEdit
-        ? `/api/gv/vendors/${vendorId}/contacts/${contact!.id}`
-        : `/api/gv/vendors/${vendorId}/contacts`;
+        ? `/api/inventory/vendors/${vendorId}/contacts/${contact!.id}`
+        : `/api/inventory/vendors/${vendorId}/contacts`;
       const method = isEdit ? 'PATCH' : 'POST';
 
       const res = await fetch(url, {
@@ -1132,7 +1093,7 @@ function AddCustomVendorModal({
       if (form.payment_terms) payload.payment_terms = form.payment_terms;
       if (form.notes) payload.notes = form.notes;
 
-      const url = isEdit ? `/api/gv/vendors/${vendor!.id}` : '/api/gv/vendors';
+      const url = isEdit ? `/api/inventory/vendors/${vendor!.id}` : '/api/inventory/vendors';
       const method = isEdit ? 'PATCH' : 'POST';
 
       const res = await fetch(url, {

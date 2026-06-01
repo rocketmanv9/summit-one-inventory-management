@@ -1,6 +1,7 @@
 import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { pickVendorColumns } from '@/lib/vendor-columns';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -27,50 +28,62 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     sc.from('vendor_contacts').select('*').eq('vendor_id', id).order('is_primary', { ascending: false }),
     sc.from('vendor_addresses').select('*').eq('vendor_id', id).order('address_type'),
   ]);
-  return Response.json({ data: { ...vendor, contacts: contacts || [], addresses: addresses || [] } });
+  // GV-style aliases so the Vendors UI renders unchanged.
+  return Response.json({ data: {
+    ...vendor,
+    is_active: !!vendor.active,
+    is_custom: true,
+    vendor_type_id: vendor.vendor_type_term_id ?? null,
+    description: vendor.notes ?? null,
+    contacts: contacts || [],
+    addresses: addresses || [],
+  } });
 }, { serviceName: SERVICE_NAME });
 
-// OCC update. Body: strip-cleaned vendor columns + expected_last_event_id.
-// trigger_vendor_events owns emission.
+// Update a vendor. Accepts GV-style field aliases (vendor_type_id, is_active)
+// from the Vendors UI and supply_chain names from the RPC layer. OCC is optional:
+// when expected_last_event_id is provided (RPC layer) it's enforced (409 on
+// stale); the UI omits it for a plain by-id update. trigger_vendor_events emits.
 export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
   const id = extractId(req);
   const body = await req.json();
-  const { expected_last_event_id, id: _id, created_at, tenant_id, last_event_id, ...updates } = body ?? {};
-  if (!expected_last_event_id) throw AppError.badRequest('Missing expected_last_event_id');
+  const { expected_last_event_id, id: _id, created_at, tenant_id, last_event_id,
+          contacts, addresses, vendor_type_id, is_active, ...rest } = body ?? {};
+  const raw: Record<string, any> = { ...rest };
+  if (vendor_type_id !== undefined) raw.vendor_type_term_id = vendor_type_id;
+  if (is_active !== undefined) raw.active = is_active;
+  if ((rest as any).description !== undefined && raw.notes === undefined) raw.notes = (rest as any).description;
+  const updates: Record<string, unknown> = { ...pickVendorColumns(raw), last_event_id: idempotencyKey };
 
   const sc = (supabase as any).schema('supply_chain');
-  const { data, error } = await sc.from('vendors')
-    .update({ ...updates, last_event_id: idempotencyKey })
-    .eq('id', id).eq('last_event_id', expected_last_event_id)
-    .select('id, last_event_id').maybeSingle();
+  let q = sc.from('vendors').update(updates).eq('id', id);
+  if (expected_last_event_id) q = q.eq('last_event_id', expected_last_event_id);
+  const { data, error } = await q.select('id, last_event_id').maybeSingle();
 
-  if (error) {
-    log.error('vendor.update_failed', { error: error.message });
-    throw AppError.internal(error.message);
+  if (error) { log.error('vendor.update_failed', { error: error.message }); throw AppError.internal(error.message); }
+  if (!data) {
+    if (expected_last_event_id) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
+    throw AppError.notFound('Vendor not found');
   }
-  if (!data) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-
   return { data, status: 200, events: [] };
 }, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/vendors/[id]' });
 
-// Soft-delete: deactivate the vendor (OCC). Body: { expected_last_event_id }.
+// Soft-delete: deactivate the vendor. OCC optional (enforced only if
+// expected_last_event_id is provided). trigger_vendor_events emits.
 export const DELETE = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
   const id = extractId(req);
   const body = await req.json().catch(() => ({}));
   const expected = body?.expected_last_event_id;
-  if (!expected) throw AppError.badRequest('Missing expected_last_event_id');
 
   const sc = (supabase as any).schema('supply_chain');
-  const { data, error } = await sc.from('vendors')
-    .update({ active: false, last_event_id: idempotencyKey })
-    .eq('id', id).eq('last_event_id', expected)
-    .select('id, last_event_id').maybeSingle();
+  let q = sc.from('vendors').update({ active: false, last_event_id: idempotencyKey }).eq('id', id);
+  if (expected) q = q.eq('last_event_id', expected);
+  const { data, error } = await q.select('id, last_event_id').maybeSingle();
 
-  if (error) {
-    log.error('vendor.delete_failed', { error: error.message });
-    throw AppError.internal(error.message);
+  if (error) { log.error('vendor.delete_failed', { error: error.message }); throw AppError.internal(error.message); }
+  if (!data) {
+    if (expected) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
+    throw AppError.notFound('Vendor not found');
   }
-  if (!data) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-
   return { data, status: 200, events: [] };
 }, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'DELETE /api/inventory/vendors/[id]' });

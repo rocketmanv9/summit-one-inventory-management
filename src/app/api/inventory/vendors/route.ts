@@ -2,6 +2,8 @@ import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
+import { pickVendorColumns } from '@/lib/vendor-columns';
+
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 // List the tenant's operational (supply_chain) vendors with their contacts and
@@ -34,6 +36,11 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   const data = (vendors || []).map((v: any) => ({
     ...v,
+    // GV-style aliases so the Vendors UI renders unchanged.
+    is_active: !!v.active,
+    is_custom: true,
+    vendor_type_id: v.vendor_type_term_id ?? null,
+    description: v.notes ?? null,
     contacts: contactsByVendor[v.id] || [],
     addresses: addressesByVendor[v.id] || [],
   }));
@@ -46,8 +53,16 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 // auto_inject_tenant_id() refuses to inject under the service-role client.
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = await req.json();
-  const { id: _id, created_at, tenant_id, last_event_id: _lei, ...fields } = body ?? {};
-  if (!fields.name) throw AppError.badRequest('Missing vendor name');
+  const { id: _id, created_at, tenant_id, last_event_id: _lei,
+          contacts: _c, addresses: _a, vendor_type_id, is_active, description, ...rest } = body ?? {};
+  const raw: Record<string, any> = { ...rest };
+  // Accept GV-style field names from the Vendors UI.
+  if (vendor_type_id !== undefined) raw.vendor_type_term_id = vendor_type_id;
+  if (is_active !== undefined) raw.active = is_active;
+  if (description !== undefined && raw.notes === undefined) raw.notes = description;
+  if (!raw.name) throw AppError.badRequest('Missing vendor name');
+  // Keep only real supply_chain.vendors columns (drops account_number, etc.).
+  const fields = pickVendorColumns(raw);
 
   const sc = (supabase as any).schema('supply_chain');
 
