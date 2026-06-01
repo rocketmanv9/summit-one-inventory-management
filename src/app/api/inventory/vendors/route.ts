@@ -1,7 +1,44 @@
-import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
+import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
+
+// List the tenant's operational (supply_chain) vendors with their contacts and
+// addresses. This is the single tenant vendor store used by items/POs.
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
+  const activeOnly = new URL(req.url).searchParams.get('active_only') !== 'false';
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId!,
+  });
+  const sc = (supabase as any).schema('supply_chain');
+
+  let q = sc.from('vendors').select('*').order('name').limit(500);
+  if (activeOnly) q = q.eq('active', true);
+  const { data: vendors, error } = await q;
+  if (error) { log.error('vendors.list_failed', { error: error.message }); throw AppError.internal(error.message); }
+
+  const ids = (vendors || []).map((v: any) => v.id);
+  let contactsByVendor: Record<string, any[]> = {};
+  let addressesByVendor: Record<string, any[]> = {};
+  if (ids.length > 0) {
+    const [{ data: contacts }, { data: addresses }] = await Promise.all([
+      sc.from('vendor_contacts').select('*').in('vendor_id', ids).order('is_primary', { ascending: false }),
+      sc.from('vendor_addresses').select('*').in('vendor_id', ids).order('address_type'),
+    ]);
+    for (const c of contacts || []) (contactsByVendor[c.vendor_id] ||= []).push(c);
+    for (const a of addresses || []) (addressesByVendor[a.vendor_id] ||= []).push(a);
+  }
+
+  const data = (vendors || []).map((v: any) => ({
+    ...v,
+    contacts: contactsByVendor[v.id] || [],
+    addresses: addressesByVendor[v.id] || [],
+  }));
+  return Response.json({ data });
+}, { serviceName: SERVICE_NAME });
 
 // Create a supply_chain vendor, or restore an inactive one with the same name
 // (the prior SupplyChainRPC.createVendor behavior, now server-side).

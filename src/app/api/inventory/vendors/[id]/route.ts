@@ -1,4 +1,5 @@
-import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
+import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
+import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -9,6 +10,25 @@ function extractId(req: Request): string {
   if (!id) throw AppError.badRequest('Missing vendor id');
   return id;
 }
+
+// Vendor detail with contacts + addresses.
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
+  const id = extractId(req);
+  const supabase = await createTenantServiceClient({
+    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    tenantId: session.tenantId!,
+  });
+  const sc = (supabase as any).schema('supply_chain');
+  const { data: vendor, error } = await sc.from('vendors').select('*').eq('id', id).maybeSingle();
+  if (error) { log.error('vendor.get_failed', { error: error.message }); throw AppError.internal(error.message); }
+  if (!vendor) throw AppError.notFound('Vendor not found');
+  const [{ data: contacts }, { data: addresses }] = await Promise.all([
+    sc.from('vendor_contacts').select('*').eq('vendor_id', id).order('is_primary', { ascending: false }),
+    sc.from('vendor_addresses').select('*').eq('vendor_id', id).order('address_type'),
+  ]);
+  return Response.json({ data: { ...vendor, contacts: contacts || [], addresses: addresses || [] } });
+}, { serviceName: SERVICE_NAME });
 
 // OCC update. Body: strip-cleaned vendor columns + expected_last_event_id.
 // trigger_vendor_events owns emission.

@@ -20,7 +20,7 @@ export function getCatalogClient(): VendorCatalogClient {
  * Build a plain GV Supabase client (no RLS context) for use as the
  * adminClient in adopt/submission flows that need to read catalog tables.
  */
-function getGVAdminClient() {
+export function getGVAdminClient() {
   const url = process.env.GV_SUPABASE_URL;
   const key = process.env.GV_SUPABASE_ANON_KEY;
   if (!url || !key) throw AppError.internal('GV_SUPABASE_URL / GV_SUPABASE_ANON_KEY not set');

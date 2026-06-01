@@ -15,8 +15,10 @@ import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/B
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { resizeImage, validateImageFile } from '@/lib/image-utils';
+import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { AppError } from '@rocketmanv9/chassis/errors';
 import { useUOMTerms, useUOMLabelMap, useGVTerms, useGVLabelMap } from '@/hooks/useGVTerms';
 import {
   ArrowLeft,
@@ -481,6 +483,16 @@ export default function NewItemWizardPage() {
           const supa = createBrowserAuthedClient();
           const inv = (supa as any).schema('inventory');
 
+          // tenant_id is NOT NULL on stock_movements (no DB default), so it must
+          // be supplied explicitly here — without it every insert is rejected and
+          // the per-variant balances silently never get written.
+          const token = getStoredAccessToken();
+          const tenantId = token ? getTenantIdFromToken(token) : null;
+          const userId = token ? getUserIdFromToken(token) : null;
+          if (!tenantId) {
+            throw AppError.badRequest('Missing tenant context — cannot set per-variant starting stock.');
+          }
+
           // Fetch the created variants so we can map each one's quantity by its
           // attribute signature (robust against ordering differences).
           const { data: variantRows } = await inv
@@ -495,7 +507,8 @@ export default function NewItemWizardPage() {
             if (!qty || qty <= 0) continue;
 
             const eventKey = `wiz-vstk-${variant.id}-${idempotencyKey}`;
-            await inv.from('stock_movements').upsert({
+            const { error: stockError } = await inv.from('stock_movements').upsert({
+              tenant_id: tenantId,
               catalog_item_id: variant.id,
               location_id: form.location_id,
               quantity_delta: qty,
@@ -504,8 +517,12 @@ export default function NewItemWizardPage() {
               reason: 'initial_stock',
               notes: 'Initial stock set during item wizard creation (per variant)',
               occurred_at: new Date().toISOString(),
+              created_by_user_id: userId,
               last_event_id: eventKey,
             }, { onConflict: 'tenant_id,last_event_id' });
+            if (stockError) {
+              throw AppError.internal(`Failed to set starting stock for a variant: ${stockError.message}`);
+            }
           }
         }
       }
