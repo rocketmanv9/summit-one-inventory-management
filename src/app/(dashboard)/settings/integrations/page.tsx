@@ -509,14 +509,19 @@ export default function IntegrationsPage() {
   const handleAmazonDeleteMapping = async (mappingId: string) => {
     if (!isAdmin) return;
     try {
-      await fetch(`${AMAZON_API}/item-mappings`, {
+      const res = await fetch(`${AMAZON_API}/item-mappings`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ mapping_id: mappingId }),
       });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        setAmazonMappingError(json.error?.message || json.error || 'Failed to delete mapping');
+        return;
+      }
       await loadAmazonMappings();
     } catch {
-      // Silently fail
+      setAmazonMappingError('Failed to delete mapping. Please try again.');
     }
   };
 
