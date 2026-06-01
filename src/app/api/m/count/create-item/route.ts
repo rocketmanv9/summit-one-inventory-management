@@ -143,11 +143,16 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
   // Add to count if requested
   let countLine = null;
   if (body.add_to_count) {
+    // p_last_event_id is a UUID column — `${idempotencyKey}-addline` is NOT a valid
+    // UUID and makes PostgREST reject the call (400), which was being swallowed as
+    // non-fatal, so newly-created items silently never joined the count. Use a fresh
+    // UUID; the outer write-route idempotency + the RPC's catalog_item_id dedup make
+    // this retry-safe.
     const { data: lineData, error: lineError } = await inv.rpc('rpc_inv_cycle_count_add_line', {
       p_cycle_count_id: session.cycleCountId,
       p_catalog_item_id: item.id,
       p_tenant_id: session.tenantId,
-      p_last_event_id: `${idempotencyKey}-addline`,
+      p_last_event_id: crypto.randomUUID(),
     });
 
     if (lineError) {
