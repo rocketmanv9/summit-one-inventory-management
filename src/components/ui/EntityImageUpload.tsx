@@ -49,7 +49,15 @@ export function EntityImageUpload({
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Generation failed' }));
-        throw new Error(err.error || 'Generation failed');
+        // err.error is a string from this route's own returns, but an object
+        // ({ message, code }) when it comes through the chassis error envelope
+        // (e.g. timeouts). Pull the message out of either shape so we don't
+        // surface "[object Object]".
+        const msg =
+          typeof err.error === 'string'
+            ? err.error
+            : err.error?.message || err.message || 'Generation failed';
+        throw new Error(msg);
       }
       const { image_data } = await res.json();
       // Re-encode the generated PNG to a resized JPEG, then attach via the hook.

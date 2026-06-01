@@ -61,7 +61,10 @@ export async function apiWrite(
       : optionsOrMethod;
 
   const idempotencyKey = options.idempotencyKey || crypto.randomUUID();
-  const bodyData = options.body ? { ...options.body } : undefined;
+  // Preserve the body's type. A spread like `{ ...options.body }` turns an ARRAY
+  // into an object with numeric keys ({"0":…}), which makes array-body routes
+  // (e.g. inventory-levels, z.array(...)) fail with "expected array, received object".
+  const bodyData = options.body ?? undefined;
   const authHeader = getAuthHeaders();
 
   return fetch(url, {
