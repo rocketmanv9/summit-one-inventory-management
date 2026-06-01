@@ -25,10 +25,14 @@ interface CountLine {
 interface MobileCountAssetRowProps {
   line: CountLine;
   onRecordAssets: (lineId: string, assetIds: string[]) => Promise<void>;
+  onAddSerial?: (lineId: string, serial: string) => Promise<void>;
+  onScanSerial?: (lineId: string) => void;
 }
 
-export function MobileCountAssetRow({ line, onRecordAssets }: MobileCountAssetRowProps) {
+export function MobileCountAssetRow({ line, onRecordAssets, onAddSerial, onScanSerial }: MobileCountAssetRowProps) {
   const [saving, setSaving] = useState(false);
+  const [serialInput, setSerialInput] = useState('');
+  const [adding, setAdding] = useState(false);
   const countedIds = new Set(line.counted_assets?.map((ca) => ca.asset_id) || []);
   const assets = line.expected_assets || [];
   const foundCount = countedIds.size;
@@ -192,7 +196,65 @@ export function MobileCountAssetRow({ line, onRecordAssets }: MobileCountAssetRo
 
         {assets.length === 0 && (
           <div style={emptyStyle}>
-            No assets expected at this location
+            No serials recorded yet — scan or enter one below to add it.
+          </div>
+        )}
+
+        {/* Scan / add a serial that isn't yet in the system. */}
+        {(onAddSerial || onScanSerial) && (
+          <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+            {onScanSerial && (
+              <button
+                type="button"
+                onClick={() => onScanSerial(line.id)}
+                disabled={adding}
+                style={{
+                  flexShrink: 0, padding: '10px 12px', borderRadius: '10px',
+                  border: '1px solid #d1d5db', background: '#fff', fontSize: '13px',
+                  fontWeight: 600, color: '#374151', cursor: 'pointer', WebkitTapHighlightColor: 'transparent',
+                }}
+              >
+                Scan
+              </button>
+            )}
+            {onAddSerial && (
+              <>
+                <input
+                  type="text"
+                  value={serialInput}
+                  onChange={(e) => setSerialInput(e.target.value)}
+                  placeholder="Enter serial / tag"
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  style={{
+                    flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: '10px',
+                    border: '1px solid #d1d5db', background: '#fff', fontSize: '14px',
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={adding || !serialInput.trim()}
+                  onClick={async () => {
+                    if (!serialInput.trim()) return;
+                    setAdding(true);
+                    try {
+                      await onAddSerial(line.id, serialInput.trim());
+                      setSerialInput('');
+                    } finally {
+                      setAdding(false);
+                    }
+                  }}
+                  style={{
+                    flexShrink: 0, padding: '10px 14px', borderRadius: '10px', border: 'none',
+                    background: '#2563eb', color: '#fff', fontSize: '13px', fontWeight: 600,
+                    cursor: 'pointer', opacity: adding || !serialInput.trim() ? 0.6 : 1,
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
+                >
+                  {adding ? '…' : 'Add'}
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

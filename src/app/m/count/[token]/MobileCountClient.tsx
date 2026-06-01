@@ -90,6 +90,9 @@ export function MobileCountClient({
   );
   const [lines, setLines] = useState<CountLine[]>(initialData?.lines || []);
   const [scannerOpen, setScannerOpen] = useState(false);
+  // When set, the scanner is targeting a serialized line: the next scan records a
+  // serial against that line instead of the normal barcode→item flow.
+  const serialScanLineRef = useRef<string | null>(null);
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -286,6 +289,51 @@ export function MobileCountClient({
     [mobileHeaders, bypassSecret]
   );
 
+  // Scan/enter a serial for a serialized line → creates the asset (if new) and
+  // marks it present. Used by both the manual input and the per-line scanner.
+  const handleAddSerial = useCallback(
+    async (lineId: string, serial: string) => {
+      const s = serial.trim();
+      if (!s) return;
+      try {
+        const res = await fetch(withBypass('/api/m/count/record-serial', bypassSecret), {
+          method: 'POST',
+          headers: mobileHeaders(),
+          body: JSON.stringify({ line_id: lineId, serial: s }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 401) { setState('error'); setErrorMessage('Session expired'); return; }
+          throw new Error(apiErrorMessage(data, 'Failed to record serial'));
+        }
+        const { data } = await res.json();
+        const asset = data.asset;
+        setLines((prev) =>
+          prev.map((l) => {
+            if (l.id !== lineId) return l;
+            const expected = l.expected_assets || [];
+            const counted = l.counted_assets || [];
+            return {
+              ...l,
+              expected_assets: expected.some((a) => a.id === asset.id)
+                ? expected
+                : [...expected, { id: asset.id, asset_tag: asset.asset_tag, serial_number: asset.serial_number, status: asset.status }],
+              counted_assets: counted.some((c) => c.asset_id === asset.id)
+                ? counted
+                : [...counted, { asset_id: asset.id }],
+              qty_counted: data.qty_counted ?? ((l.qty_counted ?? 0) + 1),
+            };
+          })
+        );
+        setScanFeedback(`Added ${asset.asset_tag || s}`);
+        setTimeout(() => setScanFeedback(null), 2000);
+      } catch (err: any) {
+        alert(err.message || 'Failed to record serial');
+      }
+    },
+    [mobileHeaders, bypassSecret]
+  );
+
   // Search catalog items for initial counts
   const handleCatalogSearch = useCallback(
     async (query: string) => {
@@ -400,6 +448,13 @@ export function MobileCountClient({
 
   const handleBarcodeScan = useCallback(
     async (decodedText: string) => {
+      // Targeted serial scan from a serialized line → record the serial there.
+      if (serialScanLineRef.current) {
+        const targetLine = serialScanLineRef.current;
+        serialScanLineRef.current = null;
+        await handleAddSerial(targetLine, decodedText);
+        return;
+      }
       try {
         const catalogItemId = await lookupBarcode(decodedText);
 
@@ -465,8 +520,14 @@ export function MobileCountClient({
         setTimeout(() => setScanFeedback(null), 2000);
       }
     },
-    [lookupBarcode, lines, handleRecordCount, isInitial, bypassSecret, mobileHeaders]
+    [lookupBarcode, lines, handleRecordCount, handleAddSerial, isInitial, bypassSecret, mobileHeaders]
   );
+
+  // Open the camera scanner aimed at a specific serialized line.
+  const handleScanSerial = useCallback((lineId: string) => {
+    serialScanLineRef.current = lineId;
+    setScannerOpen(true);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (isSubmitting || isSubmitted) return;
@@ -761,12 +822,14 @@ export function MobileCountClient({
           highlightItemId={highlightItemId}
           onRecordCount={handleRecordCount}
           onRecordAssets={handleRecordAssets}
+          onAddSerial={handleAddSerial}
+          onScanSerial={handleScanSerial}
         />
       </MobileCountShell>
 
       <BarcodeScannerOverlay
         isOpen={scannerOpen}
-        onClose={() => { setScannerOpen(false); setScanFeedback(null); }}
+        onClose={() => { setScannerOpen(false); setScanFeedback(null); serialScanLineRef.current = null; }}
         onScan={handleBarcodeScan}
         continuous
         scanFeedback={scanFeedback}

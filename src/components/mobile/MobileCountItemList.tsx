@@ -37,6 +37,8 @@ interface MobileCountItemListProps {
   highlightItemId?: string | null;
   onRecordCount: (catalogItemId: string, qty: number) => Promise<void>;
   onRecordAssets: (lineId: string, assetIds: string[]) => Promise<void>;
+  onAddSerial?: (lineId: string, serial: string) => Promise<void>;
+  onScanSerial?: (lineId: string) => void;
 }
 
 export function MobileCountItemList({
@@ -46,6 +48,8 @@ export function MobileCountItemList({
   highlightItemId,
   onRecordCount,
   onRecordAssets,
+  onAddSerial,
+  onScanSerial,
 }: MobileCountItemListProps) {
   const [search, setSearch] = useState('');
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -159,7 +163,7 @@ export function MobileCountItemList({
               style={isHighlighted ? s.highlightRing : undefined}
             >
               {isSerialized ? (
-                <MobileCountAssetRow line={line} onRecordAssets={onRecordAssets} />
+                <MobileCountAssetRow line={line} onRecordAssets={onRecordAssets} onAddSerial={onAddSerial} onScanSerial={onScanSerial} />
               ) : (
                 <MobileCountItemRow line={line} isBlind={isBlind} isInitial={isInitial} onRecordCount={onRecordCount} />
               )}
