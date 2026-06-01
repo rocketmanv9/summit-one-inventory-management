@@ -2388,7 +2388,7 @@ async function enrichItem(
   let currentCategory = '';
   if (item.category_id) {
     const { data: cat } = await inventorySchema(ctx.supabase)
-      .from('categories')
+      .from('item_categories')
       .select('name')
       .eq('id', item.category_id)
       .limit(1)
@@ -2784,7 +2784,7 @@ async function queryAssetValue(
   let catMap: Record<string, string> = {};
   if (catIds.length > 0) {
     const { data: catData } = await inventorySchema(ctx.supabase)
-      .from('categories')
+      .from('item_categories')
       .select('id, name')
       .in('id', catIds as string[])
       .limit(200);
@@ -3370,10 +3370,17 @@ async function purchasingAssistant(
   ctx: ServerToolContext
 ): Promise<ServerToolResult> {
   const inv = inventorySchema(ctx.supabase);
-  const sc = supplyChainSchema(ctx.supabase);
 
   // Step 1: Get reorder suggestions (items below reorder point)
-  const { data: reorderItems } = await inv.rpc('rpc_reorder_suggestions').limit(50);
+  const { data: reorderItems, error: reorderError } = await inv
+    .rpc('rpc_report_reorder_suggestions')
+    .limit(50);
+  if (reorderError) {
+    return {
+      text: `Failed to fetch reorder suggestions: ${reorderError.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Reorder Status', value: 'Error' },
+    };
+  }
   const shortages = reorderItems || [];
 
   if (shortages.length === 0) {
@@ -3383,34 +3390,24 @@ async function purchasingAssistant(
     };
   }
 
-  // Step 2: Get preferred vendors for short items
-  const { data: vendors } = await sc
-    .from('vendors')
-    .select('id, name, code, is_preferred')
-    .eq('status', 'active')
-    .limit(100);
-
-  const vendorMap = new Map<string, string>();
-  for (const v of (vendors || [])) {
-    vendorMap.set(v.id, v.name);
-  }
-
-  // Step 3: Group shortages by vendor for PO drafting
-  const poGroups: Record<string, Array<{ item_name: string; sku: string; qty_needed: number; current_qty: number; reorder_point: number }>> = {};
-  const unassigned: Array<{ item_name: string; sku: string; qty_needed: number }> = [];
+  // Step 2: Group shortages by preferred vendor for PO drafting.
+  // rpc_report_reorder_suggestions returns the vendor name (preferred_vendor),
+  // not an id, so we group on the name directly.
+  type ShortageEntry = { item_name: string; sku: string; qty_needed: number; current_qty: number; reorder_point: number };
+  const poGroups: Record<string, ShortageEntry[]> = {};
+  const unassigned: ShortageEntry[] = [];
 
   for (const item of shortages) {
-    const vendorId = item.preferred_vendor_id;
-    const entry = {
-      item_name: item.item_name || item.name || 'Unknown',
+    const vendorName = typeof item.preferred_vendor === 'string' ? item.preferred_vendor.trim() : '';
+    const entry: ShortageEntry = {
+      item_name: item.item_name || 'Unknown',
       sku: item.sku || '',
-      qty_needed: Math.max(1, (item.reorder_qty || item.reorder_point || 10) - (item.current_qty || 0)),
-      current_qty: item.current_qty || 0,
-      reorder_point: item.reorder_point || 0,
+      qty_needed: Math.max(1, Number(item.suggested_order_qty || item.shortage || item.reorder_qty || 1)),
+      current_qty: Number(item.qty_on_hand || 0),
+      reorder_point: Number(item.reorder_point || 0),
     };
 
-    if (vendorId && vendorMap.has(vendorId)) {
-      const vendorName = vendorMap.get(vendorId)!;
+    if (vendorName) {
       if (!poGroups[vendorName]) poGroups[vendorName] = [];
       poGroups[vendorName].push(entry);
     } else {
