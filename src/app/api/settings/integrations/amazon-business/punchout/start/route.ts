@@ -127,7 +127,15 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   const h = await headers();
   const host = h.get('host')!;
   const proto = h.get('x-forwarded-proto') || 'https';
-  const browserFormPostUrl = `${proto}://${host}/api/webhooks/amazon-business/punchout-return`;
+  // Amazon posts the cart back to this URL from the user's browser as a CROSS-SITE
+  // form POST, so Vercel's deployment-protection cookie (SameSite=Lax) isn't sent
+  // and the POST gets 401'd before our webhook runs. Carry the protection-bypass
+  // secret in the URL (same mechanism the mobile-count QR links use) so Amazon's
+  // POST clears protection. Without this the punchout return silently never lands.
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  const browserFormPostUrl =
+    `${proto}://${host}/api/webhooks/amazon-business/punchout-return` +
+    (bypass ? `?x-vercel-protection-bypass=${bypass}&x-vercel-set-bypass-cookie=true` : '');
 
   const { xml, payloadId } = buildPunchOutSetupRequest({
     credentials: cxmlConfig,
