@@ -151,6 +151,19 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
     }
   }, [open, po.vendor_id, loadGuidance]);
 
+  // Pre-fill the Amazon session email with the logged-in user's email. Without
+  // this, userEmail stays '' and the "Start Amazon Punchout" button is disabled
+  // (disabled={!userEmail}) — so clicking it appears to do nothing. Still editable.
+  useEffect(() => {
+    if (!open || userEmail) return;
+    fetch('/api/auth/session')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.authenticated && data.email) setUserEmail(data.email);
+      })
+      .catch(() => {});
+  }, [open, userEmail]);
+
   // Cleanup punchout polling on unmount or close
   useEffect(() => {
     return () => {
@@ -163,10 +176,15 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
 
   const startPunchout = useCallback(async () => {
     setIsLoading(true);
+    // Open the Amazon tab synchronously inside the click gesture. If we wait until
+    // after the awaited fetch below, the browser no longer treats it as user-initiated
+    // and the popup blocker silently kills it — making it look like nothing happened.
+    const amazonTab = window.open('about:blank', '_blank');
     try {
       // Fetch PO lines to build catalog_items payload
       const poDetails = await getPurchaseOrderWithDetails(po.id);
       if (poDetails.error || !poDetails.data?.lines?.length) {
+        amazonTab?.close();
         toast.error('Failed to load PO details', {
           description: poDetails.error?.message || 'No line items found on this PO'
         });
@@ -182,6 +200,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         }));
 
       if (catalogItems.length === 0) {
+        amazonTab?.close();
         toast.error('No catalog items on this PO', {
           description: 'Amazon punchout requires catalog items with ASIN mappings'
         });
@@ -191,6 +210,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
 
       const locationId = poDetails.data.delivery_location_id || poDetails.data.pickup_location_id;
       if (!locationId) {
+        amazonTab?.close();
         toast.error('No delivery location set on this PO');
         setIsLoading(false);
         return;
@@ -215,8 +235,13 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
       setPunchoutOrderId(result.data.punchout_order_id);
       setPunchoutStep('waiting');
 
-      // Open Amazon in new tab
-      window.open(result.data.redirect_url, '_blank');
+      // Navigate the already-open tab to Amazon (fallback to a fresh open if the
+      // pre-opened tab was blocked entirely).
+      if (amazonTab) {
+        amazonTab.location.href = result.data.redirect_url;
+      } else {
+        window.open(result.data.redirect_url, '_blank');
+      }
 
       // Start polling for cart return
       pollRef.current = setInterval(async () => {
@@ -241,6 +266,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         }
       }, 5000);
     } catch (err: any) {
+      amazonTab?.close();
       toast.error('Failed to start Amazon punchout', {
         description: err.message
       });
