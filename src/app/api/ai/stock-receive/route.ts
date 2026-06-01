@@ -75,11 +75,14 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     const { data: newItem, error: createError } = await inv
       .rpc('rpc_create_catalog_item', {
         p_name: body.item_name,
-        p_sku: autoSku,
-        p_uom_term_id: resolvedUomTermId,
         p_description: body.item_description || null,
-        p_tracking_mode: 'fungible',
+        p_category_id: null,
+        p_tracking_mode: 'stock',
+        p_reorder_point: 0,
+        p_base_sku: autoSku,
+        p_sku: autoSku,
         p_last_event_id: `${idempotencyKey}_create_item`,
+        p_uom_term_id: resolvedUomTermId,
       });
 
     if (createError) {
@@ -117,7 +120,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       p_new_qty: newQty,
       p_reason: 'other',
       p_notes: `AI image recognition stock receive: +${body.quantity} ${body.uom_term_id || 'each'}`,
-      p_last_event_id: `${idempotencyKey}_adjust`,
+      // rpc_adjust_inventory has no p_last_event_id param — passing it = no function match.
     });
 
   if (adjustError) {

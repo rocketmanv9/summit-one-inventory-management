@@ -53,9 +53,13 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     last_event_id: `${idempotencyKey}_widget_${i}`,
   }));
 
+  // Plain insert: dashboard_widgets has no unique on last_event_id, so
+  // onConflict:'last_event_id' errored (and silently produced widget-less
+  // dashboards). Widgets are always new for a freshly created dashboard, and the
+  // write-route idempotency guard covers retries.
   const { error: widgetError } = await supabase
     .from('dashboard_widgets')
-    .upsert(widgetInserts, { onConflict: 'last_event_id' });
+    .insert(widgetInserts);
 
   if (widgetError) {
     log.error('dashboard_widgets.insert_error', { error: widgetError.message });

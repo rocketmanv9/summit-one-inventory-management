@@ -18,7 +18,9 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
     p_cycle_count_id: session.cycleCountId,
     p_catalog_item_id: body.catalog_item_id,
     p_tenant_id: session.tenantId,
-    p_last_event_id: idempotencyKey,
+    // p_last_event_id is a UUID param; idempotencyKey is an arbitrary header value.
+    // Use a guaranteed UUID (same as the create-item route).
+    p_last_event_id: crypto.randomUUID(),
   });
 
   if (error) {

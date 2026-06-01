@@ -148,17 +148,19 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     poId = existingPO.id;
     poNumber = existingPO.po_number;
   } else {
-    // Create a new PO (original flow from widget)
+    // Create a new internal PO (original flow from widget). NOTE: this route runs
+    // on the admin/service-role client with no user JWT, so rpc_create_purchase_order
+    // (which derives tenant from auth.jwt() and throws without one) CANNOT be used —
+    // it previously threw and was silently swallowed, placing the Amazon order with
+    // no internal PO. Use the explicit-tenant rpc_create_po_from_punchout instead.
     const poLines = orderLines.map((line) => ({
       catalog_item_id: null,
+      item_description: line.description || line.supplierSku,
       qty_ordered: line.quantity,
       unit_cost: line.unitPrice,
-      estimated_unit_cost: line.unitPrice,
-      price_basis: 'confirmed',
       line_notes: `ASIN: ${line.supplierSku} | SPAID: ${line.spaid}`,
     }));
 
-    // Find or create Amazon vendor
     const { data: vendor } = await sc
       .from('vendors')
       .select('id')
@@ -168,26 +170,20 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       .maybeSingle();
 
     if (vendor) {
-      const { data: poResult, error: poError } = await sc.rpc('rpc_create_purchase_order', {
+      const { data: poResult, error: poError } = await sc.rpc('rpc_create_po_from_punchout', {
+        p_tenant_id: ctx.tenantId,
         p_vendor_id: vendor.id,
-        p_po_number: null,
-        p_delivery_method: 'ship',
-        p_needed_by_date: null,
-        p_cost_context: 'yard',
-        p_job_id: null,
-        p_delivery_location_id: body.location_id,
-        p_pickup_location_id: null,
-        p_max_authorized_spend: null,
-        p_vendor_quote_ref: null,
+        p_delivery_location_id: body.location_id || null,
         p_notes: `Amazon Business cXML Order (punchout session ${order.id})`,
-        p_attachments: [],
         p_lines: poLines,
       });
 
-      if (!poError && poResult) {
-        poId = poResult.po_id;
-        poNumber = poResult.po_number;
+      if (poError || !poResult?.po_id) {
+        log.error('amazon.submit.po_create_failed', { error: poError?.message });
+        throw AppError.internal(`Failed to create internal PO: ${poError?.message || 'unknown error'}`);
       }
+      poId = poResult.po_id;
+      poNumber = poResult.po_number;
     }
   }
 

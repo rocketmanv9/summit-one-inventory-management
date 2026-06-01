@@ -15,7 +15,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const { data, error } = await inv
     .from('item_categories')
     .select('*')
-    .order('name', { ascending: true })
+    .order('name', { ascending: true, nullsFirst: false })
     .limit(200);
 
   if (error) {
@@ -30,7 +30,16 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const body = await req.json();
   const inv = (supabase as any).schema('inventory');
 
-  const { data, error } = await inv.from('item_categories').upsert(body).select().single();
+  // item_categories.last_event_id is NOT NULL with no default/trigger — omitting
+  // it makes the insert fail. Stamp it (and tenant_id) and upsert on the natural key.
+  const { data, error } = await inv
+    .from('item_categories')
+    .upsert(
+      { ...body, tenant_id: ctx.tenantId, last_event_id: idempotencyKey },
+      { onConflict: 'tenant_id,name' }
+    )
+    .select()
+    .single();
 
   if (error) {
     log.error('item_category.create_failed', { error: error.message });

@@ -165,7 +165,8 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, supabase, log, id
     latency_ms: 0,
     tools_called: body.friction_metrics.flows.map((f) => f.intent),
     surface: 'friction',
-    metadata: body.friction_metrics,
+    // ai_usage_log has no `metadata` column — including it 500'd every POST.
+    // The per-flow intents are captured in tools_called above.
   }, { onConflict: 'id' });
 
   if (error) {

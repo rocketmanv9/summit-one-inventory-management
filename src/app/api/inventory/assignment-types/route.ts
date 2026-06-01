@@ -17,7 +17,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const { data, error } = await inv
     .from('assignment_types')
     .select('*')
-    .order('name', { ascending: true })
+    .order('sort_order', { ascending: true })
     .limit(100);
 
   if (error) {

@@ -27,17 +27,6 @@ function getLineId(req: Request): string {
   return id;
 }
 
-async function getLineNumber(inv: any, lineId: string): Promise<number> {
-  const { data, error } = await inv
-    .from('cycle_count_lines')
-    .select('line_number')
-    .eq('id', lineId)
-    .single();
-
-  if (error || !data) throw AppError.notFound('Cycle count line not found');
-  return data.line_number;
-}
-
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const cycleCountId = getCycleCountId(req);
   const lineId = getLineId(req);
@@ -49,13 +38,12 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   });
 
   const inv = (supabase as any).schema('inventory');
-  const lineNumber = await getLineNumber(inv, lineId);
 
   const { data: assetLines, error } = await inv
     .from('cycle_count_asset_lines')
     .select('id, asset_id, expected_present, counted_present, status, asset:assets(id, asset_tag, serial_number, status)')
     .eq('cycle_count_id', cycleCountId)
-    .eq('line_number', lineNumber);
+    .eq('cycle_count_line_id', lineId);
 
   if (error) {
     log.error('cycle_count_assets.list_failed', { error: error.message });
@@ -79,14 +67,12 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const body = AssetCountSchema.parse(await req.json());
   const inv = (supabase as any).schema('inventory');
 
-  const lineNumber = await getLineNumber(inv, lineId);
-
-  // Reset all asset lines to not counted
+  // Reset all asset lines for this line to not counted
   await inv
     .from('cycle_count_asset_lines')
-    .update({ counted_present: false, last_event_id: idempotencyKey })
+    .update({ counted_present: false })
     .eq('cycle_count_id', cycleCountId)
-    .eq('line_number', lineNumber);
+    .eq('cycle_count_line_id', lineId);
 
   // Mark selected assets as counted
   if (body.asset_ids.length > 0) {
@@ -96,10 +82,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         counted_present: true,
         scanned_by_user_id: ctx.userId,
         scanned_at: new Date().toISOString(),
-        last_event_id: idempotencyKey,
       })
       .eq('cycle_count_id', cycleCountId)
-      .eq('line_number', lineNumber)
+      .eq('cycle_count_line_id', lineId)
       .in('asset_id', body.asset_ids);
   }
 

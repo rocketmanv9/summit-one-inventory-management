@@ -38,8 +38,16 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   // vendor_items is a VIEW in `inventory`; the real table is in `supply_chain`.
   const sc = (supabase as any).schema('supply_chain');
 
+  // tenant_id is NOT NULL and not auto-injected under the service-role client, and
+  // the client payload may omit it — set it explicitly. Upsert on the natural key
+  // for retry safety.
   const { data, error } = await sc.from('vendor_items')
-    .upsert({ ...body, last_event_id: idempotencyKey }).select().single();
+    .upsert(
+      { ...body, tenant_id: ctx.tenantId, last_event_id: idempotencyKey },
+      { onConflict: 'tenant_id,vendor_id,catalog_item_id' }
+    )
+    .select()
+    .single();
 
   if (error) {
     log.error('vendor_item.create_failed', { error: error.message });
