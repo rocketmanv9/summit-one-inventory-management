@@ -418,6 +418,31 @@ export default function IntegrationsPage() {
     }
   };
 
+  const handleAmazonModeToggle = async (sandbox: boolean) => {
+    if (!isAdmin) return;
+    setAmazonSaving(true);
+    setAmazonError('');
+    setAmazonSuccess('');
+    try {
+      const res = await fetch(AMAZON_API, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ sandbox }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const msg = typeof j.error === 'string' ? j.error : j.error?.message || 'Failed to switch mode';
+        throw new Error(msg);
+      }
+      setAmazonSuccess(sandbox ? 'Switched to Test (sandbox) mode.' : 'Switched to Live mode — real orders will be placed.');
+      await loadAmazonStatus();
+    } catch (err: unknown) {
+      setAmazonError(err instanceof Error ? err.message : 'Failed to switch mode');
+    } finally {
+      setAmazonSaving(false);
+    }
+  };
+
   const handleResolveAsin = async () => {
     if (!asinInput.trim()) return;
     setAsinResolving(true);
@@ -857,9 +882,40 @@ export default function IntegrationsPage() {
                 <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
                   <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
                   <span>Connected via cXML{amazon.po_request_url_set ? ' — PO Request URL configured' : ''}</span>
-                  <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-300">
-                    {amazon.integration_mode === 'active' ? 'Active' : 'Test Mode'}
+                  <span className={`ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${amazon.integration_mode === 'active' ? 'bg-green-100 text-green-800 border-green-300' : 'bg-yellow-100 text-yellow-800 border-yellow-300'}`}>
+                    {amazon.integration_mode === 'active' ? 'Live' : 'Test Mode'}
                   </span>
+                </div>
+
+                {/* Mode switch: sandbox=true sends cXML deploymentMode="test" (Amazon
+                    shows a test-environment banner); false = production / real orders. */}
+                <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div>
+                    <div className="text-sm font-medium">Environment</div>
+                    <div className="text-xs text-muted-foreground">
+                      {amazon.sandbox === false
+                        ? 'Live — orders submitted to Amazon are real and will be charged.'
+                        : 'Test (sandbox) — Amazon shows a test-environment banner; no real orders.'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAmazonModeToggle(true)}
+                      disabled={!isAdmin || amazonSaving || amazon.sandbox !== false}
+                      className={`px-3 py-1.5 rounded-md text-sm border ${amazon.sandbox !== false ? 'bg-yellow-100 text-yellow-800 border-yellow-300 font-medium' : 'hover:bg-muted'} disabled:opacity-60`}
+                    >
+                      Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAmazonModeToggle(false)}
+                      disabled={!isAdmin || amazonSaving || amazon.sandbox === false}
+                      className={`px-3 py-1.5 rounded-md text-sm border ${amazon.sandbox === false ? 'bg-green-100 text-green-800 border-green-300 font-medium' : 'hover:bg-muted'} disabled:opacity-60`}
+                    >
+                      Live
+                    </button>
+                  </div>
                 </div>
 
                 <details className="group">

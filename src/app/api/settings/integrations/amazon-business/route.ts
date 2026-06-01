@@ -212,6 +212,50 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
   };
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business' });
 
+// ── PATCH: Flip sandbox (test) ↔ live mode ───────────────────────────────
+// Lightweight mode switch that doesn't require re-entering credentials. sandbox
+// drives the cXML deploymentMode (test|production) Amazon shows in its banner.
+
+const ModeSchema = z.object({ sandbox: z.boolean() });
+
+export const PATCH = createSessionWriteRoute(async ({ req, ctx, idempotencyKey }) => {
+  const { sandbox } = ModeSchema.parse(await req.json());
+  const adminClient = getAdminClient();
+  const prov = (adminClient as any).schema('provisioning');
+
+  const { data: existing } = await prov
+    .from('providers')
+    .select('id, config')
+    .eq('tenant_id', ctx.tenantId!)
+    .eq('provider_type', 'procurement_marketplace')
+    .like('provider_key', 'amazon-business%')
+    .limit(1)
+    .maybeSingle();
+
+  if (!existing) throw AppError.notFound('No Amazon Business connection found');
+
+  const { error } = await prov
+    .from('providers')
+    .update({
+      config: { ...existing.config, sandbox },
+      integration_mode: sandbox ? 'test' : 'active',
+      last_event_id: idempotencyKey,
+    })
+    .eq('id', existing.id);
+
+  if (error) throw AppError.internal(error.message);
+
+  return {
+    data: { sandbox, integration_mode: sandbox ? 'test' : 'active' },
+    status: 200,
+    events: [{
+      event_name: 'integration.updated',
+      payload: { provider: 'amazon-business', sandbox },
+      last_event_id: idempotencyKey,
+    }],
+  };
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PATCH /api/settings/integrations/amazon-business' });
+
 // ── DELETE: Disconnect Amazon Business ───────────────────────────────────
 
 const DisconnectSchema = z.object({});
