@@ -268,10 +268,21 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         }
       }, 5000);
     } catch (err: any) {
-      amazonTab?.close();
-      toast.error('Failed to start Amazon punchout', {
-        description: err.message
-      });
+      const msg = err?.message || 'Failed to start punchout';
+      // Show the error in the already-open tab instead of silently closing it,
+      // so the failure reason is actually visible rather than a tab that flashes.
+      if (amazonTab && !amazonTab.closed) {
+        try {
+          amazonTab.document.title = 'Amazon punchout error';
+          amazonTab.document.body.innerHTML =
+            '<pre style="white-space:pre-wrap;font:14px/1.5 monospace;padding:24px;color:#b91c1c">' +
+            'Amazon punchout failed to start:\n\n' +
+            String(msg).replace(/</g, '&lt;') + '</pre>';
+        } catch {
+          amazonTab.close();
+        }
+      }
+      toast.error('Failed to start Amazon punchout', { description: msg });
     } finally {
       setIsLoading(false);
     }
