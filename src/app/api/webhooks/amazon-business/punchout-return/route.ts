@@ -188,6 +188,7 @@ function htmlPage(title: string, message: string, success: boolean): NextRespons
 }
 
 export async function POST(req: NextRequest) {
+ try {
   const adminClient = getAdminClient();
   const inv = (adminClient as any).schema('inventory');
 
@@ -285,4 +286,14 @@ export async function POST(req: NextRequest) {
     'You can close this tab and return to Summit One to review and submit your order.',
     true
   );
+ } catch (err: any) {
+  // Catch-all: never let this route 5xx/crash. A crashed response leaves the
+  // browser on a chrome-error page (cross-origin), hiding the real reason — so
+  // always return a readable 200 page with the actual message.
+  return htmlPage(
+    'Unexpected error processing Amazon cart',
+    String(err?.message || err || 'Unknown error') + '. Please screenshot this and contact support.',
+    false
+  );
+ }
 }
