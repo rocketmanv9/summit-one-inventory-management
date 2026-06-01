@@ -273,6 +273,27 @@ export function parsePunchOutOrderMessage(xml: string): ParsedPoom {
   };
 }
 
+/**
+ * Extracts the buyer's NetworkId identities and (if present) the UserEmail from
+ * a POOM header. Used to route an Amazon-initiated cart (no app session) to the
+ * right tenant by matching its identity against a provider's from-identity.
+ */
+export function extractPoomBuyerContext(xml: string): {
+  identities: string[];
+  userEmail: string | null;
+} {
+  const headerMatch = xml.match(/<Header>([\s\S]*?)<\/Header>/i);
+  const headerXml = headerMatch?.[1] ?? xml;
+  const identities = [...headerXml.matchAll(/<Identity>([^<]+)<\/Identity>/gi)]
+    .map((m) => m[1].trim())
+    .filter((id) => id && id.toLowerCase() !== 'amazon');
+  const emailMatch = xml.match(/<Extrinsic\s+name="UserEmail">([^<]+)<\/Extrinsic>/i);
+  return {
+    identities: [...new Set(identities)],
+    userEmail: emailMatch?.[1]?.trim() ?? null,
+  };
+}
+
 // ── Decode POOM from browser form POST ────────────────────────────────
 
 export function decodePoomFromFormData(formBody: string): string {

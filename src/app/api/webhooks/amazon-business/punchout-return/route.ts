@@ -16,7 +16,144 @@ import { getAdminClient } from '@/utils/supabase/admin';
 import {
   decodePoomFromFormData,
   parsePunchOutOrderMessage,
+  extractPoomBuyerContext,
+  type ParsedPoom,
 } from '@/lib/integrations/amazon-cxml';
+
+/**
+ * Resolves which tenant an Amazon-initiated cart belongs to by matching the
+ * POOM's buyer NetworkId identity against each active Amazon Business provider's
+ * stored from-identity. Falls back to the only active provider if exactly one
+ * exists (single-tenant deployments). Returns null if it can't be determined.
+ */
+async function resolveTenantFromPoom(
+  adminClient: any,
+  identities: string[]
+): Promise<{ tenantId: string } | null> {
+  const prov = adminClient.schema('provisioning');
+  const { data: providers } = await prov
+    .from('providers')
+    .select('tenant_id, config, is_active')
+    .eq('provider_type', 'procurement_marketplace')
+    .like('provider_key', 'amazon-business%')
+    .eq('is_active', true)
+    .limit(50);
+
+  if (!providers || providers.length === 0) return null;
+
+  const wanted = new Set(identities.map((i) => i.toLowerCase()));
+  for (const p of providers) {
+    const ref = p.config?.from_identity_ref;
+    if (!ref) continue;
+    const { data: secret } = await adminClient
+      .from('decrypted_secrets')
+      .select('decrypted_secret')
+      .eq('name', ref)
+      .limit(1)
+      .single();
+    const identity = secret?.decrypted_secret?.trim().toLowerCase();
+    if (identity && wanted.has(identity)) return { tenantId: p.tenant_id };
+  }
+
+  // Single-tenant fallback: only one Amazon Business provider configured.
+  if (providers.length === 1) return { tenantId: providers[0].tenant_id };
+  return null;
+}
+
+/**
+ * Captures an Amazon-initiated cart (no app session matched the buyer_cookie):
+ * resolves the tenant, reverse-maps ASINs to catalog items, creates a DRAFT
+ * purchase order, and records a punchout order linked to it. Returns the new PO
+ * number, or null if it couldn't be routed/created.
+ */
+async function captureAmazonInitiatedCart(
+  adminClient: any,
+  poom: ParsedPoom,
+  poomXml: string
+): Promise<{ poNumber: string; itemCount: number } | null> {
+  const { identities, userEmail } = extractPoomBuyerContext(poomXml);
+  const resolved = await resolveTenantFromPoom(adminClient, identities);
+  if (!resolved) return null;
+  const tenantId = resolved.tenantId;
+
+  const sc = adminClient.schema('supply_chain');
+  const inv = adminClient.schema('inventory');
+
+  const { data: vendor } = await sc
+    .from('vendors')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('code', 'AMAZON-BIZ')
+    .eq('active', true)
+    .limit(1)
+    .maybeSingle();
+  if (!vendor) return null;
+
+  // Reverse-map returned ASINs to catalog items (unmapped items keep a null
+  // catalog_item_id and just carry the Amazon description).
+  const asins = [...new Set(poom.items.map((i) => i.supplierPartId).filter(Boolean))];
+  const { data: vendorItems } = asins.length
+    ? await sc
+        .from('vendor_items')
+        .select('catalog_item_id, vendor_sku')
+        .eq('tenant_id', tenantId)
+        .eq('vendor_id', vendor.id)
+        .in('vendor_sku', asins)
+        .limit(200)
+    : { data: [] as any[] };
+  const asinToItem = new Map<string, string>(
+    (vendorItems || []).map((vi: any) => [vi.vendor_sku, vi.catalog_item_id])
+  );
+
+  const lines = poom.items.map((item) => ({
+    catalog_item_id: asinToItem.get(item.supplierPartId) || '',
+    item_description: item.description || item.supplierPartId,
+    qty_ordered: item.quantity,
+    unit_cost: item.unitPrice,
+    line_notes: `Amazon ASIN ${item.supplierPartId}`,
+  }));
+
+  // Default ship-to location (PO is a draft; the user can change it on review).
+  const { data: loc } = await inv
+    .from('locations')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('is_default_ship_to', true)
+    .limit(1)
+    .maybeSingle();
+
+  const { data: poResult, error: poError } = await sc.rpc('rpc_create_po_from_punchout', {
+    p_tenant_id: tenantId,
+    p_vendor_id: vendor.id,
+    p_delivery_location_id: loc?.id || null,
+    p_notes: 'Created from an Amazon Business punchout cart (started on Amazon).',
+    p_lines: lines,
+  });
+  if (poError || !poResult?.po_id) return null;
+
+  // Record the punchout order, linked to the draft PO. buyer_cookie is unique;
+  // if Amazon re-posts the same cart we skip (the matched path handles re-posts).
+  await inv.from('punchout_orders').upsert(
+    {
+      tenant_id: tenantId,
+      setup_payload_id: `amazon-initiated:${poom.buyerCookie}`,
+      buyer_cookie: poom.buyerCookie,
+      user_email: userEmail || 'amazon-business@punchout',
+      status: 'cart_returned',
+      poom_received_at: new Date().toISOString(),
+      poom_raw: poomXml,
+      poom_items: poom.items,
+      poom_total: poom.total,
+      items: poom.items,
+      total_cost: poom.total,
+      purchase_order_id: poResult.po_id,
+      metadata: { source: 'amazon_initiated', po_number: poResult.po_number },
+    },
+    { onConflict: 'buyer_cookie' }
+  );
+
+  return { poNumber: poResult.po_number, itemCount: poom.items.length };
+}
 
 function htmlPage(title: string, message: string, success: boolean): NextResponse {
   const color = success ? '#16a34a' : '#dc2626';
@@ -88,9 +225,23 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (lookupError || !order) {
+    // No app-started session matched this cart → it was started on Amazon.
+    // Capture it as a draft PO the user can review/approve in Summit One.
+    try {
+      const captured = await captureAmazonInitiatedCart(adminClient, poom, poomXml);
+      if (captured) {
+        return htmlPage(
+          `Amazon cart received — draft ${captured.poNumber}`,
+          `We created draft purchase order ${captured.poNumber} (${captured.itemCount} item${captured.itemCount === 1 ? '' : 's'}) in Summit One. Close this tab and open Purchasing to review and approve it.`,
+          true
+        );
+      }
+    } catch {
+      // fall through to the generic message below
+    }
     return htmlPage(
-      'Session not found',
-      'This punchout session has expired. Please close this tab and start a new order.',
+      'Cart could not be linked',
+      'This Amazon cart was not started from Summit One and we could not match it to your account automatically. Please start the order from a purchase order in Summit One, or contact support.',
       false
     );
   }
