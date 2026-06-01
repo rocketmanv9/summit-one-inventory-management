@@ -26,7 +26,9 @@ const StartSchema = z.object({
   location_id: z.string().uuid(),
   catalog_items: z.array(z.object({
     catalog_item_id: z.string().uuid(),
-    quantity: z.number().int().min(1),
+    // qty_ordered is a Postgres numeric, which PostgREST serializes as a string
+    // (e.g. "1.0000"). Coerce so a stringy quantity doesn't 400 the whole request.
+    quantity: z.coerce.number().int().min(1),
   })).min(1),
   suggestion_ids: z.array(z.string().uuid()).optional(),
 });

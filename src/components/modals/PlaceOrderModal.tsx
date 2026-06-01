@@ -196,7 +196,9 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         .filter(line => line.catalog_item_id)
         .map(line => ({
           catalog_item_id: line.catalog_item_id!,
-          quantity: line.qty_ordered,
+          // qty_ordered comes back as a numeric string ("1.0000") — coerce to an
+          // integer so the punchout/start schema (z.number().int()) accepts it.
+          quantity: Math.max(1, Math.round(Number(line.qty_ordered) || 0)),
         }));
 
       if (catalogItems.length === 0) {
