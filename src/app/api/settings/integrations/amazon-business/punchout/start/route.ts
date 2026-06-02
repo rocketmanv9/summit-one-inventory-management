@@ -41,9 +41,11 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   const cxmlConfig = await resolveCxmlCredentials(adminClient, ctx.tenantId!);
 
-  const punchoutUrl = cxmlConfig.punchoutUrls?.[0];
+  const punchoutUrl = cxmlConfig.punchoutUrl;
   if (!punchoutUrl) {
-    throw AppError.badRequest('No Punchout URL configured. Update cXML credentials in Settings > Integrations.');
+    throw AppError.badRequest(
+      `No ${cxmlConfig.sandbox ? 'test' : 'live'} Punchout URL configured. Update cXML credentials in Settings > Integrations.`
+    );
   }
 
   // 1. Load the tenant's ship-to location

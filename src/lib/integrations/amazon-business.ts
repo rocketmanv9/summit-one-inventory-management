@@ -14,6 +14,9 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 export interface CxmlCredentials {
   fromIdentity: string;
   sharedSecret: string;
+  /** Effective PunchOutSetupRequest endpoint for the current mode (test vs live). */
+  punchoutUrl: string;
+  /** All configured punchout endpoints (legacy; kept for backward compatibility). */
   punchoutUrls: string[];
   poRequestUrl: string;
   sandbox: boolean;
@@ -146,12 +149,20 @@ export async function resolveCxmlCredentials(
     resolveSecret(sharedSecretRef),
   ]);
 
+  const sandbox = provider.config?.sandbox ?? true;
+  const legacyPunchoutUrls: string[] = provider.config?.punchout_urls ?? [];
+  const punchoutLive = provider.config?.punchout_url ?? legacyPunchoutUrls[0] ?? '';
+  const punchoutTest = provider.config?.punchout_test_url ?? legacyPunchoutUrls[0] ?? '';
+
   return {
     fromIdentity,
     sharedSecret,
-    punchoutUrls: provider.config?.punchout_urls ?? [],
+    // Mode-aware: the Test/Live toggle now switches the actual punchout endpoint,
+    // not just the cXML deploymentMode flag.
+    punchoutUrl: sandbox ? punchoutTest : punchoutLive,
+    punchoutUrls: legacyPunchoutUrls,
     poRequestUrl: provider.config?.po_request_url ?? '',
-    sandbox: provider.config?.sandbox ?? true,
+    sandbox,
     providerId: provider.id,
     integrationMode: provider.integration_mode ?? 'test',
   };

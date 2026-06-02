@@ -87,6 +87,9 @@ export const GET = createSessionReadRoute(async ({ session }) => {
       integration_mode: data.integration_mode ?? 'test',
       sandbox: data.config?.sandbox ?? true,
       po_request_url_set: hasPoUrl,
+      po_request_url: data.config?.po_request_url ?? '',
+      punchout_url: data.config?.punchout_url ?? '',
+      punchout_test_url: data.config?.punchout_test_url ?? '',
       punchout_urls: data.config?.punchout_urls ?? [],
       last_event_id: data.last_event_id,
     },
@@ -99,6 +102,10 @@ const ConnectSchema = z.object({
   from_identity: z.string().min(1),
   shared_secret: z.string().min(1),
   po_request_url: z.string().url(),
+  // Separate live/test punchout endpoints so the Test/Live toggle switches the
+  // actual endpoint. punchout_urls (legacy array) still accepted for compat.
+  punchout_url: z.string().url().optional(),
+  punchout_test_url: z.string().url().optional(),
   punchout_urls: z.array(z.string().url()).optional().default([]),
   // Optional and NOT defaulted: test/live is owned by the PATCH mode toggle.
   // Re-saving credentials must never silently flip an existing connection back
@@ -125,6 +132,9 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
     const fromIdentityRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'from-identity', body.from_identity);
     const sharedSecretRef = await storeSecret(adminClient, ctx.tenantId!, existing.id, 'shared-secret', body.shared_secret);
 
+    const punchoutLive = body.punchout_url ?? existing.config?.punchout_url ?? null;
+    const punchoutTest = body.punchout_test_url ?? existing.config?.punchout_test_url ?? null;
+    const punchoutUrls = [punchoutLive, punchoutTest].filter(Boolean);
     const config = {
       ...existing.config,
       // Preserve the current mode unless the caller explicitly sets it.
@@ -132,7 +142,10 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
       from_identity_ref: fromIdentityRef,
       shared_secret_ref: sharedSecretRef,
       po_request_url: body.po_request_url,
-      punchout_urls: body.punchout_urls,
+      punchout_url: punchoutLive,
+      punchout_test_url: punchoutTest,
+      // Keep the legacy array in sync for any older consumer.
+      punchout_urls: punchoutUrls.length ? punchoutUrls : (body.punchout_urls ?? existing.config?.punchout_urls ?? []),
     };
 
     // Remove stale OAuth refs if they exist from the old SP-API integration
@@ -174,7 +187,9 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
       config: {
         sandbox: body.sandbox ?? true,
         po_request_url: body.po_request_url,
-        punchout_urls: body.punchout_urls,
+        punchout_url: body.punchout_url ?? null,
+        punchout_test_url: body.punchout_test_url ?? null,
+        punchout_urls: [body.punchout_url, body.punchout_test_url].filter(Boolean),
       },
       capabilities: ['procurement', 'marketplace'],
       priority: 100,

@@ -25,6 +25,9 @@ interface AmazonStatus {
   integration_mode?: string;
   sandbox?: boolean;
   po_request_url_set?: boolean;
+  po_request_url?: string;
+  punchout_url?: string;
+  punchout_test_url?: string;
   punchout_urls?: string[];
 }
 
@@ -89,7 +92,7 @@ export default function IntegrationsPage() {
   // ── Amazon Business state ───────────────────────────────────────────
   const [amazon, setAmazon] = useState<AmazonStatus | null>(null);
   const [amazonStatus, setAmazonStatus] = useState<ConnectionStatus>('disconnected');
-  const [amazonForm, setAmazonForm] = useState({ from_identity: '', shared_secret: '', po_request_url: '', punchout_urls: '', sandbox: true });
+  const [amazonForm, setAmazonForm] = useState({ from_identity: '', shared_secret: '', po_request_url: '', punchout_url: '', punchout_test_url: '', sandbox: true });
   const [amazonSaving, setAmazonSaving] = useState(false);
   const [amazonError, setAmazonError] = useState('');
   const [amazonSuccess, setAmazonSuccess] = useState('');
@@ -175,6 +178,13 @@ export default function IntegrationsPage() {
       if (data) {
         setAmazon(data);
         setAmazonStatus(data.connected ? 'connected' : 'disconnected');
+        // Prefill URLs (non-secret) so editing/toggling doesn't require retyping them.
+        setAmazonForm((f) => ({
+          ...f,
+          po_request_url: f.po_request_url || data.po_request_url || '',
+          punchout_url: f.punchout_url || data.punchout_url || '',
+          punchout_test_url: f.punchout_test_url || data.punchout_test_url || '',
+        }));
       }
     } catch {
       // Not connected yet
@@ -389,11 +399,6 @@ export default function IntegrationsPage() {
     setAmazonSaving(true);
 
     try {
-      const punchoutUrls = amazonForm.punchout_urls
-        .split(',')
-        .map((u) => u.trim())
-        .filter(Boolean);
-
       const res = await fetch(AMAZON_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
@@ -404,7 +409,8 @@ export default function IntegrationsPage() {
           from_identity: amazonForm.from_identity,
           shared_secret: amazonForm.shared_secret,
           po_request_url: amazonForm.po_request_url,
-          punchout_urls: punchoutUrls,
+          punchout_url: amazonForm.punchout_url || undefined,
+          punchout_test_url: amazonForm.punchout_test_url || undefined,
         }),
       });
       const json = await res.json();
@@ -413,7 +419,7 @@ export default function IntegrationsPage() {
         throw new Error(json?.error?.message || 'Failed to connect');
       }
 
-      setAmazonForm({ from_identity: '', shared_secret: '', po_request_url: '', punchout_urls: '', sandbox: true });
+      setAmazonForm({ from_identity: '', shared_secret: '', po_request_url: '', punchout_url: '', punchout_test_url: '', sandbox: true });
       if (json?.data?.configured) {
         setAmazonSuccess('cXML credentials saved and validated. Use the Test/Live toggle above to set the order mode.');
         setAmazonStatus('connected');
@@ -1095,11 +1101,18 @@ export default function IntegrationsPage() {
                         required disabled={!isAdmin} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Punchout URLs</label>
-                      <input type="text" value={amazonForm.punchout_urls}
-                        onChange={(e) => setAmazonForm({ ...amazonForm, punchout_urls: e.target.value })}
+                      <label className="block text-sm font-medium mb-1">Punchout URL (Live)</label>
+                      <input type="url" value={amazonForm.punchout_url}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, punchout_url: e.target.value })}
                         className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                        placeholder="Comma-separated URLs" disabled={!isAdmin} />
+                        placeholder="https://…  (used in Live mode)" disabled={!isAdmin} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Punchout Test URL</label>
+                      <input type="url" value={amazonForm.punchout_test_url}
+                        onChange={(e) => setAmazonForm({ ...amazonForm, punchout_test_url: e.target.value })}
+                        className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                        placeholder="https://…  (used in Test mode)" disabled={!isAdmin} />
                     </div>
                     <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.from_identity || !amazonForm.shared_secret || !amazonForm.po_request_url}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm">
@@ -1152,18 +1165,26 @@ export default function IntegrationsPage() {
                   <p className="text-xs text-muted-foreground mt-1">The endpoint where cXML OrderRequest documents will be POSTed.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Punchout URLs <span className="text-muted-foreground font-normal">(optional)</span></label>
-                  <input type="text" value={amazonForm.punchout_urls}
-                    onChange={(e) => setAmazonForm({ ...amazonForm, punchout_urls: e.target.value })}
+                  <label className="block text-sm font-medium mb-1">Punchout URL (Live) <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input type="url" value={amazonForm.punchout_url}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, punchout_url: e.target.value })}
                     className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    placeholder="https://..., https://..." disabled={!isAdmin} />
-                  <p className="text-xs text-muted-foreground mt-1">Comma-separated. Used for catalog browsing sessions.</p>
+                    placeholder="https://..." disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">PunchOutSetupRequest endpoint used when in Live mode.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Punchout Test URL <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input type="url" value={amazonForm.punchout_test_url}
+                    onChange={(e) => setAmazonForm({ ...amazonForm, punchout_test_url: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
+                    placeholder="https://..." disabled={!isAdmin} />
+                  <p className="text-xs text-muted-foreground mt-1">PunchOutSetupRequest endpoint used when in Test (sandbox) mode.</p>
                 </div>
                 <button type="submit" disabled={!isAdmin || amazonSaving || !amazonForm.from_identity || !amazonForm.shared_secret || !amazonForm.po_request_url}
                   className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:opacity-50 font-medium flex items-center justify-center gap-2">
                   {amazonSaving ? (<><Loader2 className="h-4 w-4 animate-spin" />Saving...</>) : 'Save cXML Credentials'}
                 </button>
-                <p className="text-xs text-center text-muted-foreground">Integration starts in test mode. Switching to active requires manual configuration.</p>
+                <p className="text-xs text-center text-muted-foreground">Upload both URLs once, then use the Test / Live toggle above to switch — no need to re-enter anything.</p>
               </form>
             )}
 
