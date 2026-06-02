@@ -7,8 +7,11 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // Bulk upsert of per-location reorder levels. No event trigger → route-owned.
 const RowSchema = z.object({ catalog_item_id: z.string().min(1), location_id: z.string().min(1) }).passthrough();
 
-export const POST = createSessionWriteRoute(async ({ body, log, supabase }) => {
-  const rows = body as z.infer<typeof RowSchema>[];
+export const POST = createSessionWriteRoute(async ({ ctx, body, log, supabase }) => {
+  const incoming = body as z.infer<typeof RowSchema>[];
+  // Service-role client (no JWT) → stamp tenant_id so the auto_inject_tenant_id
+  // trigger doesn't reject the rows.
+  const rows = incoming.map((r) => ({ ...r, tenant_id: ctx.tenantId }));
   const inv = (supabase as any).schema('inventory');
   const { error } = await inv.from('inventory_levels').upsert(rows, { onConflict: 'catalog_item_id,location_id' });
   if (error) { log.error('inventory_levels.save_failed', { error: error.message }); throw AppError.internal(error.message); }

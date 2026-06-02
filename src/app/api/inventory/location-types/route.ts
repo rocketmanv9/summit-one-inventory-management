@@ -34,11 +34,11 @@ const CreateLocationTypeSchema = z.object({
 });
 
 // location_types has a DB trigger that emits to the outbox → emissionOwner: 'trigger'.
-export const POST = createSessionWriteRoute(async ({ body, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, body, log, supabase, idempotencyKey }) => {
   const inv = (supabase as any).schema('inventory');
   const { data, error } = await inv
     .from('location_types')
-    .insert({ ...body, last_event_id: idempotencyKey })
+    .insert({ ...body, tenant_id: ctx.tenantId, last_event_id: idempotencyKey })
     .select('id, last_event_id')
     .single();
 

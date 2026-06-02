@@ -56,9 +56,13 @@ export function listRoute(opts: Base) {
 
 /** POST — create one row. Stamps last_event_id = idempotency key. */
 export function createRoute<T>(opts: Base & { bodySchema: ZodType<T>; mode?: 'insert' | 'upsert'; onConflict?: string }) {
-  return createSessionWriteRoute(async ({ body, supabase, idempotencyKey, log }) => {
+  return createSessionWriteRoute(async ({ ctx, body, supabase, idempotencyKey, log }) => {
     const t = (supabase as any).schema(opts.schema).from(opts.table);
-    const row = { ...(body as any), last_event_id: idempotencyKey };
+    // Stamp tenant_id: the injected client is service-role (no JWT), so tenant
+    // tables with the auto_inject_tenant_id trigger reject inserts that omit it
+    // ("tenant_id is required when using service role"). body overrides only if
+    // it explicitly carries one.
+    const row = { tenant_id: ctx.tenantId, ...(body as any), last_event_id: idempotencyKey };
     const q = opts.mode === 'upsert'
       ? t.upsert(row, opts.onConflict ? { onConflict: opts.onConflict } : undefined)
       : t.insert(row);
