@@ -15,6 +15,7 @@ import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
 import { OrderByEmailModal } from '@/components/modals/OrderByEmailModal';
+import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 
 interface PurchaseOrder {
@@ -558,6 +559,7 @@ function PODetailPanel({
   const uomLabels = useUOMLabelMap();
   const [status, setStatus] = useState(po.status);
   const [actionError, setActionError] = useState('');
+  const [showEmail, setShowEmail] = useState(false);
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -756,6 +758,16 @@ function PODetailPanel({
             </div>
           )}
           <div className="flex flex-col gap-2">
+            {/* Email the PO to the vendor — available once approved (and after). */}
+            {['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
+              <button
+                onClick={() => setShowEmail(true)}
+                className="w-full px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10"
+              >
+                ✉ Email PO to Vendor
+              </button>
+            )}
+
             {/* Status-specific actions */}
             {status === 'draft' && (
               <>
@@ -829,6 +841,8 @@ function PODetailPanel({
           </div>
         </div>
       </div>
+
+      <SendPOEmailModal open={showEmail} poId={po.id} onClose={() => setShowEmail(false)} />
     </div>
   );
 }
