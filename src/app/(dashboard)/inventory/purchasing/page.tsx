@@ -301,17 +301,18 @@ export default function PurchasingPage() {
               </button>
             )}
 
-            {/* Place Order button - only for approved */}
-            {isApproved && (
+            {/* Amazon orders place via punchout; non-Amazon vendors are emailed
+                the PO from the detail panel ("Email PO to Vendor"). */}
+            {isApproved && row.vendor_code_snapshot === 'AMAZON-BIZ' && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handlePlacePO(row);
                 }}
                 className="px-3 py-1 text-sm rounded bg-purple-600 hover:bg-purple-700 text-white"
-                title="Place order with vendor"
+                title="Order via Amazon Business"
               >
-                Place Order
+                Order on Amazon
               </button>
             )}
 
@@ -560,6 +561,9 @@ function PODetailPanel({
   const [status, setStatus] = useState(po.status);
   const [actionError, setActionError] = useState('');
   const [showEmail, setShowEmail] = useState(false);
+  // Only the Amazon Business vendor uses the cXML/punchout flow. Every other
+  // vendor submits by emailing the PO — no Amazon detour.
+  const isAmazonVendor = po.vendor_code_snapshot === 'AMAZON-BIZ';
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -758,8 +762,9 @@ function PODetailPanel({
             </div>
           )}
           <div className="flex flex-col gap-2">
-            {/* Email the PO to the vendor — available once approved (and after). */}
-            {['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
+            {/* Email the PO to the vendor — the submit path for every non-Amazon
+                vendor, available once approved (and after). */}
+            {!isAmazonVendor && ['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
               <button
                 onClick={() => setShowEmail(true)}
                 className="w-full px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10"
@@ -814,12 +819,12 @@ function PODetailPanel({
               </>
             )}
 
-            {status === 'approved' && (
+            {isAmazonVendor && status === 'approved' && (
               <button
                 onClick={() => onPlaceOrder(po)}
                 className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
               >
-                Place Order (Send to Vendor)
+                Order via Amazon Business
               </button>
             )}
 
