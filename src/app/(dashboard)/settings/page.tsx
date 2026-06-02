@@ -80,7 +80,7 @@ export default function SettingsPage() {
     po_number_prefix: '',
     cycle_count_number_format: 'date-sequential',
     cycle_count_number_prefix: 'CC',
-    auto_approve_enabled: false,
+    auto_approve_enabled: true,
     auto_approve_limit: '',
     vendor_code_strategy: 'manual',
     vendor_code_required: false,
@@ -129,7 +129,7 @@ export default function SettingsPage() {
           po_number_prefix: data.po_number_prefix || '',
           cycle_count_number_format: data.cycle_count_number_format || 'date-sequential',
           cycle_count_number_prefix: data.cycle_count_number_prefix || 'CC',
-          auto_approve_enabled: data.auto_approve_enabled || false,
+          auto_approve_enabled: data.auto_approve_enabled ?? true,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
           vendor_code_strategy: data.vendor_code_strategy || 'manual',
           vendor_code_required: data.vendor_code_required || false,
@@ -235,7 +235,8 @@ export default function SettingsPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(json?.error?.message || `Request failed (${res.status})`);
+        setReindexErr(json?.error?.message || `Request failed (${res.status})`);
+        return;
       }
       const d = json.data || json;
       const remaining = d.itemsRemaining

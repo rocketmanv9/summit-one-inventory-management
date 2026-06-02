@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
-import { ShoppingCart, Plus, AlertCircle, Check, Info } from 'lucide-react';
+import { Plus, AlertCircle, Check } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface Vendor {
@@ -77,6 +77,29 @@ export default function CreatePurchaseOrderPage() {
       setVendors(vendorsData);
       setLocations(locationsData);
       setItems(itemsData);
+
+      // Prefill from query params (e.g. the "Create PO"/"Reorder" buttons on the
+      // alerts and item pages pass item_id, qty, location_id, and vendor).
+      const sp = new URLSearchParams(window.location.search);
+      const itemId = sp.get('item_id');
+      const qty = sp.get('qty');
+      const locId = sp.get('location_id');
+      const vendorParam = sp.get('vendor');
+
+      setForm((prev) => ({
+        ...prev,
+        delivery_location_id:
+          locId && locationsData.some((l) => l.id === locId) ? locId : prev.delivery_location_id,
+        vendor_id:
+          (vendorParam &&
+            (vendorsData.find((v) => v.id === vendorParam) ??
+              vendorsData.find((v) => v.code === vendorParam))?.id) ||
+          prev.vendor_id,
+      }));
+
+      if (itemId && itemsData.some((i) => i.id === itemId)) {
+        setLines([{ catalog_item_id: itemId, qty_ordered: qty ? parseFloat(qty) || 0 : 0, unit_cost: 0 }]);
+      }
     } catch (err: any) {
       setError(`Failed to load data: ${err.message}`);
     } finally {
@@ -200,17 +223,8 @@ export default function CreatePurchaseOrderPage() {
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Create Purchase Order</h1>
           <p className="mt-2 text-sm text-gray-600">
-            Create a new PO (uses RPC: supply_chain.rpc_create_purchase_order)
+            Add the vendor, delivery location, and line items, then create the order.
           </p>
-        </div>
-
-        {/* Info Banner */}
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
-          <Info className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-          <div className="text-sm text-blue-800">
-            <strong>Bounded Context:</strong> This RPC operates in the supply_chain schema.
-            The PO will be created with status 'draft' and can later be submitted for approval.
-          </div>
         </div>
 
         {/* Success Message */}

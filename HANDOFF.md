@@ -27,7 +27,7 @@
 
 ## What still needs to be done
 
-### Critical: 17 missing inventory API routes
+### Critical: 14 missing inventory API routes
 The shim in `src/lib/api-client.ts` covers these because real routes don't exist. Each needs a proper route.ts using chassis factories:
 
 1. `POST /api/inventory/alerts/refresh`
@@ -40,14 +40,11 @@ The shim in `src/lib/api-client.ts` covers these because real routes don't exist
 8. `POST /api/inventory/cycle-counts/{id}/submit`
 9. `POST /api/inventory/cycle-counts/{id}/approve` — RPC exists: `rpc_inv_cycle_count_approve`
 10. `GET /api/inventory/locations`
-11. `POST /api/inventory/accounting/expenses/{id}/match`
-12. `PATCH /api/inventory/accounting/expenses/{id}`
-13. `DELETE /api/inventory/accounting/expenses/{id}`
-14. `GET /api/inventory/abc-classification`
-15. `POST /api/inventory/abc-classification/calculate`
-16. `GET /api/inventory/vendor-performance`
-17. `GET /api/inventory/vendor-performance/{id}/events`
-18. `POST /api/inventory/movements/{id}/reverse` — RPC exists: `rpc_reverse_stock_movement`
+11. `GET /api/inventory/abc-classification`
+12. `POST /api/inventory/abc-classification/calculate`
+13. `GET /api/inventory/vendor-performance`
+14. `GET /api/inventory/vendor-performance/{id}/events`
+15. `POST /api/inventory/movements/{id}/reverse` — RPC exists: `rpc_reverse_stock_movement`
 
 Once all routes exist, remove the shim entirely by setting `isShimRoute` to return `false`.
 

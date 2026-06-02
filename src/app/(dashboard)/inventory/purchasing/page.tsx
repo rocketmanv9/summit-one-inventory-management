@@ -110,8 +110,6 @@ export default function PurchasingPage() {
       return;
     }
 
-    if (!confirm('Submit this PO for approval?')) return;
-
     try {
       const { error } = await updatePurchaseOrderStatus(poId, 'awaiting_approval', lastEventId);
 
@@ -120,7 +118,6 @@ export default function PurchasingPage() {
         return;
       }
 
-      alert('PO submitted for approval!');
       fetchOrders();
     } catch (error) {
       console.error('Error submitting PO:', error);
@@ -134,8 +131,6 @@ export default function PurchasingPage() {
       return;
     }
 
-    if (!confirm('Approve this PO?')) return;
-
     try {
       const { error } = await updatePurchaseOrderStatus(poId, 'approved', lastEventId);
 
@@ -144,7 +139,6 @@ export default function PurchasingPage() {
         return;
       }
 
-      alert('PO approved!');
       fetchOrders();
     } catch (error) {
       console.error('Error approving PO:', error);
@@ -179,7 +173,6 @@ export default function PurchasingPage() {
         return;
       }
 
-      alert('PO voided successfully!');
       fetchOrders();
     } catch (error) {
       console.error('Error voiding PO:', error);
@@ -450,8 +443,10 @@ export default function PurchasingPage() {
 
         {selectedOrder && !showEditModal && (
           <PODetailPanel
+            key={selectedOrder.id}
             po={selectedOrder}
             onClose={() => setSelectedOrder(null)}
+            onChanged={fetchOrders}
             locations={locations}
             catalogItems={catalogItems}
             onPlaceOrder={(poRow) => {
@@ -533,17 +528,21 @@ export default function PurchasingPage() {
 function PODetailPanel({
   po,
   onClose,
+  onChanged,
   locations,
   catalogItems,
   onPlaceOrder
 }: {
   po: PurchaseOrder;
   onClose: () => void;
+  onChanged: () => void;
   locations: Map<string, string>;
   catalogItems: Map<string, any>;
   onPlaceOrder: (po: PurchaseOrder) => void;
 }) {
   const uomLabels = useUOMLabelMap();
+  const [status, setStatus] = useState(po.status);
+  const [actionError, setActionError] = useState('');
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -578,42 +577,47 @@ function PODetailPanel({
 
   const updateStatus = async (newStatus: string) => {
     setUpdatingStatus(true);
+    setActionError('');
     try {
       const { error } = await updatePurchaseOrderStatus(po.id, newStatus, po.last_event_id);
 
       if (error) {
-        throw AppError.internal(error.message);
+        setActionError(error.message);
+        return;
       }
 
-      // Refresh the page to show updated PO
-      window.location.reload();
+      // Reflect the new status in place and refresh the list behind the panel.
+      setStatus(newStatus);
+      onChanged();
     } catch (error: any) {
       console.error('Error updating status:', error);
-      alert(`Failed to update status: ${error.message}`);
+      setActionError(error?.message || 'Failed to update status.');
     } finally {
       setUpdatingStatus(false);
     }
   };
 
   const deletePO = async () => {
-    if (!confirm(`Are you sure you want to void PO ${po.po_number}? This will cancel the purchase order.`)) {
+    if (!confirm(`Void PO ${po.po_number}? This cancels the purchase order.`)) {
       return;
     }
 
     setUpdatingStatus(true);
+    setActionError('');
     try {
       const { error } = await deletePurchaseOrder(po.id, po.last_event_id);
 
       if (error) {
-        throw AppError.internal(error.message);
+        setActionError(error.message);
+        return;
       }
 
-      // Close panel and refresh to remove voided PO from list
+      // Remove the voided PO from the list and close the panel — no full reload.
+      onChanged();
       onClose();
-      window.location.reload();
     } catch (error: any) {
       console.error('Error voiding PO:', error);
-      alert(`Failed to void PO: ${error.message}`);
+      setActionError(error?.message || 'Failed to void PO.');
     } finally {
       setUpdatingStatus(false);
     }
@@ -629,7 +633,7 @@ function PODetailPanel({
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span className="font-mono font-medium text-lg">{po.po_number}</span>
-          <StatusChip status={po.status} />
+          <StatusChip status={status} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -731,9 +735,14 @@ function PODetailPanel({
         </div>
 
         <div className="border-t pt-4">
+          {actionError && (
+            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
+              {actionError}
+            </div>
+          )}
           <div className="flex flex-col gap-2">
             {/* Status-specific actions */}
-            {po.status === 'draft' && (
+            {status === 'draft' && (
               <>
                 <button
                   onClick={() => updateStatus('awaiting_approval')}
@@ -752,7 +761,7 @@ function PODetailPanel({
               </>
             )}
 
-            {po.status === 'awaiting_approval' && (
+            {status === 'awaiting_approval' && (
               <>
                 <button
                   onClick={() => updateStatus('approved')}
@@ -778,7 +787,7 @@ function PODetailPanel({
               </>
             )}
 
-            {po.status === 'approved' && (
+            {status === 'approved' && (
               <button
                 onClick={() => onPlaceOrder(po)}
                 className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
@@ -787,7 +796,7 @@ function PODetailPanel({
               </button>
             )}
 
-            {(po.status === 'partially_received' || po.status === 'fully_received') && (
+            {(status === 'partially_received' || status === 'fully_received') && (
               <button
                 onClick={() => updateStatus('closed')}
                 disabled={updatingStatus}
@@ -797,7 +806,7 @@ function PODetailPanel({
               </button>
             )}
 
-            {po.status === 'closed' && (
+            {status === 'closed' && (
               <div className="w-full px-4 py-2 text-center text-muted-foreground bg-muted/30 rounded-md">
                 PO Closed
               </div>
@@ -923,7 +932,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
           .map(l => ({
             item_description: l.item_description.trim(),
             uom_term_id: l.uom_term_id || undefined,
-            qty_ordered: parseInt(l.qty),
+            qty_ordered: parseFloat(l.qty),
             unit_cost: parseFloat(l.unit_cost) || 0,
           }));
       } else {
@@ -932,7 +941,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
           .filter(l => l.catalog_item_id && l.qty)
           .map(l => ({
             catalog_item_id: l.catalog_item_id,
-            qty_ordered: parseInt(l.qty),
+            qty_ordered: parseFloat(l.qty),
             unit_cost: parseFloat(l.unit_cost) || 0,
           }));
       }
@@ -1131,7 +1140,8 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
                     onChange={(e) => updateLine(index, 'qty', e.target.value)}
                     className="w-20 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Qty"
-                    min="1"
+                    min="0"
+                    step="0.01"
                   />
                   <input
                     type="number"
@@ -1289,7 +1299,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
           .map(l => ({
             id: l.id || undefined,
             catalog_item_id: l.catalog_item_id,
-            qty_ordered: parseInt(l.qty),
+            qty_ordered: parseFloat(l.qty),
             unit_cost: parseFloat(l.unit_cost) || 0,
           })),
       });
@@ -1426,7 +1436,8 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                     onChange={(e) => updateLine(index, 'qty', e.target.value)}
                     className="w-20 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                     placeholder="Qty"
-                    min="1"
+                    min="0"
+                    step="0.01"
                   />
                   <input
                     type="number"

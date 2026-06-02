@@ -154,7 +154,7 @@ export default function ReorderAlertsPage() {
   };
 
   const handleCreatePO = (alert: ReorderAlert) => {
-    window.location.href = `/inventory/purchasing/new?item_id=${alert.catalog_item_id}&qty=${alert.suggested_order_qty}&location_id=${alert.location_id}`;
+    window.location.href = `/inventory/purchasing/create?item_id=${alert.catalog_item_id}&qty=${alert.suggested_order_qty}&location_id=${alert.location_id}`;
   };
 
   // ── Amazon helpers ──────────────────────────────────────────────────
@@ -170,7 +170,7 @@ export default function ReorderAlertsPage() {
       location_id: alertRow.location_id,
       vendor: 'AMAZON-BIZ',
     });
-    window.location.href = `/inventory/purchasing/new?${params}`;
+    window.location.href = `/inventory/purchasing/create?${params}`;
   };
 
   // ── Columns ─────────────────────────────────────────────────────────

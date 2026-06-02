@@ -628,8 +628,43 @@ export async function updatePurchaseOrder(
       return { data: null, error: new Error('Purchase order was updated by someone else. Please refresh and try again.') };
     }
 
-    // TODO: Handle line updates (requires deleting old lines and inserting new ones)
-    // For now, this is a simplified implementation
+    // Replace line items when provided. Editing is only exposed for draft POs (no
+    // receipts yet), so a wholesale delete + re-insert is safe — the status-from-lines
+    // triggers only fire on received quantities and leave the PO status untouched here.
+    if (updates.lines) {
+      const { error: deleteError } = await supabase
+        .from('purchase_order_lines')
+        .delete()
+        .eq('po_id', poId);
+
+      if (deleteError) {
+        console.error('Error clearing PO lines:', deleteError);
+        return { data: null, error: new Error(deleteError.message) };
+      }
+
+      if (updates.lines.length > 0) {
+        const lineRows = updates.lines.map((line, index) => ({
+          tenant_id: data.tenant_id,
+          po_id: poId,
+          line_number: index + 1,
+          catalog_item_id: line.catalog_item_id,
+          qty_ordered: line.qty_ordered,
+          unit_cost: line.unit_cost,
+          status: 'pending',
+          // last_event_id is NOT NULL + UNIQUE per row — one fresh id per line.
+          last_event_id: globalThis.crypto.randomUUID(),
+        }));
+
+        const { error: insertError } = await supabase
+          .from('purchase_order_lines')
+          .insert(lineRows);
+
+        if (insertError) {
+          console.error('Error inserting PO lines:', insertError);
+          return { data: null, error: new Error(insertError.message) };
+        }
+      }
+    }
 
     return { data: { success: true }, error: null };
   } catch (err) {
