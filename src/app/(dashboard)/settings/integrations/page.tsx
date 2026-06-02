@@ -5,7 +5,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SettingsNav } from '@/components/settings/SettingsNav';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
-import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart } from 'lucide-react';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart, Sparkles, Wand2 } from 'lucide-react';
 
 const API = '/api/settings/integrations/printify';
 const AMAZON_API = '/api/settings/integrations/amazon-business';
@@ -113,8 +114,27 @@ export default function IntegrationsPage() {
   const [punchoutReviewOrder, setPunchoutReviewOrder] = useState<any>(null);
   const [punchoutSubmitting, setPunchoutSubmitting] = useState(false);
 
-  // Shared catalog items
+  // Shared catalog items + categories
   const [catalogItems, setCatalogItems] = useState<Array<{ id: string; label: string }>>([]);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string; sku_prefix: string | null }>>([]);
+
+  // AI "paste link → draft item + map" flow
+  type AiDraft = {
+    name: string;
+    description: string;
+    category_id: string | null;        // use this existing category
+    new_category_name: string | null;  // …or create this one
+    category_sku_prefix: string;
+    uom_term_id: string | null;
+    uom_label: string;
+    tracking_mode: string;
+    reorder_point: number | null;
+    duplicates: Array<{ entityId: string; name: string; score: number }>;
+  };
+  const [mappingMode, setMappingMode] = useState<'ai' | 'existing'>('ai');
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiDraft, setAiDraft] = useState<AiDraft | null>(null);
+  const [asinAlreadyMapped, setAsinAlreadyMapped] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getStoredAccessToken();
@@ -192,11 +212,23 @@ export default function IntegrationsPage() {
     }
   }, []);
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const rows = await InventoryRPC.getItemCategories();
+      setCategories(rows.map((c) => ({ id: c.id, name: c.name, sku_prefix: c.sku_prefix ?? null })));
+    } catch {
+      // Silently fail — AI draft falls back to creating a new category by name.
+    }
+  }, []);
+
   useEffect(() => {
     if (connectionStatus === 'connected' || amazonStatus === 'connected') {
       loadCatalogItems();
     }
-  }, [connectionStatus, amazonStatus, loadCatalogItems]);
+    if (amazonStatus === 'connected') {
+      loadCategories();
+    }
+  }, [connectionStatus, amazonStatus, loadCatalogItems, loadCategories]);
 
   useEffect(() => {
     if (connectionStatus === 'connected') loadMappings();
@@ -447,6 +479,10 @@ export default function IntegrationsPage() {
     if (!asinInput.trim()) return;
     setAsinResolving(true);
     setResolvedAsin(null);
+    setAiDraft(null);
+    setAsinAlreadyMapped(null);
+    setMappingMode('ai');
+    setNewMappingForm({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
     setAmazonMappingError('');
 
     try {
@@ -461,12 +497,106 @@ export default function IntegrationsPage() {
         throw new Error(json?.error?.message || 'Could not resolve ASIN');
       }
 
-      setResolvedAsin(json.data);
+      const resolved: ResolvedAsin = json.data;
+      setResolvedAsin(resolved);
+
+      // ASIN-level dedup: this exact product may already be mapped.
+      const existing = amazonMappings.find((m) => m.supplier_sku === resolved.asin);
+      if (existing) {
+        setAsinAlreadyMapped(existing.item_name || resolved.asin);
+        return;
+      }
+
+      // Kick off the AI draft from the product title (one-tap review fills it in).
+      if (resolved.title) {
+        void buildAiDraft(resolved.title);
+      }
     } catch (err: unknown) {
       setAmazonMappingError(err instanceof Error ? err.message : 'Could not resolve ASIN');
     } finally {
       setAsinResolving(false);
     }
+  };
+
+  // Ask the AI to draft catalog fields from the product title, and check whether
+  // we already stock a matching item (so the user can map to it instead).
+  const buildAiDraft = async (title: string) => {
+    setAiDrafting(true);
+    try {
+      const [suggestRes, dupRes] = await Promise.all([
+        fetch('/api/ai/item-suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: title,
+            existing_categories: categories.map((c) => ({ id: c.id, name: c.name, sku_prefix: c.sku_prefix })),
+          }),
+        }),
+        fetch(`/api/ai/duplicates?entity_type=item&name=${encodeURIComponent(title)}`),
+      ]);
+
+      const suggestJson = await suggestRes.json().catch(() => ({}));
+      const dupJson = await dupRes.json().catch(() => ({}));
+
+      const duplicates = (dupJson?.data || []).map((d: any) => ({
+        entityId: d.entityId,
+        name: d.name,
+        score: d.score ?? 0,
+      }));
+
+      if (suggestRes.ok && suggestJson?.suggestion) {
+        const s = suggestJson.suggestion;
+        setAiDraft({
+          name: title,
+          description: s.description || '',
+          category_id: s.category_id ?? null,
+          new_category_name: s.category_id ? null : (s.new_category_name || s.category_display || null),
+          category_sku_prefix: s.sku_prefix || '',
+          uom_term_id: s.uom_term_id ?? null,
+          uom_label: s.uom || 'Each',
+          tracking_mode: s.tracking_mode || 'stock',
+          reorder_point: typeof s.reorder_point === 'number' ? s.reorder_point : null,
+          duplicates,
+        });
+      } else {
+        // AI unavailable — still let the user create with the raw title, or map manually.
+        setAiDraft({
+          name: title, description: '', category_id: null, new_category_name: null,
+          category_sku_prefix: '', uom_term_id: null, uom_label: 'Each',
+          tracking_mode: 'stock', reorder_point: null, duplicates,
+        });
+      }
+    } catch {
+      // Non-fatal — the user can still pick "Map to existing item".
+    } finally {
+      setAiDrafting(false);
+    }
+  };
+
+  const postAmazonMapping = async (catalogItemId: string) => {
+    const res = await fetch(`${AMAZON_API}/item-mappings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({
+        catalog_item_id: catalogItemId,
+        asin: resolvedAsin!.asin,
+        pack_quantity: Number(newMappingForm.pack_quantity) || 1,
+        last_known_price: resolvedAsin!.price ?? undefined,
+        is_preferred: newMappingForm.is_preferred,
+        notes: resolvedAsin!.title ?? undefined,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error?.message || 'Failed to save mapping');
+  };
+
+  const resetAmazonAddMapping = () => {
+    setNewMappingForm({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
+    setResolvedAsin(null);
+    setAiDraft(null);
+    setAsinAlreadyMapped(null);
+    setAsinInput('');
+    setShowAmazonAddMapping(false);
   };
 
   const handleAmazonAddMapping = async (e: React.FormEvent) => {
@@ -476,29 +606,41 @@ export default function IntegrationsPage() {
     setAmazonMappingSaving(true);
 
     try {
-      const res = await fetch(`${AMAZON_API}/item-mappings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({
-          catalog_item_id: newMappingForm.catalog_item_id,
-          asin: resolvedAsin.asin,
-          pack_quantity: Number(newMappingForm.pack_quantity) || 1,
-          last_known_price: resolvedAsin.price ?? undefined,
-          is_preferred: newMappingForm.is_preferred,
-          notes: resolvedAsin.title ?? undefined,
-        }),
-      });
-      const json = await res.json();
+      let catalogItemId = newMappingForm.catalog_item_id;
 
-      if (!res.ok) {
-        throw new Error(json?.error?.message || 'Failed to save mapping');
+      if (mappingMode === 'ai') {
+        if (!aiDraft || !aiDraft.name.trim()) {
+          throw new Error('Item name is required.');
+        }
+
+        // Create the category first if the AI proposed a brand-new one.
+        let categoryId = aiDraft.category_id;
+        if (!categoryId && aiDraft.new_category_name?.trim()) {
+          const cat = await InventoryRPC.createItemCategory({
+            name: aiDraft.new_category_name.trim(),
+            sku_prefix: aiDraft.category_sku_prefix || undefined,
+          } as any);
+          categoryId = cat.id;
+        }
+
+        // Create the catalog item (SKU auto-generated by the RPC).
+        const item = await InventoryRPC.createCatalogItem({
+          name: aiDraft.name.trim(),
+          description: aiDraft.description || undefined,
+          category_id: categoryId || undefined,
+          uom_term_id: aiDraft.uom_term_id || undefined,
+          tracking_mode: aiDraft.tracking_mode || undefined,
+          reorder_point: aiDraft.reorder_point ?? undefined,
+        } as any);
+        catalogItemId = item.id;
       }
 
-      setNewMappingForm({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
-      setResolvedAsin(null);
-      setAsinInput('');
-      setShowAmazonAddMapping(false);
-      await loadAmazonMappings();
+      if (!catalogItemId) throw new Error('Select an inventory item to map.');
+
+      await postAmazonMapping(catalogItemId);
+
+      resetAmazonAddMapping();
+      await Promise.all([loadAmazonMappings(), loadCatalogItems(), loadCategories()]);
     } catch (err: unknown) {
       setAmazonMappingError(err instanceof Error ? err.message : 'Failed to save mapping');
     } finally {
@@ -1047,7 +1189,7 @@ export default function IntegrationsPage() {
                 </div>
               </div>
               {isAdmin && (
-                <button onClick={() => { setShowAmazonAddMapping(!showAmazonAddMapping); setResolvedAsin(null); setAsinInput(''); setAmazonMappingError(''); }}
+                <button onClick={() => { setShowAmazonAddMapping(!showAmazonAddMapping); setResolvedAsin(null); setAiDraft(null); setAsinAlreadyMapped(null); setMappingMode('ai'); setAsinInput(''); setAmazonMappingError(''); }}
                   className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm flex items-center gap-1.5">
                   <Plus className="h-3.5 w-3.5" /> Add Mapping
                 </button>
@@ -1095,20 +1237,106 @@ export default function IntegrationsPage() {
                         <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0" />
                       </div>
 
-                      {/* Step 3: Select inventory item + pack qty */}
-                      <div className="border-t pt-3 space-y-3">
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Inventory Item</label>
-                          <select value={newMappingForm.catalog_item_id}
-                            onChange={(e) => setNewMappingForm({ ...newMappingForm, catalog_item_id: e.target.value })}
-                            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white"
-                            required disabled={!isAdmin}>
-                            <option value="">Select an inventory item...</option>
-                            {catalogItems.map((item) => (
-                              <option key={item.id} value={item.id}>{item.label}</option>
-                            ))}
-                          </select>
+                      {asinAlreadyMapped ? (
+                        <div className="border-t pt-3">
+                          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                            This product is already mapped to <strong>{asinAlreadyMapped}</strong>. Nothing to do.
+                          </div>
                         </div>
+                      ) : (
+                      <div className="border-t pt-3 space-y-3">
+                        {/* Mode toggle: AI-create vs map to existing */}
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setMappingMode('ai')}
+                            className={`flex-1 px-3 py-2 rounded-md text-sm flex items-center justify-center gap-1.5 border ${mappingMode === 'ai' ? 'bg-primary/10 border-primary text-primary font-medium' : 'hover:bg-gray-50'}`}>
+                            <Sparkles className="h-3.5 w-3.5" /> Create new item (AI)
+                          </button>
+                          <button type="button" onClick={() => setMappingMode('existing')}
+                            className={`flex-1 px-3 py-2 rounded-md text-sm border ${mappingMode === 'existing' ? 'bg-primary/10 border-primary text-primary font-medium' : 'hover:bg-gray-50'}`}>
+                            Map to existing item
+                          </button>
+                        </div>
+
+                        {mappingMode === 'ai' ? (
+                          aiDrafting ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+                              <Loader2 className="h-4 w-4 animate-spin" /> AI is drafting the item from the product…
+                            </div>
+                          ) : aiDraft ? (
+                            <div className="space-y-3">
+                              {aiDraft.duplicates.length > 0 && (
+                                <div className="bg-amber-50 border border-amber-200 rounded p-2 text-xs space-y-1">
+                                  <div className="font-medium text-amber-800">You may already stock this — map to it instead?</div>
+                                  {aiDraft.duplicates.slice(0, 3).map((d) => (
+                                    <div key={d.entityId} className="flex items-center justify-between gap-2">
+                                      <span className="truncate">{d.name}</span>
+                                      <button type="button"
+                                        onClick={() => { setMappingMode('existing'); setNewMappingForm((f) => ({ ...f, catalog_item_id: d.entityId })); }}
+                                        className="text-primary hover:underline flex-shrink-0">Map to this</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div>
+                                <label className="block text-sm font-medium mb-1">Item Name <span className="text-xs font-normal text-muted-foreground">(AI-drafted — edit if needed)</span></label>
+                                <input type="text" value={aiDraft.name}
+                                  onChange={(e) => setAiDraft({ ...aiDraft, name: e.target.value })}
+                                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm" disabled={!isAdmin} />
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-sm font-medium mb-1">Category</label>
+                                  <select
+                                    value={aiDraft.category_id ?? (aiDraft.new_category_name ? '__new__' : '')}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (v === '__new__') setAiDraft({ ...aiDraft, category_id: null, new_category_name: aiDraft.new_category_name || aiDraft.name });
+                                      else if (v === '') setAiDraft({ ...aiDraft, category_id: null, new_category_name: null });
+                                      else setAiDraft({ ...aiDraft, category_id: v, new_category_name: null });
+                                    }}
+                                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white" disabled={!isAdmin}>
+                                    <option value="">No category</option>
+                                    {categories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                                    <option value="__new__">+ Create new category…</option>
+                                  </select>
+                                  {!aiDraft.category_id && aiDraft.new_category_name != null && (
+                                    <div className="flex items-center gap-2 mt-1.5">
+                                      <input type="text" value={aiDraft.new_category_name}
+                                        onChange={(e) => setAiDraft({ ...aiDraft, new_category_name: e.target.value })}
+                                        className="flex-1 px-3 py-1.5 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm" disabled={!isAdmin} />
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-700">NEW</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <label className="block text-sm font-medium mb-1">Unit / Tracking</label>
+                                  <div className="px-3 py-2 border rounded-md text-sm bg-gray-50 text-muted-foreground">
+                                    {aiDraft.uom_label} · {aiDraft.tracking_mode}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground py-2">
+                              Couldn&apos;t auto-draft from this product. Switch to &quot;Map to existing item&quot;, or retry.
+                            </div>
+                          )
+                        ) : (
+                          <div>
+                            <label className="block text-sm font-medium mb-1">Inventory Item</label>
+                            <select value={newMappingForm.catalog_item_id}
+                              onChange={(e) => setNewMappingForm({ ...newMappingForm, catalog_item_id: e.target.value })}
+                              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm bg-white"
+                              disabled={!isAdmin}>
+                              <option value="">Select an inventory item...</option>
+                              {catalogItems.map((item) => (
+                                <option key={item.id} value={item.id}>{item.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {/* Shared: pack qty + preferred (apply to the mapping either way) */}
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="block text-sm font-medium mb-1">Pack Quantity <span className="text-red-500">*</span></label>
@@ -1128,15 +1356,20 @@ export default function IntegrationsPage() {
                           </div>
                         </div>
                       </div>
+                      )}
                     </div>
                   )}
 
                   <div className="flex items-center gap-2">
-                    <button type="submit" disabled={amazonMappingSaving || !resolvedAsin || !newMappingForm.catalog_item_id}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm">
-                      {amazonMappingSaving ? 'Saving...' : 'Save Mapping'}
+                    <button type="submit"
+                      disabled={amazonMappingSaving || !resolvedAsin || !!asinAlreadyMapped || (mappingMode === 'ai' ? (aiDrafting || !aiDraft || !aiDraft.name.trim()) : !newMappingForm.catalog_item_id)}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm flex items-center gap-1.5">
+                      {mappingMode === 'ai' && !amazonMappingSaving && <Wand2 className="h-3.5 w-3.5" />}
+                      {amazonMappingSaving
+                        ? (mappingMode === 'ai' ? 'Creating…' : 'Saving…')
+                        : (mappingMode === 'ai' ? 'Create item & map' : 'Save mapping')}
                     </button>
-                    <button type="button" onClick={() => { setShowAmazonAddMapping(false); setAmazonMappingError(''); setResolvedAsin(null); setAsinInput(''); }}
+                    <button type="button" onClick={() => { resetAmazonAddMapping(); setAmazonMappingError(''); }}
                       className="px-4 py-2 border rounded-md hover:bg-gray-50 text-sm">Cancel</button>
                   </div>
                   {amazonMappingError && (
