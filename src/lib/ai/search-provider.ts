@@ -13,6 +13,12 @@ export interface SearchResult {
   snippet: string;
   url: string;
   content?: string;
+  imageUrl?: string;
+}
+
+/** Brave (and some other engines) bold query matches with HTML tags — strip them. */
+function stripHtml(s: string): string {
+  return (s || '').replace(/<[^>]+>/g, '').trim();
 }
 
 export interface SearchOptions {
@@ -93,20 +99,56 @@ class OpenAISearchProvider implements SearchProvider {
   }
 }
 
+// ─── Brave Web Search Provider ───────────────────────────────────────────
+
+class BraveSearchProvider implements SearchProvider {
+  name = 'brave';
+
+  async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const apiKey = process.env.BRAVE_API_KEY;
+    if (!apiKey) return [];
+
+    const maxResults = options?.maxResults ?? 5;
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+
+    const res = await fetch(url, {
+      headers: { 'X-Subscription-Token': apiKey, Accept: 'application/json' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) {
+      console.warn(`[SearchProvider] Brave search failed: ${res.status}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const results = data?.web?.results ?? [];
+
+    return results.slice(0, maxResults).map((r: any) => ({
+      title: stripHtml(r.title || ''),
+      snippet: stripHtml(r.description || ''),
+      url: r.url || '',
+      content: Array.isArray(r.extra_snippets) ? r.extra_snippets.map(stripHtml).join(' ') : undefined,
+      imageUrl: r.thumbnail?.src || r.thumbnail?.original || undefined,
+    }));
+  }
+}
+
 // ─── Factory ─────────────────────────────────────────────────────────────
 
 /**
  * Returns the best available search provider, or null if none is configured.
  *
  * Priority:
- * 1. OpenAI (if OPENAI_API_KEY exists)
- * 2. Tavily (if TAVILY_API_KEY exists) — future
+ * 1. Brave (if BRAVE_API_KEY exists) — real search index, best for product/web lookups
+ * 2. OpenAI (if OPENAI_API_KEY exists) — LLM-backed web search fallback
  * 3. null
  */
 export function getSearchProvider(): SearchProvider | null {
+  if (process.env.BRAVE_API_KEY) {
+    return new BraveSearchProvider();
+  }
   if (process.env.OPENAI_API_KEY) {
     return new OpenAISearchProvider();
   }
-  // Future: if (process.env.TAVILY_API_KEY) return new TavilySearchProvider();
   return null;
 }

@@ -135,6 +135,7 @@ export default function IntegrationsPage() {
   const [aiDrafting, setAiDrafting] = useState(false);
   const [aiDraft, setAiDraft] = useState<AiDraft | null>(null);
   const [asinAlreadyMapped, setAsinAlreadyMapped] = useState<string | null>(null);
+  const [manualName, setManualName] = useState('');
 
   useEffect(() => {
     const token = getStoredAccessToken();
@@ -481,6 +482,7 @@ export default function IntegrationsPage() {
     setResolvedAsin(null);
     setAiDraft(null);
     setAsinAlreadyMapped(null);
+    setManualName('');
     setMappingMode('ai');
     setNewMappingForm({ catalog_item_id: '', pack_quantity: '1', is_preferred: false });
     setAmazonMappingError('');
@@ -595,6 +597,7 @@ export default function IntegrationsPage() {
     setResolvedAsin(null);
     setAiDraft(null);
     setAsinAlreadyMapped(null);
+    setManualName('');
     setAsinInput('');
     setShowAmazonAddMapping(false);
   };
@@ -1317,8 +1320,23 @@ export default function IntegrationsPage() {
                               </div>
                             </div>
                           ) : (
-                            <div className="text-sm text-muted-foreground py-2">
-                              Couldn&apos;t auto-draft from this product. Switch to &quot;Map to existing item&quot;, or retry.
+                            <div className="space-y-2 py-1">
+                              <p className="text-sm text-muted-foreground">
+                                Couldn&apos;t auto-read this product&apos;s name. Type it and we&apos;ll draft the rest:
+                              </p>
+                              <div className="flex gap-2">
+                                <input type="text" value={manualName}
+                                  onChange={(e) => setManualName(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter' && manualName.trim()) { e.preventDefault(); void buildAiDraft(manualName.trim()); } }}
+                                  placeholder="e.g. Eagle 5 Gallon Type I Red Safety Gas Can"
+                                  className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm" disabled={!isAdmin} />
+                                <button type="button" onClick={() => { if (manualName.trim()) void buildAiDraft(manualName.trim()); }}
+                                  disabled={!manualName.trim()}
+                                  className="px-3 py-2 border rounded-md hover:bg-gray-50 disabled:opacity-50 text-sm flex items-center gap-1.5">
+                                  <Sparkles className="h-3.5 w-3.5" /> Draft
+                                </button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">Or switch to &quot;Map to existing item&quot; above.</p>
                             </div>
                           )
                         ) : (

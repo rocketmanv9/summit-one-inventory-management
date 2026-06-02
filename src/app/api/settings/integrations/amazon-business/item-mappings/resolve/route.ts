@@ -5,6 +5,16 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { getSearchProvider } from '@/lib/ai/search-provider';
+
+/** Strip common marketplace noise from a search-result title. */
+function cleanProductTitle(raw: string): string {
+  return raw
+    .replace(/^Amazon\.com\s*:?\s*/i, '')
+    .replace(/\s*[-:|]\s*Amazon\.com.*$/i, '')
+    .replace(/\s*:\s*(Industrial|Tools|Patio|Health|Office).*$/i, '')
+    .trim();
+}
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -77,6 +87,28 @@ export const POST = createSessionReadRoute(async ({ req }) => {
     }
   } catch {
     // Metadata fetch is best-effort; ASIN extraction is what matters
+  }
+
+  // Amazon frequently blocks server-side scrapes (CAPTCHA / no OG tags). When we
+  // couldn't get a title, fall back to a web-search provider (Brave if configured,
+  // else OpenAI web search) so the AI draft still has something to work from.
+  if (!title) {
+    try {
+      const provider = getSearchProvider();
+      if (provider) {
+        const results = await provider.search(`${asin} amazon product`, { maxResults: 5 });
+        const hit =
+          results.find((r) => r.url?.includes(asin)) ||
+          results.find((r) => /amazon\./i.test(r.url || '')) ||
+          results[0];
+        if (hit?.title) {
+          title = cleanProductTitle(hit.title);
+          if (!imageUrl && hit.imageUrl) imageUrl = hit.imageUrl;
+        }
+      }
+    } catch {
+      // Search fallback is best-effort too — the user can still type a name manually.
+    }
   }
 
   return Response.json({
