@@ -81,8 +81,13 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, fetch, supabase, 
     requesterEmail: body.requester_email,
   });
 
+  // Resend can only send from a VERIFIED domain. Send from the org's verified
+  // sender (ORDER_EMAIL_FROM, e.g. orders@summit-one.app) but show the
+  // requester's name and route replies back to their real address.
+  const rawSender = process.env.ORDER_EMAIL_FROM || body.requester_email;
+  const senderAddress = rawSender.includes('<') ? rawSender.replace(/.*<([^>]+)>.*/, '$1').trim() : rawSender.trim();
   const fromName = body.requester_name?.trim();
-  const from = fromName ? `${fromName} <${body.requester_email}>` : body.requester_email;
+  const from = fromName ? `${fromName} <${senderAddress}>` : senderAddress;
 
   // Send inline (not afterCommit) so a failure surfaces to the user and the
   // idempotency key is released for retry; a successful send is cached by the

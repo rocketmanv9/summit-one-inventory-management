@@ -217,7 +217,8 @@ export function OrderByEmailModal({ open, onClose, presetVendorId }: OrderByEmai
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Sends from {requester?.email ? <strong>{requester.email}</strong> : 'your account'} and copies you for your records.
+              Sent with your name on it; the vendor&apos;s replies go to{' '}
+              {requester?.email ? <strong>{requester.email}</strong> : 'your email'}, and you&apos;re copied for your records.
             </p>
 
             <div className="flex gap-3 pt-2">
