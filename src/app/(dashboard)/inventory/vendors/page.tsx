@@ -1071,6 +1071,12 @@ function AddCustomVendorModal({
     account_number: vendor?.account_number || '',
     payment_terms: vendor?.payment_terms || '',
     notes: vendor?.notes || '',
+    contact_email: (vendor as any)?.contact_email || '',
+    contact_phone: (vendor as any)?.contact_phone || '',
+    address_line_1: (vendor as any)?.address_line_1 || '',
+    city: (vendor as any)?.city || '',
+    state: (vendor as any)?.state || '',
+    postal_code: (vendor as any)?.postal_code || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1092,6 +1098,14 @@ function AddCustomVendorModal({
       if (form.account_number) payload.account_number = form.account_number;
       if (form.payment_terms) payload.payment_terms = form.payment_terms;
       if (form.notes) payload.notes = form.notes;
+      // Contact + address — needed to email POs to the vendor. Sent on every save
+      // (including blanks) so clearing a value persists.
+      payload.contact_email = form.contact_email.trim() || null;
+      payload.contact_phone = form.contact_phone.trim() || null;
+      payload.address_line_1 = form.address_line_1.trim() || null;
+      payload.city = form.city.trim() || null;
+      payload.state = form.state.trim() || null;
+      payload.postal_code = form.postal_code.trim() || null;
 
       const url = isEdit ? `/api/inventory/vendors/${vendor!.id}` : '/api/inventory/vendors';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -1148,6 +1162,35 @@ function AddCustomVendorModal({
             <input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="Brief description of this vendor" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Contact Email</label>
+              <input type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="orders@vendor.com" />
+              <p className="text-xs text-muted-foreground mt-1">Where purchase orders are emailed.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Phone</label>
+              <input type="tel" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="(555) 123-4567" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Address</label>
+            <input type="text" value={form.address_line_1} onChange={(e) => setForm({ ...form, address_line_1: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Street address" />
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <input type="text" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })}
+                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="City" />
+              <input type="text" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })}
+                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="State" />
+              <input type="text" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })}
+                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="ZIP" />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
