@@ -100,7 +100,10 @@ const ConnectSchema = z.object({
   shared_secret: z.string().min(1),
   po_request_url: z.string().url(),
   punchout_urls: z.array(z.string().url()).optional().default([]),
-  sandbox: z.boolean().optional().default(true),
+  // Optional and NOT defaulted: test/live is owned by the PATCH mode toggle.
+  // Re-saving credentials must never silently flip an existing connection back
+  // to test mode, so we only honor sandbox here if explicitly provided.
+  sandbox: z.boolean().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey }) => {
@@ -124,7 +127,8 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
 
     const config = {
       ...existing.config,
-      sandbox: body.sandbox,
+      // Preserve the current mode unless the caller explicitly sets it.
+      sandbox: body.sandbox ?? existing.config?.sandbox ?? true,
       from_identity_ref: fromIdentityRef,
       shared_secret_ref: sharedSecretRef,
       po_request_url: body.po_request_url,
@@ -168,7 +172,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, idempotencyKey })
       display_name: 'Amazon Business',
       provider_type: 'procurement_marketplace',
       config: {
-        sandbox: body.sandbox,
+        sandbox: body.sandbox ?? true,
         po_request_url: body.po_request_url,
         punchout_urls: body.punchout_urls,
       },

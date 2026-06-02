@@ -398,11 +398,13 @@ export default function IntegrationsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({
+          // Intentionally omit `sandbox` — test/live is controlled by the mode
+          // toggle. Sending it here would reset the mode every time credentials
+          // are re-saved.
           from_identity: amazonForm.from_identity,
           shared_secret: amazonForm.shared_secret,
           po_request_url: amazonForm.po_request_url,
           punchout_urls: punchoutUrls,
-          sandbox: amazonForm.sandbox,
         }),
       });
       const json = await res.json();
@@ -413,7 +415,7 @@ export default function IntegrationsPage() {
 
       setAmazonForm({ from_identity: '', shared_secret: '', po_request_url: '', punchout_urls: '', sandbox: true });
       if (json?.data?.configured) {
-        setAmazonSuccess('cXML credentials saved and validated. Integration is in test mode.');
+        setAmazonSuccess('cXML credentials saved and validated. Use the Test/Live toggle above to set the order mode.');
         setAmazonStatus('connected');
       } else {
         setAmazonSuccess('Credentials saved. Some configuration may be incomplete — check PO Request URL.');
