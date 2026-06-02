@@ -11,6 +11,8 @@ import {
   buildOrderRequest,
   parseOrderResponse,
   postCxml,
+  normalizeStateCode,
+  normalizeCountryCode,
   type OrderRequestLineItem,
 } from '@/lib/integrations/amazon-cxml';
 
@@ -84,14 +86,26 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     );
   }
 
+  // Amazon rejects non-ISO state/country (error 003-052). The cXML builder
+  // normalizes these, but catch an unmappable state here so the operator gets an
+  // actionable message instead of a cryptic Amazon rejection.
+  const normalizedCountry = normalizeCountryCode(location.country || 'US');
+  const normalizedState = normalizeStateCode(location.state);
+  if (normalizedCountry === 'US' && !/^[A-Z]{2}$/.test(normalizedState)) {
+    throw AppError.badRequest(
+      `Location "${location.name}" has an unrecognized state "${location.state}". ` +
+      'Enter the 2-letter state code (e.g. GA) so Amazon accepts the shipping address.'
+    );
+  }
+
   const shipTo = {
     name: location.name,
     address_line_1: location.address_line_1,
     address_line_2: location.address_line_2 || undefined,
     city: location.city,
-    state: location.state,
+    state: normalizedState,
     postal_code: location.postal_code,
-    country: location.country || 'US',
+    country: normalizedCountry,
   };
 
   // 4. Optionally resolve pack quantities from vendor_items

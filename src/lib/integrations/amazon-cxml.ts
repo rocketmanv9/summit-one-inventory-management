@@ -32,6 +32,56 @@ function isoTimestamp(): string {
   return new Date().toISOString();
 }
 
+// ── Address normalization ─────────────────────────────────────────────
+// Location address fields are free-text, but Amazon's cXML requires a 2-letter
+// state code and a 2-letter ISO country code on <Country isoCountryCode="..">.
+// Transmitting "Georgia"/"United States" verbatim triggers Amazon error 003-052
+// ("invalid Shipping Address"), so we normalize before emitting the cXML.
+
+const US_STATE_CODES: Record<string, string> = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
+  colorado: 'CO', connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC',
+  florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL',
+  indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA',
+  maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN',
+  mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK',
+  oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
+  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI',
+  wyoming: 'WY', 'puerto rico': 'PR',
+};
+
+const COUNTRY_CODES: Record<string, string> = {
+  us: 'US', usa: 'US', 'u.s.': 'US', 'u.s.a.': 'US', america: 'US',
+  'united states': 'US', 'united states of america': 'US',
+  ca: 'CA', can: 'CA', canada: 'CA', mx: 'MX', mex: 'MX', mexico: 'MX',
+};
+
+const COUNTRY_NAMES: Record<string, string> = {
+  US: 'United States', CA: 'Canada', MX: 'Mexico',
+};
+
+/** Normalize a free-text US state to its 2-letter code; pass through unknown values. */
+export function normalizeStateCode(input: string): string {
+  const s = (input || '').trim();
+  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
+  return US_STATE_CODES[s.toLowerCase()] ?? s;
+}
+
+/** Normalize a free-text country to a 2-letter ISO code; default to US. */
+export function normalizeCountryCode(input: string): string {
+  const c = (input || '').trim();
+  if (/^[A-Za-z]{2}$/.test(c)) return c.toUpperCase();
+  return COUNTRY_CODES[c.toLowerCase()] ?? 'US';
+}
+
+/** Human-readable country name for the <Country> element text. */
+export function countryName(code: string): string {
+  return COUNTRY_NAMES[code] ?? code;
+}
+
 // ── cXML Header (shared by PunchOutSetupRequest and OrderRequest) ─────
 
 function buildHeader(creds: CxmlCredentials): string {
@@ -133,6 +183,7 @@ export function buildPunchOutSetupRequest(params: PunchOutSetupParams): {
     )
     .join('\n      ');
 
+  const setupCountryCode = params.shipTo ? normalizeCountryCode(params.shipTo.country) : 'US';
   const shipToXml = params.shipTo
     ? `<ShipTo>
         <Address>
@@ -141,9 +192,9 @@ export function buildPunchOutSetupRequest(params: PunchOutSetupParams): {
             <Street>${escapeXml(params.shipTo.address_line_1)}</Street>
             ${params.shipTo.address_line_2 ? `<Street>${escapeXml(params.shipTo.address_line_2)}</Street>` : ''}
             <City>${escapeXml(params.shipTo.city)}</City>
-            <State>${escapeXml(params.shipTo.state)}</State>
+            <State>${escapeXml(normalizeStateCode(params.shipTo.state))}</State>
             <PostalCode>${escapeXml(params.shipTo.postal_code)}</PostalCode>
-            <Country isoCountryCode="${escapeXml(params.shipTo.country)}">${escapeXml(params.shipTo.country)}</Country>
+            <Country isoCountryCode="${escapeXml(setupCountryCode)}">${escapeXml(countryName(setupCountryCode))}</Country>
           </PostalAddress>
           <Email>${escapeXml(params.userEmail)}</Email>
         </Address>
@@ -374,6 +425,7 @@ export function buildOrderRequest(params: OrderRequestParams): {
     .join('\n      ');
 
   const shipTo = params.shipTo;
+  const shipCountryCode = normalizeCountryCode(shipTo.country);
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE cXML SYSTEM "http://xml.cxml.org/schemas/cXML/1.2.014/cXML.dtd">
@@ -392,9 +444,9 @@ export function buildOrderRequest(params: OrderRequestParams): {
               <Street>${escapeXml(shipTo.address_line_1)}</Street>
               ${shipTo.address_line_2 ? `<Street>${escapeXml(shipTo.address_line_2)}</Street>` : ''}
               <City>${escapeXml(shipTo.city)}</City>
-              <State>${escapeXml(shipTo.state)}</State>
+              <State>${escapeXml(normalizeStateCode(shipTo.state))}</State>
               <PostalCode>${escapeXml(shipTo.postal_code)}</PostalCode>
-              <Country isoCountryCode="${escapeXml(shipTo.country)}">${escapeXml(shipTo.country)}</Country>
+              <Country isoCountryCode="${escapeXml(shipCountryCode)}">${escapeXml(countryName(shipCountryCode))}</Country>
             </PostalAddress>
             <Email>${escapeXml(params.userEmail)}</Email>
           </Address>
