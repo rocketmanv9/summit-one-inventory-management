@@ -11,6 +11,12 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 type FetchLike = typeof fetch;
 
+export interface SendEmailAttachment {
+  filename: string;
+  /** Base64-encoded file content. */
+  content: string;
+}
+
 export interface SendEmailParams {
   /** Sender address, e.g. "Grant Anderson <grant@acmoate.com>". Domain must be Resend-verified. */
   from?: string;
@@ -20,6 +26,7 @@ export interface SendEmailParams {
   subject: string;
   html: string;
   text?: string;
+  attachments?: SendEmailAttachment[];
 }
 
 /** Whether email sending is configured in this environment. */
@@ -59,6 +66,8 @@ export async function sendEmail(
       subject: params.subject,
       html: params.html,
       text: params.text,
+      attachments:
+        params.attachments && params.attachments.length > 0 ? params.attachments : undefined,
     }),
   });
 

@@ -9,8 +9,8 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getGVClient } from '@/lib/gv';
 import { getAdminClient } from '@/utils/supabase/admin';
-import { sendEmail } from '@/lib/email/send';
-import { buildPurchaseOrderEmail, type POEmailLine } from '@/lib/email/order-email';
+import type { POEmailLine } from '@/lib/email/order-email';
+import { sendPurchaseOrderEmail } from '@/lib/po/po-email-service';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -141,69 +141,59 @@ const SendSchema = z.object({
   recipient_email: z.string().email().optional(),
   requester_email: z.string().email(),
   requester_name: z.string().optional(),
+  // Optionally force a specific Gmail connection (e.g. a chosen shared mailbox).
+  connection_id: z.string().uuid().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, fetch, log, idempotencyKey }) => {
   const body = SendSchema.parse(await req.json());
-  const admin = getAdminClient();
-  const data = await loadPOEmailContext(admin, ctx.tenantId!, body.po_id);
 
-  const recipient = body.recipient_email || data.recipient;
-  if (!recipient) {
-    throw AppError.badRequest(
-      `${data.vendorName} has no email on file. Add a contact email to the vendor, or enter one to send to.`,
-    );
-  }
-
-  const { subject, html, text } = buildPurchaseOrderEmail({
-    poNumber: data.poNumber,
-    vendorName: data.vendorName,
-    shipTo: data.shipTo,
-    lines: data.lines,
-    neededBy: data.neededBy,
-    notes: data.notes,
-    message: body.message ?? null,
-    requesterName: body.requester_name ?? null,
+  // Delegate to the PO email service: prefers the tenant's Gmail connection
+  // (personal account or shared mailbox), attaches a generated PDF, and falls
+  // back to the Resend transactional sender when no Google account is connected.
+  const result = await sendPurchaseOrderEmail({
+    tenantId: ctx.tenantId!,
+    userId: ctx.userId!,
+    purchaseOrderId: body.po_id,
+    vendorEmail: body.recipient_email,
+    message: body.message,
     requesterEmail: body.requester_email,
+    requesterName: body.requester_name,
+    preferConnectionId: body.connection_id,
+    fetchImpl: fetch,
+    lastEventId: idempotencyKey,
   });
 
-  const rawSender = process.env.ORDER_EMAIL_FROM || body.requester_email;
-  const senderAddress = rawSender.includes('<') ? rawSender.replace(/.*<([^>]+)>.*/, '$1').trim() : rawSender.trim();
-  const fromName = body.requester_name?.trim();
-  const from = fromName ? `${fromName} <${senderAddress}>` : senderAddress;
-
-  const sent = await sendEmail(fetch, {
-    from,
-    to: recipient,
-    cc: [body.requester_email],
-    replyTo: body.requester_email,
-    subject,
-    html,
-    text,
+  log.info('purchase_order.emailed', {
+    poId: body.po_id,
+    to: result.recipient,
+    provider: result.provider,
+    messageId: result.messageId,
   });
-
-  // Best-effort record that the PO was emailed. Must NOT throw after a successful
-  // send (that would surface an error and risk a re-send on retry).
-  try {
-    await admin
-      .schema('supply_chain')
-      .from('purchase_orders')
-      .update({ sent_at: new Date().toISOString() })
-      .eq('id', body.po_id)
-      .eq('tenant_id', ctx.tenantId!);
-  } catch (e: any) {
-    log.warn('po_email.sent_at_stamp_failed', { poId: body.po_id, error: e?.message });
-  }
-
-  log.info('purchase_order.emailed', { poId: body.po_id, to: recipient, messageId: sent.id });
 
   return {
-    data: { sent: true, message_id: sent.id, to: recipient, cc: body.requester_email, po_number: data.poNumber },
+    data: {
+      sent: true,
+      provider: result.provider,
+      message_id: result.messageId,
+      thread_id: result.threadId,
+      from: result.from,
+      to: result.recipient,
+      cc: body.requester_email,
+      po_number: result.poNumber,
+    },
     status: 200,
     events: [
       {
         event_name: 'purchase_order.sent',
-        payload: { po_id: body.po_id, po_number: data.poNumber, to: recipient, cc: body.requester_email },
+        payload: {
+          po_id: body.po_id,
+          po_number: result.poNumber,
+          provider: result.provider,
+          from: result.from,
+          to: result.recipient,
+          cc: body.requester_email,
+        },
         last_event_id: idempotencyKey,
       },
     ],

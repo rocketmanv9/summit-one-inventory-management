@@ -6,7 +6,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SettingsNav } from '@/components/settings/SettingsNav';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart, Sparkles, Wand2 } from 'lucide-react';
+import { GmailIntegration } from '@/components/settings/GmailIntegration';
+import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart, Sparkles, Wand2, Mail } from 'lucide-react';
 
 const API = '/api/settings/integrations/printify';
 const AMAZON_API = '/api/settings/integrations/amazon-business';
@@ -70,7 +71,7 @@ type ConnectionStatus = 'disconnected' | 'loading' | 'connected' | 'error';
 export default function IntegrationsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'amazon' | 'printify'>('amazon');
+  const [activeTab, setActiveTab] = useState<'amazon' | 'printify' | 'gmail'>('amazon');
 
   // ── Printify state ──────────────────────────────────────────────────
   const [printify, setPrintify] = useState<PrintifyStatus | null>(null);
@@ -144,6 +145,11 @@ export default function IntegrationsPage() {
     const token = getStoredAccessToken();
     const payload = token ? parseJwtPayload(token) : null;
     setIsAdmin(payload?.app_metadata?.role === 'admin');
+    // Land on the right tab when returning from the Gmail OAuth callback.
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'gmail' || tab === 'printify' || tab === 'amazon') {
+      setActiveTab(tab);
+    }
     loadAllStatuses();
   }, []);
 
@@ -794,10 +800,24 @@ export default function IntegrationsPage() {
             Printify
             {connectionStatus === 'connected' && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
           </button>
+          <button
+            onClick={() => setActiveTab('gmail')}
+            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
+              activeTab === 'gmail'
+                ? 'border-red-500 text-red-600'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
+            }`}
+          >
+            <Mail className="h-4 w-4" />
+            Gmail
+          </button>
         </nav>
       </div>
 
       <div className="max-w-2xl space-y-6">
+        {/* ═══ Gmail Tab ═══ */}
+        {activeTab === 'gmail' && <GmailIntegration isAdmin={isAdmin} />}
+
         {/* ═══ Printify Tab ═══ */}
         {activeTab === 'printify' && (<>
         <div className="bg-white rounded-lg border">
