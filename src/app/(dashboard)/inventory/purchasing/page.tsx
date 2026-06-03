@@ -546,9 +546,12 @@ function PODetailPanel({
   const [status, setStatus] = useState(po.status);
   const [actionError, setActionError] = useState('');
   const [showEmail, setShowEmail] = useState(false);
-  // Only the Amazon Business vendor uses the cXML/punchout flow. Every other
-  // vendor submits by emailing the PO — no Amazon detour.
+  // Integration-backed vendors order through their own automated flow (e.g.
+  // Amazon cXML/punchout, Printify), so they don't get the manual "Send Email"
+  // path. Every non-integration vendor submits by emailing the PO.
+  const INTEGRATION_VENDOR_CODES = ['AMAZON-BIZ', 'PRINTIFY'];
   const isAmazonVendor = po.vendor_code_snapshot === 'AMAZON-BIZ';
+  const isIntegrationVendor = !!po.vendor_code_snapshot && INTEGRATION_VENDOR_CODES.includes(po.vendor_code_snapshot);
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -749,7 +752,7 @@ function PODetailPanel({
           <div className="flex flex-col gap-2">
             {/* Email the PO to the vendor — the submit path for every non-Amazon
                 vendor, available once approved (and after). */}
-            {!isAmazonVendor && ['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
+            {!isIntegrationVendor && ['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
               <button
                 onClick={() => setShowEmail(true)}
                 className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
