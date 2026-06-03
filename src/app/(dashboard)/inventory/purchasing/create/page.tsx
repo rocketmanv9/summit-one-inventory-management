@@ -46,6 +46,10 @@ export default function CreatePurchaseOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // Nearest of the selected vendor's locations to the chosen delivery location.
+  const [nearest, setNearest] = useState<{
+    label: string | null; city: string | null; state: string | null; distance_mi: number | null;
+  } | null>(null);
 
   const [form, setForm] = useState({
     vendor_id: '',
@@ -66,6 +70,28 @@ export default function CreatePurchaseOrderPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Suggest the vendor location closest to the delivery location once both are
+  // chosen. Advisory only — purely informational, nothing is stored on the PO.
+  useEffect(() => {
+    const { vendor_id, delivery_location_id } = form;
+    if (!vendor_id || !delivery_location_id) { setNearest(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/inventory/vendors/${vendor_id}/addresses?nearest_to=${delivery_location_id}`
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        const top = (json.data || [])[0] ?? null;
+        if (!cancelled) setNearest(top);
+      } catch {
+        /* non-fatal — suggestion is optional */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [form.vendor_id, form.delivery_location_id]);
 
   const loadData = async () => {
     try {
@@ -268,6 +294,21 @@ export default function CreatePurchaseOrderPage() {
                     </option>
                   ))}
                 </select>
+                {nearest && (
+                  <p className="mt-1 text-xs text-gray-600">
+                    {nearest.distance_mi != null ? (
+                      <>
+                        Closest location:{' '}
+                        <span className="font-medium">
+                          {nearest.label || [nearest.city, nearest.state].filter(Boolean).join(', ') || 'vendor address'}
+                        </span>{' '}
+                        — {nearest.distance_mi.toFixed(1)} mi from delivery location
+                      </>
+                    ) : (
+                      'Closest location unavailable — vendor addresses are not geocoded yet.'
+                    )}
+                  </p>
+                )}
               </div>
 
               <div>

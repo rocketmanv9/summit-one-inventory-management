@@ -23,7 +23,20 @@ async function tenantSc(tenantId: string) {
 
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const sc = await tenantSc(session.tenantId!);
-  const { data, error } = await sc.from('vendor_addresses').select('*').eq('vendor_id', vendorId(req)).order('address_type');
+  const id = vendorId(req);
+  // ?nearest_to=<inventory.locations id> ranks this vendor's addresses by
+  // great-circle distance from that tenant location (nearest first).
+  const nearestTo = new URL(req.url).searchParams.get('nearest_to');
+  if (nearestTo) {
+    const { data, error } = await sc.rpc('rpc_nearest_vendor_addresses', {
+      p_tenant_id: session.tenantId!,
+      p_vendor_id: id,
+      p_location_id: nearestTo,
+    });
+    if (error) { log.error('vendor_addresses.nearest_failed', { error: error.message }); throw AppError.internal(error.message); }
+    return Response.json({ data });
+  }
+  const { data, error } = await sc.from('vendor_addresses').select('*').eq('vendor_id', id).order('address_type');
   if (error) { log.error('vendor_addresses.list_failed', { error: error.message }); throw AppError.internal(error.message); }
   return Response.json({ data });
 }, { serviceName: SERVICE_NAME });
@@ -37,6 +50,8 @@ const AddressSchema = z.object({
   state: z.string().nullable().optional(),
   zip: z.string().nullable().optional(),
   country: z.string().nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ req, ctx, body, log, idempotencyKey }) => {
@@ -44,7 +59,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, body, log, idempo
   const sc = await tenantSc(ctx.tenantId!);
   const a = body as z.infer<typeof AddressSchema>;
   const { data, error } = await sc.from('vendor_addresses')
-    .insert({ tenant_id: ctx.tenantId, vendor_id: id, address_type: a.address_type ?? 'general', label: a.label ?? null, street1: a.street1 ?? null, street2: a.street2 ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip ?? null, country: a.country ?? null, last_event_id: idempotencyKey })
+    .insert({ tenant_id: ctx.tenantId, vendor_id: id, address_type: a.address_type ?? 'general', label: a.label ?? null, street1: a.street1 ?? null, street2: a.street2 ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip ?? null, country: a.country ?? null, latitude: a.latitude ?? null, longitude: a.longitude ?? null, last_event_id: idempotencyKey })
     .select().single();
   if (error) { log.error('vendor_addresses.create_failed', { error: error.message }); throw AppError.internal(error.message); }
   return { data, status: 201, events: [{ event_name: 'vendor_address.created', payload: { vendor_id: id, address_id: data.id }, last_event_id: idempotencyKey }] };

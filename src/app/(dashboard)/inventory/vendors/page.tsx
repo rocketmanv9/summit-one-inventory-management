@@ -8,6 +8,8 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
+import { geocodeAddress } from '@/lib/geocode';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -52,6 +54,22 @@ interface VendorContact {
   email: string | null;
   phone: string | null;
   title: string | null;
+}
+
+/** A tenant location ("my location") in the proximity picker. */
+interface MyLocation {
+  id: string;
+  name: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_type?: { name: string } | null;
+}
+
+/** A vendor address ranked by distance from a chosen tenant location. */
+interface RankedAddress extends VendorAddress {
+  latitude: number | null;
+  longitude: number | null;
+  distance_mi: number | null;
 }
 
 interface VendorWithRelations extends Vendor {
@@ -496,11 +514,19 @@ function VendorDetailModal({
 }) {
   const [vendor, setVendor] = useState<VendorWithRelations | null>(null);
   const [loading, setLoading] = useState(true);
-  const [detailTab, setDetailTab] = useState<'addresses' | 'contacts'>('addresses');
+  const [detailTab, setDetailTab] = useState<'addresses' | 'contacts' | 'proximity'>('addresses');
   const [editingAddress, setEditingAddress] = useState<VendorAddress | null>(null);
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [editingContact, setEditingContact] = useState<VendorContact | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
+
+  // Proximity tab: rank this vendor's addresses against one of the tenant's
+  // own locations ("which of their branches is closest to my site?").
+  const [myLocations, setMyLocations] = useState<MyLocation[]>([]);
+  const [locSearch, setLocSearch] = useState('');
+  const [selectedLocId, setSelectedLocId] = useState('');
+  const [ranked, setRanked] = useState<RankedAddress[]>([]);
+  const [ranking, setRanking] = useState(false);
 
   const fetchVendor = async () => {
     setLoading(true);
@@ -517,6 +543,46 @@ function VendorDetailModal({
   };
 
   useEffect(() => { fetchVendor(); }, [vendorId]);
+
+  // Load the tenant's locations once for the proximity picker.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const locs = await InventoryRPC.getLocations({ active: true });
+        if (!cancelled) setMyLocations((locs || []) as MyLocation[]);
+      } catch (err) {
+        console.error('Error loading locations:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Rank the vendor's addresses against the chosen tenant location.
+  useEffect(() => {
+    if (!selectedLocId) { setRanked([]); return; }
+    let cancelled = false;
+    setRanking(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/vendors/${vendorId}/addresses?nearest_to=${selectedLocId}`);
+        if (!res.ok) throw AppError.internal('Failed to rank addresses');
+        const json = await res.json();
+        if (!cancelled) setRanked((json.data || []) as RankedAddress[]);
+      } catch (err) {
+        console.error('Error ranking addresses:', err);
+        if (!cancelled) setRanked([]);
+      } finally {
+        if (!cancelled) setRanking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedLocId, vendorId]);
+
+  const filteredLocations = myLocations.filter((l) =>
+    l.name.toLowerCase().includes(locSearch.trim().toLowerCase())
+  );
+  const selectedLoc = myLocations.find((l) => l.id === selectedLocId) || null;
 
   const handleDeleteAddress = async (addressId: string) => {
     if (!confirm('Delete this address?')) return;
@@ -582,14 +648,6 @@ function VendorDetailModal({
             <div className="px-6 py-4 border-b">
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 <div>
-                  <span className="text-muted-foreground">Account #:</span>{' '}
-                  <span className="font-medium">{vendor.account_number || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Payment Terms:</span>{' '}
-                  <span className="font-medium">{vendor.payment_terms || '-'}</span>
-                </div>
-                <div>
                   <span className="text-muted-foreground">Status:</span>{' '}
                   <StatusChip status={vendor.is_active ? 'active' : 'inactive'} />
                 </div>
@@ -622,6 +680,16 @@ function VendorDetailModal({
                   }`}
                 >
                   Contacts ({vendor.contacts?.length || 0})
+                </button>
+                <button
+                  onClick={() => setDetailTab('proximity')}
+                  className={`pb-2 text-sm font-medium border-b-2 transition-colors ${
+                    detailTab === 'proximity'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Proximity
                 </button>
               </div>
             </div>
@@ -729,6 +797,105 @@ function VendorDetailModal({
                 )}
               </div>
             )}
+
+            {/* Proximity Tab — rank this vendor's locations against my locations */}
+            {detailTab === 'proximity' && (
+              <div className="px-6 py-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Search my locations</label>
+                  <input
+                    type="text"
+                    value={locSearch}
+                    onChange={(e) => setLocSearch(e.target.value)}
+                    placeholder="Type to filter your sites…"
+                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  {myLocations.length === 0 ? (
+                    <p className="text-xs text-muted-foreground mt-2">No locations found.</p>
+                  ) : (
+                    <div className="mt-2 max-h-32 overflow-y-auto border rounded-md divide-y">
+                      {filteredLocations.length === 0 ? (
+                        <p className="text-xs text-muted-foreground px-3 py-2">No matches.</p>
+                      ) : (
+                        filteredLocations.map((l) => {
+                          const ungeocoded = l.latitude == null || l.longitude == null;
+                          return (
+                            <button
+                              key={l.id}
+                              type="button"
+                              onClick={() => setSelectedLocId(l.id)}
+                              className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between hover:bg-gray-50 ${
+                                selectedLocId === l.id ? 'bg-primary/5 font-medium' : ''
+                              }`}
+                            >
+                              <span>
+                                {l.name}
+                                {l.location_type?.name && (
+                                  <span className="text-muted-foreground"> ({l.location_type.name})</span>
+                                )}
+                              </span>
+                              {ungeocoded && (
+                                <span className="text-[10px] text-amber-600">no coords</span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {selectedLoc && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      {vendor.name}&apos;s locations, closest to{' '}
+                      <span className="font-medium text-foreground">{selectedLoc.name}</span>:
+                    </p>
+                    {ranking ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">Ranking…</p>
+                    ) : ranked.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">
+                        This vendor has no addresses yet.
+                      </p>
+                    ) : (
+                      ranked.map((addr, idx) => (
+                        <div
+                          key={addr.id}
+                          className={`border rounded-lg p-3 space-y-1 ${
+                            idx === 0 && addr.distance_mi != null ? 'border-primary bg-primary/5' : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {addr.label && <span className="font-medium text-sm">{addr.label}</span>}
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                {addr.address_type}
+                              </span>
+                              {idx === 0 && addr.distance_mi != null && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-primary text-primary-foreground">
+                                  Closest
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-sm font-medium whitespace-nowrap">
+                              {addr.distance_mi != null ? `${addr.distance_mi.toFixed(1)} mi` : '—'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {[addr.street1, addr.city, addr.state, addr.zip].filter(Boolean).join(', ') || 'No address details'}
+                          </p>
+                          {addr.distance_mi == null && (
+                            <p className="text-xs text-amber-600">
+                              Not geocoded — edit this address (or your location) to enable distance.
+                            </p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -792,6 +959,11 @@ function AddressFormModal({
     setError('');
 
     try {
+      // Geocode so this location can be ranked by distance on purchase orders.
+      let coords: { latitude: number; longitude: number } | null = null;
+      const q = [form.street1, form.city, form.state, form.zip].filter(Boolean).join(', ');
+      if (q) coords = await geocodeAddress(q);
+
       const url = isEdit
         ? `/api/inventory/vendors/${vendorId}/addresses/${address!.id}`
         : `/api/inventory/vendors/${vendorId}/addresses`;
@@ -800,7 +972,7 @@ function AddressFormModal({
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, latitude: coords?.latitude ?? null, longitude: coords?.longitude ?? null }),
       });
 
       if (!res.ok) {
@@ -1052,6 +1224,33 @@ function ContactFormModal({
 /*  Add / Edit Custom Vendor Modal                                            */
 /* -------------------------------------------------------------------------- */
 
+/** One editable address row in the vendor add/edit modal. `id` is set for
+ *  addresses that already exist in supply_chain.vendor_addresses. */
+interface AddressDraft {
+  id?: string;
+  address_type: 'billing' | 'shipping' | 'general';
+  label: string;
+  street1: string;
+  street2: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+function emptyAddress(): AddressDraft {
+  return {
+    address_type: 'general', label: '', street1: '', street2: '',
+    city: '', state: '', zip: '', country: '', latitude: null, longitude: null,
+  };
+}
+
+function addressHasContent(a: AddressDraft): boolean {
+  return !!(a.street1.trim() || a.city.trim() || a.state.trim() || a.zip.trim() || a.label.trim());
+}
+
 function AddCustomVendorModal({
   vendor,
   onClose,
@@ -1068,18 +1267,61 @@ function AddCustomVendorModal({
     name: vendor?.name || '',
     vendor_type_id: vendor?.vendor_type_id || '',
     description: vendor?.description || '',
-    account_number: vendor?.account_number || '',
-    payment_terms: vendor?.payment_terms || '',
     notes: vendor?.notes || '',
     contact_email: (vendor as any)?.contact_email || '',
     contact_phone: (vendor as any)?.contact_phone || '',
-    address_line_1: (vendor as any)?.address_line_1 || '',
-    city: (vendor as any)?.city || '',
-    state: (vendor as any)?.state || '',
-    postal_code: (vendor as any)?.postal_code || '',
   });
+  const [addresses, setAddresses] = useState<AddressDraft[]>([emptyAddress()]);
+  // Ids of addresses that existed on load but the user removed — DELETE on save.
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
+  const [loadingAddrs, setLoadingAddrs] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // On edit, pull the vendor's existing addresses so they can be managed inline.
+  useEffect(() => {
+    if (!vendor?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/vendors/${vendor.id}/addresses`);
+        if (!res.ok) throw AppError.internal('Failed to load addresses');
+        const json = await res.json();
+        const rows: AddressDraft[] = (json.data || []).map((a: any) => ({
+          id: a.id,
+          address_type: a.address_type || 'general',
+          label: a.label || '',
+          street1: a.street1 || '',
+          street2: a.street2 || '',
+          city: a.city || '',
+          state: a.state || '',
+          zip: a.zip || '',
+          country: a.country || '',
+          latitude: a.latitude ?? null,
+          longitude: a.longitude ?? null,
+        }));
+        if (!cancelled) setAddresses(rows.length ? rows : [emptyAddress()]);
+      } catch {
+        // Leave the single empty row if addresses can't be loaded.
+      } finally {
+        if (!cancelled) setLoadingAddrs(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [vendor?.id]);
+
+  const updateAddress = (idx: number, patch: Partial<AddressDraft>) => {
+    setAddresses((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  };
+
+  const removeAddress = (idx: number) => {
+    setAddresses((prev) => {
+      const target = prev[idx];
+      if (target.id) setRemovedIds((r) => [...r, target.id!]);
+      const next = prev.filter((_, i) => i !== idx);
+      return next.length ? next : [emptyAddress()];
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1093,19 +1335,34 @@ function AddCustomVendorModal({
     }
 
     try {
+      // Geocode any filled address that doesn't already have coordinates. Coords
+      // power the "closest vendor location" suggestion on purchase orders.
+      const filled = addresses.filter(addressHasContent);
+      for (const a of filled) {
+        if (a.latitude == null || a.longitude == null) {
+          const q = [a.street1, a.city, a.state, a.zip].filter(Boolean).join(', ');
+          const geo = await geocodeAddress(q);
+          if (geo) { a.latitude = geo.latitude; a.longitude = geo.longitude; }
+        }
+      }
+
       const payload: Record<string, unknown> = { name: form.name, vendor_type_id: form.vendor_type_id };
       if (form.description) payload.description = form.description;
-      if (form.account_number) payload.account_number = form.account_number;
-      if (form.payment_terms) payload.payment_terms = form.payment_terms;
       if (form.notes) payload.notes = form.notes;
-      // Contact + address — needed to email POs to the vendor. Sent on every save
-      // (including blanks) so clearing a value persists.
+      // Contact — needed to email POs to the vendor. Sent on every save (including
+      // blanks) so clearing a value persists.
       payload.contact_email = form.contact_email.trim() || null;
       payload.contact_phone = form.contact_phone.trim() || null;
-      payload.address_line_1 = form.address_line_1.trim() || null;
-      payload.city = form.city.trim() || null;
-      payload.state = form.state.trim() || null;
-      payload.postal_code = form.postal_code.trim() || null;
+      // Mirror the primary (first filled) address onto the vendor record so the
+      // ops globe still gets a vendor pin. The per-location rows are the source
+      // of truth; this is a denormalized convenience copy.
+      const primary = filled[0];
+      payload.address_line_1 = primary?.street1.trim() || null;
+      payload.city = primary?.city.trim() || null;
+      payload.state = primary?.state.trim() || null;
+      payload.postal_code = primary?.zip.trim() || null;
+      payload.latitude = primary?.latitude ?? null;
+      payload.longitude = primary?.longitude ?? null;
 
       const url = isEdit ? `/api/inventory/vendors/${vendor!.id}` : '/api/inventory/vendors';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -1120,6 +1377,36 @@ function AddCustomVendorModal({
         const errJson = await res.json().catch(() => null);
         throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} vendor`);
       }
+      const vendorJson = await res.json().catch(() => null);
+      const vendorId: string = isEdit ? vendor!.id : vendorJson?.data?.id;
+      if (!vendorId) throw AppError.internal('Vendor saved but no id returned');
+
+      // Sync addresses: delete removed, PATCH existing, POST new.
+      const addrBody = (a: AddressDraft) => ({
+        address_type: a.address_type, label: a.label.trim() || null,
+        street1: a.street1.trim() || null, street2: a.street2.trim() || null,
+        city: a.city.trim() || null, state: a.state.trim() || null,
+        zip: a.zip.trim() || null, country: a.country.trim() || null,
+        latitude: a.latitude, longitude: a.longitude,
+      });
+      const addrFetch = (u: string, m: string, body?: unknown) =>
+        fetch(u, {
+          method: m,
+          headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+
+      for (const id of removedIds) {
+        await addrFetch(`/api/inventory/vendors/${vendorId}/addresses/${id}`, 'DELETE');
+      }
+      for (const a of filled) {
+        if (a.id) {
+          await addrFetch(`/api/inventory/vendors/${vendorId}/addresses/${a.id}`, 'PATCH', addrBody(a));
+        } else {
+          await addrFetch(`/api/inventory/vendors/${vendorId}/addresses`, 'POST', addrBody(a));
+        }
+      }
+
       onComplete();
     } catch (err: any) {
       setError(err.message);
@@ -1128,27 +1415,28 @@ function AddCustomVendorModal({
     }
   };
 
+  const inputCls = 'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary';
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] flex flex-col">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">{isEdit ? 'Edit Vendor' : 'Add Custom Vendor'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">{error}</div>}
           <div>
             <label className="block text-sm font-medium mb-1">Name *</label>
             <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g. Acme Materials" required />
+              className={inputCls} placeholder="e.g. Acme Materials" required />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Vendor Type *</label>
             <select
               value={form.vendor_type_id}
               onChange={(e) => setForm({ ...form, vendor_type_id: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              className={inputCls}
               required
             >
               <option value="">{typesLoading ? 'Loading...' : 'Select vendor type'}</option>
@@ -1160,55 +1448,71 @@ function AddCustomVendorModal({
           <div>
             <label className="block text-sm font-medium mb-1">Description</label>
             <input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Brief description of this vendor" />
+              className={inputCls} placeholder="Brief description of this vendor" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Contact Email</label>
               <input type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="orders@vendor.com" />
+                className={inputCls} placeholder="orders@vendor.com" />
               <p className="text-xs text-muted-foreground mt-1">Where purchase orders are emailed.</p>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Phone</label>
               <input type="tel" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="(555) 123-4567" />
+                className={inputCls} placeholder="(555) 123-4567" />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Address</label>
-            <input type="text" value={form.address_line_1} onChange={(e) => setForm({ ...form, address_line_1: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Street address" />
-            <div className="grid grid-cols-3 gap-2 mt-2">
-              <input type="text" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })}
-                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="City" />
-              <input type="text" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })}
-                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="State" />
-              <input type="text" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })}
-                className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="ZIP" />
+
+          {/* Addresses — one or more locations per vendor. */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium">Locations</label>
+              <button type="button" onClick={() => setAddresses((prev) => [...prev, emptyAddress()])}
+                className="text-sm text-primary hover:underline">+ Add location</button>
             </div>
+            {loadingAddrs ? (
+              <p className="text-sm text-muted-foreground">Loading addresses…</p>
+            ) : (
+              addresses.map((a, idx) => (
+                <div key={a.id || `new-${idx}`} className="border rounded-md p-3 space-y-2 bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <select value={a.address_type}
+                      onChange={(e) => updateAddress(idx, { address_type: e.target.value as AddressDraft['address_type'] })}
+                      className="px-2 py-1 border rounded-md text-sm bg-white">
+                      <option value="general">General</option>
+                      <option value="billing">Billing</option>
+                      <option value="shipping">Shipping</option>
+                    </select>
+                    <input type="text" value={a.label} onChange={(e) => updateAddress(idx, { label: e.target.value })}
+                      className="flex-1 px-2 py-1 border rounded-md text-sm" placeholder="Label (e.g. East Yard)" />
+                    {(addresses.length > 1 || a.id) && (
+                      <button type="button" onClick={() => removeAddress(idx)}
+                        className="text-xs text-red-600 hover:underline px-1">Remove</button>
+                    )}
+                  </div>
+                  <input type="text" value={a.street1} onChange={(e) => updateAddress(idx, { street1: e.target.value, latitude: null, longitude: null })}
+                    className={inputCls} placeholder="Street address" />
+                  <div className="grid grid-cols-3 gap-2">
+                    <input type="text" value={a.city} onChange={(e) => updateAddress(idx, { city: e.target.value, latitude: null, longitude: null })}
+                      className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="City" />
+                    <input type="text" value={a.state} onChange={(e) => updateAddress(idx, { state: e.target.value, latitude: null, longitude: null })}
+                      className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="State" />
+                    <input type="text" value={a.zip} onChange={(e) => updateAddress(idx, { zip: e.target.value, latitude: null, longitude: null })}
+                      className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="ZIP" />
+                  </div>
+                </div>
+              ))
+            )}
+            <p className="text-xs text-muted-foreground">
+              Addresses are geocoded on save to suggest the closest vendor location when creating purchase orders.
+            </p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Account Number</label>
-              <input type="text" value={form.account_number} onChange={(e) => setForm({ ...form, account_number: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. ACM-001" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Payment Terms</label>
-              <input type="text" value={form.payment_terms} onChange={(e) => setForm({ ...form, payment_terms: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. Net 30" />
-            </div>
-          </div>
+
           <div>
             <label className="block text-sm font-medium mb-1">Notes</label>
             <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              rows={3} placeholder="Any notes about this vendor..." />
+              className={inputCls} rows={3} placeholder="Any notes about this vendor..." />
           </div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">Cancel</button>

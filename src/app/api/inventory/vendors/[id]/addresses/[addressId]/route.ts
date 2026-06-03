@@ -31,6 +31,8 @@ const UpdateSchema = z.object({
   state: z.string().nullable().optional(),
   zip: z.string().nullable().optional(),
   country: z.string().nullable().optional(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 });
 
 export const PATCH = createSessionWriteRoute(async ({ req, ctx, body, log, idempotencyKey }) => {
