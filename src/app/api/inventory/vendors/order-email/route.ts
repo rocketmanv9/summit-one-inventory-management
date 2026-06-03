@@ -109,7 +109,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, fetch, supabase, 
     status: 200,
     events: [
       {
-        event_name: 'vendor.order_email.sent',
+        event_name: 'order.emailed',
         payload: {
           vendor_id: vendor.id,
           to: vendorEmail,
