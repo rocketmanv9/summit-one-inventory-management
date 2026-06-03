@@ -14,7 +14,6 @@ import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
-import { OrderByEmailModal } from '@/components/modals/OrderByEmailModal';
 import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 
@@ -54,7 +53,6 @@ export default function PurchasingPage() {
   const [pendingVendorId, setPendingVendorId] = useState<string | null>(null);
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
   const [placeOrderPO, setPlaceOrderPO] = useState<PurchaseOrder | null>(null);
-  const [showOrderEmailModal, setShowOrderEmailModal] = useState(false);
 
   useEffect(() => {
     loadReferenceData();
@@ -389,20 +387,12 @@ export default function PurchasingPage() {
           title="Purchase Orders"
           description="Manage purchase orders and track vendor deliveries. Example: Create a PO for 500 tons of asphalt from Acme Materials, track delivery status, and receive partial shipments as they arrive at your yard."
           actions={
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowOrderEmailModal(true)}
-                className="px-4 py-2 border rounded-md hover:bg-muted transition-colors"
-              >
-                ✉ Email an Order
-              </button>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Create PO
-              </button>
-            </div>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            >
+              + Create PO
+            </button>
           }
         />
 
@@ -512,11 +502,6 @@ export default function PurchasingPage() {
             }}
           />
         )}
-
-        <OrderByEmailModal
-          open={showOrderEmailModal}
-          onClose={() => setShowOrderEmailModal(false)}
-        />
 
         <AddVendorModal
           open={showVendorModal}
@@ -767,9 +752,9 @@ function PODetailPanel({
             {!isAmazonVendor && ['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
               <button
                 onClick={() => setShowEmail(true)}
-                className="w-full px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10"
+                className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
               >
-                ✉ Email PO to Vendor
+                ✉ Send Email
               </button>
             )}
 
