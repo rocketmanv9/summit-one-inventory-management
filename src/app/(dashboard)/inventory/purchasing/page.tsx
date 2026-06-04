@@ -15,7 +15,17 @@ import { VendorModal } from '@/components/vendors/VendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
 import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
+import { ReceivePOModal } from '@/components/modals/ReceivePOModal';
+import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
+import {
+  poBucket,
+  poBucketLabel,
+  poActions,
+  INTEGRATION_VENDOR_CODES,
+  type PoBucket,
+} from '@/lib/po/po-status';
+import { createBrowserAuthedClient } from '@/supabase/client';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 
 interface PurchaseOrder {
@@ -41,7 +51,6 @@ interface PurchaseOrder {
 }
 
 export default function PurchasingPage() {
-  const uomLabels = useUOMLabelMap();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -54,6 +63,12 @@ export default function PurchasingPage() {
   const [pendingVendorId, setPendingVendorId] = useState<string | null>(null);
   const [showPlaceOrderModal, setShowPlaceOrderModal] = useState(false);
   const [placeOrderPO, setPlaceOrderPO] = useState<PurchaseOrder | null>(null);
+  // Send-confirm modal target (PO id) and receive-materials modal target.
+  const [sendPoId, setSendPoId] = useState<string | null>(null);
+  const [receivePO, setReceivePO] = useState<PurchaseOrder | null>(null);
+  // "Create & Send" hands off here; once the new row loads we route it through
+  // the vendor-aware send path (email vs. integration punchout).
+  const [pendingSendPoId, setPendingSendPoId] = useState<string | null>(null);
 
   useEffect(() => {
     loadReferenceData();
@@ -62,6 +77,18 @@ export default function PurchasingPage() {
   useEffect(() => {
     fetchOrders();
   }, [filters]);
+
+  // After "Create & Send", wait for the freshly-created PO to land in the list,
+  // then trigger its vendor-aware send (email confirm or integration punchout).
+  useEffect(() => {
+    if (!pendingSendPoId) return;
+    const row = orders.find((o) => o.id === pendingSendPoId);
+    if (row) {
+      setPendingSendPoId(null);
+      handleSend(row);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, pendingSendPoId]);
 
   const loadReferenceData = async () => {
     try {
@@ -82,10 +109,9 @@ export default function PurchasingPage() {
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const data = await SupplyChainRPC.getPurchaseOrders({
-        status: filters.status
-      });
-      console.log('Fetched orders:', data);
+      // Load all POs; the status filter is applied client-side by display bucket
+      // (a bucket spans several stored statuses).
+      const data = await SupplyChainRPC.getPurchaseOrders();
       setOrders(data || []);
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
@@ -93,6 +119,14 @@ export default function PurchasingPage() {
       setLoading(false);
     }
   };
+
+  // Cancelled/voided POs are hidden from the active list unless explicitly filtered.
+  const bucketFilter = (filters.status || '') as PoBucket | '';
+  const displayedOrders = orders.filter((o) => {
+    const bucket = poBucket(o.status);
+    if (bucketFilter) return bucket === bucketFilter;
+    return bucket !== 'cancelled';
+  });
 
   // qty_ordered/qty_received/unit_cost are Postgres numeric → arrive as strings via
   // PostgREST; coerce with Number() before any arithmetic (string + string concatenates).
@@ -106,64 +140,69 @@ export default function PurchasingPage() {
     return totalQty > 0 ? Math.round((receivedQty / totalQty) * 100) : 0;
   };
 
-  const handleSubmitForApproval = async (poId: string, status: string, lastEventId: string) => {
-    if (status !== 'draft') {
-      alert(`Cannot submit PO in status: ${status}. Only draft POs can be submitted.`);
+  // Flip a PO to 'sent' after it's been emailed. Fetches the current
+  // last_event_id fresh so the optimistic-concurrency guard doesn't fail on a
+  // stale row (the create-and-send path has no row in state yet).
+  const markPoSent = async (poId: string) => {
+    try {
+      const supabase = createBrowserAuthedClient().schema('supply_chain');
+      const { data } = await supabase
+        .from('purchase_orders')
+        .select('status, last_event_id')
+        .eq('id', poId)
+        .single();
+      // Only advance from the draft bucket — never downgrade a received PO.
+      if (data && poBucket(data.status) === 'draft') {
+        await updatePurchaseOrderStatus(poId, 'sent', data.last_event_id);
+      }
+    } catch (error) {
+      console.error('Error marking PO as sent:', error);
+    } finally {
+      fetchOrders();
+    }
+  };
+
+  // "Send PO": integration vendors (Amazon punchout, Printify) go through their
+  // own ordering modal; everyone else gets the email confirm-and-send step.
+  const handleSend = (row: PurchaseOrder) => {
+    const isIntegration =
+      !!row.vendor_code_snapshot && INTEGRATION_VENDOR_CODES.includes(row.vendor_code_snapshot);
+    if (isIntegration) {
+      setPlaceOrderPO(row);
+      setShowPlaceOrderModal(true);
+    } else {
+      setSendPoId(row.id);
+    }
+  };
+
+  const handleReceive = (row: PurchaseOrder) => {
+    setReceivePO(row);
+  };
+
+  const handleViewPdf = (row: PurchaseOrder) => {
+    window.open(`/api/inventory/purchasing/po-pdf?po_id=${row.id}`, '_blank');
+  };
+
+  const handleCancel = async (row: PurchaseOrder) => {
+    if (!confirm(`Cancel PO ${row.po_number}? This stops any further receiving.`)) {
       return;
     }
-
     try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'awaiting_approval', lastEventId);
-
+      const { error } = await updatePurchaseOrderStatus(row.id, 'cancelled', row.last_event_id);
       if (error) {
         alert(`Error: ${error.message}`);
         return;
       }
-
+      setSelectedOrder(null);
       fetchOrders();
     } catch (error) {
-      console.error('Error submitting PO:', error);
-      alert('Failed to submit PO. Please try again.');
+      console.error('Error cancelling PO:', error);
+      alert('Failed to cancel PO. Please try again.');
     }
   };
 
-  const handleApprovePO = async (poId: string, status: string, lastEventId: string) => {
-    if (status !== 'awaiting_approval') {
-      alert(`Cannot approve PO in status: ${status}. Only POs awaiting approval can be approved.`);
-      return;
-    }
-
-    try {
-      const { error } = await updatePurchaseOrderStatus(poId, 'approved', lastEventId);
-
-      if (error) {
-        alert(`Error: ${error.message}`);
-        return;
-      }
-
-      fetchOrders();
-    } catch (error) {
-      console.error('Error approving PO:', error);
-      alert('Failed to approve PO. Please try again.');
-    }
-  };
-
-  const handlePlacePO = (row: PurchaseOrder) => {
-    if (row.status !== 'approved') {
-      alert(`Cannot place PO in status: ${row.status}. Only approved POs can be placed.`);
-      return;
-    }
-    setPlaceOrderPO(row);
-    setShowPlaceOrderModal(true);
-  };
-
-  const handleDeletePO = async (poId: string, status: string, poNumber: string, lastEventId: string) => {
-    if (!['draft', 'awaiting_approval'].includes(status)) {
-      alert(`Cannot delete PO in status: ${status}. Only draft or awaiting approval POs can be deleted.`);
-      return;
-    }
-
-    if (!confirm(`Delete PO ${poNumber}? This will void the purchase order.`)) {
+  const handleDeletePO = async (poId: string, poNumber: string, lastEventId: string) => {
+    if (!confirm(`Delete draft PO ${poNumber}? This permanently voids it.`)) {
       return;
     }
 
@@ -175,12 +214,45 @@ export default function PurchasingPage() {
         return;
       }
 
+      setSelectedOrder(null);
       fetchOrders();
     } catch (error) {
       console.error('Error voiding PO:', error);
       alert('Failed to void PO. Please try again.');
     }
   };
+
+  // Build the ⋮ menu items for a row from its display bucket.
+  const buildRowActions = (row: PurchaseOrder): RowActionItem[] =>
+    poActions(poBucket(row.status)).map((a) => ({
+      key: a.key,
+      label: a.label,
+      variant: a.variant,
+      onClick: () => {
+        switch (a.key) {
+          case 'edit':
+            setSelectedOrder(row);
+            setShowEditModal(true);
+            break;
+          case 'send':
+          case 'resend':
+            handleSend(row);
+            break;
+          case 'delete':
+            handleDeletePO(row.id, row.po_number, row.last_event_id);
+            break;
+          case 'receive':
+            handleReceive(row);
+            break;
+          case 'view_pdf':
+            handleViewPdf(row);
+            break;
+          case 'cancel':
+            handleCancel(row);
+            break;
+        }
+      },
+    }));
 
   const columns = [
     {
@@ -243,7 +315,8 @@ export default function PurchasingPage() {
       render: (row: PurchaseOrder) => {
         if (!row.expected_delivery_date) return '-';
         const date = new Date(row.expected_delivery_date);
-        const isLate = date < new Date() && row.status !== 'received' && row.status !== 'closed';
+        const bucket = poBucket(row.status);
+        const isLate = date < new Date() && bucket !== 'received' && bucket !== 'cancelled';
         return (
           <span className={isLate ? 'text-red-600 font-medium' : ''}>
             {date.toLocaleDateString()}
@@ -255,111 +328,17 @@ export default function PurchasingPage() {
       key: 'status',
       header: 'Status',
       render: (row: PurchaseOrder) => (
-        <StatusChip status={row.status} />
+        <StatusChip status={poBucketLabel(poBucket(row.status))} />
       ),
     },
     {
       key: 'actions',
       header: 'Actions',
-      render: (row: PurchaseOrder) => {
-        const isDraft = row.status === 'draft';
-        const isAwaitingApproval = row.status === 'awaiting_approval';
-        const isApproved = row.status === 'approved';
-        const isPlaced = row.status === 'placed' || row.status === 'acknowledged';
-        const isPartiallyReceived = row.status === 'partially_received';
-        const isFullyReceived = row.status === 'fully_received';
-        const isClosed = row.status === 'closed';
-        
-        return (
-          <div className="flex gap-2">
-            {/* Submit button - only for draft */}
-            {isDraft && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSubmitForApproval(row.id, row.status, row.last_event_id);
-                }}
-                className="px-3 py-1 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white"
-                title="Submit for approval"
-              >
-                Submit
-              </button>
-            )}
-
-            {/* Approve button - only for awaiting approval */}
-            {isAwaitingApproval && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleApprovePO(row.id, row.status, row.last_event_id);
-                }}
-                className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white"
-                title="Approve purchase order"
-              >
-                Approve
-              </button>
-            )}
-
-            {/* Amazon orders place via punchout; non-Amazon vendors are emailed
-                the PO from the detail panel ("Email PO to Vendor"). */}
-            {isApproved && row.vendor_code_snapshot === 'AMAZON-BIZ' && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePlacePO(row);
-                }}
-                className="px-3 py-1 text-sm rounded bg-purple-600 hover:bg-purple-700 text-white"
-                title="Order via Amazon Business"
-              >
-                Order on Amazon
-              </button>
-            )}
-
-            {/* Edit button - only for draft */}
-            {isDraft && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedOrder(row);
-                  setShowEditModal(true);
-                }}
-                className="px-3 py-1 text-sm rounded bg-gray-600 hover:bg-gray-700 text-white"
-                title="Edit purchase order"
-              >
-                Edit
-              </button>
-            )}
-
-            {/* Delete button - for draft or awaiting approval */}
-            {(isDraft || isAwaitingApproval) && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeletePO(row.id, row.status, row.po_number, row.last_event_id);
-                }}
-                className="px-3 py-1 text-sm rounded bg-red-600 hover:bg-red-700 text-white"
-                title="Delete purchase order"
-              >
-                Delete
-              </button>
-            )}
-
-            {/* View button - for all non-draft statuses */}
-            {!isDraft && !isClosed && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedOrder(row);
-                }}
-                className="px-3 py-1 text-sm rounded bg-gray-500 hover:bg-gray-600 text-white"
-                title="View details"
-              >
-                View
-              </button>
-            )}
-          </div>
-        );
-      },
+      render: (row: PurchaseOrder) => (
+        <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+          <RowActionMenu items={buildRowActions(row)} ariaLabel={`Actions for ${row.po_number}`} />
+        </div>
+      ),
     },
   ];
 
@@ -370,12 +349,9 @@ export default function PurchasingPage() {
       type: 'select' as const,
       options: [
         { value: 'draft', label: 'Draft' },
-        { value: 'submitted', label: 'Submitted' },
-        { value: 'approved', label: 'Approved' },
-        { value: 'in_transit', label: 'In Transit' },
+        { value: 'sent', label: 'Sent' },
         { value: 'partially_received', label: 'Partially Received' },
         { value: 'received', label: 'Received' },
-        { value: 'closed', label: 'Closed' },
         { value: 'cancelled', label: 'Cancelled' },
       ],
     },
@@ -398,30 +374,31 @@ export default function PurchasingPage() {
         />
 
         <div className="grid grid-cols-4 gap-4">
-          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="text-2xl font-bold text-yellow-700">
-              {orders.filter(o => o.status === 'draft' || o.status === 'submitted').length}
+          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+            <div className="text-2xl font-bold text-gray-700">
+              {orders.filter(o => poBucket(o.status) === 'draft').length}
             </div>
-            <div className="text-sm text-yellow-600">Pending Approval</div>
+            <div className="text-sm text-gray-600">Draft</div>
           </div>
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="text-2xl font-bold text-blue-700">
-              {orders.filter(o => o.status === 'approved' || o.status === 'in_transit').length}
+              {orders.filter(o => poBucket(o.status) === 'sent').length}
             </div>
-            <div className="text-sm text-blue-600">Open</div>
+            <div className="text-sm text-blue-600">Sent</div>
           </div>
-          <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
-            <div className="text-2xl font-bold text-orange-700">
-              {orders.filter(o => o.status === 'partially_received').length}
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="text-2xl font-bold text-amber-700">
+              {orders.filter(o => poBucket(o.status) === 'partially_received').length}
             </div>
-            <div className="text-sm text-orange-600">Partial</div>
+            <div className="text-sm text-amber-600">Partially Received</div>
           </div>
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="text-2xl font-bold text-red-700">
               {orders.filter(o => {
                 if (!o.expected_delivery_date) return false;
+                const bucket = poBucket(o.status);
                 return new Date(o.expected_delivery_date) < new Date() &&
-                       !['received', 'closed', 'cancelled'].includes(o.status);
+                       bucket !== 'received' && bucket !== 'cancelled';
               }).length}
             </div>
             <div className="text-sm text-red-600">Late</div>
@@ -436,7 +413,7 @@ export default function PurchasingPage() {
         />
 
         <DataTable
-          data={orders}
+          data={displayedOrders}
           columns={columns}
           loading={loading}
           emptyMessage="No purchase orders found"
@@ -452,10 +429,7 @@ export default function PurchasingPage() {
             onChanged={fetchOrders}
             locations={locations}
             catalogItems={catalogItems}
-            onPlaceOrder={(poRow) => {
-              setSelectedOrder(null);
-              handlePlacePO(poRow);
-            }}
+            actions={buildRowActions(selectedOrder)}
           />
         )}
 
@@ -464,6 +438,12 @@ export default function PurchasingPage() {
             onClose={() => setShowCreateModal(false)}
             onCreated={() => {
               setShowCreateModal(false);
+              fetchOrders();
+            }}
+            onCreatedAndSend={(poId) => {
+              setShowCreateModal(false);
+              // Hand off to the vendor-aware send path once the row loads.
+              setPendingSendPoId(poId);
               fetchOrders();
             }}
             onAddVendor={() => setShowVendorModal(true)}
@@ -504,6 +484,28 @@ export default function PurchasingPage() {
           />
         )}
 
+        {/* Send-confirm step: emails the PO, then flips it to "Sent". Shared by
+            the row/detail "Send PO" action and the create modal's Create & Send. */}
+        <SendPOEmailModal
+          open={!!sendPoId}
+          poId={sendPoId}
+          onClose={() => setSendPoId(null)}
+          onSent={() => {
+            if (sendPoId) markPoSent(sendPoId);
+          }}
+        />
+
+        <ReceivePOModal
+          open={!!receivePO}
+          po={receivePO}
+          catalogItems={catalogItems}
+          onClose={() => setReceivePO(null)}
+          onReceived={() => {
+            setSelectedOrder(null);
+            fetchOrders();
+          }}
+        />
+
         <VendorModal
           open={showVendorModal}
           onClose={() => setShowVendorModal(false)}
@@ -524,25 +526,17 @@ function PODetailPanel({
   onChanged,
   locations,
   catalogItems,
-  onPlaceOrder
+  actions,
 }: {
   po: PurchaseOrder;
   onClose: () => void;
   onChanged: () => void;
   locations: Map<string, string>;
   catalogItems: Map<string, any>;
-  onPlaceOrder: (po: PurchaseOrder) => void;
+  actions: RowActionItem[];
 }) {
   const uomLabels = useUOMLabelMap();
-  const [status, setStatus] = useState(po.status);
-  const [actionError, setActionError] = useState('');
-  const [showEmail, setShowEmail] = useState(false);
-  // Integration-backed vendors order through their own automated flow (e.g.
-  // Amazon cXML/punchout, Printify), so they don't get the manual "Send Email"
-  // path. Every non-integration vendor submits by emailing the PO.
-  const INTEGRATION_VENDOR_CODES = ['AMAZON-BIZ', 'PRINTIFY'];
-  const isAmazonVendor = po.vendor_code_snapshot === 'AMAZON-BIZ';
-  const isIntegrationVendor = !!po.vendor_code_snapshot && INTEGRATION_VENDOR_CODES.includes(po.vendor_code_snapshot);
+  const bucket = poBucket(po.status);
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -557,7 +551,6 @@ function PODetailPanel({
     }>;
   }>>([]);
   const [loadingReceipts, setLoadingReceipts] = useState(true);
-  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
     fetchReceipts();
@@ -575,54 +568,6 @@ function PODetailPanel({
     }
   };
 
-  const updateStatus = async (newStatus: string) => {
-    setUpdatingStatus(true);
-    setActionError('');
-    try {
-      const { error } = await updatePurchaseOrderStatus(po.id, newStatus, po.last_event_id);
-
-      if (error) {
-        setActionError(error.message);
-        return;
-      }
-
-      // Reflect the new status in place and refresh the list behind the panel.
-      setStatus(newStatus);
-      onChanged();
-    } catch (error: any) {
-      console.error('Error updating status:', error);
-      setActionError(error?.message || 'Failed to update status.');
-    } finally {
-      setUpdatingStatus(false);
-    }
-  };
-
-  const deletePO = async () => {
-    if (!confirm(`Void PO ${po.po_number}? This cancels the purchase order.`)) {
-      return;
-    }
-
-    setUpdatingStatus(true);
-    setActionError('');
-    try {
-      const { error } = await deletePurchaseOrder(po.id, po.last_event_id);
-
-      if (error) {
-        setActionError(error.message);
-        return;
-      }
-
-      // Remove the voided PO from the list and close the panel — no full reload.
-      onChanged();
-      onClose();
-    } catch (error: any) {
-      console.error('Error voiding PO:', error);
-      setActionError(error?.message || 'Failed to void PO.');
-    } finally {
-      setUpdatingStatus(false);
-    }
-  };
-
   return (
     <div className="fixed inset-y-0 right-0 w-[28rem] bg-white shadow-xl border-l z-40 overflow-y-auto">
       <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-white">
@@ -633,7 +578,7 @@ function PODetailPanel({
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span className="font-mono font-medium text-lg">{po.po_number}</span>
-          <StatusChip status={status} />
+          <StatusChip status={poBucketLabel(bucket)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -738,103 +683,36 @@ function PODetailPanel({
         <PurchaseOrderActivity poId={po.id} onChanged={onChanged} />
 
         <div className="border-t pt-4">
-          {actionError && (
-            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {actionError}
-            </div>
-          )}
           <div className="flex flex-col gap-2">
-            {/* Email the PO to the vendor — the submit path for every non-Amazon
-                vendor, available once approved (and after). */}
-            {!isIntegrationVendor && ['approved', 'placed', 'acknowledged', 'partially_received', 'fully_received'].includes(status) && (
-              <button
-                onClick={() => setShowEmail(true)}
-                className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
-              >
-                ✉ Send Email
-              </button>
-            )}
-
-            {/* Status-specific actions */}
-            {status === 'draft' && (
-              <>
-                <button
-                  onClick={() => updateStatus('awaiting_approval')}
-                  disabled={updatingStatus}
-                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {updatingStatus ? 'Updating...' : 'Submit for Approval'}
-                </button>
-                <button
-                  onClick={deletePO}
-                  disabled={updatingStatus}
-                  className="w-full px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50"
-                >
-                  {updatingStatus ? 'Deleting...' : 'Delete PO'}
-                </button>
-              </>
-            )}
-
-            {status === 'awaiting_approval' && (
-              <>
-                <button
-                  onClick={() => updateStatus('approved')}
-                  disabled={updatingStatus}
-                  className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                >
-                  {updatingStatus ? 'Updating...' : 'Approve PO'}
-                </button>
-                <button
-                  onClick={() => updateStatus('cancelled')}
-                  disabled={updatingStatus}
-                  className="w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
-                >
-                  {updatingStatus ? 'Updating...' : 'Reject'}
-                </button>
-                <button
-                  onClick={deletePO}
-                  disabled={updatingStatus}
-                  className="w-full px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50 disabled:opacity-50"
-                >
-                  {updatingStatus ? 'Deleting...' : 'Delete PO'}
-                </button>
-              </>
-            )}
-
-            {isAmazonVendor && status === 'approved' && (
-              <button
-                onClick={() => onPlaceOrder(po)}
-                className="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
-              >
-                Order via Amazon Business
-              </button>
-            )}
-
-            {(status === 'partially_received' || status === 'fully_received') && (
-              <button
-                onClick={() => updateStatus('closed')}
-                disabled={updatingStatus}
-                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
-              >
-                {updatingStatus ? 'Updating...' : 'Close PO'}
-              </button>
-            )}
-
-            {status === 'closed' && (
+            {actions.length === 0 ? (
               <div className="w-full px-4 py-2 text-center text-muted-foreground bg-muted/30 rounded-md">
-                PO Closed
+                No actions available
               </div>
+            ) : (
+              actions.map((action) => (
+                <button
+                  key={action.key}
+                  onClick={action.onClick}
+                  className={
+                    action.variant === 'danger'
+                      ? 'w-full px-4 py-2 border border-red-300 text-red-700 rounded-md hover:bg-red-50'
+                      : action.key === 'receive' || action.key === 'send' || action.key === 'resend'
+                      ? 'w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90'
+                      : 'w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50'
+                  }
+                >
+                  {action.label}
+                </button>
+              ))
             )}
           </div>
         </div>
       </div>
-
-      <SendPOEmailModal open={showEmail} poId={po.id} onClose={() => setShowEmail(false)} />
     </div>
   );
 }
 
-function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClose: () => void; onCreated: () => void; onAddVendor: () => void; newVendorId?: string | null }) {
+function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newVendorId }: { onClose: () => void; onCreated: () => void; onCreatedAndSend: (poId: string) => void; onAddVendor: () => void; newVendorId?: string | null }) {
   const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   type POLine = { catalog_item_id: string; item_description: string; uom_term_id: string; qty: string; unit_cost: string };
   const emptyLine: POLine = { catalog_item_id: '', item_description: '', uom_term_id: '', qty: '', unit_cost: '' };
@@ -929,6 +807,11 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Enter-to-submit saves a draft; "Create & Send" is an explicit button.
+    await submit(false);
+  };
+
+  const submit = async (sendAfter: boolean) => {
     setSaving(true);
     setError('');
 
@@ -966,7 +849,7 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
         throw AppError.badRequest('Please add at least one line item');
       }
 
-      await SupplyChainRPC.createPurchaseOrder({
+      const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         delivery_location_id: form.ship_to_location_id,
         needed_by_date: form.expected_delivery_date || undefined,
@@ -974,7 +857,11 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
         lines: validLines,
       });
 
-      onCreated();
+      if (sendAfter && result?.po_id) {
+        onCreatedAndSend(result.po_id);
+      } else {
+        onCreated();
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -1189,15 +1076,23 @@ function CreatePOModal({ onClose, onCreated, onAddVendor, newVendorId }: { onClo
           </div>
 
           <div className="flex gap-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">
+            <button type="button" onClick={onClose} className="px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50">
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
+              className="flex-1 px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save as Draft'}
+            </button>
+            <button
+              type="button"
+              onClick={() => submit(true)}
+              disabled={saving}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
             >
-              {saving ? 'Creating...' : 'Create PO'}
+              {saving ? 'Creating…' : 'Create & Send →'}
             </button>
           </div>
         </form>

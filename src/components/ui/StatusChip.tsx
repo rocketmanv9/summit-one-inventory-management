@@ -9,6 +9,9 @@ type StatusType =
   | 'draft'
   | 'submitted'
   | 'approved'
+  | 'sent'
+  | 'voided'
+  | 'fully_received'
   | 'in_transit'
   | 'received'
   | 'partially_received'
@@ -50,6 +53,9 @@ const statusConfig: Record<StatusType, { bg: string; text: string; dot: string }
   draft: { bg: 'bg-gray-100', text: 'text-gray-800', dot: 'bg-gray-400' },
   submitted: { bg: 'bg-purple-100', text: 'text-purple-800', dot: 'bg-purple-500' },
   approved: { bg: 'bg-green-100', text: 'text-green-800', dot: 'bg-green-500' },
+  sent: { bg: 'bg-blue-100', text: 'text-blue-800', dot: 'bg-blue-500' },
+  voided: { bg: 'bg-gray-100', text: 'text-gray-600', dot: 'bg-gray-400' },
+  fully_received: { bg: 'bg-green-100', text: 'text-green-800', dot: 'bg-green-500' },
   in_transit: { bg: 'bg-blue-100', text: 'text-blue-800', dot: 'bg-blue-500' },
   received: { bg: 'bg-green-100', text: 'text-green-800', dot: 'bg-green-500' },
   partially_received: { bg: 'bg-amber-100', text: 'text-amber-800', dot: 'bg-amber-500' },
