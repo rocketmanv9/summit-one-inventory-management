@@ -15,6 +15,7 @@ import { AddVendorModal } from '@/components/modals/AddVendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
 import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
+import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 
 interface PurchaseOrder {
@@ -742,6 +743,9 @@ function PODetailPanel({
             <p className="text-sm text-muted-foreground italic">No receipts yet</p>
           )}
         </div>
+
+        {/* AI-tracked vendor replies (acknowledgements, ETAs, backorders, …). */}
+        <PurchaseOrderActivity poId={po.id} onChanged={onChanged} />
 
         <div className="border-t pt-4">
           {actionError && (

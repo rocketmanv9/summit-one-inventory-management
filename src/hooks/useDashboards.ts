@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createBrowserAuthedClient } from '@/supabase/client';
-import { getAuthToken, getStoredAccessToken, getTenantIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
+import { getAuthToken, getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken, handleSupabaseAuthError } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Dashboard, DashboardWidget, WidgetRegistryEntry } from '@/types/dashboard';
 

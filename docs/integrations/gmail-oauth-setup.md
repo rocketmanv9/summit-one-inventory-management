@@ -171,5 +171,50 @@ replies** button. Connection status reflects `revoked_at`.
 - `prompt=consent` + `access_type=offline` ensures a refresh token. If a user
   previously authorized without one, they’ll see a `no_refresh_token` hint to
   remove the app at <https://myaccount.google.com/permissions> and retry.
-- Reply sync currently runs on demand (button / `POST /sync-replies`). It can be
-  promoted to a cron/poller later using the same `syncVendorReplies()` function.
+- Reply sync runs **automatically** (see §10). The in-app buttons just force an
+  immediate refresh.
+
+---
+
+## 10. Automatic vendor-reply sync (no manual button)
+
+Replies are pulled and interpreted on a schedule — POs update themselves.
+
+**Endpoint:** `GET /api/system/cron/gmail-reply-sync` — iterates every tenant
+with an active Gmail connection and runs `syncAllTenantsReplies()`. It is
+**secret-guarded**: it only runs when the request carries
+`Authorization: Bearer <CRON_SECRET>`, so it isn't publicly triggerable.
+
+**Setup:**
+1. Set a `CRON_SECRET` env var (random 32+ chars) in each environment.
+2. Scheduling is wired two ways — use whichever fits the deployment:
+
+**a) Vercel Cron (default, already in `vercel.json`):**
+```json
+{ "crons": [ { "path": "/api/system/cron/gmail-reply-sync", "schedule": "*/10 * * * *" } ] }
+```
+Vercel automatically sends `Authorization: Bearer $CRON_SECRET`. Note: sub-daily
+schedules require the **Pro** plan; Hobby runs crons at most once per day.
+
+**b) Supabase pg_cron + pg_net (works on any plan / non-Vercel):**
+```sql
+-- Run every 10 minutes. Set the two GUCs once (app URL + cron secret).
+select cron.schedule(
+  'gmail-reply-sync',
+  '*/10 * * * *',
+  $$ select net.http_get(
+       url := current_setting('app.inventory_url') || '/api/system/cron/gmail-reply-sync',
+       headers := jsonb_build_object('Authorization', 'Bearer ' || current_setting('app.cron_secret'))
+     ) $$
+);
+```
+
+**Bounds:** each run processes up to `maxTenants` (15) tenants with a 5-day
+look-back to stay within the route timeout. For larger fleets, move the fan-out
+to a queue or a Supabase Edge Function (the `syncVendorRepliesForTenant()` /
+`syncAllTenantsReplies()` helpers are reusable from anywhere).
+
+**Real-time option:** for instant updates instead of polling, use Gmail
+`users.watch` → Google Pub/Sub → a webhook route that calls
+`syncVendorRepliesForTenant()`. Heavier infra (a Pub/Sub topic + push
+subscription), so polling is the default.

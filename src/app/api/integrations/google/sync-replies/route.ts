@@ -29,7 +29,12 @@ export const POST = createSessionWriteRoute(
     log.info('gmail.replies_synced', { ...result });
 
     return {
-      data: { scanned_connections: result.scannedConnections, new_replies: result.newReplies },
+      data: {
+        scanned_connections: result.scannedConnections,
+        new_replies: result.newReplies,
+        auto_applied: result.autoApplied,
+        suggested: result.suggested,
+      },
       status: 200,
       events: [
         {
@@ -37,6 +42,8 @@ export const POST = createSessionWriteRoute(
           payload: {
             scanned_connections: result.scannedConnections,
             new_replies: result.newReplies,
+            auto_applied: result.autoApplied,
+            suggested: result.suggested,
           },
           last_event_id: idempotencyKey,
         },

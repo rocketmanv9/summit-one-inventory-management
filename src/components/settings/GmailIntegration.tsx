@@ -283,7 +283,8 @@ export function GmailIntegration({ isAdmin }: { isAdmin: boolean }) {
               <div className="text-sm">
                 <div className="font-medium">Vendor replies</div>
                 <div className="text-xs text-muted-foreground">
-                  Pull recent replies and link them to their purchase orders.
+                  Checked automatically in the background every few minutes and linked to their
+                  purchase orders. Use this to check right now.
                 </div>
                 {syncResult && <div className="text-xs text-green-700 mt-1">{syncResult}</div>}
               </div>
@@ -292,7 +293,7 @@ export function GmailIntegration({ isAdmin }: { isAdmin: boolean }) {
                 disabled={busy}
                 className="px-3 py-1.5 border rounded-md hover:bg-gray-50 disabled:opacity-50 text-sm flex items-center gap-1.5"
               >
-                <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} /> Sync replies
+                <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} /> Check now
               </button>
             </div>
           )}

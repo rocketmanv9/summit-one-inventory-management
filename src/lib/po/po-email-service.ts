@@ -22,6 +22,7 @@ import {
 } from '@/lib/integrations/google-connections';
 import { loadPOContext, type POContext } from './po-context';
 import { generatePurchaseOrderPdf } from './po-pdf';
+import { processReply } from './po-status-tracker';
 
 type AdminClient = any;
 type FetchLike = typeof fetch;
@@ -389,29 +390,24 @@ function templateDraft(ctx: POContext, urgency: EmailUrgency): string {
 export interface SyncVendorRepliesResult {
   scannedConnections: number;
   newReplies: number;
+  autoApplied: number;
+  suggested: number;
 }
 
 /**
- * Read recent Gmail messages across the user's connections (personal + shared
- * mailboxes), match them to sent POs by thread id or PO number in the subject,
- * and store inbound vendor replies linked to the originating PO.
+ * Core scan: for a given set of connections, pull recent inbound Gmail messages,
+ * match them to sent POs (by thread id or PO number), store new vendor replies,
+ * and run the AI status tracker on each new one.
  */
-export async function syncVendorReplies(args: {
-  tenantId: string;
-  userId: string;
-  fetchImpl: FetchLike;
-  lookbackDays?: number;
-}): Promise<SyncVendorRepliesResult> {
-  const admin = getAdminClient();
-  const lookback = args.lookbackDays ?? 30;
-
-  // Gather candidate connections (personal + shared).
-  const connections: GoogleConnectionRow[] = [];
-  const personal = await getUserConnection(admin, args.tenantId, args.userId);
-  if (personal) connections.push(personal);
-  connections.push(...(await getSharedMailboxes(admin, args.tenantId)));
+async function scanConnectionsForReplies(
+  admin: AdminClient,
+  tenantId: string,
+  connections: GoogleConnectionRow[],
+  fetchImpl: FetchLike,
+  lookbackDays: number,
+): Promise<SyncVendorRepliesResult> {
   if (connections.length === 0) {
-    return { scannedConnections: 0, newReplies: 0 };
+    return { scannedConnections: 0, newReplies: 0, autoApplied: 0, suggested: 0 };
   }
 
   // Build lookup maps from sent PO emails.
@@ -419,7 +415,7 @@ export async function syncVendorReplies(args: {
     .schema('supply_chain')
     .from('purchase_order_emails')
     .select('id, purchase_order_id, gmail_thread_id, subject')
-    .eq('tenant_id', args.tenantId)
+    .eq('tenant_id', tenantId)
     .eq('provider', 'gmail')
     .order('sent_at', { ascending: false })
     .limit(500);
@@ -432,24 +428,31 @@ export async function syncVendorReplies(args: {
     if (m) poNumberToPO.set(m[1].toLowerCase(), { poId: e.purchase_order_id, emailId: e.id });
   }
 
+  // Nothing was ever sent via Gmail → no threads to match against.
+  if (threadToPO.size === 0 && poNumberToPO.size === 0) {
+    return { scannedConnections: connections.length, newReplies: 0, autoApplied: 0, suggested: 0 };
+  }
+
   let newReplies = 0;
+  let autoApplied = 0;
+  let suggested = 0;
   for (const conn of connections) {
     let accessToken: string;
     try {
-      accessToken = await getAccessTokenForConnection(admin, conn, args.fetchImpl);
+      accessToken = await getAccessTokenForConnection(admin, conn, fetchImpl);
     } catch {
       continue; // skip connections whose token can't be refreshed
     }
     const refs = await listGmailMessages(
-      args.fetchImpl,
+      fetchImpl,
       accessToken,
-      `newer_than:${lookback}d -in:sent -in:drafts`,
+      `newer_than:${lookbackDays}d -in:sent -in:drafts`,
       50,
     );
     for (const ref of refs) {
       let msg;
       try {
-        msg = await getGmailMessage(args.fetchImpl, accessToken, ref.id);
+        msg = await getGmailMessage(fetchImpl, accessToken, ref.id);
       } catch {
         continue;
       }
@@ -464,12 +467,12 @@ export async function syncVendorReplies(args: {
       }
       if (!match) continue;
 
-      const { error } = await admin
+      const { data: inserted, error } = await admin
         .schema('supply_chain')
         .from('purchase_order_email_replies')
         .upsert(
           {
-            tenant_id: args.tenantId,
+            tenant_id: tenantId,
             purchase_order_id: match.poId,
             po_email_id: match.emailId,
             connection_id: conn.id,
@@ -485,9 +488,128 @@ export async function syncVendorReplies(args: {
           { onConflict: 'tenant_id,gmail_message_id', ignoreDuplicates: true },
         )
         .select('id');
-      if (!error) newReplies += 1;
+
+      // ignoreDuplicates → a row is returned only when this reply is genuinely new.
+      const newRow = inserted?.[0];
+      if (error || !newRow) continue;
+      newReplies += 1;
+
+      // Interpret the new reply and (auto-)update the PO.
+      try {
+        const r = await processReply(
+          admin,
+          tenantId,
+          {
+            id: newRow.id,
+            purchase_order_id: match.poId,
+            subject: msg.subject,
+            body_text: msg.bodyText,
+            snippet: msg.snippet,
+          },
+          fetchImpl,
+        );
+        autoApplied += r.autoApplied;
+        suggested += r.suggested;
+      } catch {
+        // leave the reply unprocessed; a later sync / backfill will retry it
+      }
     }
   }
 
-  return { scannedConnections: connections.length, newReplies };
+  return { scannedConnections: connections.length, newReplies, autoApplied, suggested };
+}
+
+/**
+ * Read recent Gmail messages across a single user's connections (their personal
+ * account + the tenant's shared mailboxes). Used by the on-demand sync route.
+ */
+export async function syncVendorReplies(args: {
+  tenantId: string;
+  userId: string;
+  fetchImpl: FetchLike;
+  lookbackDays?: number;
+}): Promise<SyncVendorRepliesResult> {
+  const admin = getAdminClient();
+  const connections: GoogleConnectionRow[] = [];
+  const personal = await getUserConnection(admin, args.tenantId, args.userId);
+  if (personal) connections.push(personal);
+  connections.push(...(await getSharedMailboxes(admin, args.tenantId)));
+  return scanConnectionsForReplies(admin, args.tenantId, connections, args.fetchImpl, args.lookbackDays ?? 30);
+}
+
+/**
+ * Sync ALL active connections in a tenant (every user's personal Gmail + shared
+ * mailboxes). Used by the automatic background poller.
+ */
+export async function syncVendorRepliesForTenant(args: {
+  tenantId: string;
+  fetchImpl: FetchLike;
+  lookbackDays?: number;
+}): Promise<SyncVendorRepliesResult> {
+  const admin = getAdminClient();
+  const { data } = await admin
+    .schema('supply_chain')
+    .from('google_connections')
+    .select('*')
+    .eq('tenant_id', args.tenantId)
+    .is('revoked_at', null)
+    .limit(200);
+  return scanConnectionsForReplies(
+    admin,
+    args.tenantId,
+    (data as GoogleConnectionRow[]) ?? [],
+    args.fetchImpl,
+    args.lookbackDays ?? 7,
+  );
+}
+
+export interface SyncAllTenantsResult {
+  tenants: number;
+  newReplies: number;
+  autoApplied: number;
+  suggested: number;
+}
+
+/**
+ * Cross-tenant poller entrypoint (called by the scheduled cron route). Iterates
+ * every tenant that has at least one active Google connection, isolating
+ * per-tenant failures. `maxTenants` bounds work per invocation to stay within
+ * the route timeout.
+ */
+export async function syncAllTenantsReplies(args: {
+  fetchImpl: FetchLike;
+  lookbackDays?: number;
+  maxTenants?: number;
+}): Promise<SyncAllTenantsResult> {
+  const admin = getAdminClient();
+  const { data } = await admin
+    .schema('supply_chain')
+    .from('google_connections')
+    .select('tenant_id')
+    .is('revoked_at', null)
+    .limit(1000);
+
+  const tenantIds = [...new Set((data ?? []).map((r: any) => r.tenant_id as string))].slice(
+    0,
+    args.maxTenants ?? 25,
+  );
+
+  let newReplies = 0;
+  let autoApplied = 0;
+  let suggested = 0;
+  for (const tenantId of tenantIds) {
+    try {
+      const r = await syncVendorRepliesForTenant({
+        tenantId,
+        fetchImpl: args.fetchImpl,
+        lookbackDays: args.lookbackDays,
+      });
+      newReplies += r.newReplies;
+      autoApplied += r.autoApplied;
+      suggested += r.suggested;
+    } catch {
+      // isolate per-tenant failures so one bad tenant doesn't stop the poll
+    }
+  }
+  return { tenants: tenantIds.length, newReplies, autoApplied, suggested };
 }
