@@ -45,23 +45,45 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
 
 // ---- Event Handlers (customise these for your service) ----
 
+/**
+ * A locally-granted admin must never be downgraded by a Core membership sync —
+ * Core isn't the source of truth for this service's admins. If the existing
+ * local row is 'admin', keep it regardless of what Core reports.
+ */
+async function resolveRoleKeepingLocalAdmin(
+  supabase: SupabaseClient,
+  user_id: string,
+  tenantId: string,
+  coreRole: string,
+): Promise<string> {
+  const { data } = await supabase
+    .from('local_users')
+    .select('role')
+    .eq('user_id', user_id)
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  return data?.role === 'admin' ? 'admin' : coreRole;
+}
+
 async function handleMembershipCreated(supabase: SupabaseClient, payload: any, tenantId: string) {
   const { user_id, role, email, name } = payload;
+  const finalRole = await resolveRoleKeepingLocalAdmin(supabase, user_id, tenantId, role);
   await supabase.from('local_users').upsert({
     user_id,
     tenant_id: tenantId,
     email,
     name,
-    role,
+    role: finalRole,
     synced_at: new Date().toISOString(),
   });
 }
 
 async function handleMembershipUpdated(supabase: SupabaseClient, payload: any, tenantId: string) {
   const { user_id, role } = payload;
+  const finalRole = await resolveRoleKeepingLocalAdmin(supabase, user_id, tenantId, role);
   await supabase
     .from('local_users')
-    .update({ role, synced_at: new Date().toISOString() })
+    .update({ role: finalRole, synced_at: new Date().toISOString() })
     .eq('user_id', user_id)
     .eq('tenant_id', tenantId);
 }

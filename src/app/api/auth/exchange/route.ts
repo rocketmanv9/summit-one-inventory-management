@@ -19,20 +19,25 @@ const ExchangeSchema = z.object({
 
 /**
  * Enrich user role from local_users table.
- * If the user has 'admin' in local_users, override the role from Core.
+ * If the user has an 'admin' row in local_users (matched by user_id OR email
+ * within their tenant), override the role from Core. Matching on email keeps a
+ * local admin assignment intact even when Core reissues the user's id, and the
+ * array check avoids throwing on zero/duplicate rows.
  * This ensures local admin assignments survive Core migrations.
  */
 async function enrichRoleFromLocalUsers(user: SessionUserInfo): Promise<SessionUserInfo> {
   try {
     const admin = getAdminClient();
+    const orFilters = [`user_id.eq.${user.userId}`];
+    if (user.email) orFilters.push(`email.eq.${user.email}`);
+
     const { data } = await admin
       .from('local_users')
       .select('role')
-      .eq('user_id', user.userId)
       .eq('tenant_id', user.tenantId)
-      .single();
+      .or(orFilters.join(','));
 
-    if (data?.role === 'admin') {
+    if (Array.isArray(data) && data.some((r) => r?.role === 'admin')) {
       return { ...user, role: 'admin' };
     }
   } catch {

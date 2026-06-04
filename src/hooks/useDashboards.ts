@@ -33,6 +33,28 @@ async function resolveTenantId(): Promise<string | null> {
   return token ? getTenantIdFromToken(token) : null;
 }
 
+/**
+ * Resolve the current user ID — same cache-then-await pattern as resolveTenantId.
+ * Used to scope `scope='user'` (private) dashboards to their owner.
+ */
+async function resolveUserId(): Promise<string | null> {
+  const cached = getStoredAccessToken();
+  if (cached) return getUserIdFromToken(cached);
+
+  const token = await getAuthToken();
+  return token ? getUserIdFromToken(token) : null;
+}
+
+/**
+ * PostgREST `.or()` clause for dashboard visibility:
+ *   tenant-wide dashboards (everyone) + the current user's private ones.
+ * Role-scoped dashboards are not surfaced yet (no role claim wired client-side).
+ * Returns null when there's no user — caller should fall back to tenant-only.
+ */
+function visibilityFilter(userId: string | null): string | null {
+  return userId ? `scope.eq.tenant,owner_user_id.eq.${userId}` : null;
+}
+
 export function useDashboards() {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,12 +68,19 @@ export function useDashboards() {
         if (!tenantId) {
           throw AppError.unauthorized('Missing tenant context. Please log in again.');
         }
+        const userId = await resolveUserId();
 
-        const { data, error } = await supabase
+        let query = supabase
           .from('dashboards')
           .select('*')
           .eq('tenant_id', tenantId)
           .is('deleted_at', null);
+
+        // Only show tenant-wide dashboards + the current user's private ones.
+        const filter = visibilityFilter(userId);
+        query = filter ? query.or(filter) : query.eq('scope', 'tenant');
+
+        const { data, error } = await query;
 
         if (error) {
           handleSupabaseAuthError(error);
@@ -176,15 +205,21 @@ export function useDashboard(id: string | null) {
       if (!tenantId) {
         throw AppError.unauthorized('Missing tenant context. Please log in again.');
       }
+      const userId = await resolveUserId();
 
       const supabase = createBrowserAuthedClient();
-      const { data, error } = await supabase
+      let query = supabase
         .from('dashboards')
         .select('*')
         .eq('id', id)
         .eq('tenant_id', tenantId)
-        .is('deleted_at', null)
-        .single();
+        .is('deleted_at', null);
+
+      // Block reading another user's private dashboard by guessing its id.
+      const filter = visibilityFilter(userId);
+      query = filter ? query.or(filter) : query.eq('scope', 'tenant');
+
+      const { data, error } = await query.single();
 
       if (error) {
         handleSupabaseAuthError(error);
