@@ -3,13 +3,16 @@
 /**
  * Review & email a purchase order to its vendor.
  *
- * Loads a server-composed preview (recipient, ship-to, line items) so the user
- * reviews exactly what will be sent, can edit the recipient + add a message,
- * then sends from their own address (CC'd back to them).
+ * Shows an exact preview of what will be sent: the rendered email (built with
+ * the same buildPurchaseOrderEmail() the server uses, so it updates live as the
+ * message is typed) and the actual PDF attachment (streamed from the po-pdf
+ * route). The user edits the recipient + message, then sends from their own
+ * address (CC'd back to them).
  */
 
-import { useState, useEffect } from 'react';
-import { Loader2, Mail, CheckCircle2, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Loader2, Mail, CheckCircle2, AlertCircle, FileText } from 'lucide-react';
+import { buildPurchaseOrderEmail } from '@/lib/email/order-email';
 
 interface PreviewLine {
   description: string;
@@ -25,6 +28,7 @@ interface Preview {
   ship_to: string | null;
   needed_by: string | null;
   notes: string | null;
+  company_name: string | null;
   lines: PreviewLine[];
   subject: string;
 }
@@ -37,10 +41,7 @@ interface SendPOEmailModalProps {
 }
 
 const PO_EMAIL_API = '/api/inventory/purchasing/po-email';
-
-function money(n: number): string {
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+const PO_PDF_API = '/api/inventory/purchasing/po-pdf';
 
 export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailModalProps) {
   const [loading, setLoading] = useState(false);
@@ -51,10 +52,15 @@ export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailMod
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ to: string; cc: string } | null>(null);
+  const [tab, setTab] = useState<'email' | 'pdf'>('email');
+  // Mount the PDF iframe only once its tab is first opened (avoids generating
+  // the PDF up front), then keep it mounted so switching tabs doesn't reload it.
+  const [pdfLoaded, setPdfLoaded] = useState(false);
 
   useEffect(() => {
     if (!open || !poId) return;
     setPreview(null); setError(''); setResult(null); setMessage('');
+    setTab('email'); setPdfLoaded(false);
     setLoading(true);
     (async () => {
       try {
@@ -74,6 +80,37 @@ export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailMod
       }
     })();
   }, [open, poId]);
+
+  useEffect(() => {
+    if (tab === 'pdf') setPdfLoaded(true);
+  }, [tab]);
+
+  // Build the exact email the server will send, live as the message is typed.
+  const email = useMemo(() => {
+    if (!preview) return null;
+    return buildPurchaseOrderEmail({
+      poNumber: preview.po_number,
+      vendorName: preview.vendor_name,
+      shipTo: preview.ship_to,
+      lines: preview.lines.map((l) => ({
+        description: l.description,
+        quantity: l.quantity,
+        uom: l.uom,
+        unitPrice: l.unitPrice,
+      })),
+      neededBy: preview.needed_by,
+      notes: preview.notes,
+      message: message.trim() || null,
+      // Mirror the server: a blank requester name falls back to the company name.
+      requesterName: requester?.name?.trim() || preview.company_name || null,
+      requesterEmail: requester?.email || recipient || 'you@example.com',
+    });
+  }, [preview, message, requester, recipient]);
+
+  const emailDoc = useMemo(() => {
+    if (!email) return '';
+    return `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body style="margin:0;padding:16px;background:#fff;">${email.html}</body></html>`;
+  }, [email]);
 
   if (!open || !poId) return null;
 
@@ -107,8 +144,8 @@ export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailMod
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[92vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white z-10">
           <h3 className="text-lg font-semibold flex items-center gap-2"><Mail className="h-5 w-5" /> Email PO to Vendor</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
         </div>
@@ -147,35 +184,62 @@ export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailMod
               )}
             </div>
 
-            {/* Read-only preview of what will be sent */}
-            <div className="border rounded-lg bg-gray-50 p-3 space-y-2 text-sm">
-              <div className="font-medium">{preview.subject}</div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr className="text-left text-muted-foreground border-b">
-                    <th className="py-1 pr-2">Item</th><th className="py-1 pr-2">Qty</th><th className="py-1 pr-2">Unit</th><th className="py-1">Total</th>
-                  </tr></thead>
-                  <tbody>
-                    {preview.lines.map((l, i) => (
-                      <tr key={i} className="border-b last:border-0">
-                        <td className="py-1 pr-2">{l.description}</td>
-                        <td className="py-1 pr-2">{l.quantity}{l.uom ? ` ${l.uom}` : ''}</td>
-                        <td className="py-1 pr-2">{l.unitPrice != null ? money(l.unitPrice) : '—'}</td>
-                        <td className="py-1">{l.unitPrice != null ? money(l.unitPrice * l.quantity) : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {preview.ship_to && <div><span className="text-muted-foreground">Deliver to:</span> <span className="font-medium">{preview.ship_to}</span></div>}
-              {preview.needed_by && <div><span className="text-muted-foreground">Needed by:</span> {new Date(preview.needed_by).toLocaleDateString()}</div>}
-            </div>
-
             <div>
-              <label className="block text-sm font-medium mb-1">Message <span className="text-muted-foreground font-normal">(optional)</span></label>
-              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
+              <label className="block text-sm font-medium mb-1">Message <span className="text-muted-foreground font-normal">(optional — appears in the email below)</span></label>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2}
                 placeholder="Add a note to the vendor…"
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm" />
+            </div>
+
+            {/* Exact preview of what gets sent: rendered email + the PDF attachment. */}
+            <div>
+              <div className="flex items-center gap-1 border-b mb-0">
+                <button
+                  onClick={() => setTab('email')}
+                  className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 transition-colors ${
+                    tab === 'email' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Mail className="h-4 w-4" /> Email
+                </button>
+                <button
+                  onClick={() => setTab('pdf')}
+                  className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 transition-colors ${
+                    tab === 'pdf' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <FileText className="h-4 w-4" /> PDF attachment
+                </button>
+              </div>
+
+              {/* Email tab */}
+              <div className={tab === 'email' ? 'block' : 'hidden'}>
+                <div className="text-xs text-muted-foreground px-1 py-2 space-y-0.5 border-x border-b-0">
+                  <div><span className="text-muted-foreground">Subject:</span> <span className="font-medium text-foreground">{email?.subject}</span></div>
+                  <div><span className="text-muted-foreground">To:</span> {recipient || <span className="italic">vendor email</span>} · <span className="text-muted-foreground">Attachment:</span> PO-{preview.po_number}.pdf</div>
+                </div>
+                <iframe
+                  title="Email preview"
+                  srcDoc={emailDoc}
+                  sandbox=""
+                  className="w-full h-[340px] border rounded-md bg-white"
+                />
+              </div>
+
+              {/* PDF tab */}
+              <div className={tab === 'pdf' ? 'block' : 'hidden'}>
+                {pdfLoaded ? (
+                  <iframe
+                    title="PDF preview"
+                    src={`${PO_PDF_API}?po_id=${encodeURIComponent(poId)}`}
+                    className="w-full h-[460px] border rounded-md bg-gray-100 mt-2"
+                  />
+                ) : (
+                  <div className="h-[460px] flex items-center justify-center text-muted-foreground text-sm mt-2 border rounded-md">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading PDF…
+                  </div>
+                )}
+              </div>
             </div>
 
             <p className="text-xs text-muted-foreground">

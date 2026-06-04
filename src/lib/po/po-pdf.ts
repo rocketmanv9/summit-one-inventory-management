@@ -15,7 +15,9 @@ function money(n: number | null): string {
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
-  const d = new Date(iso);
+  // Parse date-only values (YYYY-MM-DD) as local time, not UTC, so a stored
+  // order/needed-by date doesn't render a day early in western timezones.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T00:00:00`) : new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
@@ -50,35 +52,60 @@ export async function generatePurchaseOrderPdf(ctx: POContext): Promise<Uint8Arr
 
   const truncate = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
+  // Truncate by measured width (not char count) so text never overflows its column.
+  const fit = (s: string, size: number, f: PDFFont, maxW: number): string => {
+    if (f.widthOfTextAtSize(s, size) <= maxW) return s;
+    let t = s;
+    while (t.length > 1 && f.widthOfTextAtSize(`${t}…`, size) > maxW) t = t.slice(0, -1);
+    return `${t}…`;
+  };
+
+  // Right-aligns a string so its right edge sits on the page's right margin.
+  const rightX = (s: string, size: number, f: PDFFont) =>
+    PAGE.w - PAGE.margin - f.widthOfTextAtSize(s, size);
+
   // ── Header ────────────────────────────────────────────────────────────────
-  text(page, ctx.company.name, PAGE.margin, y, { size: 18, font: bold });
-  text(page, 'PURCHASE ORDER', PAGE.w - PAGE.margin - bold.widthOfTextAtSize('PURCHASE ORDER', 16), y, {
-    size: 16,
-    font: bold,
-    color: MUTED,
-  });
-  y -= 18;
-  if (ctx.company.email) text(page, ctx.company.email, PAGE.margin, y, { size: 9, color: MUTED });
-  text(page, `# ${ctx.poNumber}`, PAGE.w - PAGE.margin - bold.widthOfTextAtSize(`# ${ctx.poNumber}`, 11), y, {
-    size: 11,
-    font: bold,
-  });
-  y -= 14;
-  if (ctx.company.address) {
-    for (const ln of ctx.company.address.split('\n')) {
-      text(page, ln, PAGE.margin, y, { size: 9, color: MUTED });
-      y -= 11;
-    }
-  }
+  // The company block (left) and the PO-meta block (right) advance on their own
+  // vertical cursors, so neither can overlap the other no matter how many lines
+  // each contains. We continue below whichever block is taller.
+  const headTop = y;
+
+  // Right block: PURCHASE ORDER / # number / date / needed-by.
+  const poTitle = 'PURCHASE ORDER';
+  const poTitleX = rightX(poTitle, 16, bold);
+  let ry = headTop;
+  text(page, poTitle, poTitleX, ry, { size: 16, font: bold, color: MUTED });
+  ry -= 18;
+  const poNumStr = `# ${ctx.poNumber}`;
+  text(page, poNumStr, rightX(poNumStr, 11, bold), ry, { size: 11, font: bold });
+  ry -= 15;
   const dateStr = `Date: ${formatDate(ctx.orderDate)}`;
-  text(page, dateStr, PAGE.w - PAGE.margin - font.widthOfTextAtSize(dateStr, 9), y + 11, { size: 9, color: MUTED });
+  text(page, dateStr, rightX(dateStr, 9, font), ry, { size: 9, color: MUTED });
+  ry -= 12;
   if (ctx.neededBy) {
     const nb = `Needed by: ${formatDate(ctx.neededBy)}`;
-    text(page, nb, PAGE.w - PAGE.margin - font.widthOfTextAtSize(nb, 9), y, { size: 9, color: MUTED });
-    y -= 11;
+    text(page, nb, rightX(nb, 9, font), ry, { size: 9, color: MUTED });
+    ry -= 12;
   }
 
-  y -= 14;
+  // Left block: company name (capped so it never runs into the right block),
+  // email, then address lines.
+  let ly = headTop;
+  const nameMax = poTitleX - PAGE.margin - 16;
+  text(page, fit(ctx.company.name, 18, bold, nameMax), PAGE.margin, ly, { size: 18, font: bold });
+  ly -= 16;
+  if (ctx.company.email) {
+    text(page, fit(ctx.company.email, 9, font, nameMax), PAGE.margin, ly, { size: 9, color: MUTED });
+    ly -= 12;
+  }
+  if (ctx.company.address) {
+    for (const ln of ctx.company.address.split('\n')) {
+      text(page, truncate(ln, 46), PAGE.margin, ly, { size: 9, color: MUTED });
+      ly -= 11;
+    }
+  }
+
+  y = Math.min(ly, ry) - 10;
   page.drawLine({ start: { x: PAGE.margin, y }, end: { x: PAGE.w - PAGE.margin, y }, thickness: 1, color: LINE });
   y -= 22;
 
@@ -160,7 +187,7 @@ export async function generatePurchaseOrderPdf(ctx: POContext): Promise<Uint8Arr
       y = PAGE.h - PAGE.margin;
       y = drawTableHeader(page, y);
     }
-    const desc = truncate(l.sku ? `${l.description} (${l.sku})` : l.description, 52);
+    const desc = fit(l.sku ? `${l.description} (${l.sku})` : l.description, 10, font, cols.qty - cols.item - 12);
     const qty = `${l.quantity}${l.uom ? ` ${l.uom}` : ''}`;
     text(page, desc, cols.item, y, { size: 10 });
     text(page, qty, cols.qty, y, { size: 10 });
@@ -172,11 +199,16 @@ export async function generatePurchaseOrderPdf(ctx: POContext): Promise<Uint8Arr
   }
 
   // ── Total ────────────────────────────────────────────────────────────────
-  y -= 10;
-  const totalLabel = ctx.allPriced ? 'ORDER TOTAL' : 'ORDER TOTAL (priced items)';
-  text(page, totalLabel, cols.unit - 40, y, { size: 11, font: bold });
+  y -= 6;
+  page.drawLine({ start: { x: cols.qty, y: y + 4 }, end: { x: PAGE.w - PAGE.margin, y: y + 4 }, thickness: 0.75, color: LINE });
+  y -= 14;
+  // Right-align the amount, then place the label ending a fixed gap to its left
+  // so a long "(priced items)" label can never overlap the figure.
   const totalStr = money(ctx.total);
-  text(page, totalStr, cols.ext - bold.widthOfTextAtSize(totalStr, 12), y, { size: 12, font: bold });
+  const amtX = cols.ext - bold.widthOfTextAtSize(totalStr, 12);
+  const totalLabel = ctx.allPriced ? 'ORDER TOTAL' : 'ORDER TOTAL (priced items)';
+  text(page, totalLabel, amtX - 12 - bold.widthOfTextAtSize(totalLabel, 11), y, { size: 11, font: bold });
+  text(page, totalStr, amtX, y, { size: 12, font: bold });
   if (!ctx.allPriced) {
     y -= 14;
     text(page, 'Some lines are quoted at market/estimated pricing — please confirm.', PAGE.margin, y, {

@@ -7,127 +7,41 @@
 import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
-import { getGVClient } from '@/lib/gv';
 import { getAdminClient } from '@/utils/supabase/admin';
-import type { POEmailLine } from '@/lib/email/order-email';
+import { loadPOContext } from '@/lib/po/po-context';
 import { sendPurchaseOrderEmail } from '@/lib/po/po-email-service';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-interface POEmailContext {
-  poNumber: string;
-  vendorName: string;
-  recipient: string | null;
-  shipTo: string | null;
-  neededBy: string | null;
-  notes: string | null;
-  lines: POEmailLine[];
-}
-
-async function loadPOEmailContext(supabase: any, tenantId: string, poId: string): Promise<POEmailContext> {
-  const sc = supabase.schema('supply_chain');
-  const inv = supabase.schema('inventory');
-
-  const { data: po, error: poErr } = await sc
-    .from('purchase_orders')
-    .select('id, po_number, vendor_id, vendor_name_snapshot, delivery_location_id, needed_by_date, notes')
-    .eq('id', poId)
-    .eq('tenant_id', tenantId)
-    .limit(1)
-    .single();
-  if (poErr || !po) throw AppError.notFound('Purchase order not found.');
-
-  let recipient: string | null = null;
-  let vendorName: string = po.vendor_name_snapshot || 'Vendor';
-  if (po.vendor_id) {
-    const { data: vendor } = await sc
-      .from('vendors')
-      .select('name, po_email, contact_email')
-      .eq('id', po.vendor_id)
-      .limit(1)
-      .maybeSingle();
-    if (vendor) {
-      recipient = vendor.po_email || vendor.contact_email || null;
-      vendorName = po.vendor_name_snapshot || vendor.name || vendorName;
-    }
-  }
-
-  let shipTo: string | null = null;
-  if (po.delivery_location_id) {
-    const { data: loc } = await inv
-      .from('locations')
-      .select('name')
-      .eq('id', po.delivery_location_id)
-      .limit(1)
-      .maybeSingle();
-    shipTo = loc?.name ?? null;
-  }
-
-  const { data: rawLines } = await sc
-    .from('purchase_order_lines')
-    .select('catalog_item_id, item_description, qty_ordered, unit_cost, uom_term_id, line_number')
-    .eq('po_id', poId)
-    .order('line_number');
-
-  const lineRows = rawLines || [];
-
-  // Resolve catalog item names.
-  const itemIds = [...new Set(lineRows.map((l: any) => l.catalog_item_id).filter(Boolean))];
-  const itemMap: Record<string, { name: string; sku: string }> = {};
-  if (itemIds.length > 0) {
-    const { data: items } = await inv.from('catalog_items').select('id, name, sku').in('id', itemIds).limit(200);
-    for (const it of items || []) itemMap[it.id] = { name: it.name, sku: it.sku };
-  }
-
-  // Resolve UOM labels (best-effort).
-  let uomMap: Record<string, string> = {};
-  try {
-    const raw = await getGVClient().buildLabelMap(tenantId, 'uom');
-    uomMap = raw instanceof Map ? Object.fromEntries(raw) : (raw as Record<string, string>);
-  } catch {
-    uomMap = {};
-  }
-
-  const lines: POEmailLine[] = lineRows.map((l: any) => {
-    const item = l.catalog_item_id ? itemMap[l.catalog_item_id] : null;
-    const description = item ? `${item.name} (${item.sku})` : l.item_description || 'Item';
-    return {
-      description,
-      quantity: Number(l.qty_ordered) || 0,
-      uom: l.uom_term_id ? uomMap[l.uom_term_id] ?? null : null,
-      unitPrice: l.unit_cost != null ? Number(l.unit_cost) : null,
-    };
-  });
-
-  return {
-    poNumber: po.po_number,
-    vendorName,
-    recipient,
-    shipTo,
-    neededBy: po.needed_by_date ?? null,
-    notes: po.notes ?? null,
-    lines,
-  };
-}
-
 // ── GET: preview ─────────────────────────────────────────────────────
+// Returns the structured data the modal needs to render an exact preview of
+// both the email and the PDF. We load via loadPOContext — the same loader the
+// PDF generator and the send path use — so the preview can't drift from what
+// actually gets sent. Line descriptions are formatted identically to
+// ctxLinesToEmailLines() in the email service.
 
 export const GET = createSessionReadRoute(async ({ req, session }) => {
   const poId = new URL(req.url).searchParams.get('po_id');
   if (!poId) throw AppError.badRequest('po_id is required.');
 
-  const ctx = await loadPOEmailContext(getAdminClient(), session.tenantId!, poId);
+  const ctx = await loadPOContext(getAdminClient(), session.tenantId!, poId);
 
   return Response.json({
     data: {
       po_number: ctx.poNumber,
       vendor_name: ctx.vendorName,
-      recipient: ctx.recipient,
-      has_recipient: !!ctx.recipient,
-      ship_to: ctx.shipTo,
+      recipient: ctx.vendorEmail,
+      has_recipient: !!ctx.vendorEmail,
+      ship_to: ctx.shipToName,
       needed_by: ctx.neededBy,
       notes: ctx.notes,
-      lines: ctx.lines,
+      company_name: ctx.company.name,
+      lines: ctx.lines.map((l) => ({
+        description: l.sku ? `${l.description} (${l.sku})` : l.description,
+        quantity: l.quantity,
+        uom: l.uom,
+        unitPrice: l.unitPrice,
+      })),
       subject: `Purchase Order ${ctx.poNumber}`,
     },
   });

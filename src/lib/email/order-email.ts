@@ -106,6 +106,13 @@ function money(n: number): string {
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function fmtDate(iso: string): string {
+  // Parse date-only values as local time so they don't render a day early.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(`${iso}T00:00:00`) : new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 export function buildPurchaseOrderEmail(p: POEmailParams): { subject: string; html: string; text: string } {
   const signer = p.requesterName?.trim() || p.requesterEmail;
   const subject = `Purchase Order ${p.poNumber}`;
@@ -128,7 +135,7 @@ export function buildPurchaseOrderEmail(p: POEmailParams): { subject: string; ht
   ];
   if (allPriced) textLines.push('', `Order total: ${money(orderTotal)}`);
   if (p.shipTo) textLines.push('', `Deliver to: ${p.shipTo}`);
-  if (p.neededBy) textLines.push(`Needed by: ${p.neededBy}`);
+  if (p.neededBy) textLines.push(`Needed by: ${fmtDate(p.neededBy)}`);
   if (p.notes?.trim()) textLines.push('', `Notes: ${p.notes.trim()}`);
   if (p.message?.trim()) textLines.push('', p.message.trim());
   textLines.push('', 'Please confirm availability, pricing, and lead time.', '', 'Thank you,', signer, p.requesterEmail);
@@ -152,7 +159,7 @@ export function buildPurchaseOrderEmail(p: POEmailParams): { subject: string; ht
 
   const metaBits: string[] = [];
   if (p.shipTo) metaBits.push(`<p style="margin:4px 0;"><strong>Deliver to:</strong> ${escapeHtml(p.shipTo)}</p>`);
-  if (p.neededBy) metaBits.push(`<p style="margin:4px 0;"><strong>Needed by:</strong> ${escapeHtml(p.neededBy)}</p>`);
+  if (p.neededBy) metaBits.push(`<p style="margin:4px 0;"><strong>Needed by:</strong> ${escapeHtml(fmtDate(p.neededBy))}</p>`);
   if (p.notes?.trim()) metaBits.push(`<p style="margin:4px 0;"><strong>Notes:</strong> ${escapeHtml(p.notes.trim())}</p>`);
   const messageHtml = p.message?.trim() ? `<p style="margin:16px 0;white-space:pre-wrap;">${escapeHtml(p.message.trim())}</p>` : '';
 
