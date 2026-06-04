@@ -42,7 +42,9 @@ interface PurchaseOrder {
   last_event_id: string;
   purchase_order_lines?: Array<{
     id: string;
-    catalog_item_id: string;
+    catalog_item_id: string | null;
+    item_description?: string | null;
+    uom_term_id?: string | null;
     qty_ordered: number;
     qty_received: number;
     unit_cost: number;
@@ -606,11 +608,11 @@ function PODetailPanel({
           <h4 className="font-medium mb-2">Line Items</h4>
           <div className="space-y-2">
             {po.purchase_order_lines?.map((line) => {
-              const item = catalogItems.get(line.catalog_item_id);
+              const item = line.catalog_item_id ? catalogItems.get(line.catalog_item_id) : undefined;
               return (
                 <div key={line.id} className="p-3 bg-muted/30 rounded-lg">
                   <div className="flex items-center justify-between mb-1">
-                    <div className="font-medium">{item?.name || 'Unknown Item'}</div>
+                    <div className="font-medium">{item?.name || line.item_description || 'Unknown Item'}</div>
                     <StatusChip status={line.status} size="sm" />
                   </div>
                   <div className="text-xs text-muted-foreground mb-2">
@@ -1109,7 +1111,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
     notes: po.notes || '',
     lines: po.purchase_order_lines?.map(line => ({
       id: line.id,
-      catalog_item_id: line.catalog_item_id,
+      catalog_item_id: line.catalog_item_id ?? '',
       qty: line.qty_ordered.toString(),
       unit_cost: line.unit_cost.toString(),
     })) || [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }],

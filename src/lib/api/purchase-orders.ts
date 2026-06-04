@@ -544,6 +544,36 @@ export async function updatePurchaseOrderStatus(
 }
 
 /**
+ * Mark free-text (non-catalog) PO lines as received by setting their absolute
+ * cumulative qty_received. There's no stock to post for these, so we write the
+ * line directly; the update_po_line_status BEFORE trigger derives the line
+ * status and update_po_status_from_lines rolls the header up to
+ * partially_received / fully_received. Pass the NEW cumulative qty_received per
+ * line (existing + amount received now), not a delta.
+ *
+ * Raw supabase-js writes don't throw on error, so each update selects the row
+ * and the error is surfaced explicitly.
+ */
+export async function receivePurchaseOrderLines(
+  poId: string,
+  lines: Array<{ id: string; qty_received: number }>
+): Promise<{ error: Error | null }> {
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
+  for (const line of lines) {
+    const { data, error } = await supabase
+      .from('purchase_order_lines')
+      .update({ qty_received: line.qty_received })
+      .eq('id', line.id)
+      .eq('po_id', poId)
+      .select('id')
+      .single();
+    if (error) return { error: new Error(error.message) };
+    if (!data) return { error: new Error('Could not update a PO line — it may have changed. Please refresh and retry.') };
+  }
+  return { error: null };
+}
+
+/**
  * Void (soft-delete) a purchase order with optimistic concurrency control.
  * Sets status to 'voided' instead of hard-deleting so the existing
  * trigger_po_status_events trigger emits a status-change event to the outbox.

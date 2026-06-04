@@ -3,22 +3,25 @@
 /**
  * Receive materials against a purchase order.
  *
- * One modal lists each catalog-backed line with the quantity still outstanding
- * pre-filled. "Receive All" fills every line; edit a number for a partial
- * delivery. Confirm creates a receipt that auto-posts to inventory stock
- * (rpc_create_receipt_v2), and the DB triggers move the PO to
- * Partially Received / Received automatically.
+ * Lists every outstanding line with its remaining quantity pre-filled.
+ * Catalog-backed lines create a receipt that auto-posts to inventory stock
+ * (rpc_create_receipt_v2). Free-text lines have no stock to post, so confirming
+ * just stamps their received quantity directly. Either way the DB triggers move
+ * the PO to Partially Received / Received, so a PO that mixes catalog and
+ * free-text lines can reach Fully Received.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, PackageCheck, AlertCircle } from 'lucide-react';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
-import { updatePurchaseOrderStatus } from '@/lib/api/purchase-orders';
+import { receivePurchaseOrderLines } from '@/lib/api/purchase-orders';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 interface POLine {
   id: string;
-  catalog_item_id: string;
+  catalog_item_id: string | null;
+  item_description?: string | null;
+  uom_term_id?: string | null;
   qty_ordered: number;
   qty_received: number;
   unit_cost: number;
@@ -51,8 +54,28 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     return { ...l, outstanding: outstanding > 0 ? outstanding : 0 };
   }), [po]);
 
-  const receivableLines = lines.filter((l) => l.catalog_item_id && l.outstanding > 0);
-  const hasCatalogLine = lines.some((l) => l.catalog_item_id);
+  // Every line still owing quantity is receivable — catalog lines post to stock,
+  // free-text lines are confirmation-only.
+  const receivable = lines.filter((l) => l.outstanding > 0);
+
+  // Display info for a line: name + uom, whether it's stock-tracked.
+  const lineInfo = (l: (typeof lines)[number]) => {
+    if (l.catalog_item_id) {
+      const item = catalogItems.get(l.catalog_item_id);
+      return {
+        name: item?.name || 'Unknown item',
+        sku: item?.sku as string | undefined,
+        uom: uomLabels[item?.uom_term_id] || '',
+        tracked: true,
+      };
+    }
+    return {
+      name: l.item_description || 'Custom item',
+      sku: undefined as string | undefined,
+      uom: l.uom_term_id ? uomLabels[l.uom_term_id] || '' : '',
+      tracked: false,
+    };
+  };
 
   useEffect(() => {
     if (!open || !po) return;
@@ -60,7 +83,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     setSaving(false);
     // Default every receivable line to its full outstanding quantity.
     const init: Record<string, string> = {};
-    for (const l of receivableLines) init[l.id] = String(l.outstanding);
+    for (const l of receivable) init[l.id] = String(l.outstanding);
     setQtyByLine(init);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, po?.id]);
@@ -69,45 +92,50 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
 
   const receiveAll = () => {
     const next: Record<string, string> = {};
-    for (const l of receivableLines) next[l.id] = String(l.outstanding);
+    for (const l of receivable) next[l.id] = String(l.outstanding);
     setQtyByLine(next);
   };
 
   const handleConfirm = async () => {
     setError('');
-    if (!po.delivery_location_id) {
+
+    // Split the entered quantities into catalog (post to stock) vs free-text
+    // (stamp the line). Free-text lines store an absolute cumulative
+    // qty_received, so add the amount received now to what's already received.
+    const catalogToReceive = receivable
+      .filter((l) => l.catalog_item_id)
+      .map((l) => ({ catalog_item_id: l.catalog_item_id as string, qty_received: parseFloat(qtyByLine[l.id] || '0'), po_line_id: l.id }))
+      .filter((l) => l.qty_received > 0);
+
+    const freeToReceive = receivable
+      .filter((l) => !l.catalog_item_id)
+      .map((l) => ({ id: l.id, delta: parseFloat(qtyByLine[l.id] || '0'), current: Number(l.qty_received) }))
+      .filter((l) => l.delta > 0)
+      .map((l) => ({ id: l.id, qty_received: l.current + l.delta }));
+
+    if (catalogToReceive.length === 0 && freeToReceive.length === 0) {
+      setError('Enter a quantity to receive on at least one line.');
+      return;
+    }
+    // Only stock-posting (catalog) receipts need a delivery location.
+    if (catalogToReceive.length > 0 && !po.delivery_location_id) {
       setError('This PO has no delivery location set — edit the PO to add one before receiving.');
       return;
     }
 
-    const receiptLines = receivableLines
-      .map((l) => ({
-        catalog_item_id: l.catalog_item_id,
-        qty_received: parseFloat(qtyByLine[l.id] || '0'),
-        po_line_id: l.id,
-      }))
-      .filter((l) => l.qty_received > 0);
-
     setSaving(true);
     try {
-      if (receiptLines.length === 0) {
-        if (hasCatalogLine) {
-          setError('Enter a quantity to receive on at least one line.');
-          setSaving(false);
-          return;
-        }
-        // Free-text-only PO: nothing to post to stock — just mark it received.
-        // Must be 'fully_received' (the stored status); 'received' is not a valid
-        // purchase_orders.status and violates purchase_orders_status_check.
-        const { error: statusError } = await updatePurchaseOrderStatus(po.id, 'fully_received', po.last_event_id);
-        if (statusError) throw statusError;
-      } else {
+      if (catalogToReceive.length > 0) {
         await SupplyChainRPC.createReceipt({
-          location_id: po.delivery_location_id,
+          location_id: po.delivery_location_id!,
           po_id: po.id,
           auto_post: true,
-          lines: receiptLines,
+          lines: catalogToReceive,
         });
+      }
+      if (freeToReceive.length > 0) {
+        const { error: freeErr } = await receivePurchaseOrderLines(po.id, freeToReceive);
+        if (freeErr) throw freeErr;
       }
       onReceived();
       onClose();
@@ -137,11 +165,9 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
             </div>
           )}
 
-          {receivableLines.length === 0 ? (
+          {receivable.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {hasCatalogLine
-                ? 'Everything on this PO has already been received.'
-                : 'This PO has no stock-tracked items. Confirm to mark it received.'}
+              Everything on this PO has already been received.
             </p>
           ) : (
             <>
@@ -159,15 +185,15 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
               </div>
 
               <div className="space-y-2">
-                {receivableLines.map((l) => {
-                  const item = catalogItems.get(l.catalog_item_id);
-                  const uom = uomLabels[item?.uom_term_id] || '';
+                {receivable.map((l) => {
+                  const info = lineInfo(l);
                   return (
                     <div key={l.id} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{item?.name || 'Unknown item'}</div>
+                        <div className="font-medium truncate">{info.name}</div>
                         <div className="text-xs text-muted-foreground">
-                          {item?.sku ? `${item.sku} · ` : ''}{l.outstanding} {uom} outstanding
+                          {info.sku ? `${info.sku} · ` : ''}{l.outstanding}{info.uom ? ` ${info.uom}` : ''} outstanding
+                          {!info.tracked && <span className="ml-1 text-amber-600">· not stock-tracked</span>}
                         </div>
                       </div>
                       <input
@@ -182,7 +208,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
                         className="w-24 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-right"
                       />
                       <span className="text-xs text-muted-foreground w-16 shrink-0">
-                        / {Number(l.qty_ordered)} {uom}
+                        / {Number(l.qty_ordered)}{info.uom ? ` ${info.uom}` : ''}
                       </span>
                     </div>
                   );
@@ -202,7 +228,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={saving}
+              disabled={saving || receivable.length === 0}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm flex items-center justify-center gap-1.5"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}

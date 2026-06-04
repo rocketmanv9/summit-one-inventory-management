@@ -455,6 +455,8 @@ export const SupplyChainRPC = {
         purchase_order_lines(
           id,
           catalog_item_id,
+          item_description,
+          uom_term_id,
           qty_ordered,
           qty_received,
           unit_cost,
