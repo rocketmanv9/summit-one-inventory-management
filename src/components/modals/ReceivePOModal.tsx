@@ -97,7 +97,9 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
           return;
         }
         // Free-text-only PO: nothing to post to stock — just mark it received.
-        const { error: statusError } = await updatePurchaseOrderStatus(po.id, 'received', po.last_event_id);
+        // Must be 'fully_received' (the stored status); 'received' is not a valid
+        // purchase_orders.status and violates purchase_orders_status_check.
+        const { error: statusError } = await updatePurchaseOrderStatus(po.id, 'fully_received', po.last_event_id);
         if (statusError) throw statusError;
       } else {
         await SupplyChainRPC.createReceipt({

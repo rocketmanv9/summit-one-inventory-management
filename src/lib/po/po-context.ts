@@ -165,11 +165,13 @@ export async function loadPOContext(
   }
 
   // Lines
-  const { data: rawLines } = await sc
+  const { data: rawLines, error: lineErr } = await sc
     .from('purchase_order_lines')
-    .select('line_number, catalog_item_id, item_description, item_vendor_sku, qty_ordered, unit_cost, estimated_unit_cost, uom_term_id, unit_of_measure')
+    .select('line_number, catalog_item_id, item_description, item_vendor_sku, qty_ordered, unit_cost, estimated_unit_cost, uom_term_id')
     .eq('po_id', poId)
     .order('line_number');
+  // A bad select here silently drops every line from the PDF/email — surface it.
+  if (lineErr) throw AppError.internal(`Failed to load PO lines: ${lineErr.message}`);
   const lineRows = rawLines || [];
 
   // Resolve catalog item names/SKUs
@@ -196,7 +198,7 @@ export async function loadPOContext(
     const quantity = Number(l.qty_ordered) || 0;
     const unitPrice =
       l.unit_cost != null ? Number(l.unit_cost) : l.estimated_unit_cost != null ? Number(l.estimated_unit_cost) : null;
-    const uom = l.uom_term_id ? uomMap[l.uom_term_id] ?? null : l.unit_of_measure ?? null;
+    const uom = l.uom_term_id ? uomMap[l.uom_term_id] ?? null : null;
     return {
       lineNumber: l.line_number ?? 0,
       description,
