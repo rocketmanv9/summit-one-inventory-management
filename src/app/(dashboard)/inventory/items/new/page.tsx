@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CategoryModal } from '@/components/modals/CategoryModal';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 import { AddLocationModal } from '@/components/modals/AddLocationModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
@@ -573,17 +573,13 @@ export default function NewItemWizardPage() {
     }
   };
 
-  const handleVendorCreated = async () => {
+  const handleVendorCreated = async (result: { id: string; name: string }) => {
     setShowVendorModal(false);
+    // Reload the dropdown, then select the newly created vendor by id.
     const vends = await SupplyChainRPC.getVendors();
     const mapped = (vends || []).map(v => ({ id: v.id, name: v.name, code: v.code }));
     setVendors(mapped);
-    const newest = (vends || []).sort((a, b) =>
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )[0];
-    if (newest) {
-      updateForm('vendor_id', newest.id);
-    }
+    updateForm('vendor_id', result.id);
   };
 
   const handleLocationCreated = async (loc: { id: string; name: string }) => {
@@ -776,7 +772,7 @@ export default function NewItemWizardPage() {
           defaultName={aiSuggestedCategory || undefined}
           defaultSkuPrefix={aiSuggestedSkuPrefix || undefined}
         />
-        <AddVendorModal
+        <VendorModal
           open={showVendorModal}
           onClose={() => setShowVendorModal(false)}
           onSuccess={handleVendorCreated}

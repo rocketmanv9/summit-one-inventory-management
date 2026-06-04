@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Send, Loader2, ExternalLink, Check, XCircle, Trash2 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 import { useAiChat } from '@/lib/ai/useAiChat';
 import { QUICK_ACTIONS } from '@/lib/ai/types';
 import type { Message, ChatAction } from '@/lib/ai/types';
@@ -51,7 +51,7 @@ export function ChatBot({ onClose }: ChatBotProps) {
   return (
     <>
       {/* Vendor Modal */}
-      <AddVendorModal
+      <VendorModal
         open={chat.vendorModal.open}
         onClose={chat.vendorModal.onClose}
         onSuccess={chat.vendorModal.onSuccess}

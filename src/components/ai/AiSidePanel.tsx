@@ -9,7 +9,7 @@ import { QUICK_ACTIONS } from '@/lib/ai/types';
 import type { Message } from '@/lib/ai/types';
 import { AiDataRenderer } from './AiDataRenderer';
 import { ImageAttachment } from './ImageAttachment';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 
 export function AiSidePanel() {
   const { isOpen, close } = useAiPanel();
@@ -50,7 +50,7 @@ export function AiSidePanel() {
   return (
     <>
       {/* Vendor Modal */}
-      <AddVendorModal
+      <VendorModal
         open={chat.vendorModal.open}
         onClose={chat.vendorModal.onClose}
         onSuccess={chat.vendorModal.onSuccess}

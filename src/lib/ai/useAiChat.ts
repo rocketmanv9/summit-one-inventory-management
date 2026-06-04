@@ -942,7 +942,7 @@ export function useAiChat(options?: AiChatOptions) {
   // ── Vendor modal callbacks ─────────────────────────────────────────
 
   const handleVendorModalSuccess = useCallback(
-    (vendorName: string) => {
+    ({ name: vendorName }: { id: string; name: string }) => {
       vendorModalSubmitted.current = true;
       setVendorModalOpen(false);
       addMessage('assistant', `Vendor "${vendorName}" created successfully!`, {

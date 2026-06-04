@@ -34,7 +34,7 @@ import { QUICK_ACTIONS } from '@/lib/ai/types';
 import { AvatarVideo } from './AvatarVideo';
 import { AiDataRenderer } from './AiDataRenderer';
 import { ImageAttachment } from './ImageAttachment';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 import type { Message, ChatAction } from '@/lib/ai/types';
 
 // Words indicating a problem → use "thinking" (concerned) video
@@ -113,7 +113,7 @@ export function AvatarChatPage() {
   return (
     <>
       {/* Vendor Modal */}
-      <AddVendorModal
+      <VendorModal
         open={chat.vendorModal.open}
         onClose={chat.vendorModal.onClose}
         onSuccess={chat.vendorModal.onSuccess}

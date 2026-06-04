@@ -11,7 +11,7 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } from '@/lib/api/purchase-orders';
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
 import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
@@ -504,23 +504,13 @@ export default function PurchasingPage() {
           />
         )}
 
-        <AddVendorModal
+        <VendorModal
           open={showVendorModal}
           onClose={() => setShowVendorModal(false)}
-          onSuccess={async (_vendorName: string) => {
+          onSuccess={({ id }) => {
             setShowVendorModal(false);
-            // Fetch latest vendors to get the new one's ID for auto-selection
-            try {
-              const vendors = await SupplyChainRPC.getVendors();
-              const newest = vendors.sort((a, b) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-              )[0];
-              if (newest) {
-                setPendingVendorId(newest.id);
-              }
-            } catch {
-              // Vendor was created but auto-select failed — modal will refresh its list
-            }
+            // The new vendor's id auto-selects it once the dropdown reloads.
+            setPendingVendorId(id);
           }}
         />
       </div>
