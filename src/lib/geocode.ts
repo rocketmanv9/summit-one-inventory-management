@@ -55,3 +55,51 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
     return null;
   }
 }
+
+export interface AddressParts {
+  street1?: string | null;
+  street2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  country?: string | null;
+}
+
+const clean = (s?: string | null) => (s ? s.trim() : '');
+
+/**
+ * Geocode an address with a progressively-coarser fallback cascade.
+ *
+ * Nominatim's free-form search frequently returns no result at full street
+ * precision (it's OSM-coverage dependent), so a single street query silently
+ * yields null. We fall back to city/state/zip and then zip so any address with
+ * a city or ZIP still resolves to a usable coordinate — accurate enough for the
+ * "nearest vendor location" ranking, which works in miles.
+ *
+ * Returns the first hit, or null if even the coarsest query misses.
+ */
+export async function geocodeStructured(parts: AddressParts): Promise<GeocodeResult | null> {
+  const country = clean(parts.country) || 'USA';
+  const street = [clean(parts.street1), clean(parts.street2)].filter(Boolean).join(' ');
+  const city = clean(parts.city);
+  const state = clean(parts.state);
+  const zip = clean(parts.zip);
+
+  const queries = [
+    [street, city, state, zip].filter(Boolean).join(', '), // full street precision
+    [city, state, zip].filter(Boolean).join(', '),         // city + ZIP centroid
+    [city, state].filter(Boolean).join(', '),              // city centroid
+    zip,                                                    // ZIP centroid
+  ]
+    .map((q) => (q ? `${q}, ${country}` : ''))
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  for (const q of queries) {
+    if (seen.has(q)) continue;
+    seen.add(q);
+    const result = await geocodeAddress(q);
+    if (result) return result;
+  }
+  return null;
+}

@@ -2,6 +2,7 @@ import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { geocodeStructured } from '@/lib/geocode';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -38,7 +39,16 @@ const UpdateSchema = z.object({
 export const PATCH = createSessionWriteRoute(async ({ req, ctx, body, log, idempotencyKey }) => {
   const { vendorId, addressId } = ids(req);
   const sc = await tenantSc(ctx.tenantId!);
-  const updates = body as z.infer<typeof UpdateSchema>;
+  const updates = { ...(body as z.infer<typeof UpdateSchema>) };
+
+  // Safety net: an edited address with no resolved coordinates gets re-geocoded
+  // server-side (same fallback cascade as create) so it stays on the map.
+  if ((updates.latitude == null || updates.longitude == null) &&
+      (updates.street1 || updates.city || updates.zip)) {
+    const geo = await geocodeStructured(updates);
+    if (geo) { updates.latitude = geo.latitude; updates.longitude = geo.longitude; }
+  }
+
   const { data, error } = await sc.from('vendor_addresses')
     .update({ ...updates, last_event_id: idempotencyKey })
     .eq('id', addressId).eq('vendor_id', vendorId)

@@ -16,7 +16,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2, Search, MapPin, Plus, Trash2 } from 'lucide-react';
 import { searchVendorOnline } from '@/lib/ai/client';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
-import { geocodeAddress } from '@/lib/geocode';
+import { geocodeStructured } from '@/lib/geocode';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
@@ -427,15 +427,15 @@ export function VendorModal({ open, onClose, onSuccess, initialName, vendor }: V
 
     try {
       // 1. Geocode filled addresses lacking coords (sequential — Nominatim is rate-limited).
+      //    geocodeStructured falls back from street → city/ZIP → ZIP so an address
+      //    Nominatim can't resolve at street precision still gets a usable coordinate.
+      //    The server address routes re-geocode as a safety net if any stay null.
       const filled = addresses.filter(addressHasContent);
       if (filled.some((a) => a.latitude == null || a.longitude == null)) setSavingMsg('Geocoding addresses…');
       for (const a of filled) {
         if (a.latitude == null || a.longitude == null) {
-          const q = [a.street1, a.city, a.state, a.zip].filter(Boolean).join(', ');
-          if (q) {
-            const geo = await geocodeAddress(q);
-            if (geo) { a.latitude = geo.latitude; a.longitude = geo.longitude; }
-          }
+          const geo = await geocodeStructured(a);
+          if (geo) { a.latitude = geo.latitude; a.longitude = geo.longitude; }
         }
       }
 

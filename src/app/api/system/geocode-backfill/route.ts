@@ -1,6 +1,7 @@
 import { createInternalRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { getAdminClient } from '@/utils/supabase/admin';
+import { geocodeStructured } from '@/lib/geocode';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -107,9 +108,54 @@ export const POST = createInternalRoute(async ({ log }) => {
     }
   }
 
+  // Fetch per-vendor addresses with details but no coordinates. These power the
+  // vendor locations map + nearest-location ranking, and previously had no
+  // backfill path — so a street address Nominatim missed stayed null forever.
+  const { data: vendorAddresses, error: addrErr } = await supabase
+    .schema('supply_chain' as any)
+    .from('vendor_addresses')
+    .select('id, label, street1, street2, city, state, zip, country')
+    .is('latitude' as any, null)
+    .limit(50);
+
+  if (addrErr) {
+    log.error('geocode_backfill.vendor_addresses_failed', { error: addrErr.message });
+    throw AppError.internal(addrErr.message);
+  }
+
+  // Geocode vendor addresses with the fallback cascade (street → city/ZIP → ZIP).
+  for (const addr of vendorAddresses || []) {
+    const a = addr as any;
+    if (!a.street1 && !a.city && !a.zip) continue;
+
+    await sleep(1100);
+
+    try {
+      const coords = await geocodeStructured(a);
+      if (coords) {
+        const { error: updateErr } = await supabase
+          .schema('supply_chain' as any)
+          .from('vendor_addresses')
+          .update({ latitude: coords.latitude, longitude: coords.longitude } as any)
+          .eq('id', a.id);
+
+        if (updateErr) {
+          results.push({ type: 'vendor_address', id: a.id, name: a.label || a.city || a.id, status: `update_failed: ${updateErr.message}` });
+        } else {
+          results.push({ type: 'vendor_address', id: a.id, name: a.label || a.city || a.id, status: 'geocoded', coords: `${coords.latitude},${coords.longitude}` });
+        }
+      } else {
+        results.push({ type: 'vendor_address', id: a.id, name: a.label || a.city || a.id, status: 'no_results' });
+      }
+    } catch (err: any) {
+      results.push({ type: 'vendor_address', id: a.id, name: a.label || a.city || a.id, status: `error: ${err.message}` });
+    }
+  }
+
   log.info('geocode_backfill.complete', {
     locations_processed: (locations || []).length,
     vendors_processed: (vendors || []).length,
+    vendor_addresses_processed: (vendorAddresses || []).length,
     results_count: results.length,
   });
 
@@ -117,6 +163,7 @@ export const POST = createInternalRoute(async ({ log }) => {
     data: {
       locations_found: (locations || []).length,
       vendors_found: (vendors || []).length,
+      vendor_addresses_found: (vendorAddresses || []).length,
       results,
     },
   });

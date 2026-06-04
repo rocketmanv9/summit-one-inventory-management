@@ -2,6 +2,7 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { geocodeStructured } from '@/lib/geocode';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -58,8 +59,18 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, body, log, idempo
   const id = vendorId(req);
   const sc = await tenantSc(ctx.tenantId!);
   const a = body as z.infer<typeof AddressSchema>;
+
+  // Safety net: if the client didn't resolve coordinates (e.g. Nominatim missed
+  // at street precision), geocode server-side with the same fallback cascade so
+  // the address still lands on the map and in nearest-location ranking.
+  let { latitude, longitude } = a;
+  if ((latitude == null || longitude == null) && (a.city || a.zip || a.street1)) {
+    const geo = await geocodeStructured(a);
+    if (geo) { latitude = geo.latitude; longitude = geo.longitude; }
+  }
+
   const { data, error } = await sc.from('vendor_addresses')
-    .insert({ tenant_id: ctx.tenantId, vendor_id: id, address_type: a.address_type ?? 'general', label: a.label ?? null, street1: a.street1 ?? null, street2: a.street2 ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip ?? null, country: a.country ?? null, latitude: a.latitude ?? null, longitude: a.longitude ?? null, last_event_id: idempotencyKey })
+    .insert({ tenant_id: ctx.tenantId, vendor_id: id, address_type: a.address_type ?? 'general', label: a.label ?? null, street1: a.street1 ?? null, street2: a.street2 ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip ?? null, country: a.country ?? null, latitude: latitude ?? null, longitude: longitude ?? null, last_event_id: idempotencyKey })
     .select().single();
   if (error) { log.error('vendor_addresses.create_failed', { error: error.message }); throw AppError.internal(error.message); }
   return { data, status: 201, events: [{ event_name: 'vendor_address.created', payload: { vendor_id: id, address_id: data.id }, last_event_id: idempotencyKey }] };
