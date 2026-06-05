@@ -1104,6 +1104,8 @@ function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newV
 }
 
 function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po: PurchaseOrder; onClose: () => void; onUpdated: () => void; onAddVendor: () => void; newVendorId?: string | null }) {
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
+  const emptyLine = { id: '', catalog_item_id: '', item_description: '', uom_term_id: '', qty: '', unit_cost: '' };
   const [form, setForm] = useState({
     vendor_id: po.vendor_id || '',
     ship_to_location_id: po.delivery_location_id || '',
@@ -1112,10 +1114,17 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
     lines: po.purchase_order_lines?.map(line => ({
       id: line.id,
       catalog_item_id: line.catalog_item_id ?? '',
+      item_description: line.item_description ?? '',
+      uom_term_id: line.uom_term_id ?? '',
       qty: line.qty_ordered.toString(),
       unit_cost: line.unit_cost.toString(),
-    })) || [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+    })) || [{ ...emptyLine }],
   });
+  // Free-text mode if any existing line has no catalog item. The PO builder
+  // produces all-catalog or all-free-text POs, so this round-trips correctly.
+  const [useFreetextLines, setUseFreetextLines] = useState(
+    !!po.purchase_order_lines?.some(l => !l.catalog_item_id),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
@@ -1137,7 +1146,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
       setForm((prev) => ({
         ...prev,
         vendor_id: newVendorId,
-        lines: [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+        lines: [{ ...emptyLine }],
       }));
     });
   }, [newVendorId]);
@@ -1179,7 +1188,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
   const addLine = () => {
     setForm({
       ...form,
-      lines: [...form.lines, { id: '', catalog_item_id: '', qty: '', unit_cost: '' }],
+      lines: [...form.lines, { ...emptyLine }],
     });
   };
 
@@ -1202,19 +1211,48 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
     setError('');
 
     try {
-      const { error } = await updatePurchaseOrder(po.id, po.last_event_id, {
-        vendor_id: form.vendor_id,
-        delivery_location_id: form.ship_to_location_id,
-        needed_by_date: form.expected_delivery_date || null,
-        notes: form.notes || null,
-        lines: form.lines
+      // Build either free-text lines (item_description + uom) or catalog lines,
+      // matching how the order was originally created.
+      let validLines: Array<{
+        id?: string;
+        catalog_item_id?: string;
+        item_description?: string;
+        uom_term_id?: string;
+        qty_ordered: number;
+        unit_cost: number;
+      }>;
+
+      if (useFreetextLines) {
+        validLines = form.lines
+          .filter(l => l.item_description.trim() && l.qty)
+          .map(l => ({
+            id: l.id || undefined,
+            item_description: l.item_description.trim(),
+            uom_term_id: l.uom_term_id || undefined,
+            qty_ordered: parseFloat(l.qty),
+            unit_cost: parseFloat(l.unit_cost) || 0,
+          }));
+      } else {
+        validLines = form.lines
           .filter(l => l.catalog_item_id && l.qty)
           .map(l => ({
             id: l.id || undefined,
             catalog_item_id: l.catalog_item_id,
             qty_ordered: parseFloat(l.qty),
             unit_cost: parseFloat(l.unit_cost) || 0,
-          })),
+          }));
+      }
+
+      if (validLines.length === 0) {
+        throw AppError.badRequest('Please add at least one line item');
+      }
+
+      const { error } = await updatePurchaseOrder(po.id, po.last_event_id, {
+        vendor_id: form.vendor_id,
+        delivery_location_id: form.ship_to_location_id,
+        needed_by_date: form.expected_delivery_date || null,
+        notes: form.notes || null,
+        lines: validLines,
       });
 
       if (error) {
@@ -1266,7 +1304,7 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                   setForm({
                     ...form,
                     vendor_id: e.target.value,
-                    lines: [{ id: '', catalog_item_id: '', qty: '', unit_cost: '' }]
+                    lines: [{ ...emptyLine }]
                   });
                 }}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
@@ -1312,9 +1350,23 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
           <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="font-medium">Line Items</h4>
-              <button type="button" onClick={addLine} className="text-sm text-primary hover:underline">
-                + Add Line
-              </button>
+              <div className="flex items-center gap-3">
+                {form.vendor_id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseFreetextLines(!useFreetextLines);
+                      setForm({ ...form, lines: [{ ...emptyLine }] });
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    {useFreetextLines ? 'Use catalog items' : 'Use free-text items'}
+                  </button>
+                )}
+                <button type="button" onClick={addLine} className="text-sm text-primary hover:underline">
+                  + Add Line
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {!form.vendor_id && (
@@ -1322,27 +1374,60 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
                   Select a vendor first to see available items
                 </p>
               )}
+
+              {form.vendor_id && !useFreetextLines && vendorItems.length === 0 && (
+                <p className="text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded p-2">
+                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or map items on the Vendor Items page.
+                </p>
+              )}
+
               {form.lines.map((line, index) => (
                 <div key={index} className="flex gap-2 items-center">
-                  <select
-                    value={line.catalog_item_id}
-                    onChange={(e) => {
-                      const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
-                      updateLine(index, 'catalog_item_id', e.target.value);
-                      if (selectedItem?.unit_cost && !line.unit_cost) {
-                        updateLine(index, 'unit_cost', selectedItem.unit_cost.toString());
-                      }
-                    }}
-                    className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    disabled={!form.vendor_id}
-                  >
-                    <option value="">Select an item...</option>
-                    {vendorItems.map(vi => (
-                      <option key={vi.id} value={vi.catalog_items?.id}>
-                        {vi.vendor_sku} - {vi.catalog_items?.name}
-                      </option>
-                    ))}
-                  </select>
+                  {useFreetextLines ? (
+                    <>
+                      <input
+                        type="text"
+                        value={line.item_description}
+                        onChange={(e) => updateLine(index, 'item_description', e.target.value)}
+                        className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Item description..."
+                      />
+                      <select
+                        value={line.uom_term_id}
+                        onChange={(e) => updateLine(index, 'uom_term_id', e.target.value)}
+                        className="w-24 shrink-0 px-2 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                      >
+                        <option value="">UOM</option>
+                        {uomLoading ? (
+                          <option disabled>...</option>
+                        ) : (
+                          uomTerms.map((t) => (
+                            <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                          ))
+                        )}
+                      </select>
+                    </>
+                  ) : (
+                    <select
+                      value={line.catalog_item_id}
+                      onChange={(e) => {
+                        const selectedItem = vendorItems.find(vi => vi.catalog_items?.id === e.target.value);
+                        updateLine(index, 'catalog_item_id', e.target.value);
+                        if (selectedItem?.unit_cost && !line.unit_cost) {
+                          updateLine(index, 'unit_cost', selectedItem.unit_cost.toString());
+                        }
+                      }}
+                      className="flex-1 min-w-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                      disabled={!form.vendor_id}
+                    >
+                      <option value="">Select an item...</option>
+                      {vendorItems.map(vi => (
+                        <option key={vi.id} value={vi.catalog_items?.id}>
+                          {vi.vendor_sku} - {vi.catalog_items?.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <input
                     type="number"
                     value={line.qty}

@@ -626,7 +626,11 @@ export async function updatePurchaseOrder(
     notes?: string | null;
     lines?: Array<{
       id?: string;
-      catalog_item_id: string;
+      // Either a catalog line (catalog_item_id) or a free-text line
+      // (item_description + optional uom_term_id).
+      catalog_item_id?: string | null;
+      item_description?: string | null;
+      uom_term_id?: string | null;
       qty_ordered: number;
       unit_cost: number;
     }>;
@@ -677,7 +681,9 @@ export async function updatePurchaseOrder(
           tenant_id: data.tenant_id,
           po_id: poId,
           line_number: index + 1,
-          catalog_item_id: line.catalog_item_id,
+          catalog_item_id: line.catalog_item_id ?? null,
+          item_description: line.item_description ?? null,
+          uom_term_id: line.uom_term_id ?? null,
           qty_ordered: line.qty_ordered,
           unit_cost: line.unit_cost,
           status: 'pending',
