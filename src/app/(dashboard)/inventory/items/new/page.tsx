@@ -42,7 +42,10 @@ import {
   ChevronUp,
   Tags,
   Camera,
+  Link2,
 } from 'lucide-react';
+import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
+import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import type { Database } from 'types/supabase';
 
 type ItemCategoryRow = Database['inventory']['Tables']['item_categories']['Row'];
@@ -71,6 +74,7 @@ interface WizardState {
 
   // Step 2: Identifiers
   catalog_barcode: string;
+  reference_links: ReferenceLink[];
   identifier_types: ('barcode' | 'qr')[];
   create_assets: boolean;
   asset_tag_prefix: string;
@@ -125,6 +129,7 @@ const defaultState: WizardState = {
   new_dimension_name: '',
   new_option_value: '',
   catalog_barcode: '',
+  reference_links: [],
   identifier_types: ['barcode'],
   create_assets: false,
   asset_tag_prefix: '',
@@ -458,17 +463,24 @@ export default function NewItemWizardPage() {
         idempotency_key: idempotencyKey,
       });
 
-      // Update material classification term IDs (not part of the wizard RPC)
+      // Apply fields not handled by the wizard RPC: material classification term
+      // IDs and reference links. Single update so we only round-trip once.
       const hasTermIds = form.material_term_id || form.product_term_id || form.quality_tier_term_id;
-      if (hasTermIds) {
+      const cleanLinks = cleanReferenceLinks(form.reference_links);
+      if (hasTermIds || cleanLinks.length > 0) {
         const { createBrowserAuthedClient: createClient } = await import('@/supabase/client');
         const supaClient = createClient();
         const inv = (supaClient as any).schema('inventory');
-        await inv.from('catalog_items').update({
-          material_term_id: form.material_term_id || null,
-          product_term_id: form.product_term_id || null,
-          quality_tier_term_id: form.quality_tier_term_id || null,
-        }).eq('id', res.item_id);
+        const update: Record<string, any> = {};
+        if (hasTermIds) {
+          update.material_term_id = form.material_term_id || null;
+          update.product_term_id = form.product_term_id || null;
+          update.quality_tier_term_id = form.quality_tier_term_id || null;
+        }
+        if (cleanLinks.length > 0) {
+          update.reference_links = cleanLinks;
+        }
+        await inv.from('catalog_items').update(update).eq('id', res.item_id);
       }
 
       // Apply per-variant initial stock if variants were created. Each variant
@@ -1418,6 +1430,20 @@ function StepIdentifiers({
               Auto-generate from SKU prefix
             </button>
           </div>
+        </div>
+
+        {/* Reference links */}
+        <div className="space-y-3 border-t pt-4">
+          <h4 className="text-sm font-semibold flex items-center gap-2">
+            <Link2 className="h-4 w-4" /> Reference Links
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            Store product pages, spec sheets, or supplier URLs for quick access and reordering.
+          </p>
+          <ReferenceLinksEditor
+            links={form.reference_links}
+            onChange={(next) => updateFormDirect('reference_links', next)}
+          />
         </div>
 
         {/* Label types */}

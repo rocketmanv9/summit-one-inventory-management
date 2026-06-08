@@ -60,6 +60,41 @@ export async function searchVendorOnline(name: string): Promise<VendorSearchResu
   }
 }
 
+/** A single business returned by the natural-language vendor discovery search. */
+export interface VendorCandidate {
+  name: string;
+  code?: string;
+  category?: string;
+  street1?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+}
+
+/**
+ * Natural-language, location-aware vendor search (e.g. "auto parts vendor near
+ * Portland"). Returns up to ~6 candidate businesses, or [] on any failure so the
+ * UI can degrade to manual entry.
+ */
+export async function discoverVendors(query: string): Promise<VendorCandidate[]> {
+  try {
+    const res = await fetch('/api/ai/vendor-discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.results) ? json.results : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Send conversation history to the AI chat endpoint (non-streaming fallback).
  * Returns structured response or throws on network error.

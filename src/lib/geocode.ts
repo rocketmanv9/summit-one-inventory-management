@@ -65,6 +65,27 @@ export interface AddressParts {
   country?: string | null;
 }
 
+/**
+ * Great-circle (haversine) distance in miles between two lat/lng points.
+ * Mirrors the miles unit used by the server-side `rpc_nearest_vendor_addresses`
+ * ranking so client and server distances are comparable.
+ */
+export function distanceMiles(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 const clean = (s?: string | null) => (s ? s.trim() : '');
 
 /**

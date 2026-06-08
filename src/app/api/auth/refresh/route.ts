@@ -9,33 +9,9 @@ import {
   type SessionUserInfo,
 } from '@rocketmanv9/chassis/auth';
 import { AppError } from '@rocketmanv9/chassis/errors';
-import { getAdminClient } from '@/utils/supabase/admin';
+import { provisionAndEnrichLocalUser } from '@/lib/auth/provision-local-user';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
-
-/**
- * Enrich user role from local_users table on refresh.
- * Ensures local admin assignments are picked up even if the original
- * login from Core didn't include them.
- */
-async function enrichRoleFromLocalUsers(user: SessionUserInfo): Promise<SessionUserInfo> {
-  try {
-    const admin = getAdminClient();
-    const { data } = await admin
-      .from('local_users')
-      .select('role')
-      .eq('user_id', user.userId)
-      .eq('tenant_id', user.tenantId)
-      .single();
-
-    if (data?.role === 'admin') {
-      return { ...user, role: 'admin' };
-    }
-  } catch {
-    // local_users table may not exist yet — fall through to existing role
-  }
-  return user;
-}
 
 /**
  * POST /api/auth/refresh — verify the refresh token and mint a fresh pair.
@@ -64,7 +40,7 @@ export const POST = createReadRoute(async ({ req }) => {
       role: claims.app_metadata?.role ?? 'authenticated',
       isDeveloper: claims.app_metadata?.is_developer === true,
     };
-    user = await enrichRoleFromLocalUsers(user);
+    user = await provisionAndEnrichLocalUser(user);
 
     const { accessToken: newAccess, refreshToken: newRefresh } = await mintSessionTokens(user);
 

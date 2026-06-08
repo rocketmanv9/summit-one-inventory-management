@@ -8,6 +8,7 @@ import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
 import { apiWrite } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { parseReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -633,6 +634,28 @@ export const InventoryRPC = {
       { expected_last_event_id: lastEventId },
       'Catalog item was updated by someone else. Please refresh and try again.',
     );
+  },
+
+  /**
+   * Get the reference links for a catalog item.
+   * Fetched separately from the stock snapshot (which omits this column).
+   * Table: inventory.catalog_items
+   */
+  async getCatalogItemLinks(id: string): Promise<ReferenceLink[]> {
+    // Cast to any — reference_links isn't in the generated types yet (added by
+    // migration 20260605000001), so the typed select-string would reject it.
+    const supabase = (createBrowserAuthedClient().schema('inventory') as any);
+    const { data, error } = await supabase
+      .from('catalog_items')
+      .select('reference_links')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      throw AppError.internal(`Failed to fetch item links: ${error.message}`);
+    }
+
+    return parseReferenceLinks((data as any)?.reference_links);
   },
 
   /**

@@ -9,42 +9,13 @@ import {
 } from '@rocketmanv9/chassis/auth';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
-import { getAdminClient } from '@/utils/supabase/admin';
+import { provisionAndEnrichLocalUser } from '@/lib/auth/provision-local-user';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const ExchangeSchema = z.object({
   ticket: z.string().min(1),
 });
-
-/**
- * Enrich user role from local_users table.
- * If the user has an 'admin' row in local_users (matched by user_id OR email
- * within their tenant), override the role from Core. Matching on email keeps a
- * local admin assignment intact even when Core reissues the user's id, and the
- * array check avoids throwing on zero/duplicate rows.
- * This ensures local admin assignments survive Core migrations.
- */
-async function enrichRoleFromLocalUsers(user: SessionUserInfo): Promise<SessionUserInfo> {
-  try {
-    const admin = getAdminClient();
-    const orFilters = [`user_id.eq.${user.userId}`];
-    if (user.email) orFilters.push(`email.eq.${user.email}`);
-
-    const { data } = await admin
-      .from('local_users')
-      .select('role')
-      .eq('tenant_id', user.tenantId)
-      .or(orFilters.join(','));
-
-    if (Array.isArray(data) && data.some((r) => r?.role === 'admin')) {
-      return { ...user, role: 'admin' };
-    }
-  } catch {
-    // local_users table may not exist yet — fall through to Core role
-  }
-  return user;
-}
 
 /**
  * POST /api/auth/exchange — exchange a one-time ticket for session tokens.
@@ -81,8 +52,9 @@ export const POST = createReadRoute(async ({ req }) => {
       },
     });
 
-    // Enrich role from local_users — local admin assignments take precedence over Core
-    user = await enrichRoleFromLocalUsers(user);
+    // Provision/refresh the local_users row (self-heal for manually-added members)
+    // and enrich role — local admin assignments take precedence over Core.
+    user = await provisionAndEnrichLocalUser(user);
   }
 
   const { accessToken, refreshToken } = await mintSessionTokens(user);

@@ -372,7 +372,7 @@ export default function VendorItemsPage() {
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
                       onClick={() => handleEdit(item)}
-                      className="text-blue-600 hover:text-blue-900 mr-3"
+                      className="text-slate-600 hover:text-slate-900 mr-3"
                     >
                       <Edit className="w-4 h-4" />
                     </button>

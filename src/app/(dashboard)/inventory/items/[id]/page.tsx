@@ -15,6 +15,7 @@ import {
   ScanBarcode,
   Printer,
   Tag,
+  Link2,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -23,6 +24,8 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
+import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
+import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
@@ -90,6 +93,12 @@ export default function ItemDetailPage() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [showLabelDialog, setShowLabelDialog] = useState(false);
 
+  // Reference links state
+  const [links, setLinks] = useState<ReferenceLink[]>([]);
+  const [linksDirty, setLinksDirty] = useState(false);
+  const [linksSaving, setLinksSaving] = useState(false);
+  const [linksMsg, setLinksMsg] = useState('');
+
   useEffect(() => {
     if (!params.id) return;
 
@@ -97,8 +106,13 @@ export default function ItemDetailPage() {
       setLoading(true);
       setError('');
       try {
-        const data = await InventoryRPC.getItemStockSnapshot(params.id);
+        const [data, itemLinks] = await Promise.all([
+          InventoryRPC.getItemStockSnapshot(params.id),
+          InventoryRPC.getCatalogItemLinks(params.id),
+        ]);
         setSnapshot(data);
+        setLinks(itemLinks);
+        setLinksDirty(false);
       } catch (err: any) {
         console.error('[ItemDetail] Error:', err);
         setError(err.message || 'Failed to load item snapshot');
@@ -142,6 +156,36 @@ export default function ItemDetailPage() {
       setBarcodeMsg(`Error: ${err.message}`);
     } finally {
       setBarcodeSaving(false);
+    }
+  };
+
+  const handleSaveLinks = async () => {
+    if (!snapshot?.item) return;
+    const lastEventId = snapshot.item.last_event_id;
+    if (!lastEventId) {
+      setLinksMsg('Cannot save — missing event ID. Refresh and try again.');
+      return;
+    }
+    setLinksSaving(true);
+    setLinksMsg('');
+    try {
+      const clean = cleanReferenceLinks(links);
+      await InventoryRPC.updateCatalogItem(
+        snapshot.item.id,
+        { reference_links: clean } as any,
+        lastEventId
+      );
+      setLinks(clean);
+      setLinksDirty(false);
+      setLinksMsg('Saved');
+      // Reload snapshot to get a fresh last_event_id for the next OCC write.
+      const fresh = await InventoryRPC.getItemStockSnapshot(params.id);
+      setSnapshot(fresh);
+      setTimeout(() => setLinksMsg(''), 2000);
+    } catch (err: any) {
+      setLinksMsg(`Error: ${err.message}`);
+    } finally {
+      setLinksSaving(false);
     }
   };
 
@@ -202,7 +246,7 @@ export default function ItemDetailPage() {
       render: (row: StockSnapshot['locations'][number]) => (
         <button
           onClick={() => router.push(`/inventory/locations/${row.location_id}`)}
-          className="font-medium text-primary hover:underline"
+          className="font-medium text-foreground hover:text-primary hover:underline"
         >
           {row.location_name}
         </button>
@@ -404,6 +448,38 @@ export default function ItemDetailPage() {
           </div>
         </div>
 
+        {/* Reference Links */}
+        <div className="rounded-xl border bg-background p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-base font-semibold">
+              <Link2 className="h-4 w-4" />
+              Reference Links
+            </h3>
+            <div className="flex items-center gap-3">
+              {linksMsg && (
+                <span className={`text-xs font-medium ${linksMsg.startsWith('Error') ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {linksMsg}
+                </span>
+              )}
+              <button
+                onClick={handleSaveLinks}
+                disabled={!linksDirty || linksSaving}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+              >
+                {linksSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Store product pages, spec sheets, or supplier URLs for quick access and reordering.
+          </p>
+          <ReferenceLinksEditor
+            links={links}
+            onChange={(next) => { setLinks(next); setLinksDirty(true); }}
+            disabled={linksSaving}
+          />
+        </div>
+
         {/* Scanner overlay */}
         <BarcodeScannerOverlay
           isOpen={scannerOpen}
@@ -460,7 +536,7 @@ export default function ItemDetailPage() {
                         <td className="px-4 py-2.5">
                           <button
                             onClick={() => router.push(`/inventory/items/${v.variant_id}`)}
-                            className="font-medium text-primary hover:underline text-left"
+                            className="font-medium text-foreground hover:text-primary hover:underline text-left"
                           >
                             {v.variant_name}
                           </button>

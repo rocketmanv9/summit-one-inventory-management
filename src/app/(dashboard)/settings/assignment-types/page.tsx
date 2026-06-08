@@ -157,7 +157,7 @@ export default function AssignmentTypesSettingsPage() {
           <button
             onClick={() => setEditingType(row)}
             disabled={!isAdmin}
-            className="text-primary hover:text-primary/80 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-slate-600 hover:text-slate-900 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Edit
           </button>

@@ -12,6 +12,8 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
+import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
+import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMTerms, useUOMLabelMap, useGVTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
@@ -63,8 +65,9 @@ export default function ItemsPage() {
   const [pendingCategoryId, setPendingCategoryId] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
 
+  const [imageRefreshKey, setImageRefreshKey] = useState(0);
   const itemIds = items.map(i => i.id);
-  const { imageMap } = useEntityImages('catalog_item', itemIds);
+  const { imageMap } = useEntityImages('catalog_item', itemIds, imageRefreshKey);
 
   useEffect(() => {
     fetchItems();
@@ -148,7 +151,7 @@ export default function ItemsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => router.push(`/inventory/items/${row.id}`)}
-              className="font-medium text-primary hover:underline text-left"
+              className="font-medium text-foreground hover:text-primary hover:underline text-left"
             >
               {row.name}
             </button>
@@ -217,7 +220,7 @@ export default function ItemsPage() {
               setEditingItem(row);
               setShowCreateModal(true);
             }}
-            className="text-blue-600 hover:text-blue-800 px-2 py-1 text-sm font-medium"
+            className="text-slate-600 hover:text-slate-900 px-2 py-1 text-sm font-medium"
           >
             Edit
           </button>
@@ -324,6 +327,10 @@ export default function ItemsPage() {
               setShowCreateModal(false);
               setEditingItem(undefined);
               fetchItems();
+              // Force the list thumbnails to re-fetch: editing an existing item
+              // doesn't change the set of IDs, so useEntityImages won't otherwise
+              // pick up an image that was added/replaced in the modal.
+              setImageRefreshKey((k) => k + 1);
             }}
             onAddCategory={() => setShowCategoryModal(true)}
             newCategoryId={pendingCategoryId}
@@ -481,6 +488,11 @@ function CreateItemModal({
   const [locations, setLocations] = useState<Location[]>([]);
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
   const [levelsSaving, setLevelsSaving] = useState(false);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [showAllLocations, setShowAllLocations] = useState(false);
+
+  // Reference links (plain URLs — distinct from the Amazon vendor mapping below)
+  const [links, setLinks] = useState<ReferenceLink[]>([]);
 
   // Amazon Business mapping state (edit mode only)
   const [amazonConnected, setAmazonConnected] = useState(false);
@@ -591,6 +603,15 @@ function CreateItemModal({
     }
 
     loadLevels();
+  }, [isEditing, item?.id]);
+
+  useEffect(() => {
+    if (!isEditing || !item?.id) return;
+    const itemId = item.id;
+
+    InventoryRPC.getCatalogItemLinks(itemId)
+      .then(setLinks)
+      .catch((err) => console.error('Error loading reference links:', err));
   }, [isEditing, item?.id]);
 
   // Load Amazon Business integration status + mapping for this item
@@ -844,6 +865,8 @@ function CreateItemModal({
         quality_tier_term_id: form.quality_tier_term_id || null,
       };
 
+      const cleanLinks = cleanReferenceLinks(links);
+
       // SKU handling: `sku` is NOT NULL. For a manual-mode category we send the
       // entered/built SKU. On create (non-manual) we send null so the RPC
       // generates one. On EDIT (non-manual) we must NOT send sku at all —
@@ -861,7 +884,11 @@ function CreateItemModal({
           throw AppError.badRequest('Missing last_event_id for this item. Please refresh and try again.');
         }
 
-        await InventoryRPC.updateCatalogItem(item.id, payload as Parameters<typeof InventoryRPC.updateCatalogItem>[1], item.last_event_id);
+        await InventoryRPC.updateCatalogItem(
+          item.id,
+          { ...payload, reference_links: cleanLinks } as Parameters<typeof InventoryRPC.updateCatalogItem>[1],
+          item.last_event_id,
+        );
         catalogItemId = item.id;
       } else {
         const created = await InventoryRPC.createCatalogItem({
@@ -869,6 +896,16 @@ function CreateItemModal({
           last_event_id: crypto.randomUUID(),
         } as Parameters<typeof InventoryRPC.createCatalogItem>[0]);
         catalogItemId = created.id;
+
+        // reference_links isn't a create-RPC param — apply it in a follow-up
+        // OCC update using the event id the create just returned.
+        if (cleanLinks.length > 0 && created.last_event_id) {
+          await InventoryRPC.updateCatalogItem(
+            created.id,
+            { reference_links: cleanLinks } as Parameters<typeof InventoryRPC.updateCatalogItem>[1],
+            created.last_event_id,
+          );
+        }
       }
 
       if (!isEditing) {
@@ -948,7 +985,7 @@ function CreateItemModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md h-[80vh] mx-4 flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl h-[85vh] mx-4 flex flex-col">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold">{isEditing ? 'Edit Catalog Item' : 'Create Catalog Item'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
@@ -1212,11 +1249,11 @@ function CreateItemModal({
           )}
 
           <div className="border-t pt-4">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-1">
               <div>
                 <h4 className="text-sm font-semibold">Location Stock Management</h4>
                 <p className="text-xs text-muted-foreground">
-                  Set reorder and target stock per location. Warnings appear when below threshold.
+                  Override the default reorder point per location, or set a target stock. Leave blank to use the default above.
                 </p>
               </div>
               {isEditing && (
@@ -1224,83 +1261,134 @@ function CreateItemModal({
                   type="button"
                   onClick={saveLevels}
                   disabled={levelsSaving}
-                  className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 shrink-0"
                 >
                   {levelsSaving ? 'Saving...' : 'Save Levels'}
                 </button>
               )}
             </div>
 
-            <div className="space-y-3">
-              {locations.map((loc) => {
-                const level = levels.find((row) => row.location_id === loc.id);
-                const currentStock = level?.current_stock ?? 0;
-                const defaultReorderPoint = form.reorder_point !== '' && Number.isFinite(Number(form.reorder_point))
-                  ? Number(form.reorder_point)
-                  : null;
-                const reorderPoint = level?.reorder_point ?? null;
-                const effectiveReorderPoint = reorderPoint ?? defaultReorderPoint;
-                const isLow = effectiveReorderPoint !== null && currentStock <= effectiveReorderPoint;
+            {locations.length === 0 ? (
+              <div className="mt-3 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                No locations found. Add a location to manage per-site stock.
+              </div>
+            ) : (() => {
+              const defaultReorderPoint = form.reorder_point !== '' && Number.isFinite(Number(form.reorder_point))
+                ? Number(form.reorder_point)
+                : null;
+              const isConfigured = (locId: string) => {
+                const lvl = levels.find((row) => row.location_id === locId);
+                return !!lvl && (lvl.reorder_point !== null || lvl.target_stock !== null || (lvl.current_stock ?? 0) > 0);
+              };
+              const search = locationSearch.trim().toLowerCase();
+              const visibleLocations = locations.filter((loc) => {
+                if (search) return loc.name.toLowerCase().includes(search);
+                if (showAllLocations) return true;
+                return isConfigured(loc.id);
+              });
+              const hiddenCount = locations.length - visibleLocations.length;
 
-                return (
-                  <div key={loc.id} className="rounded-md border p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium">{loc.name}</div>
-                        {formatLocationType(loc.location_type) && (
-                          <div className="text-xs text-muted-foreground capitalize">
-                            {formatLocationType(loc.location_type)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-xs font-mono text-muted-foreground">
-                        Stock: {currentStock}
-                      </div>
+              return (
+                <div className="mt-3 space-y-2">
+                  {locations.length > 6 && (
+                    <input
+                      type="text"
+                      value={locationSearch}
+                      onChange={(e) => setLocationSearch(e.target.value)}
+                      placeholder={`Search ${locations.length} locations...`}
+                      className="w-full px-3 py-1.5 border rounded-md text-sm"
+                    />
+                  )}
+
+                  {visibleLocations.length > 0 && (
+                    <div className="grid grid-cols-[1fr_4rem_5.5rem_5.5rem] gap-2 px-2 text-[11px] font-medium text-muted-foreground">
+                      <span>Location</span>
+                      <span className="text-right">On hand</span>
+                      <span>Reorder</span>
+                      <span>Target</span>
                     </div>
+                  )}
 
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Reorder Point</label>
+                  {visibleLocations.map((loc) => {
+                    const level = levels.find((row) => row.location_id === loc.id);
+                    const currentStock = level?.current_stock ?? 0;
+                    const reorderPoint = level?.reorder_point ?? null;
+                    const effectiveReorderPoint = reorderPoint ?? defaultReorderPoint;
+                    const isLow = effectiveReorderPoint !== null && currentStock <= effectiveReorderPoint;
+
+                    return (
+                      <div
+                        key={loc.id}
+                        className="grid grid-cols-[1fr_4rem_5.5rem_5.5rem] items-center gap-2 rounded-md border px-2 py-1.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium">{loc.name}</div>
+                          {isLow ? (
+                            <div className="text-[11px] font-medium text-amber-600">Below reorder</div>
+                          ) : formatLocationType(loc.location_type) ? (
+                            <div className="truncate text-[11px] text-muted-foreground capitalize">
+                              {formatLocationType(loc.location_type)}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="text-right font-mono text-xs text-muted-foreground">{currentStock}</div>
                         <input
                           type="number"
                           min="0"
                           value={reorderPoint ?? ''}
                           onChange={(e) => handleLevelChange(loc.id, 'reorder_point', e.target.value)}
-                          className="w-full px-2 py-1.5 border rounded-md text-sm"
+                          placeholder={defaultReorderPoint !== null ? String(defaultReorderPoint) : '—'}
+                          title={reorderPoint === null && defaultReorderPoint !== null ? `Using default: ${defaultReorderPoint}` : undefined}
+                          className="w-full px-2 py-1 border rounded-md text-sm"
                         />
-                        {reorderPoint === null && defaultReorderPoint !== null && (
-                          <p className="mt-1 text-[11px] text-muted-foreground">
-                            Using default: {defaultReorderPoint}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium mb-1">Target Stock</label>
                         <input
                           type="number"
                           min="0"
                           value={level?.target_stock ?? ''}
                           onChange={(e) => handleLevelChange(loc.id, 'target_stock', e.target.value)}
-                          className="w-full px-2 py-1.5 border rounded-md text-sm"
+                          placeholder="—"
+                          className="w-full px-2 py-1 border rounded-md text-sm"
                         />
                       </div>
+                    );
+                  })}
+
+                  {visibleLocations.length === 0 && (
+                    <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      {search ? 'No locations match your search.' : 'No locations configured yet.'}
                     </div>
+                  )}
 
-                    {isLow && (
-                      <div className="mt-2 text-xs font-medium text-amber-600">
-                        Warning: below reorder point
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {locations.length === 0 && (
-                <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                  No locations found. Add a location to manage per-site stock.
+                  {!search && hiddenCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllLocations(true)}
+                      className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      Show all {locations.length} locations ({hiddenCount} more)
+                    </button>
+                  )}
+                  {!search && showAllLocations && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllLocations(false)}
+                      className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      Show only configured locations
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
+          </div>
+
+          {/* Reference Links — plain URLs (product pages, spec sheets, suppliers) */}
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-semibold mb-1">Reference Links</h4>
+            <p className="text-xs text-muted-foreground mb-3">
+              Save any product page, spec sheet, or supplier URL for quick access. For orderable Amazon products, use the Amazon Business section below.
+            </p>
+            <ReferenceLinksEditor links={links} onChange={setLinks} disabled={saving} />
           </div>
 
           {/* Amazon Business Mapping (edit mode only) */}

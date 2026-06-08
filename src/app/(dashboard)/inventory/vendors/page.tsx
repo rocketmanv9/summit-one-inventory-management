@@ -10,7 +10,9 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { geocodeAddress } from '@/lib/geocode';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { VendorModal } from '@/components/vendors/VendorModal';
+import { VendorDiscoveryModal } from '@/components/vendors/VendorDiscoveryModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
+import type { VendorDraft } from '@/lib/vendor-draft';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -103,6 +105,9 @@ export default function VendorsPage() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [industryFilter, setIndustryFilter] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDiscoverModal, setShowDiscoverModal] = useState(false);
+  // Draft handed off from discovery's "Review & edit" → opens the full form.
+  const [draftVendor, setDraftVendor] = useState<VendorDraft | null>(null);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [selectedCatalogIds, setSelectedCatalogIds] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
@@ -313,12 +318,20 @@ export default function VendorsPage() {
           description="Browse and adopt vendors from the shared platform catalog, or add custom vendor entries."
           actions={
             activeTab === 'my-vendors' ? (
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Add Custom
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDiscoverModal(true)}
+                  className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
+                >
+                  🔍 Find Online
+                </button>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                  + Add Custom
+                </button>
+              </div>
             ) : selectedCatalogIds.size > 0 ? (
               <button
                 onClick={handleAdopt}
@@ -473,12 +486,24 @@ export default function VendorsPage() {
         )}
 
         {/* Add / Edit Vendor Modal */}
-        {(showAddModal || editingVendor) && (
+        {(showAddModal || editingVendor || draftVendor) && (
           <VendorModal
             open
             vendor={editingVendor}
-            onClose={() => { setShowAddModal(false); setEditingVendor(null); }}
-            onSuccess={() => { setShowAddModal(false); setEditingVendor(null); fetchVendors(); }}
+            initialDraft={draftVendor}
+            onClose={() => { setShowAddModal(false); setEditingVendor(null); setDraftVendor(null); }}
+            onSuccess={() => { setShowAddModal(false); setEditingVendor(null); setDraftVendor(null); fetchVendors(); }}
+          />
+        )}
+
+        {/* Find Vendors Online (natural-language web search) */}
+        {showDiscoverModal && (
+          <VendorDiscoveryModal
+            open
+            existingNames={vendors.map((v) => v.name)}
+            onClose={() => setShowDiscoverModal(false)}
+            onAdded={fetchVendors}
+            onReview={(draft) => { setShowDiscoverModal(false); setDraftVendor(draft); }}
           />
         )}
 

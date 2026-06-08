@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2, Search, MapPin, Plus, Trash2 } from 'lucide-react';
 import { searchVendorOnline } from '@/lib/ai/client';
+import type { VendorDraft } from '@/lib/vendor-draft';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { geocodeStructured } from '@/lib/geocode';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
@@ -42,6 +43,10 @@ interface VendorModalProps {
   onSuccess: (result: { id: string; name: string }) => void;
   /** Pre-fill the name (triggers AI search automatically) in create mode. */
   initialName?: string;
+  /** Pre-fill the full form from a structured draft (create mode). Takes
+   *  precedence over `initialName` and skips the automatic online search —
+   *  used by the "Review & edit" path of the vendor discovery flow. */
+  initialDraft?: VendorDraft | null;
   /** Pass a vendor to enter edit mode. */
   vendor?: VendorLike | null;
 }
@@ -128,7 +133,7 @@ const SELECT_CLS =
 /*  Component                                                                  */
 /* -------------------------------------------------------------------------- */
 
-export function VendorModal({ open, onClose, onSuccess, initialName, vendor }: VendorModalProps) {
+export function VendorModal({ open, onClose, onSuccess, initialName, initialDraft, vendor }: VendorModalProps) {
   const isEdit = !!vendor;
   // AMAZON-BIZ (and other integration-managed) vendors own their identity via the
   // integration — keep the code field locked so edits don't break the link.
@@ -315,13 +320,47 @@ export function VendorModal({ open, onClose, onSuccess, initialName, vendor }: V
     }
 
     // Create mode
-    setBasics({ ...emptyBasics(), name: initialName || '' });
-    setAddresses([emptyAddress()]);
-    setContacts([]);
-    setLastEventId(null);
-    if (initialName) runSearch(initialName);
+    if (initialDraft) {
+      // Prefilled from discovery — populate directly, skip the online search.
+      setBasics({
+        ...emptyBasics(),
+        name: initialDraft.name || '',
+        code: initialDraft.code ? normalizeVendorCode(initialDraft.code) : '',
+        vendor_type_term_id: initialDraft.vendor_type_term_id || '',
+        payment_terms: initialDraft.payment_terms || 'NET30',
+        lead_time_days: initialDraft.lead_time_days || '',
+        notes: [initialDraft.notes, initialDraft.website ? `Website: ${initialDraft.website}` : '']
+          .filter(Boolean)
+          .join('\n'),
+      });
+      const a = initialDraft.address;
+      setAddresses([
+        a && (a.street1 || a.city || a.state || a.zip)
+          ? {
+              ...emptyAddress(),
+              street1: a.street1 || '', street2: a.street2 || '',
+              city: a.city || '', state: a.state || '',
+              zip: a.zip || '', country: a.country || '',
+            }
+          : emptyAddress(),
+      ]);
+      const c = initialDraft.contact;
+      setContacts(
+        c && (c.name || c.email || c.phone)
+          ? [{ ...emptyContact(), name: c.name || '', email: c.email || '', phone: c.phone || '', title: c.title || '', is_primary: true }]
+          : [],
+      );
+      setLastEventId(null);
+      setSearchDone(false);
+    } else {
+      setBasics({ ...emptyBasics(), name: initialName || '' });
+      setAddresses([emptyAddress()]);
+      setContacts([]);
+      setLastEventId(null);
+      if (initialName) runSearch(initialName);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, vendor, isEdit, initialName]);
+  }, [open, vendor, isEdit, initialName, initialDraft]);
 
   /* ---- AI online search (create mode only) ---- */
   async function runSearch(name: string) {

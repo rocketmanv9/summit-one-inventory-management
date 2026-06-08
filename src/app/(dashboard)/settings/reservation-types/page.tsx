@@ -129,7 +129,7 @@ export default function ReservationTypesSettingsPage() {
             <>
               <button
                 onClick={() => setEditingType(row)}
-                className="text-primary hover:text-primary/80 text-sm font-medium"
+                className="text-slate-600 hover:text-slate-900 text-sm font-medium"
               >
                 Edit
               </button>

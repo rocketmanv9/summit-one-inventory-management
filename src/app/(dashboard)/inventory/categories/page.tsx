@@ -102,7 +102,7 @@ export default function CategoriesPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setEditingCategory(row)}
-            className="text-primary hover:text-primary/80 text-sm font-medium"
+            className="text-slate-600 hover:text-slate-900 text-sm font-medium"
           >
             Edit
           </button>

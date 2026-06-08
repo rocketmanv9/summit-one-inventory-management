@@ -109,7 +109,7 @@ export default function LocationsPage() {
           <div>
             <button
               onClick={() => router.push(`/inventory/locations/${row.id}`)}
-              className="font-medium text-primary hover:underline text-left"
+              className="font-medium text-foreground hover:text-primary hover:underline text-left"
             >
               {row.name}
             </button>
@@ -169,7 +169,7 @@ export default function LocationsPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setEditingLocation(row)}
-            className="text-primary hover:text-primary/80 text-sm font-medium"
+            className="text-slate-600 hover:text-slate-900 text-sm font-medium"
           >
             Edit
           </button>

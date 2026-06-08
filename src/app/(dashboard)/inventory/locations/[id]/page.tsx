@@ -131,7 +131,7 @@ export default function LocationDetailPage() {
           onClick={() => router.push(`/inventory/items/${row.item_id}`)}
           className="text-left"
         >
-          <div className="font-medium text-primary hover:underline">{row.item_name}</div>
+          <div className="font-medium text-foreground hover:text-primary hover:underline">{row.item_name}</div>
           {row.sku && (
             <div className="font-mono text-xs text-muted-foreground">{row.sku}</div>
           )}

@@ -10,7 +10,12 @@ type EntityType = 'catalog_item' | 'asset' | 'tool' | 'vehicle' | 'equipment';
  */
 export function useEntityImages(
   entityType: EntityType,
-  entityIds: string[]
+  entityIds: string[],
+  /**
+   * Bump this to force a re-fetch even when the set of entityIds is unchanged
+   * (e.g. after an image is added/replaced on an item that's already in the list).
+   */
+  refreshToken?: number
 ): { imageMap: Record<string, string>; loading: boolean } {
   const [imageMap, setImageMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -56,7 +61,7 @@ export function useEntityImages(
     return () => { cancelled = true; };
   // Stringify IDs to avoid infinite re-renders from array reference changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityType, entityIds.join(',')]);
+  }, [entityType, entityIds.join(','), refreshToken]);
 
   return { imageMap, loading };
 }
