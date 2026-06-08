@@ -31,6 +31,22 @@ export function idFromPath(req: Request, segment: string): string {
   return id;
 }
 
+/**
+ * Maps a delete-time DB error to an AppError. Postgres `23503`
+ * (foreign_key_violation) means the row is still referenced by ON DELETE
+ * RESTRICT/NO ACTION children (ledger/history/config rows kept intentionally).
+ * Surface a clear, actionable 409 instead of leaking the raw "violates foreign
+ * key constraint" text as a 500. Anything else stays a 500.
+ */
+export function rethrowDeleteError(error: { code?: string; message: string }, entity = 'record'): never {
+  if (error.code === '23503') {
+    throw AppError.conflict(
+      `This ${entity} is still referenced by other records (history, transactions, or settings) and can't be deleted. Remove or reassign those first, or deactivate it instead.`,
+    );
+  }
+  throw AppError.internal(error.message);
+}
+
 interface Base {
   schema: string;
   table: string;
@@ -39,6 +55,8 @@ interface Base {
   emissionOwner?: EmissionOwner;
   orderBy?: string;
   limit?: number;
+  /** Human label for FK-violation messages (e.g. 'location'). Defaults to 'record'. */
+  entityLabel?: string;
 }
 
 /** GET — list rows for the tenant. */
@@ -95,7 +113,7 @@ export function deleteRouteOCC<T extends { expected_last_event_id: string }>(opt
       .from(opts.table).delete()
       .eq('id', id).eq('last_event_id', (body as any).expected_last_event_id)
       .select('id').maybeSingle();
-    if (error) { log.error(`${opts.table}.delete_failed`, { error: error.message }); throw AppError.internal(error.message); }
+    if (error) { log.error(`${opts.table}.delete_failed`, { error: error.message }); rethrowDeleteError(error, opts.entityLabel); }
     if (!data) throw AppError.conflict('Record was updated by someone else. Please refresh and try again.');
     return { data, status: 200, events: [] };
   }, { bodySchema: opts.bodySchema, emissionOwner: opts.emissionOwner ?? 'trigger', serviceName: SERVICE_NAME, scope: `DELETE ${opts.table}/[id]` });
@@ -120,7 +138,7 @@ export function deleteRoute(opts: Base) {
     const id = idFromPath(req, opts.segment!);
     const { data, error } = await (supabase as any).schema(opts.schema)
       .from(opts.table).delete().eq('id', id).select('id').maybeSingle();
-    if (error) { log.error(`${opts.table}.delete_failed`, { error: error.message }); throw AppError.internal(error.message); }
+    if (error) { log.error(`${opts.table}.delete_failed`, { error: error.message }); rethrowDeleteError(error, opts.entityLabel); }
     if (!data) throw AppError.notFound('Record not found');
     return { data, status: 200, events: [] };
   }, { bodySchema: 'raw', emissionOwner: opts.emissionOwner ?? 'trigger', serviceName: SERVICE_NAME, scope: `DELETE ${opts.table}/[id]` });

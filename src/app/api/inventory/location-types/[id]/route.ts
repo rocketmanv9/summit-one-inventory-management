@@ -1,6 +1,7 @@
 import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { rethrowDeleteError } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -69,7 +70,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, body, log, supabase 
 
   if (error) {
     log.error('location_type.delete_failed', { error: error.message });
-    throw AppError.internal(error.message);
+    rethrowDeleteError(error, 'location type');
   }
   if (!data) {
     throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');

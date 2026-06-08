@@ -70,6 +70,15 @@ export const DELETE = createSessionWriteRoute(async ({ req, log, supabase }) => 
     .select('id').maybeSingle();
 
   if (error) {
+    // 23503 = foreign_key_violation. The item is referenced by ledger/history
+    // rows (stock movements, cycle counts, transfers, receipts, or PO lines)
+    // that are intentionally ON DELETE RESTRICT to preserve history. Surface a
+    // clear, actionable conflict so the client can offer to deactivate instead.
+    if ((error as { code?: string }).code === '23503') {
+      throw AppError.conflict(
+        "This item has transaction history (stock movements, counts, transfers, receipts, or purchase orders) and can't be permanently deleted. Deactivate it instead to hide it from active use.",
+      );
+    }
     log.error('catalog_item.delete_failed', { error: error.message });
     throw AppError.internal(error.message);
   }

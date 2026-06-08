@@ -1,7 +1,7 @@
 import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
-import { updateRouteOCC, idFromPath } from '@/lib/api/typed-crud';
+import { updateRouteOCC, idFromPath, rethrowDeleteError } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -34,7 +34,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, body, log, supabase 
     .eq('last_event_id', body.expected_last_event_id)
     .select('id')
     .maybeSingle();
-  if (error) { log.error('item_category.delete_failed', { error: error.message }); throw AppError.internal(error.message); }
+  if (error) { log.error('item_category.delete_failed', { error: error.message }); rethrowDeleteError(error, 'category'); }
   if (!data) throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
 
   return { data, status: 200, events: [] };

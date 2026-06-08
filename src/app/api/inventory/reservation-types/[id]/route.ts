@@ -17,4 +17,5 @@ export const DELETE = deleteRoute({
   schema: 'inventory',
   table: 'reservation_types',
   segment: 'reservation-types',
+  entityLabel: 'reservation type',
 });

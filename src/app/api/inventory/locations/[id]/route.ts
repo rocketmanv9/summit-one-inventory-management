@@ -13,5 +13,6 @@ export const DELETE = deleteRouteOCC({
   schema: 'inventory',
   table: 'locations',
   segment: 'locations',
+  entityLabel: 'location',
   bodySchema: z.object({ expected_last_event_id: z.string().min(1) }),
 });
