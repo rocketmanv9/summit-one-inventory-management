@@ -104,16 +104,38 @@ type AssetWithRelations = {
   id: string;
   asset_tag: string;
   serial_number: string | null;
+  vin?: string | null;
   catalog_item_id: string | null;
   location_id: string | null;
+  home_location_id?: string | null;
   status: string | null;
   purchase_date: string | null;
   purchase_cost: number | null;
   warranty_expires: string | null;
   last_event_id: string | null;
+  created_at?: string | null;
   catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   location?: (LocationWithType & { location_type?: { id?: string; name?: string } | null }) | null;
-  asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id'> | null;
+  asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id' | 'assigned_to_ref' | 'last_movement_at'> | null;
+};
+
+/** One row of an asset's custody ledger (who held it, when, return condition). */
+type AssetAssignmentHistoryRow = {
+  id: string;
+  assigned_to_type: string | null;
+  assigned_to_id: string | null;
+  assigned_at: string | null;
+  returned_at: string | null;
+  return_condition: string | null;
+  notes: string | null;
+};
+
+/** One immutable audit entry from inventory.asset_events. */
+type AssetEventRow = {
+  id: string;
+  event_type: string | null;
+  occurred_at: string | null;
+  payload: Record<string, unknown> | null;
 };
 
 type ReservationWithRelations = {
@@ -871,14 +893,22 @@ export const InventoryRPC = {
   },
 
   /**
-   * Return asset via RPC
+   * Return asset via RPC.
+   * `return_condition` drives the resulting status server-side:
+   * good → available, damaged/needs_repair → in_repair, lost → out_of_service.
    */
-  async returnAsset(params: { asset_id: string; notes?: string; last_event_id: string }) {
+  async returnAsset(params: {
+    asset_id: string;
+    return_condition?: 'good' | 'damaged' | 'needs_repair' | 'lost';
+    notes?: string;
+    last_event_id: string;
+  }) {
     const { tenantId } = getAuthContext();
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase.rpc('rpc_inv_asset_return', {
       p_tenant_id: tenantId,
       p_asset_id: params.asset_id,
+      p_return_condition: params.return_condition ?? 'good',
       p_notes: params.notes ?? null,
       p_last_event_id: params.last_event_id,
     });
@@ -888,6 +918,102 @@ export const InventoryRPC = {
     }
 
     return data as boolean;
+  },
+
+  /**
+   * Transfer (move) an asset to a different location via RPC.
+   * Updates the asset + asset_state read model, logs a `moved` asset_event,
+   * and publishes asset.moved. Idempotent via last_event_id.
+   */
+  async transferAsset(params: {
+    asset_id: string;
+    to_location_id: string;
+    notes?: string;
+    last_event_id: string;
+  }) {
+    const { tenantId, userId } = getAuthContext();
+    // Cast to any — rpc_inv_asset_transfer isn't in the generated types yet
+    // (added by migration 20260608000001).
+    const supabase = createBrowserAuthedClient().schema('inventory') as any;
+    const { data, error } = await supabase.rpc('rpc_inv_asset_transfer', {
+      p_tenant_id: tenantId,
+      p_asset_id: params.asset_id,
+      p_to_location_id: params.to_location_id,
+      p_actor_user_id: userId ?? null,
+      p_notes: params.notes ?? null,
+      p_last_event_id: params.last_event_id,
+    });
+
+    if (error) {
+      throw AppError.internal(`Failed to transfer asset: ${error.message}`);
+    }
+
+    return data as boolean;
+  },
+
+  /**
+   * Get a single asset with catalog/location relations + live state.
+   * Table: inventory.assets
+   */
+  async getAssetById(id: string): Promise<AssetWithRelations | null> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('assets')
+      .select(
+        'id, asset_tag, serial_number, vin, catalog_item_id, location_id, home_location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, created_at, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id, assigned_to_ref, last_movement_at)'
+      )
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      throw AppError.internal(`Failed to fetch asset: ${error.message}`);
+    }
+    if (!data) return null;
+
+    const item: any = data;
+    return {
+      ...item,
+      catalog_item: Array.isArray(item.catalog_item) ? item.catalog_item[0] ?? null : item.catalog_item ?? null,
+      location: Array.isArray(item.location) ? item.location[0] ?? null : item.location ?? null,
+      asset_state: Array.isArray(item.asset_state) ? item.asset_state[0] ?? null : item.asset_state ?? null,
+    } as AssetWithRelations;
+  },
+
+  /**
+   * Get the assignment + event history for an asset (audit trail).
+   * Tables: inventory.asset_assignments, inventory.asset_events
+   */
+  async getAssetHistory(id: string): Promise<{
+    assignments: AssetAssignmentHistoryRow[];
+    events: AssetEventRow[];
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const [assignmentsRes, eventsRes] = await Promise.all([
+      supabase
+        .from('asset_assignments')
+        .select('id, assigned_to_type, assigned_to_id, assigned_at, returned_at, return_condition, notes')
+        .eq('asset_id', id)
+        .order('assigned_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('asset_events')
+        .select('id, event_type, occurred_at, payload')
+        .eq('asset_id', id)
+        .order('occurred_at', { ascending: false })
+        .limit(100),
+    ]);
+
+    if (assignmentsRes.error) {
+      throw AppError.internal(`Failed to fetch asset assignments: ${assignmentsRes.error.message}`);
+    }
+    if (eventsRes.error) {
+      throw AppError.internal(`Failed to fetch asset events: ${eventsRes.error.message}`);
+    }
+
+    return {
+      assignments: (assignmentsRes.data || []) as AssetAssignmentHistoryRow[],
+      events: (eventsRes.data || []) as AssetEventRow[],
+    };
   },
 
   /**

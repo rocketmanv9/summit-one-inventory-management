@@ -3,6 +3,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -15,6 +16,7 @@ import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
+import { AssetTransferModal } from '@/components/assets/AssetTransferModal';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -60,6 +62,7 @@ export default function AssetsPage() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
   const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
 
@@ -135,7 +138,12 @@ export default function AssetsPage() {
       header: 'Asset Tag',
       sortable: true,
       render: (row: Asset) => (
-        <span className="font-mono font-medium">{row.asset_tag}</span>
+        <Link
+          href={`/inventory/assets/${row.id}`}
+          className="font-mono font-medium text-foreground hover:text-primary hover:underline"
+        >
+          {row.asset_tag}
+        </Link>
       ),
     },
     {
@@ -225,6 +233,16 @@ export default function AssetsPage() {
             className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
           >
             {row.status === 'assigned' ? 'Return' : 'Assign'}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedAsset(row);
+              setShowTransferModal(true);
+            }}
+            className="px-2 py-1 text-xs bg-teal-100 text-teal-800 rounded hover:bg-teal-200"
+          >
+            Transfer
           </button>
           <button
             onClick={(e) => {
@@ -366,6 +384,21 @@ export default function AssetsPage() {
             }}
             onComplete={() => {
               setShowAssignModal(false);
+              setSelectedAsset(null);
+              fetchAssets();
+            }}
+          />
+        )}
+
+        {showTransferModal && selectedAsset && (
+          <AssetTransferModal
+            asset={selectedAsset}
+            onClose={() => {
+              setShowTransferModal(false);
+              setSelectedAsset(null);
+            }}
+            onComplete={() => {
+              setShowTransferModal(false);
               setSelectedAsset(null);
               fetchAssets();
             }}
@@ -936,14 +969,37 @@ function AssetAssignModal({
   onClose: () => void; 
   onComplete: () => void;
 }) {
+  // Active assignment types from settings, with a sensible fallback if none are
+  // configured yet. Drives the "Assign To" dropdown so custom types show up.
+  const FALLBACK_TYPES: { type_key: string; display_name: string }[] = [
+    { type_key: 'employee', display_name: 'Employee' },
+    { type_key: 'crew', display_name: 'Crew' },
+    { type_key: 'vehicle', display_name: 'Vehicle' },
+    { type_key: 'job', display_name: 'Job Site' },
+    { type_key: 'yard', display_name: 'Yard/Location' },
+    { type_key: 'department', display_name: 'Department' },
+  ];
+  const typeOptions = assignmentTypes.filter((t) => t.is_active).length > 0
+    ? assignmentTypes.filter((t) => t.is_active)
+    : FALLBACK_TYPES;
+
+  const RETURN_CONDITIONS: { value: 'good' | 'damaged' | 'needs_repair' | 'lost'; label: string }[] = [
+    { value: 'good', label: 'Good — back to available' },
+    { value: 'damaged', label: 'Damaged — needs repair' },
+    { value: 'needs_repair', label: 'Needs repair' },
+    { value: 'lost', label: 'Lost — out of service' },
+  ];
+
   const [form, setForm] = useState({
-    assigned_to_type: assignmentTypes[0]?.type_key || 'employee',
+    assigned_to_type: typeOptions[0]?.type_key || 'employee',
     assigned_to_id: '',
     notes: '',
+    return_condition: 'good' as 'good' | 'damaged' | 'needs_repair' | 'lost',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const isReturn = (asset.asset_state?.current_status || asset.status) === 'assigned';
+  const selectedType = typeOptions.find((t) => t.type_key === form.assigned_to_type);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -954,6 +1010,7 @@ function AssetAssignModal({
       if (isReturn) {
         await InventoryRPC.returnAsset({
           asset_id: asset.id,
+          return_condition: form.return_condition,
           notes: form.notes,
           last_event_id: crypto.randomUUID(),
         });
@@ -1010,41 +1067,44 @@ function AssetAssignModal({
                   onChange={(e) => setForm({ ...form, assigned_to_type: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
                 >
-                  <option value="employee">Employee</option>
-                  <option value="crew">Crew</option>
-                  <option value="vehicle">Vehicle</option>
-                  <option value="job">Job Site</option>
-                  <option value="yard">Yard/Location</option>
-                  <option value="department">Department</option>
+                  {typeOptions.map((t) => (
+                    <option key={t.type_key} value={t.type_key}>{t.display_name}</option>
+                  ))}
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  {form.assigned_to_type === 'employee' && 'Employee ID *'}
-                  {form.assigned_to_type === 'crew' && 'Crew Name/ID *'}
-                  {form.assigned_to_type === 'vehicle' && 'Vehicle ID *'}
-                  {form.assigned_to_type === 'job' && 'Job Number/Site *'}
-                  {form.assigned_to_type === 'yard' && 'Yard/Location *'}
-                  {form.assigned_to_type === 'department' && 'Department *'}
+                  {selectedType?.display_name || 'Assignee'} *
                 </label>
                 <input
                   type="text"
                   value={form.assigned_to_id}
                   onChange={(e) => setForm({ ...form, assigned_to_id: e.target.value })}
                   className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder={
-                    form.assigned_to_type === 'employee' ? 'Employee ID or badge number' :
-                    form.assigned_to_type === 'crew' ? 'Crew name' :
-                    form.assigned_to_type === 'vehicle' ? 'Vehicle number' :
-                    form.assigned_to_type === 'job' ? 'Job number or site name' :
-                    form.assigned_to_type === 'yard' ? 'Yard name' :
-                    'Department name'
-                  }
+                  placeholder={`Enter ${(selectedType?.display_name || 'assignee').toLowerCase()} name or ID`}
                   required
                 />
               </div>
             </>
+          )}
+
+          {isReturn && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Return Condition *</label>
+              <select
+                value={form.return_condition}
+                onChange={(e) => setForm({ ...form, return_condition: e.target.value as typeof form.return_condition })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                {RETURN_CONDITIONS.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Determines the asset&apos;s next status — good returns it to available; damaged or needs-repair sends it to maintenance; lost marks it out of service.
+              </p>
+            </div>
           )}
 
           <div>
