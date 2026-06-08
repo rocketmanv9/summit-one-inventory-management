@@ -19,6 +19,8 @@ interface Position {
   source: string;
 }
 
+type BudgetPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual';
+
 interface UserRow {
   user_id: string;
   name: string | null;
@@ -31,6 +33,14 @@ interface UserRow {
   effective_limit: number | string | null;
   effective_source: 'user' | 'position' | 'tenant' | 'none';
   hr_person_id: string | null;
+  // Periodic (cumulative) budget — config + live usage for the current window.
+  budget_amount: number | string | null;
+  budget_period: BudgetPeriod | null;
+  budget_anchor: string | null;
+  budget_spent: number | string | null;
+  budget_remaining: number | string | null;
+  budget_period_start: string | null;
+  budget_period_end: string | null;
 }
 
 interface RosterMember {
@@ -75,6 +85,71 @@ async function patchJson(url: string, body: unknown): Promise<any> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw AppError.internal(json?.error?.message || `Request failed (${res.status})`);
   return json.data ?? json;
+}
+
+const fmtDate = (s: string | null): string =>
+  !s ? '—' : new Date(`${s}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const firstOfThisMonth = (): string => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; };
+
+/**
+ * Per-user periodic budget editor. Amount + cadence + the date periods are anchored to.
+ * Clearing the amount (or picking "no budget") removes the budget. Saves on blur/change.
+ */
+function BudgetEditor({ row, disabled, onSave }: {
+  row: UserRow;
+  disabled: boolean;
+  onSave: (b: { amount: number; period: BudgetPeriod; anchor: string } | null) => void;
+}) {
+  const [amount, setAmount] = useState<string>(num(row.budget_amount)?.toString() ?? '');
+  const [period, setPeriod] = useState<BudgetPeriod | ''>(row.budget_period ?? '');
+  const [anchor, setAnchor] = useState<string>(row.budget_anchor ?? firstOfThisMonth());
+
+  const commit = (next: { amount?: string; period?: BudgetPeriod | ''; anchor?: string }) => {
+    const a = next.amount ?? amount;
+    const p = next.period ?? period;
+    const an = next.anchor ?? anchor;
+    if (a === '' || Number(a) <= 0) { onSave(null); return; }      // no/zero amount => clear
+    const effP: BudgetPeriod = (p || 'monthly') as BudgetPeriod;     // default cadence if amount set first
+    const effAn = an || firstOfThisMonth();
+    if (!p) setPeriod(effP);
+    if (!an) setAnchor(effAn);
+    onSave({ amount: Number(a), period: effP, anchor: effAn });
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1">
+        <span className="text-gray-400">$</span>
+        <input
+          type="number" min="0" value={amount} disabled={disabled} placeholder="none"
+          onChange={(e) => setAmount(e.target.value)}
+          onBlur={(e) => { if (e.target.value !== (num(row.budget_amount)?.toString() ?? '')) commit({ amount: e.target.value }); }}
+          className="w-24 rounded-md border px-2 py-1 text-right"
+        />
+        <select
+          value={period} disabled={disabled || amount === ''}
+          onChange={(e) => { const p = e.target.value as BudgetPeriod | ''; setPeriod(p); commit({ period: p }); }}
+          className="rounded-md border px-1 py-1 text-xs"
+        >
+          <option value="">no budget</option>
+          <option value="weekly">/ week</option>
+          <option value="monthly">/ month</option>
+          <option value="quarterly">/ quarter</option>
+          <option value="annual">/ year</option>
+        </select>
+      </div>
+      {amount !== '' && period && (
+        <label className="flex items-center gap-1 text-[11px] text-gray-400">
+          resets from
+          <input
+            type="date" value={anchor} disabled={disabled}
+            onChange={(e) => { setAnchor(e.target.value); commit({ anchor: e.target.value }); }}
+            className="rounded border px-1 py-0.5 text-[11px]"
+          />
+        </label>
+      )}
+    </div>
+  );
 }
 
 export default function PeopleSettingsPage() {
@@ -139,6 +214,14 @@ export default function PeopleSettingsPage() {
     try {
       await patchJson(`/api/hr/users/${userId}`, patch);
       flash('User updated.');
+      await load();
+    } catch (e) { fail(e); }
+  };
+
+  const saveUserBudget = async (userId: string, budget: { amount: number; period: BudgetPeriod; anchor: string } | null) => {
+    try {
+      await patchJson(`/api/hr/users/${userId}`, { budget });
+      flash(budget ? 'Budget saved.' : 'Budget cleared.');
       await load();
     } catch (e) { fail(e); }
   };
@@ -253,11 +336,14 @@ export default function PeopleSettingsPage() {
           {/* Users */}
           <section className="rounded-lg border bg-white p-4">
             <h2 className="mb-1 flex items-center gap-2 text-base font-semibold"><Users className="h-4 w-4" /> Users ({data.users.length})</h2>
-            <p className="mb-4 text-sm text-gray-500">Assign a position and an optional per-user override. Effective limit = user override → position default → tenant global.</p>
+            <p className="mb-4 text-sm text-gray-500">
+              <span className="font-medium text-gray-600">Per-order cap</span> (Override → Effective): the biggest single PO that auto-approves.{' '}
+              <span className="font-medium text-gray-600">Period budget</span>: a recurring pool of approved spend; once it&apos;s used up for the period, new POs go to draft until it resets. Both must pass to auto-approve.
+            </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b text-left text-xs uppercase text-gray-400">
-                  <th className="py-2">User</th><th>Position</th><th className="text-right">Override ($)</th><th className="text-right">Effective</th>
+                  <th className="py-2">User</th><th>Position</th><th className="text-right">Override ($)</th><th className="text-right">Effective</th><th className="text-right">Period budget</th><th className="text-right">This period</th>
                 </tr></thead>
                 <tbody>
                   {data.users.map((u) => (
@@ -291,9 +377,27 @@ export default function PeopleSettingsPage() {
                         <span className="font-medium">{u.effective_limit == null ? 'No cap' : fmtMoney(u.effective_limit)}</span>
                         <span className="ml-1 text-xs text-gray-400">({u.effective_source})</span>
                       </td>
+                      <td className="text-right">
+                        <BudgetEditor row={u} disabled={!isAdmin} onSave={(b) => saveUserBudget(u.user_id, b)} />
+                      </td>
+                      <td className="text-right align-middle">
+                        {u.budget_amount == null ? (
+                          <span className="text-gray-300">—</span>
+                        ) : (
+                          <div className="text-xs">
+                            <div className="font-medium text-gray-700">
+                              {fmtMoney(u.budget_spent)} <span className="text-gray-400">of</span> {fmtMoney(u.budget_amount)}
+                            </div>
+                            <div className={num(u.budget_remaining) != null && num(u.budget_remaining)! <= 0 ? 'text-red-600' : 'text-green-600'}>
+                              {fmtMoney(u.budget_remaining)} left
+                            </div>
+                            <div className="text-gray-400">resets {fmtDate(u.budget_period_end)}</div>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
-                  {data.users.length === 0 && <tr><td colSpan={4} className="py-4 text-center text-gray-400">No users yet.</td></tr>}
+                  {data.users.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-gray-400">No users yet.</td></tr>}
                 </tbody>
               </table>
             </div>

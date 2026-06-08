@@ -5,12 +5,20 @@ import { idFromPath } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
-// Either field may be sent. null clears it (position -> none, limit -> inherit position/tenant).
+// A periodic (cumulative) budget. Sent as a whole object; `budget: null` clears it.
+const BudgetSchema = z.object({
+  amount: z.number().positive(),
+  period: z.enum(['weekly', 'monthly', 'quarterly', 'annual']),
+  anchor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'anchor must be a YYYY-MM-DD date'),
+});
+
+// Any field may be sent. null clears it (position -> none, limit -> inherit, budget -> none).
 const Schema = z.object({
   position_id: z.string().uuid().nullable().optional(),
   spending_limit: z.number().nonnegative().nullable().optional(),
-}).refine((b) => b.position_id !== undefined || b.spending_limit !== undefined, {
-  message: 'Provide position_id and/or spending_limit',
+  budget: BudgetSchema.nullable().optional(),
+}).refine((b) => b.position_id !== undefined || b.spending_limit !== undefined || b.budget !== undefined, {
+  message: 'Provide position_id, spending_limit, and/or budget',
 });
 
 /** PATCH /api/hr/users/[id] — assign a user's position and/or per-user PO cap (admin). */
@@ -30,13 +38,19 @@ export const PATCH = createSessionWriteRoute(async ({ req, body, ctx, supabase, 
   const patch: Record<string, any> = { synced_at: new Date().toISOString() };
   if (body.position_id !== undefined) patch.position_id = body.position_id;
   if (body.spending_limit !== undefined) patch.spending_limit = body.spending_limit;
+  if (body.budget !== undefined) {
+    // Whole-object set, or null to clear. The DB CHECK requires all three together.
+    patch.budget_amount = body.budget?.amount ?? null;
+    patch.budget_period = body.budget?.period ?? null;
+    patch.budget_anchor = body.budget?.anchor ?? null;
+  }
 
   const { data, error } = await supabase
     .from('local_users')
     .update(patch)
     .eq('user_id', userId)
     .eq('tenant_id', tenantId)
-    .select('user_id, name, position_id, spending_limit')
+    .select('user_id, name, position_id, spending_limit, budget_amount, budget_period, budget_anchor')
     .maybeSingle();
   if (error) throw AppError.internal(error.message);
   if (!data) throw AppError.notFound('User not found');
@@ -46,7 +60,11 @@ export const PATCH = createSessionWriteRoute(async ({ req, body, ctx, supabase, 
     status: 200,
     events: [{
       event_name: 'user.limit_updated',
-      payload: { tenant_id: tenantId, user_id: userId, position_id: data.position_id, spending_limit: data.spending_limit },
+      payload: {
+        tenant_id: tenantId, user_id: userId, position_id: data.position_id,
+        spending_limit: data.spending_limit, budget_amount: data.budget_amount,
+        budget_period: data.budget_period, budget_anchor: data.budget_anchor,
+      },
       last_event_id: idempotencyKey,
     }],
   };

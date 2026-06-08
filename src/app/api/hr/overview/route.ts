@@ -33,7 +33,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
         .limit(1000),
       supabase
         .from('local_users')
-        .select('user_id, name, email, role, position_id, spending_limit, hr_person_id, synced_at')
+        .select('user_id, name, email, role, position_id, spending_limit, budget_amount, budget_period, budget_anchor, hr_person_id, synced_at')
         .eq('tenant_id', tenantId)
         .order('name', { ascending: true })
         .limit(1000),
@@ -55,6 +55,13 @@ export const GET = createSessionReadRoute(async ({ session }) => {
   if (usersErr) throw AppError.internal(usersErr.message);
   if (setErr) throw AppError.internal(setErr.message);
   if (pplErr) throw AppError.internal(pplErr.message);
+
+  // Live period-budget usage (spent/remaining within each user's current window).
+  const { data: budgetRows, error: budgetErr } = await supabase
+    .schema('supply_chain')
+    .rpc('tenant_user_budgets', { p_tenant: tenantId });
+  if (budgetErr) throw AppError.internal(budgetErr.message);
+  const budgetByUser = new Map<string, any>((budgetRows ?? []).map((b: any) => [b.user_id, b]));
 
   const tenantLimit = settings?.auto_approve_limit ?? null;
   const positionById = new Map((positions ?? []).map((p: any) => [p.id, p]));
@@ -83,12 +90,21 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     const userLimit = u.spending_limit ?? null;
     const positionLimit = pos?.spending_limit ?? null;
     const effective = userLimit ?? positionLimit ?? tenantLimit;
+    const b = budgetByUser.get(u.user_id);
     return {
       ...u,
       position_title: pos?.title ?? null,
       position_limit: positionLimit,
       effective_limit: effective, // null => unlimited
       effective_source: userLimit != null ? 'user' : positionLimit != null ? 'position' : tenantLimit != null ? 'tenant' : 'none',
+      // Periodic budget (cumulative). budget_* are the stored config; spent/remaining/period_* are live.
+      budget_amount: u.budget_amount ?? null,
+      budget_period: u.budget_period ?? null,
+      budget_anchor: u.budget_anchor ?? null,
+      budget_spent: b?.spent ?? null,
+      budget_remaining: b?.remaining ?? null,
+      budget_period_start: b?.period_start ?? null,
+      budget_period_end: b?.period_end ?? null,
     };
   });
 
