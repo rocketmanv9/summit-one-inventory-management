@@ -107,6 +107,24 @@ export default function ItemsPage() {
 
       fetchItems(); // Refresh the list
     } catch (error: any) {
+      // Items with transaction history can't be hard-deleted (the ledger FKs are
+      // ON DELETE RESTRICT). Offer to deactivate instead so the user isn't stuck.
+      const msg: string = error?.message || '';
+      if (msg.includes("can't be permanently deleted") && lastEventId) {
+        if (
+          confirm(
+            `"${itemName}" has transaction history and can't be permanently deleted.\n\nDeactivate it instead? It will be marked inactive and hidden from active use, but its history is preserved.`,
+          )
+        ) {
+          try {
+            await InventoryRPC.updateCatalogItem(itemId, { active: false } as any, lastEventId);
+            fetchItems();
+          } catch (deactErr: any) {
+            alert(`Error deactivating: ${deactErr.message}`);
+          }
+        }
+        return;
+      }
       alert(`Error: ${error.message}`);
     }
   };
