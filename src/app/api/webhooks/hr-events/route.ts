@@ -22,7 +22,7 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
  * Tenant note: assumes the HR tenant_id equals the app tenant_id (true for AC Moate;
  * see tenant_settings.hr_tenant_id). The hub delivers per-tenant via the signed envelope.
  */
-const deliverHrEvent = createWebhookRoute(async ({ eventType, payload, supabase, log, tenantId }) => {
+export const POST = createWebhookRoute(async ({ eventType, payload, supabase, log, tenantId }) => {
   // Tolerate either the raw outbox envelope ({op,new,old}) or a pre-unwrapped row.
   const row = (payload?.new ?? payload?.old ?? payload) as any;
   if (!row?.id) {
@@ -47,34 +47,17 @@ const deliverHrEvent = createWebhookRoute(async ({ eventType, payload, supabase,
   // Dedicated secret for HR/hub deliveries (not the Core webhook secret). Holds the
   // same value as the subscription's `secret` column registered in the hub.
   secretEnvVar: 'HR_WEBHOOK_SECRET',
+  // The Summit hub's events-poller signs as `x-event-signature: <bare-hex>`
+  // (HMAC-SHA256 of the raw body), unlike Core's `x-webhook-signature: sha256=<hex>`.
+  // (chassis >=2.1.0 verifies this scheme natively.)
+  signatureHeader: 'x-event-signature',
+  signatureEncoding: 'hex',
   createClient: async (tenantId) => createTenantServiceClient({
     url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
     tenantId,
   }),
 });
-
-/**
- * Signature-scheme bridge for the Summit hub (events-poller).
- *
- * The hub signs deliveries as `x-event-signature: <bare-hex>` where the hex is
- * HMAC-SHA256(rawBody) — but chassis createWebhookRoute verifies
- * `x-webhook-signature: sha256=<hex>`. Both sides HMAC the *same* raw body with
- * the same secret, so we only translate the header name and add the `sha256=`
- * prefix, then delegate to the factory (which re-derives and compares the HMAC).
- * Fail-closed: a missing hub header becomes `sha256=` and the factory rejects it.
- *
- * The shared secret lives in HR_WEBHOOK_SECRET (deployed app env) and in the
- * hub subscription's `secret` column. Tracked for removal once chassis exposes a
- * configurable signature header/scheme (see chassis follow-up).
- */
-export const POST = async (req: Request): Promise<Response> => {
-  const rawBody = await req.text();
-  const hubSignature = req.headers.get('x-event-signature') ?? '';
-  const headers = new Headers(req.headers);
-  headers.set('x-webhook-signature', `sha256=${hubSignature}`);
-  return deliverHrEvent(new Request(req.url, { method: 'POST', headers, body: rawBody }));
-};
 
 async function upsertPerson(supabase: SupabaseClient, row: any, tenantId: string) {
   const nowIso = new Date().toISOString();
