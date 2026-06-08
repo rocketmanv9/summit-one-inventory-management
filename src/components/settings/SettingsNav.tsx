@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 
 const SETTINGS_TABS = [
   { label: 'General', href: '/settings' },
+  { label: 'People & Limits', href: '/settings/people' },
   { label: 'Branding', href: '/settings/branding' },
   { label: 'Device Management', href: '/settings/device-management' },
   { label: 'Integrations', href: '/settings/integrations' },
