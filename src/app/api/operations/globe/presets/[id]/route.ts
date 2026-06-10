@@ -7,6 +7,7 @@
 import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { rethrowDeleteError } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -41,7 +42,7 @@ export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, 
 
   if (error) {
     log.error('globe_filter_preset.delete failed', { error: error.message });
-    throw AppError.internal(error.message);
+    rethrowDeleteError(error, 'preset');
   }
 
   log.info('globe_filter_preset.deleted', { presetId: id });

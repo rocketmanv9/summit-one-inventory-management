@@ -8,6 +8,7 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getAdminClient } from '@/utils/supabase/admin';
+import { rethrowDeleteError } from '@/lib/api/typed-crud';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -146,7 +147,7 @@ export const DELETE = createSessionWriteRoute(async ({ req, ctx, idempotencyKey 
     .eq('tenant_id', ctx.tenantId!)
     .eq('provider_id', providerId);
 
-  if (error) throw AppError.internal(error.message);
+  if (error) rethrowDeleteError(error, 'mapping');
 
   return {
     data: { deleted: true },
