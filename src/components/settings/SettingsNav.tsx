@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useSession } from '@/hooks/useSession';
 
 const SETTINGS_TABS = [
   { label: 'General', href: '/settings' },
@@ -12,8 +13,15 @@ const SETTINGS_TABS = [
   { label: 'Integrations', href: '/settings/integrations' },
 ] as const;
 
+// Externally-hosted OpenClaw maintenance assistant (Cloudflare Access–gated).
+// Dev-only tool that can edit the codebase, so it opens in a new tab and is
+// hidden from non-developer/non-admin users.
+const MAINTENANCE_ASSISTANT_URL = 'https://claw.forge-operation.com';
+
 export function SettingsNav() {
   const pathname = usePathname();
+  const { session } = useSession();
+  const canSeeAssistant = session?.isDeveloper === true || session?.role === 'admin';
 
   return (
     <div className="mb-6 flex flex-wrap gap-2 border-b pb-3">
@@ -44,6 +52,21 @@ export function SettingsNav() {
           </Link>
         );
       })}
+
+      {canSeeAssistant && (
+        <a
+          href={MAINTENANCE_ASSISTANT_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Maintenance assistant — opens the OpenClaw bug-fix chat (developers only)"
+          className={cn(
+            'ml-auto px-3 py-1.5 text-sm font-medium rounded-md',
+            'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+          )}
+        >
+          Assistant ↗
+        </a>
+      )}
     </div>
   );
 }
