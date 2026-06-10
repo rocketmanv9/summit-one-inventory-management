@@ -3,6 +3,7 @@ import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { createRoute } from '@/lib/api/typed-crud';
+import { locationAddressSchema } from '@/lib/locations/address-schema';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -35,5 +36,7 @@ export const POST = createRoute({
   schema: 'inventory',
   table: 'locations',
   returning: '*, location_type:location_type_id(name)',
-  bodySchema: z.object({ name: z.string().min(1) }).passthrough(),
+  // Enforces state/ZIP consistency and normalizes state/country when an address
+  // is provided; address-less locations (sheds, containers) still save.
+  bodySchema: locationAddressSchema(z.object({ name: z.string().min(1) }).passthrough()),
 });

@@ -13,6 +13,7 @@ import {
   postCxml,
   normalizeStateCode,
   normalizeCountryCode,
+  validateShipToAddress,
   type OrderRequestLineItem,
 } from '@/lib/integrations/amazon-cxml';
 
@@ -80,23 +81,12 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (locError || !location) throw AppError.notFound('Delivery location not found.');
 
-  if (!location.address_line_1 || !location.city || !location.state || !location.postal_code) {
-    throw AppError.badRequest(
-      `Location "${location.name}" is missing structured address fields.`
-    );
-  }
+  // Reject incomplete, unrecognized-state, or state/ZIP-mismatched addresses with an
+  // actionable message instead of a cryptic Amazon 003-052 rejection on submit.
+  validateShipToAddress(location, location.name);
 
-  // Amazon rejects non-ISO state/country (error 003-052). The cXML builder
-  // normalizes these, but catch an unmappable state here so the operator gets an
-  // actionable message instead of a cryptic Amazon rejection.
   const normalizedCountry = normalizeCountryCode(location.country || 'US');
   const normalizedState = normalizeStateCode(location.state);
-  if (normalizedCountry === 'US' && !/^[A-Z]{2}$/.test(normalizedState)) {
-    throw AppError.badRequest(
-      `Location "${location.name}" has an unrecognized state "${location.state}". ` +
-      'Enter the 2-letter state code (e.g. GA) so Amazon accepts the shipping address.'
-    );
-  }
 
   const shipTo = {
     name: location.name,

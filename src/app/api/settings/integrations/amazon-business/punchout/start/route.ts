@@ -16,6 +16,9 @@ import {
   buildPunchOutSetupRequest,
   parsePunchOutSetupResponse,
   postCxml,
+  validateShipToAddress,
+  normalizeStateCode,
+  normalizeCountryCode,
 } from '@/lib/integrations/amazon-cxml';
 import { headers } from 'next/headers';
 
@@ -59,20 +62,20 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (locError || !location) throw AppError.notFound('Delivery location not found.');
 
-  if (!location.address_line_1 || !location.city || !location.state || !location.postal_code) {
-    throw AppError.badRequest(
-      `Location "${location.name}" is missing structured address fields. Update in Inventory > Locations.`
-    );
-  }
+  // Reject incomplete or state/ZIP-mismatched addresses up front — in production
+  // Amazon silently blocks checkout for a bad ShipTo, so the cart just never returns.
+  validateShipToAddress(location, location.name);
 
+  // Store and transmit the normalized address (2-letter state, ISO country) so the
+  // saved shipping_address matches what we send and isn't a free-text mismatch.
   const shipTo = {
     name: location.name,
     address_line_1: location.address_line_1,
     address_line_2: location.address_line_2 || undefined,
     city: location.city,
-    state: location.state,
+    state: normalizeStateCode(location.state),
     postal_code: location.postal_code,
-    country: location.country || 'US',
+    country: normalizeCountryCode(location.country || 'US'),
   };
 
   // 2. Resolve ASINs from vendor_items for the Amazon vendor

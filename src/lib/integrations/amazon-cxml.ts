@@ -82,6 +82,107 @@ export function countryName(code: string): string {
   return COUNTRY_NAMES[code] ?? code;
 }
 
+// ── US ZIP ↔ state validation ─────────────────────────────────────────
+// Amazon rejects a ShipTo whose state and ZIP disagree (error 003-052) and, in
+// production (not test) mode, won't let a punchout cart check out at all — so a
+// bad address shows up as a cart that never returns. We catch it before transmit.
+
+/** Set of valid 2-letter USPS state/territory codes. */
+const US_STATE_CODE_SET = new Set<string>([
+  ...Object.values(US_STATE_CODES),
+  'DC', 'AS', 'GU', 'MP', 'PR', 'VI',
+]);
+
+// ZIP3 (first three digits) → state, as contiguous ranges per the USPS
+// allocation. Used only as a sanity check: an unmapped ZIP3 passes (we don't
+// want false negatives), a mapped-but-mismatched one is rejected.
+const ZIP3_STATE_RANGES: Array<[number, number, string]> = [
+  [600, 629, 'IL'], [630, 658, 'MO'], [660, 679, 'KS'], [680, 693, 'NE'],
+  [700, 714, 'LA'], [716, 729, 'AR'], [730, 749, 'OK'], [750, 799, 'TX'],
+  [800, 816, 'CO'], [820, 831, 'WY'], [832, 838, 'ID'], [840, 847, 'UT'],
+  [850, 865, 'AZ'], [870, 884, 'NM'], [889, 898, 'NV'], [900, 961, 'CA'],
+  [967, 968, 'HI'], [970, 979, 'OR'], [980, 994, 'WA'], [995, 999, 'AK'],
+  [10, 27, 'MA'], [28, 29, 'RI'], [30, 38, 'NH'], [39, 49, 'ME'],
+  [50, 59, 'VT'], [60, 69, 'CT'], [70, 89, 'NJ'], [100, 149, 'NY'],
+  [150, 196, 'PA'], [197, 199, 'DE'], [200, 205, 'DC'], [206, 219, 'MD'],
+  [220, 246, 'VA'], [247, 268, 'WV'], [270, 289, 'NC'], [290, 299, 'SC'],
+  [300, 319, 'GA'], [320, 349, 'FL'], [350, 369, 'AL'], [370, 385, 'TN'],
+  [386, 397, 'MS'], [400, 427, 'KY'], [430, 459, 'OH'], [460, 479, 'IN'],
+  [480, 499, 'MI'], [500, 528, 'IA'], [530, 549, 'WI'], [550, 567, 'MN'],
+  [570, 577, 'SD'], [580, 588, 'ND'], [590, 599, 'MT'],
+];
+
+/** Map a 5-digit ZIP to its expected state, or null if the prefix is unmapped. */
+export function zipToState(zip: string): string | null {
+  const m = (zip || '').trim().match(/^(\d{3})\d{2}/);
+  if (!m) return null;
+  const zip3 = parseInt(m[1], 10);
+  for (const [lo, hi, st] of ZIP3_STATE_RANGES) {
+    if (zip3 >= lo && zip3 <= hi) return st;
+  }
+  return null;
+}
+
+export interface ShipToLike {
+  name?: string;
+  address_line_1?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+}
+
+/**
+ * Validate a ship-to address before we put it in cXML. Throws AppError.badRequest
+ * with an operator-actionable message (naming the location) when the address is
+ * incomplete or internally inconsistent. US-only checks; non-US passes through.
+ */
+export function validateShipToAddress(shipTo: ShipToLike, locationName: string): void {
+  if (!shipTo.address_line_1 || !shipTo.city || !shipTo.state || !shipTo.postal_code) {
+    throw AppError.badRequest(
+      `Location "${locationName}" is missing structured address fields (street, city, state, ZIP). ` +
+      'Complete it in Inventory > Locations before ordering.'
+    );
+  }
+
+  const problem = stateZipProblem(shipTo.state, shipTo.postal_code, shipTo.country);
+  if (problem) {
+    throw AppError.badRequest(`Location "${locationName}": ${problem}`);
+  }
+}
+
+/**
+ * Pure US state/ZIP consistency check, reusable outside the Amazon flow (e.g. at
+ * location save time). Returns a human message describing the problem, or null
+ * when the address is consistent (or non-US, or missing state/ZIP — those are the
+ * caller's completeness concern, not a consistency one).
+ */
+export function stateZipProblem(
+  stateRaw?: string | null,
+  zipRaw?: string | null,
+  countryRaw?: string | null,
+): string | null {
+  const country = normalizeCountryCode(countryRaw || 'US');
+  if (country !== 'US') return null;
+  if (!stateRaw || !zipRaw) return null;
+
+  const state = normalizeStateCode(stateRaw);
+  if (!US_STATE_CODE_SET.has(state)) {
+    return `unrecognized state "${stateRaw}" — use the 2-letter code (e.g. WA). Amazon rejects non-ISO states (003-052).`;
+  }
+
+  const zip = String(zipRaw).trim();
+  if (!/^\d{5}(-\d{4})?$/.test(zip)) {
+    return `invalid ZIP "${zipRaw}" — use a 5-digit US ZIP (or ZIP+4).`;
+  }
+
+  const expected = zipToState(zip);
+  if (expected && expected !== state) {
+    return `state/ZIP mismatch — state is ${state} but ZIP ${zip} belongs to ${expected}. Fix it so they agree; Amazon rejects mismatched shipping addresses (003-052).`;
+  }
+  return null;
+}
+
 // ── cXML Header (shared by PunchOutSetupRequest and OrderRequest) ─────
 
 function buildHeader(creds: CxmlCredentials): string {
