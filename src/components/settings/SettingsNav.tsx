@@ -11,6 +11,7 @@ const SETTINGS_TABS = [
   { label: 'Branding', href: '/settings/branding' },
   { label: 'Device Management', href: '/settings/device-management' },
   { label: 'Integrations', href: '/settings/integrations' },
+  { label: 'Test', href: '/settings/test' },
 ] as const;
 
 // Externally-hosted OpenClaw maintenance assistant (Cloudflare Access–gated).
