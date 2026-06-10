@@ -42,7 +42,8 @@
       "mcp__supabase_dev__get_project_url",
       "mcp__supabase_main__get_project_url",
       "mcp__supabase_stage__get_project_url",
-      "mcp__supabase__list_branches"
+      "mcp__supabase__list_branches",
+      "Bash(claude mcp *)"
     ]
   }
 }
