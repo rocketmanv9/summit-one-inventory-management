@@ -1,3 +1,7 @@
+// GV is a separate Supabase project; chassis client factories target the app DB only.
+// We must use createClient directly with GV_SUPABASE_URL + GV_SUPABASE_ANON_KEY to
+// connect to the GV project for catalog reads and vendor RPCs.
+// eslint-disable-next-line no-restricted-imports
 import { createClient } from '@supabase/supabase-js';
 import { createVendorCatalogClient, createTenantVendorClient } from '@rocketmanv9/chassis/vendors';
 import { AppError } from '@rocketmanv9/chassis/errors';
