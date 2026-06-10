@@ -287,9 +287,10 @@ export function buildPunchOutSetupRequest(params: PunchOutSetupParams): {
   const setupCountryCode = params.shipTo ? normalizeCountryCode(params.shipTo.country) : 'US';
   const shipToXml = params.shipTo
     ? `<ShipTo>
-        <Address>
+        <Address isoCountryCode="${escapeXml(setupCountryCode)}" addressID="${escapeXml(params.shipTo.addressId || 'ship-1')}">
           <Name xml:lang="en-US">${escapeXml(params.shipTo.name)}</Name>
-          <PostalAddress>
+          <PostalAddress name="default">
+            <DeliverTo>${escapeXml((params.shipTo.deliverTo || params.shipTo.name || 'Receiving').slice(0, 17))}</DeliverTo>
             <Street>${escapeXml(params.shipTo.address_line_1)}</Street>
             ${params.shipTo.address_line_2 ? `<Street>${escapeXml(params.shipTo.address_line_2)}</Street>` : ''}
             <City>${escapeXml(params.shipTo.city)}</City>
@@ -539,9 +540,10 @@ export function buildOrderRequest(params: OrderRequestParams): {
           <Money currency="${escapeXml(params.currency)}">${params.total.toFixed(2)}</Money>
         </Total>
         <ShipTo>
-          <Address>
+          <Address isoCountryCode="${escapeXml(shipCountryCode)}" addressID="${escapeXml(shipTo.addressId || 'ship-1')}">
             <Name xml:lang="en-US">${escapeXml(shipTo.name)}</Name>
-            <PostalAddress>
+            <PostalAddress name="default">
+              <DeliverTo>${escapeXml((shipTo.deliverTo || shipTo.name || 'Receiving').slice(0, 17))}</DeliverTo>
               <Street>${escapeXml(shipTo.address_line_1)}</Street>
               ${shipTo.address_line_2 ? `<Street>${escapeXml(shipTo.address_line_2)}</Street>` : ''}
               <City>${escapeXml(shipTo.city)}</City>

@@ -100,6 +100,8 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     state: normalizedState,
     postal_code: eff.postal_code,
     country: normalizedCountry,
+    addressId: location.id,
+    deliverTo: location.name,
   };
 
   // 4. Optionally resolve pack quantities from vendor_items

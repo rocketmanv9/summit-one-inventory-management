@@ -30,6 +30,10 @@ export interface ShippingAddress {
   state: string;
   postal_code: string;
   country: string;
+  /** Stable identifier for the <Address addressID="..."> attribute Amazon requires. */
+  addressId?: string;
+  /** Recipient/attention line for <DeliverTo> (Amazon caps at ~17 chars for card orders). */
+  deliverTo?: string;
 }
 
 /**

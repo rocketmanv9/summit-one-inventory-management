@@ -80,6 +80,8 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     state: normalizeStateCode(eff.state),
     postal_code: eff.postal_code,
     country: normalizeCountryCode(eff.country || 'US'),
+    addressId: location.id,
+    deliverTo: location.name,
   };
 
   // 2. Resolve ASINs from vendor_items for the Amazon vendor

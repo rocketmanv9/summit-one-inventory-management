@@ -60,10 +60,20 @@ export async function POST(req: NextRequest) {
       return cxml(200, 'OK (no matching PO)', 200);
     }
 
-    // 4. Advance status to acknowledged, but never downgrade a received/closed PO.
-    const terminal = ['partially_received', 'fully_received', 'cancelled', 'voided', 'closed'];
-    if (!terminal.includes(po.status)) {
-      await sc.from('purchase_orders').update({ status: 'acknowledged' }).eq('id', po.id);
+    // 4. Honor the confirmation outcome. A header or all-line "reject" means Amazon
+    //    will not fulfill the order — reflect that as cancelled, NOT acknowledged.
+    const lineStatuses = (conf.items || []).map((i) => (i.status || '').toLowerCase());
+    const isRejected =
+      (conf.confirmationType || '').toLowerCase() === 'reject' ||
+      (lineStatuses.length > 0 && lineStatuses.every((s) => s === 'reject'));
+
+    // Never overwrite a PO already further along (received) or already final.
+    const locked = ['partially_received', 'fully_received', 'closed', 'cancelled', 'voided'];
+    if (!locked.includes(po.status)) {
+      await sc
+        .from('purchase_orders')
+        .update({ status: isRejected ? 'cancelled' : 'acknowledged' })
+        .eq('id', po.id);
     }
 
     // 5. Record the confirmation detail on the linked punchout order (if any).
@@ -85,9 +95,11 @@ export async function POST(req: NextRequest) {
             ...(order.metadata ?? {}),
             order_confirmation: {
               type: conf.confirmationType,
+              rejected: isRejected,
               amazon_order_id: conf.amazonOrderId,
               items: conf.items,
               received_at: new Date().toISOString(),
+              raw: xml.slice(0, 20000),
             },
           },
         })
