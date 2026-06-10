@@ -254,14 +254,36 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     log.warn('amazon.order.update_failed', { orderId: order.id, error: updateError.message });
   }
 
-  // Mark internal PO as ordered if we have one
+  // Mark internal PO as ordered if we have one. NOTE: rpc_mark_po_ordered derives
+  // the tenant from auth.jwt(), which is NULL under the admin/service-role client
+  // used by this route — it would RAISE 'Authentication required' and, because the
+  // result was previously ignored, silently leave the PO stuck in 'draft' even
+  // though Amazon accepted the order. Update directly with the explicit tenant
+  // instead (same reasoning the PO *creation* path uses rpc_create_po_from_punchout).
+  let poMarkedOrdered = false;
   if (poId && isSuccess) {
-    await sc.rpc('rpc_mark_po_ordered', {
-      p_po_id: poId,
-      p_external_order_number: payloadId,
-      p_order_placement_method: 'portal',
-      p_order_placement_notes: `Submitted via Amazon Business cXML punchout. Payload: ${payloadId}`,
-    });
+    const nowIso = new Date().toISOString();
+    const { error: markError } = await sc
+      .from('purchase_orders')
+      .update({
+        status: 'placed',
+        external_order_number: payloadId,
+        ordered_at: nowIso,
+        ordered_by_user_id: ctx.userId ?? null,
+        order_placement_method: 'portal',
+        order_placement_notes: `Submitted via Amazon Business cXML punchout. Payload: ${payloadId}`,
+        updated_at: nowIso,
+      })
+      .eq('id', poId)
+      .eq('tenant_id', ctx.tenantId!)
+      // Only advance from the pre-order buckets — never downgrade a received/closed PO
+      // or re-stamp on idempotent replay.
+      .in('status', ['draft', 'approved']);
+    if (markError) {
+      log.error('amazon.order.mark_ordered_failed', { poId, error: markError.message });
+    } else {
+      poMarkedOrdered = true;
+    }
   }
 
   if (!isSuccess) {
@@ -285,16 +307,33 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       },
     },
     status: 200,
-    events: [{
-      event_name: 'punchout.submitted',
-      payload: {
-        punchout_order_id: order.id,
-        po_id: poId,
-        po_number: poNumber,
-        total,
-        provider: 'amazon-business',
+    events: [
+      {
+        event_name: 'punchout.submitted',
+        payload: {
+          punchout_order_id: order.id,
+          po_id: poId,
+          po_number: poNumber,
+          total,
+          provider: 'amazon-business',
+        },
+        last_event_id: idempotencyKey,
       },
-      last_event_id: idempotencyKey,
-    }],
+      // Mirror the event rpc_mark_po_ordered used to emit, but only when the PO
+      // actually advanced to 'placed' here.
+      ...(poMarkedOrdered
+        ? [{
+            event_name: 'purchase_order.ordered_externally',
+            payload: {
+              po_id: poId,
+              po_number: poNumber,
+              external_order_number: payloadId,
+              order_placement_method: 'portal',
+              provider: 'amazon-business',
+            },
+            last_event_id: `${idempotencyKey}-ordered`,
+          }]
+        : []),
+    ],
   };
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/settings/integrations/amazon-business/punchout/submit' });
