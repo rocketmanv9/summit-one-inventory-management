@@ -16,6 +16,7 @@ import {
   validateShipToAddress,
   type OrderRequestLineItem,
 } from '@/lib/integrations/amazon-cxml';
+import { applyInheritedAddress } from '@/lib/locations/resolve-address';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -73,7 +74,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   // 3. Load shipping address
   const { data: location, error: locError } = await inv
     .from('locations')
-    .select('id, name, address_line_1, address_line_2, city, state, postal_code, country')
+    .select('id, name, parent_location_id, address_line_1, address_line_2, city, state, postal_code, country')
     .eq('id', body.location_id)
     .eq('tenant_id', ctx.tenantId!)
     .limit(1)
@@ -81,20 +82,23 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (locError || !location) throw AppError.notFound('Delivery location not found.');
 
+  // A child location inherits its parent's address when it has none of its own.
+  const eff = await applyInheritedAddress(inv, ctx.tenantId!, location);
+
   // Reject incomplete, unrecognized-state, or state/ZIP-mismatched addresses with an
   // actionable message instead of a cryptic Amazon 003-052 rejection on submit.
-  validateShipToAddress(location, location.name);
+  validateShipToAddress(eff, location.name);
 
-  const normalizedCountry = normalizeCountryCode(location.country || 'US');
-  const normalizedState = normalizeStateCode(location.state);
+  const normalizedCountry = normalizeCountryCode(eff.country || 'US');
+  const normalizedState = normalizeStateCode(eff.state);
 
   const shipTo = {
     name: location.name,
-    address_line_1: location.address_line_1,
-    address_line_2: location.address_line_2 || undefined,
-    city: location.city,
+    address_line_1: eff.address_line_1,
+    address_line_2: eff.address_line_2 || undefined,
+    city: eff.city,
     state: normalizedState,
-    postal_code: location.postal_code,
+    postal_code: eff.postal_code,
     country: normalizedCountry,
   };
 

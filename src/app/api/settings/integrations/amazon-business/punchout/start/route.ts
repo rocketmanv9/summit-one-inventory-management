@@ -20,6 +20,7 @@ import {
   normalizeStateCode,
   normalizeCountryCode,
 } from '@/lib/integrations/amazon-cxml';
+import { applyInheritedAddress } from '@/lib/locations/resolve-address';
 import { headers } from 'next/headers';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -54,7 +55,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   // 1. Load the tenant's ship-to location
   const { data: location, error: locError } = await inv
     .from('locations')
-    .select('id, name, address_line_1, address_line_2, city, state, postal_code, country')
+    .select('id, name, parent_location_id, address_line_1, address_line_2, city, state, postal_code, country')
     .eq('id', body.location_id)
     .eq('tenant_id', ctx.tenantId!)
     .limit(1)
@@ -62,20 +63,23 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   if (locError || !location) throw AppError.notFound('Delivery location not found.');
 
+  // A child location inherits its parent's address when it has none of its own.
+  const eff = await applyInheritedAddress(inv, ctx.tenantId!, location);
+
   // Reject incomplete or state/ZIP-mismatched addresses up front — in production
   // Amazon silently blocks checkout for a bad ShipTo, so the cart just never returns.
-  validateShipToAddress(location, location.name);
+  validateShipToAddress(eff, location.name);
 
   // Store and transmit the normalized address (2-letter state, ISO country) so the
   // saved shipping_address matches what we send and isn't a free-text mismatch.
   const shipTo = {
     name: location.name,
-    address_line_1: location.address_line_1,
-    address_line_2: location.address_line_2 || undefined,
-    city: location.city,
-    state: normalizeStateCode(location.state),
-    postal_code: location.postal_code,
-    country: normalizeCountryCode(location.country || 'US'),
+    address_line_1: eff.address_line_1,
+    address_line_2: eff.address_line_2 || undefined,
+    city: eff.city,
+    state: normalizeStateCode(eff.state),
+    postal_code: eff.postal_code,
+    country: normalizeCountryCode(eff.country || 'US'),
   };
 
   // 2. Resolve ASINs from vendor_items for the Amazon vendor
