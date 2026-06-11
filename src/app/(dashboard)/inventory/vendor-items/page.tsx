@@ -4,6 +4,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
+import { AppShell } from '@/components/layout/AppShell';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
@@ -232,14 +233,17 @@ export default function VendorItemsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading vendor items...</div>
-      </div>
+      <AppShell>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-gray-500">Loading vendor items...</div>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="p-6">
+    <AppShell>
+    <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Vendor Items</h1>
         <p className="text-gray-600">
@@ -618,5 +622,6 @@ export default function VendorItemsPage() {
         </div>
       )}
     </div>
+    </AppShell>
   );
 }

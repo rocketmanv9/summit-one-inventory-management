@@ -4,6 +4,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -55,6 +56,7 @@ type Asset = {
 };
 
 export default function AssetsPage() {
+  const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -362,6 +364,7 @@ export default function AssetsPage() {
           loading={loading}
           emptyMessage="No assets found"
           rowKey={(row) => row.id}
+          onRowClick={(row) => router.push(`/inventory/assets/${row.id}`)}
         />
 
         {showCreateModal && (

@@ -91,7 +91,14 @@ export default function LocationsPage() {
       await InventoryRPC.deleteLocation(location.id, location.last_event_id);
       fetchLocations();
     } catch (err: any) {
-      alert(err.message);
+      // Chassis error envelope may be { error: { message } } or { error: 'msg' } —
+      // extract the message so the server's friendly FK-conflict text shows.
+      const message =
+        err?.error?.message ??
+        (typeof err?.error === 'string' ? err.error : undefined) ??
+        (typeof err?.message === 'string' ? err.message : undefined) ??
+        'Failed to delete location.';
+      alert(message);
     }
   };
 
@@ -168,13 +175,19 @@ export default function LocationsPage() {
       render: (row: Location) => (
         <div className="flex gap-3">
           <button
-            onClick={() => setEditingLocation(row)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingLocation(row);
+            }}
             className="text-slate-600 hover:text-slate-900 text-sm font-medium"
           >
             Edit
           </button>
           <button
-            onClick={() => handleDelete(row)}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDelete(row);
+            }}
             className="text-red-600 hover:text-red-800 text-sm font-medium"
           >
             Delete
@@ -237,6 +250,7 @@ export default function LocationsPage() {
           loading={loading}
           emptyMessage="No locations found"
           rowKey={(row) => row.id}
+          onRowClick={(row) => router.push(`/inventory/locations/${row.id}`)}
         />
 
         {(showCreateModal || editingLocation) && (

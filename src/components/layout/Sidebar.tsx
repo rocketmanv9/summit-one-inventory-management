@@ -18,6 +18,8 @@ import {
   Boxes,
   History,
   Globe,
+  PackageSearch,
+  TrendingUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -85,6 +87,16 @@ const navigation: NavSection[] = [
         title: 'Vendors',
         href: '/inventory/vendors',
         icon: Users,
+      },
+      {
+        title: 'Vendor Items',
+        href: '/inventory/vendor-items',
+        icon: PackageSearch,
+      },
+      {
+        title: 'Vendor Performance',
+        href: '/inventory/vendor-performance',
+        icon: TrendingUp,
       },
     ],
   },
