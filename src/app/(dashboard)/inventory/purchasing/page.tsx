@@ -20,7 +20,7 @@ import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import {
   poBucket,
-  poBucketLabel,
+  poStatusChipLabel,
   poActions,
   INTEGRATION_VENDOR_CODES,
   type PoBucket,
@@ -330,7 +330,7 @@ export default function PurchasingPage() {
       key: 'status',
       header: 'Status',
       render: (row: PurchaseOrder) => (
-        <StatusChip status={poBucketLabel(poBucket(row.status))} />
+        <StatusChip status={poStatusChipLabel(row.status)} />
       ),
     },
     {
@@ -538,7 +538,6 @@ function PODetailPanel({
   actions: RowActionItem[];
 }) {
   const uomLabels = useUOMLabelMap();
-  const bucket = poBucket(po.status);
   const [receipts, setReceipts] = useState<Array<{
     id: string;
     receipt_number: string;
@@ -580,7 +579,7 @@ function PODetailPanel({
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span className="font-mono font-medium text-lg">{po.po_number}</span>
-          <StatusChip status={poBucketLabel(bucket)} />
+          <StatusChip status={poStatusChipLabel(po.status)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">

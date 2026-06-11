@@ -62,6 +62,29 @@ const EVENT_META: Record<string, { label: string; Icon: typeof Truck }> = {
   other: { label: 'Vendor reply', Icon: Mail },
 };
 
+interface Shipment {
+  carrier: string | null;
+  tracking_number: string | null;
+  shipment_id: string | null;
+  ship_date: string | null;
+  delivery_date: string | null;
+  received_at: string | null;
+}
+
+/** Build a carrier tracking URL from the ASN carrier name + tracking number. */
+function trackingUrl(carrier: string | null, num: string | null): string | null {
+  if (!num) return null;
+  const c = (carrier || '').toLowerCase();
+  const n = encodeURIComponent(num.trim());
+  if (c.includes('ups')) return `https://www.ups.com/track?tracknum=${n}`;
+  if (c.includes('fedex')) return `https://www.fedex.com/fedextrack/?trknbr=${n}`;
+  if (c.includes('usps')) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}`;
+  if (c.includes('dhl')) return `https://www.dhl.com/us-en/home/tracking.html?tracking-id=${n}`;
+  return `https://www.google.com/search?q=${n}`; // carrier-agnostic fallback
+}
+
+const shipDate = (s: string | null) => (s ? s.split('T')[0] : null);
+
 function changeSummary(c: Record<string, unknown>): string[] {
   const out: string[] = [];
   if (typeof c.status === 'string') out.push(`Set status → ${c.status}`);
@@ -75,6 +98,7 @@ function changeSummary(c: Record<string, unknown>): string[] {
 export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onChanged?: () => void }) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [replies, setReplies] = useState<Reply[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
@@ -87,6 +111,7 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
       if (res.ok) {
         setSuggestions(json.data.suggestions || []);
         setReplies(json.data.replies || []);
+        setShipments(json.data.shipments || []);
       }
     } catch {
       // silent
@@ -168,6 +193,39 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
         <div className="p-3 bg-muted/30 rounded-lg animate-pulse h-12" />
       ) : (
         <div className="space-y-3">
+          {/* Carrier shipments (from the integration ASN, e.g. Amazon ship-notice) */}
+          {shipments.length > 0 && (
+            <div className="space-y-2">
+              {shipments.map((sh, i) => {
+                const url = trackingUrl(sh.carrier, sh.tracking_number);
+                return (
+                  <div key={i} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <Truck className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-blue-900">
+                          Shipped{sh.carrier ? ` via ${sh.carrier}` : ''}
+                        </div>
+                        <div className="text-xs text-blue-800 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                          {sh.tracking_number &&
+                            (url ? (
+                              <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium underline">
+                                Track {sh.tracking_number} ↗
+                              </a>
+                            ) : (
+                              <span>Tracking: {sh.tracking_number}</span>
+                            ))}
+                          {shipDate(sh.ship_date) && <span>· Shipped {shipDate(sh.ship_date)}</span>}
+                          {shipDate(sh.delivery_date) && <span>· Expected {shipDate(sh.delivery_date)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Pending — needs human confirm */}
           {pending.length > 0 && (
             <div className="space-y-2">
@@ -240,7 +298,7 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
           })}
 
           {/* Raw replies with no extracted action */}
-          {suggestions.length === 0 && replies.length === 0 && (
+          {suggestions.length === 0 && replies.length === 0 && shipments.length === 0 && (
             <p className="text-sm text-muted-foreground italic">
               No vendor replies yet. Replies are checked automatically in the background; “Check
               replies” forces an immediate refresh.

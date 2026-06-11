@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     // 3. Match our PO by the echoed order number (tenant-scoped).
     const { data: po } = await sc
       .from('purchase_orders')
-      .select('id, expected_delivery_date')
+      .select('id, status, expected_delivery_date')
       .eq('tenant_id', tenantId)
       .eq('po_number', asn.orderId)
       .limit(1)
@@ -60,6 +60,14 @@ export async function POST(req: NextRequest) {
     if (asn.deliveryDate && !po.expected_delivery_date) {
       const d = asn.deliveryDate.split('T')[0];
       await sc.from('purchase_orders').update({ expected_delivery_date: d }).eq('id', po.id);
+    }
+
+    // 4b. Advance the PO to in_transit so the status chip reflects "on its way".
+    //     in_transit lives in the "sent" bucket, so receiving stays available.
+    //     Never override a terminal/already-received state.
+    const locked = ['partially_received', 'fully_received', 'received', 'closed', 'cancelled', 'voided'];
+    if (!locked.includes((po.status || '').toLowerCase())) {
+      await sc.from('purchase_orders').update({ status: 'in_transit' }).eq('id', po.id);
     }
 
     // 5. Append the shipment to the linked punchout order's tracking list.

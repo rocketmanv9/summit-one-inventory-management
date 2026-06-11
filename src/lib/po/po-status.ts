@@ -65,6 +65,18 @@ export function poBucketLabel(bucket: PoBucket): string {
   return BUCKET_LABELS[bucket];
 }
 
+/**
+ * Status-chip label for a stored PO status. Normally the bucket label, but
+ * surfaces a distinct "In Transit" for shipped POs: they stay in the `sent`
+ * bucket (so the status filter and the "Receive Materials" action keep working)
+ * while the chip reflects that the order is physically on its way.
+ */
+export function poStatusChipLabel(status: string | null | undefined): string {
+  const s = (status || '').toLowerCase();
+  if (s === 'in_transit' || s === 'shipped') return 'In Transit';
+  return poBucketLabel(poBucket(status));
+}
+
 /** All stored statuses that fall into a given bucket — used for DB filtering. */
 export function statusesForBucket(bucket: PoBucket): string[] {
   switch (bucket) {
