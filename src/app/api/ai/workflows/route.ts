@@ -91,27 +91,32 @@ async function autoReorderWorkflow(
     };
   }
 
-  // Execute: generate POs via the existing RPC
+  // Execute via rpc_generate_reorder_pos_v2 — the old generate_reorder_pos is
+  // a stub that returns vendor/location groups without inserting anything, so
+  // this path used to report "POs created" while creating nothing.
   log.info('workflow.auto_reorder.executing', { vendorCount: vendorSummaries.length });
 
   const { data: result, error: genError } = await (invSchema as any)
     .schema('supply_chain')
-    .rpc('generate_reorder_pos', { p_tenant_id: tenantId });
+    .rpc('rpc_generate_reorder_pos_v2', {
+      p_tenant_id: tenantId,
+      p_run_id: `wf-${idempotencyKey}`,
+    });
 
   if (genError) {
     throw AppError.internal(`Failed to generate reorder POs: ${genError.message}`);
   }
 
-  const createdPOs = Array.isArray(result) ? result : [];
+  const createdPOs = Array.isArray(result?.created) ? result.created : [];
 
   return {
     data: {
       posCreated: createdPOs.length,
       createdPOs: createdPOs.map((po: any) => ({
         poNumber: po.po_number,
-        vendor: po.vendor_name,
+        vendorId: po.vendor_id,
         itemCount: po.line_count,
-        totalAmount: po.total_amount,
+        totalAmount: Number(po.estimated_total) || 0,
       })),
       totalAmount,
       dryRun: false,
