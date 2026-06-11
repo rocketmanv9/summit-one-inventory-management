@@ -37,6 +37,10 @@ export default function StockBalancesPage() {
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustForm, setAdjustForm] = useState({
     catalog_item_id: '',
+    // When the chosen item is a variant parent, the adjustment targets a specific
+    // child (size/color). variant_item_id holds that resolved child id; for plain
+    // items it stays empty and we adjust catalog_item_id directly.
+    variant_item_id: '',
     location_id: '',
     new_qty: '',
     reason: 'count_variance',
@@ -51,7 +55,14 @@ export default function StockBalancesPage() {
     details?: Record<string, any>;
     action?: string;
   } | null>(null);
-  const [adjustItems, setAdjustItems] = useState<Array<{ id: string; name: string; sku: string }>>([]);
+  const [adjustItems, setAdjustItems] = useState<Array<{
+    id: string;
+    name: string;
+    sku: string;
+    is_parent?: boolean;
+    variant_dimensions?: string[] | null;
+    variant_options?: Record<string, string[]> | null;
+  }>>([]);
   const [adjustLocations, setAdjustLocations] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
@@ -81,10 +92,13 @@ export default function StockBalancesPage() {
           InventoryRPC.getCatalogItems({ active: true, tracking_mode: 'stock' }),
           InventoryRPC.getLocations({ active: true }),
         ]);
-        setAdjustItems((items || []).map((item) => ({
+        setAdjustItems((items || []).map((item: any) => ({
           id: item.id,
           name: item.name,
           sku: item.sku,
+          is_parent: item.is_parent ?? false,
+          variant_dimensions: item.variant_dimensions ?? null,
+          variant_options: item.variant_options ?? null,
         })));
         setAdjustLocations((locations || []).map((loc) => ({
           id: loc.id,
@@ -179,6 +193,7 @@ export default function StockBalancesPage() {
       const locationId = prefill.location_id || prefill.locations?.id || '';
       setAdjustForm({
         catalog_item_id: itemId,
+        variant_item_id: '',
         location_id: locationId,
         new_qty: prefill.on_hand_qty?.toString() ?? '',
         reason: 'count_variance',
@@ -188,6 +203,7 @@ export default function StockBalancesPage() {
     } else {
       setAdjustForm({
         catalog_item_id: '',
+        variant_item_id: '',
         location_id: '',
         new_qty: '',
         reason: 'count_variance',
@@ -206,6 +222,14 @@ export default function StockBalancesPage() {
       setAdjustError('Select an item and location.');
       return;
     }
+    // A parent (variant) item can't hold stock itself — the user must pick which
+    // variant (size/color) they're adjusting, and we target that child's balance.
+    const selected = adjustItems.find((i) => i.id === adjustForm.catalog_item_id);
+    const targetItemId = selected?.is_parent ? adjustForm.variant_item_id : adjustForm.catalog_item_id;
+    if (selected?.is_parent && !targetItemId) {
+      setAdjustError('Select which variant to adjust.');
+      return;
+    }
     const qty = Number(adjustForm.new_qty);
     if (!Number.isFinite(qty)) {
       setAdjustError('Enter a valid quantity.');
@@ -215,7 +239,7 @@ export default function StockBalancesPage() {
     setAdjustSaving(true);
     try {
       const result = await InventoryRPC.adjustInventory({
-        catalog_item_id: adjustForm.catalog_item_id,
+        catalog_item_id: targetItemId,
         location_id: adjustForm.location_id,
         new_qty: qty,
         reason: adjustForm.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
@@ -512,13 +536,21 @@ function AdjustStockModal({
 }: {
   form: {
     catalog_item_id: string;
+    variant_item_id: string;
     location_id: string;
     new_qty: string;
     reason: string;
     notes: string;
     override_reason: string;
   };
-  items: Array<{ id: string; name: string; sku: string }>;
+  items: Array<{
+    id: string;
+    name: string;
+    sku: string;
+    is_parent?: boolean;
+    variant_dimensions?: string[] | null;
+    variant_options?: Record<string, string[]> | null;
+  }>;
   locations: Array<{ id: string; name: string }>;
   saving: boolean;
   error: string;
@@ -529,6 +561,87 @@ function AdjustStockModal({
 }) {
   const isOverrideRequired = guardrailBlock?.code === 'OVERRIDE_REASON_REQUIRED';
   const isHardBlock = !!guardrailBlock && !isOverrideRequired;
+
+  const selectedItem = items.find((i) => i.id === form.catalog_item_id);
+  const isVariantParent = selectedItem?.is_parent === true;
+
+  // Variant children for the selected parent (size/color rows that actually
+  // hold stock). Loaded on demand — getCatalogItems hides children by default.
+  const [variants, setVariants] = useState<
+    Array<{ id: string; name: string; sku: string; attributes: Record<string, string> }>
+  >([]);
+  const [loadingVariants, setLoadingVariants] = useState(false);
+  // Current on-hand for the resolved target item + location, so the absolute-qty
+  // field has a sensible starting value per variant.
+  const [currentOnHand, setCurrentOnHand] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isVariantParent) {
+      setVariants([]);
+      return;
+    }
+    let alive = true;
+    setLoadingVariants(true);
+    (async () => {
+      try {
+        const children = await InventoryRPC.getCatalogItems({
+          active: true,
+          exclude_variants: false,
+          parent_item_id: form.catalog_item_id,
+        });
+        if (!alive) return;
+        setVariants(
+          (children || []).map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            sku: c.sku,
+            attributes: (c.variant_attributes as Record<string, string>) ?? {},
+          })),
+        );
+      } catch {
+        if (alive) setVariants([]);
+      } finally {
+        if (alive) setLoadingVariants(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isVariantParent, form.catalog_item_id]);
+
+  // The item whose balance we'll actually write.
+  const targetItemId = isVariantParent ? form.variant_item_id : form.catalog_item_id;
+
+  useEffect(() => {
+    if (!targetItemId || !form.location_id) {
+      setCurrentOnHand(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const sb = createBrowserAuthedClient().schema('inventory');
+        const { data } = await sb
+          .from('stock_balances')
+          .select('qty_on_hand')
+          .eq('catalog_item_id', targetItemId)
+          .eq('location_id', form.location_id)
+          .maybeSingle();
+        if (!alive) return;
+        setCurrentOnHand(data ? Number((data as any).qty_on_hand) : 0);
+      } catch {
+        if (alive) setCurrentOnHand(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [targetItemId, form.location_id]);
+
+  const variantLabel = (attributes: Record<string, string>) => {
+    const vals = Object.values(attributes || {});
+    return vals.length ? vals.join(' · ') : 'Variant';
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -573,18 +686,48 @@ function AdjustStockModal({
             <label className="block text-sm font-medium mb-1">Item</label>
             <select
               value={form.catalog_item_id}
-              onChange={(e) => onChange({ catalog_item_id: e.target.value })}
+              onChange={(e) => onChange({ catalog_item_id: e.target.value, variant_item_id: '' })}
               className="w-full px-3 py-2 border rounded-md"
               disabled={isHardBlock}
             >
               <option value="">Select item...</option>
               {items.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name} ({item.sku})
+                  {item.name} ({item.sku}){item.is_parent ? ' — has variants' : ''}
                 </option>
               ))}
             </select>
           </div>
+
+          {isVariantParent && (
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Variant{selectedItem?.variant_dimensions?.length
+                  ? ` (${selectedItem.variant_dimensions.join(', ')})`
+                  : ''}{' '}
+                *
+              </label>
+              <select
+                value={form.variant_item_id}
+                onChange={(e) => onChange({ variant_item_id: e.target.value, new_qty: '' })}
+                className="w-full px-3 py-2 border rounded-md"
+                disabled={isHardBlock || loadingVariants}
+              >
+                <option value="">
+                  {loadingVariants ? 'Loading variants…' : 'Select variant…'}
+                </option>
+                {variants.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {variantLabel(v.attributes)} ({v.sku})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                This item has variants — pick which one you&apos;re counting. Each
+                variant tracks its own stock.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium mb-1">Location</label>
@@ -610,8 +753,14 @@ function AdjustStockModal({
               value={form.new_qty}
               onChange={(e) => onChange({ new_qty: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
-              disabled={isHardBlock}
+              disabled={isHardBlock || (isVariantParent && !form.variant_item_id)}
             />
+            {currentOnHand !== null && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Current on hand here: <span className="font-mono">{currentOnHand}</span>
+                {' '}— enter the new absolute count.
+              </p>
+            )}
           </div>
 
           <div>
@@ -668,7 +817,11 @@ function AdjustStockModal({
           {!isHardBlock && (
             <button
               onClick={onSubmit}
-              disabled={saving || (isOverrideRequired && !form.override_reason.trim())}
+              disabled={
+                saving ||
+                (isOverrideRequired && !form.override_reason.trim()) ||
+                (isVariantParent && !form.variant_item_id)
+              }
               className={`flex-1 px-4 py-2 text-white rounded-md disabled:opacity-50 ${
                 isOverrideRequired
                   ? 'bg-amber-600 hover:bg-amber-700'
