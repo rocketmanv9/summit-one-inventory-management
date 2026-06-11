@@ -12,6 +12,34 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
+const COUNT_TYPE_LABELS: Record<string, string> = {
+  full: 'Full Inventory',
+  partial: 'Partial Count',
+  spot_check: 'Spot Check',
+  initial: 'Initial Count',
+};
+
+const STATUS_META: Record<string, { label: string; description: string }> = {
+  draft: { label: 'Draft', description: 'Being set up — counting has not started yet' },
+  scheduled: { label: 'Scheduled', description: 'Scheduled to start at a future date/time' },
+  in_progress: { label: 'In Progress', description: 'Counting underway' },
+  under_review: { label: 'Under Review', description: 'Awaiting approval — variance decisions needed before posting' },
+  submitted_for_review: { label: 'Pending Review', description: 'Awaiting approval — variance decisions needed before posting' },
+  approved: { label: 'Approved', description: 'Approved — adjustments posted to stock' },
+  posted: { label: 'Posted', description: 'Finalized — stock updated' },
+  closed: { label: 'Closed', description: 'Finalized and closed — no further changes' },
+  cancelled: { label: 'Cancelled', description: 'Cancelled — no stock changes were made' },
+};
+
+const titleCase = (value: string) =>
+  value.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+const countTypeLabel = (countType: string) =>
+  COUNT_TYPE_LABELS[countType] || titleCase(countType);
+
+const statusMeta = (status: string) =>
+  STATUS_META[status] || { label: titleCase(status), description: '' };
+
 interface CycleCount {
   id: string;
   count_number: string;
@@ -119,8 +147,8 @@ export default function CycleCountsPage() {
       key: 'count_type',
       header: 'Type',
       render: (row: CycleCount) => (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 capitalize">
-          {row.count_type.replace('_', ' ')}
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+          {countTypeLabel(row.count_type)}
         </span>
       ),
     },
@@ -136,11 +164,17 @@ export default function CycleCountsPage() {
     {
       key: 'status',
       header: 'Status',
-      render: (row: CycleCount) => (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(row.status)}`}>
-          {row.status === 'submitted_for_review' ? 'Pending Review' : row.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-        </span>
-      ),
+      render: (row: CycleCount) => {
+        const meta = statusMeta(row.status);
+        return (
+          <span
+            title={meta.description || undefined}
+            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(row.status)}`}
+          >
+            {meta.label}
+          </span>
+        );
+      },
     },
     {
       key: 'progress',
@@ -446,15 +480,16 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         <div>
           <div className="flex items-center gap-3 mb-4">
             <span className="font-mono text-lg font-bold">{cycleCount.count_number}</span>
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              cycleCount.status === 'posted' ? 'bg-green-100 text-green-800' :
-              cycleCount.status === 'under_review' ? 'bg-purple-100 text-purple-800' :
-              cycleCount.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-              'bg-gray-100 text-gray-800'
-            }`}>
-              {cycleCount.status === 'under_review' ? 'Under Review' : 
-               cycleCount.status === 'in_progress' ? 'In Progress' :
-               cycleCount.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+            <span
+              title={statusMeta(cycleCount.status).description || undefined}
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                cycleCount.status === 'posted' ? 'bg-green-100 text-green-800' :
+                cycleCount.status === 'under_review' ? 'bg-purple-100 text-purple-800' :
+                cycleCount.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                'bg-gray-100 text-gray-800'
+              }`}
+            >
+              {statusMeta(cycleCount.status).label}
             </span>
           </div>
 
@@ -485,8 +520,8 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         {/* Count Type */}
         <div>
           <div className="text-xs text-muted-foreground mb-2">Count Type</div>
-          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 capitalize">
-            {cycleCount.count_type === 'initial' ? 'Initial Count' : cycleCount.count_type.replace('_', ' ')}
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
+            {countTypeLabel(cycleCount.count_type)}
           </span>
         </div>
 

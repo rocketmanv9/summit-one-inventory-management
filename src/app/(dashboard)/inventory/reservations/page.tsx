@@ -10,6 +10,21 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
+// reservation_type = HOW the reservation tracks inventory (fungible stock vs a specific serialized asset).
+// allocation_type = WHAT the reservation is allocated to (job, project, customer order, etc.).
+const RESERVATION_KIND_META: Record<string, { label: string; description: string }> = {
+  fungible: { label: 'Stock', description: 'Stock reservation — reserves a quantity of a bulk/fungible item' },
+  serialized: { label: 'Serialized', description: 'Serialized reservation — reserves a specific asset by tag/serial number' },
+};
+
+const titleCase = (value: string) =>
+  value.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+const reservationKindMeta = (kind: string | null) =>
+  kind ? RESERVATION_KIND_META[kind] || { label: titleCase(kind), description: '' } : null;
+
+const ALLOCATED_TO_DESCRIPTION = 'What this reservation is allocated to (job, project, customer order, etc.)';
+
 interface Reservation {
   id: string;
   catalog_item_id: string;
@@ -86,7 +101,7 @@ export default function ReservationsPage() {
   const allocationTypeLabel = (typeKey?: string | null) => {
     if (!typeKey) return '';
     const match = reservationTypes.find((type) => type.type_key === typeKey);
-    return match?.display_name || typeKey;
+    return match?.display_name || titleCase(typeKey);
   };
 
   const getSerializedAssetStatus = (reservation: Reservation) =>
@@ -222,18 +237,25 @@ export default function ReservationsPage() {
     },
     {
       key: 'qty',
-      header: 'Qty',
+      header: 'Reserved Qty',
       className: 'text-right font-mono',
-      render: (row: Reservation) => (
-        <div>
-          <div>{row.qty.toLocaleString()}</div>
-          {row.reservation_type && (
-            <div className="text-xs text-muted-foreground">
-              {row.reservation_type === 'serialized' ? '(Asset)' : '(Stock)'}
-            </div>
-          )}
-        </div>
-      ),
+      render: (row: Reservation) => row.qty.toLocaleString(),
+    },
+    {
+      key: 'reservation_type',
+      header: 'Kind',
+      render: (row: Reservation) => {
+        const kind = reservationKindMeta(row.reservation_type);
+        if (!kind) return '—';
+        return (
+          <span
+            title={kind.description || undefined}
+            className="inline-flex px-2 py-1 text-xs font-medium rounded bg-blue-50 text-blue-700"
+          >
+            {kind.label}
+          </span>
+        );
+      },
     },
     {
       key: 'location',
@@ -247,9 +269,12 @@ export default function ReservationsPage() {
     },
     {
       key: 'allocation_type',
-      header: 'Type',
+      header: 'Allocated To',
       render: (row: Reservation) => (
-        <span className="inline-flex px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-700">
+        <span
+          title={ALLOCATED_TO_DESCRIPTION}
+          className="inline-flex px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-700"
+        >
           {allocationTypeLabel(row.allocation_type) || '—'}
         </span>
       ),
@@ -418,7 +443,7 @@ export default function ReservationsPage() {
     },
     {
       key: 'allocation_type',
-      label: 'Type',
+      label: 'Allocated To',
       type: 'select' as const,
       options: reservationTypes.map((type) => ({
         value: type.type_key,
@@ -852,7 +877,7 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Type</label>
+              <label className="block text-sm font-medium mb-1" title={ALLOCATED_TO_DESCRIPTION}>Allocated To</label>
               <select
                 value={form.allocation_type}
                 onChange={(e) => setForm({ ...form, allocation_type: e.target.value })}
