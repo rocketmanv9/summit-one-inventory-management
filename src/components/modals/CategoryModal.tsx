@@ -181,9 +181,10 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="cat-name">Category Name *</Label>
+            <Label htmlFor="cat-name">Category Name <span className="text-red-500">*</span></Label>
             <Input
               id="cat-name"
               value={name}
@@ -191,6 +192,7 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
               placeholder="e.g., Raw Materials, Finished Goods, Tools"
               disabled={submitting}
               autoFocus
+              aria-required="true"
             />
           </div>
 
@@ -309,11 +311,12 @@ export function CategoryModal({ open, onClose, onSuccess, item, defaultName, def
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Update Category' : 'Create Category'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

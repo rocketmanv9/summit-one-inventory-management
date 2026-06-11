@@ -129,9 +129,10 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="at-key">Type Key *</Label>
+            <Label htmlFor="at-key">Type Key <span className="text-red-500">*</span></Label>
             <Input
               id="at-key"
               value={typeKey}
@@ -141,6 +142,7 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
               }}
               placeholder="e.g., crew, contractor, tool_crib"
               disabled={submitting || isEdit}
+              aria-required="true"
             />
             <p className="text-xs text-muted-foreground">
               {isEdit ? 'Type key cannot be changed after creation.' : 'Lowercase, alphanumeric with underscores/hyphens only.'}
@@ -148,7 +150,7 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="at-name">Display Name *</Label>
+            <Label htmlFor="at-name">Display Name <span className="text-red-500">*</span></Label>
             <Input
               id="at-name"
               value={displayName}
@@ -156,6 +158,7 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
               placeholder="e.g., Crew, Contractor, Tool Crib"
               disabled={submitting}
               autoFocus={isEdit}
+              aria-required="true"
             />
           </div>
 
@@ -224,11 +227,12 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Update Type' : 'Create Type'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

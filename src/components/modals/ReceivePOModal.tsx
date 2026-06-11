@@ -58,6 +58,10 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   // free-text lines are confirmation-only.
   const receivable = lines.filter((l) => l.outstanding > 0);
 
+  // Lines where the entered quantity exceeds what's still outstanding.
+  const isOver = (l: (typeof lines)[number]) => parseFloat(qtyByLine[l.id] || '0') > l.outstanding;
+  const hasOverReceipt = receivable.some(isOver);
+
   // Display info for a line: name + uom, whether it's stock-tracked.
   const lineInfo = (l: (typeof lines)[number]) => {
     if (l.catalog_item_id) {
@@ -98,6 +102,11 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
 
   const handleConfirm = async () => {
     setError('');
+
+    if (hasOverReceipt) {
+      setError('One or more lines exceed the outstanding quantity. Reduce them before confirming.');
+      return;
+    }
 
     // Split the entered quantities into catalog (post to stock) vs free-text
     // (stamp the line). Free-text lines store an absolute cumulative
@@ -140,8 +149,11 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
       onReceived();
       onClose();
     } catch (err: any) {
-      // Surface guardrail errors (e.g. OVER_RECEIPT_BLOCKED) and chassis envelopes.
-      const message = err?.message || err?.error?.message || 'Failed to receive materials.';
+      // Surface guardrail errors (e.g. OVER_RECEIPT_BLOCKED) and chassis envelopes
+      // ({ error: { message } }) — never render '[object Object]'.
+      const raw = err?.error?.message ?? err?.message;
+      const base = typeof raw === 'string' && raw ? raw : 'Failed to receive materials.';
+      const message = /OVER_RECEIPT/i.test(base) ? `Over-receipt blocked: ${base}` : base;
       setError(message);
     } finally {
       setSaving(false);
@@ -187,29 +199,39 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
               <div className="space-y-2">
                 {receivable.map((l) => {
                   const info = lineInfo(l);
+                  const over = isOver(l);
                   return (
-                    <div key={l.id} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{info.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {info.sku ? `${info.sku} · ` : ''}{l.outstanding}{info.uom ? ` ${info.uom}` : ''} outstanding
-                          {!info.tracked && <span className="ml-1 text-amber-600">· not stock-tracked</span>}
+                    <div key={l.id} className="p-3 bg-muted/30 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{info.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {info.sku ? `${info.sku} · ` : ''}{l.outstanding}{info.uom ? ` ${info.uom}` : ''} outstanding
+                            {!info.tracked && <span className="ml-1 text-amber-600">· not stock-tracked</span>}
+                          </div>
                         </div>
+                        <input
+                          type="number"
+                          value={qtyByLine[l.id] ?? ''}
+                          min="0"
+                          max={l.outstanding}
+                          step="0.01"
+                          onChange={(e) =>
+                            setQtyByLine((prev) => ({ ...prev, [l.id]: e.target.value }))
+                          }
+                          className={`w-24 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 text-right ${
+                            over ? 'border-red-500 focus:ring-red-500' : 'focus:ring-primary'
+                          }`}
+                        />
+                        <span className="text-xs text-muted-foreground w-16 shrink-0">
+                          / {Number(l.qty_ordered)}{info.uom ? ` ${info.uom}` : ''}
+                        </span>
                       </div>
-                      <input
-                        type="number"
-                        value={qtyByLine[l.id] ?? ''}
-                        min="0"
-                        max={l.outstanding}
-                        step="0.01"
-                        onChange={(e) =>
-                          setQtyByLine((prev) => ({ ...prev, [l.id]: e.target.value }))
-                        }
-                        className="w-24 shrink-0 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-right"
-                      />
-                      <span className="text-xs text-muted-foreground w-16 shrink-0">
-                        / {Number(l.qty_ordered)}{info.uom ? ` ${info.uom}` : ''}
-                      </span>
+                      {over && (
+                        <p className="mt-1 text-xs text-red-600 text-right">
+                          exceeds outstanding ({l.outstanding})
+                        </p>
+                      )}
                     </div>
                   );
                 })}
@@ -228,7 +250,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={saving || receivable.length === 0}
+              disabled={saving || receivable.length === 0 || hasOverReceipt}
               className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 text-sm flex items-center justify-center gap-1.5"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}

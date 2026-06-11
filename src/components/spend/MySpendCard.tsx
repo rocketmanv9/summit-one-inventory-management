@@ -29,7 +29,7 @@ interface MySpend {
 const usd = (n: number | null | undefined) =>
   n === null || n === undefined
     ? '—'
-    : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+    : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const PERIOD_LABEL: Record<string, string> = {
   weekly: 'this week',
