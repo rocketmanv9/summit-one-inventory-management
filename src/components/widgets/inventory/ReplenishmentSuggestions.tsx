@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import { createPurchaseOrder, getNextPONumber } from '@/lib/api/purchase-orders';
+import { createPurchaseOrder } from '@/lib/api/purchase-orders';
 import { errMessage } from '@/lib/client-errors';
 
 export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }) {
@@ -45,13 +45,12 @@ export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }
       return next;
     });
     try {
-      const { data: poNumber } = await getNextPONumber();
       const neededBy = new Date();
       neededBy.setDate(neededBy.getDate() + (item.lead_time_days ?? 7));
 
+      // po_number omitted — the RPC generates it server-side (race-free).
       const { data: result, error: createError } = await createPurchaseOrder({
         vendor_id: item.preferred_vendor_id,
-        po_number: poNumber || `PO-${new Date().getFullYear()}-001`,
         delivery_method: 'ship',
         needed_by_date: neededBy.toISOString().slice(0, 10),
         cost_context: 'yard',

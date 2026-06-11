@@ -33,7 +33,7 @@ export async function createPurchaseOrder(
   try {
     const { data, error } = await supabase.rpc('rpc_create_purchase_order', {
       p_vendor_id: request.vendor_id,
-      p_po_number: request.po_number,
+      p_po_number: request.po_number ?? null,
       p_delivery_method: request.delivery_method,
       p_needed_by_date: request.needed_by_date,
       p_cost_context: request.cost_context,

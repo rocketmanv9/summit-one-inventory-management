@@ -290,6 +290,68 @@ async function recordSentEmail(
   return data?.id ?? null;
 }
 
+// ── Generic notification send (non-PO) ──────────────────────────────────────
+
+export interface SendNotificationEmailInput {
+  tenantId: string;
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+  fetchImpl: FetchLike;
+  /** Resolve a personal Gmail connection for this user too (optional — cron callers have no user). */
+  userId?: string;
+}
+
+export interface SendNotificationEmailResult {
+  provider: 'gmail' | 'resend';
+  messageId: string | null;
+  from: string;
+}
+
+/**
+ * Send a plain notification email using the same transport selection as PO
+ * sends: prefer the tenant's Gmail connection (shared mailbox first, then the
+ * user's personal account when a userId is given), fall back to Resend.
+ * No PDF, no audit row, no PO coupling — for digests and system notices.
+ */
+export async function sendNotificationEmail(
+  input: SendNotificationEmailInput,
+): Promise<SendNotificationEmailResult> {
+  const admin = getAdminClient();
+
+  // Same priority as resolveSendingConnection, but tolerate a missing userId.
+  let connection: GoogleConnectionRow | null = null;
+  const shared = await getSharedMailboxes(admin, input.tenantId);
+  if (shared.length > 0) {
+    connection = shared[0];
+  } else if (input.userId) {
+    connection = await getUserConnection(admin, input.tenantId, input.userId);
+  }
+
+  if (connection) {
+    const accessToken = await getAccessTokenForConnection(admin, connection, input.fetchImpl);
+    const fromName = connection.display_name || connection.google_email;
+    const sent = await sendGmailMessage(input.fetchImpl, accessToken, {
+      from: `${fromName} <${connection.google_email}>`,
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+    });
+    return { provider: 'gmail', messageId: sent.id, from: connection.google_email };
+  }
+
+  const sent = await sendEmail(input.fetchImpl, {
+    // from omitted → sendEmail falls back to ORDER_EMAIL_FROM (Resend-verified).
+    to: input.to,
+    subject: input.subject,
+    html: input.html,
+    text: input.text,
+  });
+  return { provider: 'resend', messageId: sent.id, from: process.env.ORDER_EMAIL_FROM || '' };
+}
+
 // ── AI draft helper ──────────────────────────────────────────────────────────
 
 export type EmailUrgency = 'normal' | 'urgent' | 'follow_up';

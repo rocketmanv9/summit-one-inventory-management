@@ -230,7 +230,9 @@ export interface PurchaseOrderLine {
 export interface CreatePORequest {
   // Required Core Fields
   vendor_id: string;
-  po_number: string;
+  // Omit to let the RPC generate one server-side (supply_chain.generate_po_number)
+  // — avoids the client-side fetch-and-increment race.
+  po_number?: string;
   delivery_method: DeliveryMethod;
   needed_by_date: string;
   cost_context: CostContext;
