@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { errMessage } from '@/lib/client-errors';
 import { AlertTriangle, AlertCircle, Package, TrendingDown } from 'lucide-react';
 import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
@@ -40,7 +41,7 @@ export function LowStockWidget({ widget }: { widget: DashboardWidget }) {
       setItems(data);
       setError('');
     } catch (err: any) {
-      setError(err.message);
+      setError(errMessage(err, 'Failed to load low stock alerts'));
     } finally {
       setLoading(false);
     }

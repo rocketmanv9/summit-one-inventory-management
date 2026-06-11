@@ -3,20 +3,24 @@
 import { useState, useEffect } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { errMessage } from '@/lib/client-errors';
 
 export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }) {
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [creatingPO, setCreatingPO] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true);
+      setError(null);
       try {
         const result = await InventoryRPC.getReplenishmentSuggestions();
         setData(result.slice(0, 10));
       } catch (error) {
         console.error('Error fetching replenishment suggestions:', error);
+        setError(errMessage(error, 'Unknown error'));
       } finally {
         setIsLoading(false);
       }
@@ -32,6 +36,14 @@ export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }
             <div key={i} className="h-8 bg-gray-100 rounded" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 text-center text-muted-foreground text-sm">
+        Failed to load — {error}
       </div>
     );
   }

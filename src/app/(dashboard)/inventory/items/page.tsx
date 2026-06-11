@@ -14,6 +14,7 @@ import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
+import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMTerms, useUOMLabelMap, useGVTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
@@ -125,7 +126,7 @@ export default function ItemsPage() {
         }
         return;
       }
-      alert(`Error: ${error.message}`);
+      alert(`Error: ${errMessage(error, 'Failed to delete item')}`);
     }
   };
 
@@ -688,14 +689,14 @@ function CreateItemModal({
         headers: { 'Content-Type': 'application/json', 'x-idempotency-key': crypto.randomUUID() },
         body: JSON.stringify({ input: asinInput.trim() }),
       });
-      const json = await res.json();
       if (!res.ok) {
-        setAmazonError(json.error?.message || 'Failed to resolve ASIN');
+        setAmazonError(await apiErrorMessage(res, 'Failed to resolve ASIN'));
         return;
       }
+      const json = await res.json();
       setResolvedAsin(json.data);
     } catch (err: any) {
-      setAmazonError(err.message);
+      setAmazonError(errMessage(err, 'Failed to resolve ASIN'));
     } finally {
       setAsinResolving(false);
     }
@@ -718,11 +719,11 @@ function CreateItemModal({
           last_known_price: resolvedAsin?.price ?? amazonMapping?.last_known_price ?? undefined,
         }),
       });
-      const json = await res.json();
       if (!res.ok) {
-        setAmazonError(json.error?.message || 'Failed to save mapping');
+        setAmazonError(await apiErrorMessage(res, 'Failed to save mapping'));
         return;
       }
+      const json = await res.json();
       // Update local state with saved mapping
       setAmazonMapping({
         id: json.data.id,
@@ -736,7 +737,7 @@ function CreateItemModal({
       setResolvedAsin(null);
       setAsinInput('');
     } catch (err: any) {
-      setAmazonError(err.message);
+      setAmazonError(errMessage(err, 'Failed to save mapping'));
     } finally {
       setAmazonSaving(false);
     }
@@ -754,8 +755,7 @@ function CreateItemModal({
         body: JSON.stringify({ mapping_id: amazonMapping.id }),
       });
       if (!res.ok) {
-        const json = await res.json();
-        setAmazonError(json.error?.message || 'Failed to remove mapping');
+        setAmazonError(await apiErrorMessage(res, 'Failed to remove mapping'));
         return;
       }
       setAmazonMapping(null);
@@ -764,7 +764,7 @@ function CreateItemModal({
       setAmazonPackQty('1');
       setAmazonPreferred(false);
     } catch (err: any) {
-      setAmazonError(err.message);
+      setAmazonError(errMessage(err, 'Failed to remove mapping'));
     } finally {
       setAmazonSaving(false);
     }
@@ -1220,7 +1220,7 @@ function CreateItemModal({
               min="0"
             />
             <p className="mt-2 text-xs text-muted-foreground">
-              Used when a location does not have a specific reorder point.
+              Default for all locations — override per-location in Location Stock Management below.
             </p>
           </div>
 

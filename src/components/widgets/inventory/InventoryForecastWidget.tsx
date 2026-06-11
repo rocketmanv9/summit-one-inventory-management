@@ -3,19 +3,23 @@
 import { useState, useEffect } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { errMessage } from '@/lib/client-errors';
 
 export function InventoryForecastWidget({ widget }: { widget: DashboardWidget }) {
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true);
+      setError(null);
       try {
         const result = await InventoryRPC.getInventoryForecast();
         setData(result);
       } catch (error) {
         console.error('Error fetching inventory forecast:', error);
+        setError(errMessage(error, 'Unknown error'));
       } finally {
         setIsLoading(false);
       }
@@ -31,6 +35,14 @@ export function InventoryForecastWidget({ widget }: { widget: DashboardWidget })
             <div key={i} className="h-12 bg-gray-100 rounded" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 text-center text-muted-foreground text-sm">
+        Failed to load — {error}
       </div>
     );
   }

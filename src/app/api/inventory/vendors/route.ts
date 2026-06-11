@@ -23,8 +23,8 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   if (error) { log.error('vendors.list_failed', { error: error.message }); throw AppError.internal(error.message); }
 
   const ids = (vendors || []).map((v: any) => v.id);
-  let contactsByVendor: Record<string, any[]> = {};
-  let addressesByVendor: Record<string, any[]> = {};
+  const contactsByVendor: Record<string, any[]> = {};
+  const addressesByVendor: Record<string, any[]> = {};
   if (ids.length > 0) {
     const [{ data: contacts }, { data: addresses }] = await Promise.all([
       sc.from('vendor_contacts').select('*').in('vendor_id', ids).order('is_primary', { ascending: false }),

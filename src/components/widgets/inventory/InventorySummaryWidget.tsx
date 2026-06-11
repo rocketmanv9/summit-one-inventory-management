@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { errMessage } from '@/lib/client-errors';
 import { Package, AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
 import type { DashboardWidget } from '@/types/dashboard';
 
@@ -48,7 +49,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       });
       setError('');
     } catch (err: any) {
-      setError(err.message);
+      setError(errMessage(err, 'Failed to load summary'));
     } finally {
       setLoading(false);
     }

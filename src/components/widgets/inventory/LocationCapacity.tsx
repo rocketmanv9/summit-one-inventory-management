@@ -4,21 +4,25 @@ import { useState, useEffect } from 'react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import { errMessage } from '@/lib/client-errors';
 
 export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
   const uomLabels = useUOMLabelMap();
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true);
+      setError(null);
       try {
         const result = await InventoryRPC.getLocationUtilization();
         // Only show locations with capacity configured
         setData(result.filter((l: any) => l.max_capacity != null).slice(0, 10));
       } catch (error) {
         console.error('Error fetching location capacity:', error);
+        setError(errMessage(error, 'Unknown error'));
       } finally {
         setIsLoading(false);
       }
@@ -34,6 +38,14 @@ export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
             <div key={i} className="h-6 bg-gray-100 rounded" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 text-center text-muted-foreground text-sm">
+        Failed to load — {error}
       </div>
     );
   }

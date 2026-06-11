@@ -8,6 +8,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { geocodeAddress } from '@/lib/geocode';
+import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { VendorModal } from '@/components/vendors/VendorModal';
 import { VendorDiscoveryModal } from '@/components/vendors/VendorDiscoveryModal';
@@ -122,7 +123,7 @@ export default function VendorsPage() {
       // Unified: the tenant's own vendors live in supply_chain.vendors (used by
       // items/POs). GV is just the browse catalog (the Catalog tab + adopt).
       const res = await fetch('/api/inventory/vendors');
-      if (!res.ok) throw AppError.internal('Failed to fetch vendors');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to fetch vendors'));
       const json = await res.json();
       setVendors(json.data || []);
     } catch (err) {
@@ -138,7 +139,7 @@ export default function VendorsPage() {
       const params = new URLSearchParams();
       if (industryFilter) params.set('industry', industryFilter);
       const res = await fetch(`/api/gv/vendors/catalog?${params.toString()}`);
-      if (!res.ok) throw AppError.internal('Failed to fetch catalog');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to fetch catalog'));
       const json = await res.json();
       setCatalogVendors(json.data || []);
     } catch (err) {
@@ -172,11 +173,11 @@ export default function VendorsPage() {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw AppError.internal('Failed to remove vendor');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to remove vendor'));
       await fetchVendors();
     } catch (err) {
       console.error('Error removing vendor:', err);
-      alert('Failed to remove vendor');
+      alert(errMessage(err, 'Failed to remove vendor'));
     }
   };
 
@@ -193,13 +194,13 @@ export default function VendorsPage() {
         },
         body: JSON.stringify({ catalogVendorIds: Array.from(selectedCatalogIds) }),
       });
-      if (!res.ok) throw AppError.internal('Failed to adopt vendors');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to adopt vendors'));
 
       setSelectedCatalogIds(new Set());
       setActiveTab('my-vendors');
     } catch (err) {
       console.error('Error adopting vendors:', err);
-      alert('Failed to adopt selected vendors');
+      alert(errMessage(err, 'Failed to adopt selected vendors'));
     } finally {
       setAdopting(false);
     }
@@ -561,7 +562,7 @@ function VendorDetailModal({
     setLoading(true);
     try {
       const res = await fetch(`/api/inventory/vendors/${vendorId}`);
-      if (!res.ok) throw AppError.internal('Failed to fetch vendor');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to fetch vendor'));
       const json = await res.json();
       setVendor(json.data || null);
     } catch (err) {
@@ -595,7 +596,7 @@ function VendorDetailModal({
     (async () => {
       try {
         const res = await fetch(`/api/inventory/vendors/${vendorId}/addresses?nearest_to=${selectedLocId}`);
-        if (!res.ok) throw AppError.internal('Failed to rank addresses');
+        if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to rank addresses'));
         const json = await res.json();
         if (!cancelled) setRanked((json.data || []) as RankedAddress[]);
       } catch (err) {
@@ -620,11 +621,11 @@ function VendorDetailModal({
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw AppError.internal('Failed to delete address');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to delete address'));
       await fetchVendor();
     } catch (err) {
       console.error('Error deleting address:', err);
-      alert('Failed to delete address');
+      alert(errMessage(err, 'Failed to delete address'));
     }
   };
 
@@ -635,11 +636,11 @@ function VendorDetailModal({
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw AppError.internal('Failed to delete contact');
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to delete contact'));
       await fetchVendor();
     } catch (err) {
       console.error('Error deleting contact:', err);
-      alert('Failed to delete contact');
+      alert(errMessage(err, 'Failed to delete contact'));
     }
   };
 
@@ -1022,8 +1023,7 @@ function AddressFormModal({
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} address`);
+        throw AppError.internal(await apiErrorMessage(res, `Failed to ${isEdit ? 'update' : 'add'} address`));
       }
       onComplete();
     } catch (err: any) {
@@ -1182,8 +1182,7 @@ function ContactFormModal({
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw AppError.internal(errJson?.error?.message || errJson?.message || `Failed to ${isEdit ? 'update' : 'add'} contact`);
+        throw AppError.internal(await apiErrorMessage(res, `Failed to ${isEdit ? 'update' : 'add'} contact`));
       }
       onComplete();
     } catch (err: any) {
@@ -1294,11 +1293,11 @@ function NotesModal({
         headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({ notes }),
       });
-      if (!res.ok) throw AppError.internal(`Failed to update ${entityLabel} notes`);
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, `Failed to update ${entityLabel} notes`));
       onSaved();
     } catch (err) {
       console.error(`Error updating ${entityLabel} notes:`, err);
-      alert(`Failed to save notes`);
+      alert(errMessage(err, 'Failed to save notes'));
     } finally {
       setSaving(false);
     }
