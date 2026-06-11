@@ -144,6 +144,35 @@ const defaultState: WizardState = {
   initial_cost: '',
 };
 
+// Ordered variant combos, mirroring inventory.generate_variant_combos. Each
+// combo's key is the attribute signature used to look up per-variant
+// quantities in variantQtys. Shared by StepSupply and StepReview.
+function buildVariantCombos(
+  hasVariants: boolean,
+  variantDimensions: string[],
+  variantOptions: Record<string, string[]>,
+): { key: string; label: string; attributes: Record<string, string> }[] {
+  if (!hasVariants) return [];
+  const dims = variantDimensions.filter((d) => (variantOptions[d] || []).length > 0);
+  if (dims.length === 0) return [];
+  let acc: { attributes: Record<string, string>; vals: string[] }[] = [{ attributes: {}, vals: [] }];
+  for (const d of dims) {
+    const opts = variantOptions[d] || [];
+    const next: typeof acc = [];
+    for (const c of acc) {
+      for (const o of opts) {
+        next.push({ attributes: { ...c.attributes, [d]: o }, vals: [...c.vals, o] });
+      }
+    }
+    acc = next;
+  }
+  return acc.map((c) => ({
+    key: dims.map((d) => c.attributes[d]).join('||'),
+    label: c.vals.join(' / '),
+    attributes: c.attributes,
+  }));
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────
 
 export default function NewItemWizardPage() {
@@ -735,6 +764,7 @@ export default function NewItemWizardPage() {
             materialLabels={materialLabels}
             productLabels={productLabels}
             tierLabels={tierLabels}
+            variantQtys={variantQtys}
           />
         )}
         {step === 4 && result && (
@@ -1611,27 +1641,10 @@ function StepSupply({
 
   // Ordered variant combos, mirroring inventory.generate_variant_combos so each
   // row maps to a created variant by its attribute signature (= combo.key).
-  const variantCombos = useMemo(() => {
-    if (!form.has_variants) return [] as { key: string; label: string; attributes: Record<string, string> }[];
-    const dims = form.variant_dimensions.filter((d) => (form.variant_options[d] || []).length > 0);
-    if (dims.length === 0) return [];
-    let acc: { attributes: Record<string, string>; vals: string[] }[] = [{ attributes: {}, vals: [] }];
-    for (const d of dims) {
-      const opts = form.variant_options[d] || [];
-      const next: typeof acc = [];
-      for (const c of acc) {
-        for (const o of opts) {
-          next.push({ attributes: { ...c.attributes, [d]: o }, vals: [...c.vals, o] });
-        }
-      }
-      acc = next;
-    }
-    return acc.map((c) => ({
-      key: dims.map((d) => c.attributes[d]).join('||'),
-      label: c.vals.join(' / '),
-      attributes: c.attributes,
-    }));
-  }, [form.has_variants, form.variant_dimensions, form.variant_options]);
+  const variantCombos = useMemo(
+    () => buildVariantCombos(form.has_variants, form.variant_dimensions, form.variant_options),
+    [form.has_variants, form.variant_dimensions, form.variant_options],
+  );
 
   return (
     <Card>
@@ -1902,6 +1915,7 @@ function StepReview({
   materialLabels,
   productLabels,
   tierLabels,
+  variantQtys,
 }: {
   form: WizardState;
   categories: ItemCategoryRow[];
@@ -1911,12 +1925,30 @@ function StepReview({
   materialLabels: Record<string, string>;
   productLabels: Record<string, string>;
   tierLabels: Record<string, string>;
+  variantQtys: Record<string, string>;
 }) {
   const uomLabels = useUOMLabelMap();
   const category = categories.find(c => c.id === form.category_id);
   const vendor = vendors.find(v => v.id === form.vendor_id);
   const location = locations.find(l => l.id === form.location_id);
   const assets = buildAssetList();
+  const uomLabel = uomLabels[form.uom_term_id] || 'EA';
+
+  // Per-variant initial stock summary — same key/fallback logic handleSubmit
+  // uses, so the review matches exactly what will be written.
+  const variantCombos = useMemo(
+    () => buildVariantCombos(form.has_variants, form.variant_dimensions, form.variant_options),
+    [form.has_variants, form.variant_dimensions, form.variant_options],
+  );
+  const defaultQty = form.initial_qty ? Number(form.initial_qty) : 0;
+  const variantStockRows = variantCombos.map((c) => {
+    const raw = variantQtys[c.key];
+    const qty = raw !== undefined && raw !== '' ? Number(raw) : defaultQty;
+    return { ...c, qty: Number.isFinite(qty) && qty > 0 ? qty : 0 };
+  });
+  const totalVariantUnits = variantStockRows.reduce((sum, r) => sum + r.qty, 0);
+  const zeroVariantCount = variantStockRows.filter((r) => r.qty === 0).length;
+  const hasAnyVariantQty = variantStockRows.some((r) => r.qty > 0);
 
   return (
     <Card>
@@ -2061,7 +2093,7 @@ function StepReview({
         )}
 
         {/* Starting stock */}
-        {location && form.initial_qty && (
+        {location && (form.initial_qty || (form.has_variants && hasAnyVariantQty)) && (
           <div className="rounded-md border p-4 space-y-2">
             <h4 className="text-sm font-semibold flex items-center gap-2">
               <MapPin className="h-4 w-4" /> Starting Stock
@@ -2070,20 +2102,9 @@ function StepReview({
               <span className="text-muted-foreground">Location</span>
               <span className="font-medium">{location.name}</span>
               <span className="text-muted-foreground">
-                {form.has_variants ? 'Qty per Variant' : 'Quantity'}
+                {form.has_variants ? 'Default Qty per Variant' : 'Quantity'}
               </span>
-              <span className="font-mono">{form.initial_qty} {uomLabels[form.uom_term_id] || 'EA'}</span>
-              {form.has_variants && form.variant_dimensions.length > 0 && (() => {
-                const counts = form.variant_dimensions.map(d => (form.variant_options[d] || []).length);
-                const variantTotal = counts.every(c => c > 0) ? counts.reduce((a, b) => a * b, 1) : 0;
-                const totalUnits = variantTotal * Number(form.initial_qty || 0);
-                return (
-                  <>
-                    <span className="text-muted-foreground">Total Stock</span>
-                    <span className="font-mono">{totalUnits} {uomLabels[form.uom_term_id] || 'EA'} ({variantTotal} variants)</span>
-                  </>
-                );
-              })()}
+              <span className="font-mono">{form.initial_qty || '0'} {uomLabel}</span>
               {form.initial_cost && (
                 <>
                   <span className="text-muted-foreground">Unit Cost</span>
@@ -2091,6 +2112,47 @@ function StepReview({
                 </>
               )}
             </div>
+
+            {/* Per-variant breakdown of exactly what will be written */}
+            {form.has_variants && variantStockRows.length > 0 ? (
+              <div className="border-t pt-3 space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Initial Stock per Variant
+                </div>
+                <div className="max-h-56 overflow-y-auto rounded-md border divide-y">
+                  {variantStockRows.map((row) => (
+                    <div key={row.key} className="flex items-center justify-between gap-3 px-3 py-1.5 text-sm">
+                      <span className="font-mono text-gray-700 truncate" title={row.label}>{row.label}</span>
+                      {row.qty > 0 ? (
+                        <span className="font-mono">{row.qty} {uomLabel}</span>
+                      ) : (
+                        <span
+                          className="font-mono text-amber-600"
+                          title="This variant will start with no stock"
+                        >
+                          0 — no stock
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-sm">
+                  Creating <span className="font-mono font-bold">{totalVariantUnits}</span> {uomLabel} across{' '}
+                  <span className="font-mono font-bold">{variantStockRows.length}</span> variant{variantStockRows.length !== 1 ? 's' : ''}.
+                  {zeroVariantCount > 0 && (
+                    <span className="text-amber-600">
+                      {' '}{zeroVariantCount} variant{zeroVariantCount !== 1 ? 's' : ''} will start at 0.
+                    </span>
+                  )}
+                </p>
+              </div>
+            ) : !form.has_variants && (
+              <p className={`border-t pt-2 text-sm ${Number(form.initial_qty || 0) > 0 ? '' : 'text-amber-600'}`}>
+                Creating <span className="font-mono font-bold">{Number(form.initial_qty || 0)}</span> {uomLabel} of{' '}
+                <span className="font-medium">{form.name}</span>
+                {Number(form.initial_qty || 0) <= 0 && ' — no stock will be created.'}
+              </p>
+            )}
           </div>
         )}
 
