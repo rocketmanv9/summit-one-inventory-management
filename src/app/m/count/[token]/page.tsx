@@ -16,9 +16,9 @@ async function loadCountData(token: string) {
     .eq('token', token)
     .single();
 
-  if (sessionError || !session) return { error: 'Invalid session link. Please generate a new QR code.' };
-  if (session.revoked_at) return { error: 'This session has been revoked.' };
-  if (new Date(session.expires_at) < new Date()) return { error: 'This session has expired. Please generate a new one.' };
+  if (sessionError || !session) return { error: 'Invalid session link. Generate a new mobile session QR from the cycle count on desktop.' };
+  if (session.revoked_at) return { error: 'This session has been revoked. Generate a new mobile session QR from the cycle count on desktop.' };
+  if (new Date(session.expires_at) < new Date()) return { error: 'This count session has expired. Generate a new mobile session QR from the cycle count on desktop.' };
 
   // Fire-and-forget: update last_used_at
   inv.from('mobile_count_sessions')
@@ -104,6 +104,10 @@ async function loadCountData(token: string) {
     const lineCounted = countedAssets.filter((ca: any) => ca.line_number === line.line_number && ca.counted_present);
     return {
       ...line,
+      // PostgREST returns Postgres numerics as strings — normalize before the
+      // payload reaches the client so no string qty enters client state.
+      qty_expected: line.qty_expected == null ? 0 : Number(line.qty_expected),
+      qty_counted: line.qty_counted == null ? null : Number(line.qty_counted),
       catalog_item: item ? { ...item, parent_name: parentName } : null,
       expected_assets: item?.tracking_mode === 'serialized' ? lineAssets : [],
       counted_assets: lineCounted.map((ca: any) => ({ asset_id: ca.asset_id })),

@@ -69,16 +69,21 @@ export const GET = createReadRoute(async ({ req, log }) => {
     throw AppError.notFound('No matching item found');
   }
 
-  // Find the matching cycle count line
+  // Find the matching cycle count line. maybeSingle() — the item can legitimately
+  // exist in the catalog without being part of this count session, in which case
+  // count_line is null and the client decides what to do (initial counts auto-add
+  // the item; recounts show "Not in count list"). Don't throw 404 here — that
+  // would break the auto-add flow in MobileCountClient.
   let countLine: any = null;
   if (catalogItem) {
-    const { data: line } = await inv
+    const { data: line, error: lineError } = await inv
       .from('cycle_count_lines')
       .select('id, catalog_item_id, qty_expected, qty_counted, variance')
       .eq('cycle_count_id', session.cycleCountId)
       .eq('catalog_item_id', catalogItem.id)
       .limit(1)
-      .single();
+      .maybeSingle();
+    if (lineError) throw AppError.internal(lineError.message);
     countLine = line;
   }
 
@@ -87,6 +92,11 @@ export const GET = createReadRoute(async ({ req, log }) => {
       catalog_item: catalogItem,
       asset,
       count_line: countLine,
+      // User-facing hint for consumers that don't auto-add missing lines.
+      count_line_message:
+        catalogItem && !countLine
+          ? "This item isn't part of this count session"
+          : null,
     },
   });
 }, { serviceName: SERVICE_NAME, auth: 'public' });

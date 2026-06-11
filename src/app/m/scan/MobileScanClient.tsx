@@ -46,8 +46,12 @@ export function MobileScanClient({ bypassSecret }: { bypassSecret: string }) {
       .then(async (res) => {
         const json = await res.json();
         if (!res.ok) {
-          // chassis error envelope is { error: { message } }, not { message }
-          setError(json.error?.message || json.message || 'Not found');
+          // Error envelope can be { error: { message } } (chassis) or
+          // { error: 'string' } — handle both, never render '[object Object]'.
+          const err = json?.error;
+          const message =
+            typeof err === 'string' ? err : err?.message || json?.message;
+          setError(typeof message === 'string' && message ? message : 'Not found');
           return;
         }
         setResult(json.data);

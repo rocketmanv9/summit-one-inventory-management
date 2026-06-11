@@ -28,18 +28,10 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
 
   if (lineError || !line) throw AppError.notFound('Count line not found');
 
-  // Replace the set of present assets for this line. cycle_count_asset_lines uses
-  // cycle_count_line_id + counted_present + last_event_id (the older code wrote to
-  // nonexistent columns cycle_count_line_id was missing/`found`, and omitted
-  // last_event_id, so this never worked).
-  await inv
-    .from('cycle_count_asset_lines')
-    .delete()
-    .eq('cycle_count_line_id', body.line_id)
-    .eq('cycle_count_id', session.cycleCountId)
-    .eq('tenant_id', session.tenantId);
-
-  // Insert new counted assets
+  // Replace the set of present assets for this line. cycle_count_asset_lines has
+  // UNIQUE (cycle_count_id, asset_id), so upsert on that key instead of
+  // delete-then-insert — two concurrent taps no longer race into duplicate-key
+  // errors (the loser's insert becomes an update of the same row).
   if (body.asset_ids.length > 0) {
     const now = new Date().toISOString();
     const rows = body.asset_ids.map((assetId) => ({
@@ -54,22 +46,42 @@ export const POST = createWriteRoute(async ({ ctx, req, log, supabase, idempoten
       last_event_id: `${idempotencyKey}-${assetId}`,
     }));
 
-    const { error: insertError } = await inv
+    const { error: upsertError } = await inv
       .from('cycle_count_asset_lines')
-      .insert(rows);
+      .upsert(rows, { onConflict: 'cycle_count_id,asset_id' });
 
-    if (insertError) throw AppError.internal(insertError.message);
+    if (upsertError) throw AppError.internal(upsertError.message);
   }
 
+  // Then prune assets that were previously counted on this line but are no longer
+  // in the submitted set (upsert-first ordering means a concurrent request never
+  // observes the line momentarily empty).
+  let pruneQuery = inv
+    .from('cycle_count_asset_lines')
+    .delete()
+    .eq('cycle_count_line_id', body.line_id)
+    .eq('cycle_count_id', session.cycleCountId)
+    .eq('tenant_id', session.tenantId);
+
+  if (body.asset_ids.length > 0) {
+    pruneQuery = pruneQuery.not('asset_id', 'in', `(${body.asset_ids.join(',')})`);
+  }
+
+  const { error: pruneError } = await pruneQuery;
+  if (pruneError) throw AppError.internal(pruneError.message);
+
   // Update the line's qty_counted to match asset count
-  await inv
+  const { error: lineUpdateError } = await inv
     .from('cycle_count_lines')
     .update({
       qty_counted: body.asset_ids.length,
       counted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq('id', body.line_id);
+    .eq('id', body.line_id)
+    .eq('tenant_id', session.tenantId);
+
+  if (lineUpdateError) throw AppError.internal(lineUpdateError.message);
 
   log.info('mobile_count.asset_recorded', {
     cycleCountId: session.cycleCountId,

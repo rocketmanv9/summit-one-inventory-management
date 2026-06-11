@@ -59,6 +59,20 @@ interface InitialData {
   categories?: CategoryItem[];
 }
 
+const EXPIRED_MESSAGE =
+  'This count session has expired. Generate a new mobile session QR from the cycle count on desktop.';
+
+// Postgres numerics arrive as strings via PostgREST. Normalize every line's
+// numeric fields at the moment data enters client state so no string qty
+// survives into state ("3" + 1 would become "31").
+function normalizeLine(line: CountLine): CountLine {
+  return {
+    ...line,
+    qty_expected: line.qty_expected == null ? 0 : Number(line.qty_expected),
+    qty_counted: line.qty_counted == null ? null : Number(line.qty_counted),
+  };
+}
+
 function bypassHeaders(secret: string): Record<string, string> {
   return secret ? { 'x-vercel-protection-bypass': secret } : {};
 }
@@ -88,7 +102,9 @@ export function MobileCountClient({
   const [cycleCount, setCycleCount] = useState<CycleCountMeta | null>(
     initialData?.cycle_count || null
   );
-  const [lines, setLines] = useState<CountLine[]>(initialData?.lines || []);
+  const [lines, setLines] = useState<CountLine[]>(() =>
+    (initialData?.lines || []).map(normalizeLine)
+  );
   const [scannerOpen, setScannerOpen] = useState(false);
   // When set, the scanner is targeting a serialized line: the next scan records a
   // serial against that line instead of the normal barcode→item flow.
@@ -97,6 +113,13 @@ export function MobileCountClient({
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Non-blocking warning when a JWT refresh fails (counting continues).
+  const [connectionWarning, setConnectionWarning] = useState(false);
+  // Visible feedback when a count save fails (the line is NOT marked counted).
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Idempotency key kept stable across retries of the same submit attempt set.
+  const submitKeyRef = useRef<string | null>(null);
 
   // Catalog management overlays (initial counts only)
   const [showAddItem, setShowAddItem] = useState(false);
@@ -109,6 +132,7 @@ export function MobileCountClient({
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogResults, setCatalogResults] = useState<Array<{ id: string; name: string; sku?: string; barcode?: string; tracking_mode?: string; uom_term_id?: string }>>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [addingItemId, setAddingItemId] = useState<string | null>(null);
   const catalogSearchRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -136,7 +160,7 @@ export function MobileCountClient({
     return () => {
       if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
     };
-  }, [jwt, token]);
+  }, [jwt, token, bypassSecret]);
 
   const validateToken = async () => {
     const controller = new AbortController();
@@ -173,7 +197,7 @@ export function MobileCountClient({
       setJwt(data.jwt);
       setExpiresAt(data.expires_at);
       setCycleCount(data.cycle_count);
-      setLines(data.lines || []);
+      setLines((data.lines || []).map(normalizeLine));
       setState('counting');
     } catch (err: any) {
       clearTimeout(timeout);
@@ -186,7 +210,7 @@ export function MobileCountClient({
     }
   };
 
-  const refreshJwt = async () => {
+  const refreshJwt = async (isRetry = false) => {
     try {
       const res = await fetch(withBypass(`/api/m/count/sessions/${token}/refresh`, bypassSecret), {
         method: 'POST',
@@ -198,16 +222,23 @@ export function MobileCountClient({
         },
       });
 
-      if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
         setState('error');
-        setErrorMessage('Session expired');
+        setErrorMessage(EXPIRED_MESSAGE);
         return;
       }
 
+      if (!res.ok) throw new Error(`Refresh failed (${res.status})`);
+
       const { data } = await res.json();
       setJwt(data.jwt);
+      setConnectionWarning(false);
     } catch {
-      // Silent fail on refresh - will catch on next API call
+      // Don't block counting — show a warning banner and retry once shortly.
+      setConnectionWarning(true);
+      if (!isRetry) {
+        setTimeout(() => refreshJwt(true), 5000);
+      }
     }
   };
 
@@ -221,8 +252,16 @@ export function MobileCountClient({
     [jwt, bypassSecret]
   );
 
+  const showSaveError = useCallback((message: string) => {
+    setSaveError(message);
+    if (saveErrorTimerRef.current) clearTimeout(saveErrorTimerRef.current);
+    saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 6000);
+  }, []);
+
   const handleRecordCount = useCallback(
     async (catalogItemId: string, qty: number) => {
+      const itemName =
+        lines.find((l) => l.catalog_item_id === catalogItemId)?.catalog_item?.name || 'item';
       try {
         const res = await fetch(withBypass('/api/m/count/record', bypassSecret), {
           method: 'POST',
@@ -234,12 +273,13 @@ export function MobileCountClient({
           const data = await res.json().catch(() => ({}));
           if (res.status === 401) {
             setState('error');
-            setErrorMessage('Session expired');
+            setErrorMessage(EXPIRED_MESSAGE);
             return;
           }
           throw new Error(apiErrorMessage(data, 'Failed to record count'));
         }
 
+        // Local state only updates after the server confirms the save.
         setLines((prev) =>
           prev.map((line) =>
             line.catalog_item_id === catalogItemId ? { ...line, qty_counted: qty } : line
@@ -247,13 +287,18 @@ export function MobileCountClient({
         );
       } catch (err: any) {
         console.error('Record count error:', err);
+        showSaveError(`Couldn't save count for "${itemName}" — check signal and re-enter the quantity.`);
+        setScanFeedback(`Save failed: ${itemName}`);
+        setTimeout(() => setScanFeedback(null), 2000);
       }
     },
-    [mobileHeaders, bypassSecret]
+    [mobileHeaders, bypassSecret, lines, showSaveError]
   );
 
   const handleRecordAssets = useCallback(
     async (lineId: string, assetIds: string[]) => {
+      const itemName =
+        lines.find((l) => l.id === lineId)?.catalog_item?.name || 'item';
       try {
         const res = await fetch(withBypass('/api/m/count/record-asset', bypassSecret), {
           method: 'POST',
@@ -265,7 +310,7 @@ export function MobileCountClient({
           const data = await res.json().catch(() => ({}));
           if (res.status === 401) {
             setState('error');
-            setErrorMessage('Session expired');
+            setErrorMessage(EXPIRED_MESSAGE);
             return;
           }
           throw new Error(apiErrorMessage(data, 'Failed to record assets'));
@@ -284,9 +329,10 @@ export function MobileCountClient({
         );
       } catch (err: any) {
         console.error('Record asset error:', err);
+        showSaveError(`Couldn't save assets for "${itemName}" — check signal and try again.`);
       }
     },
-    [mobileHeaders, bypassSecret]
+    [mobileHeaders, bypassSecret, lines, showSaveError]
   );
 
   // Scan/enter a serial for a serialized line → creates the asset (if new) and
@@ -303,7 +349,7 @@ export function MobileCountClient({
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          if (res.status === 401) { setState('error'); setErrorMessage('Session expired'); return; }
+          if (res.status === 401) { setState('error'); setErrorMessage(EXPIRED_MESSAGE); return; }
           throw new Error(apiErrorMessage(data, 'Failed to record serial'));
         }
         const { data } = await res.json();
@@ -321,7 +367,7 @@ export function MobileCountClient({
               counted_assets: counted.some((c) => c.asset_id === asset.id)
                 ? counted
                 : [...counted, { asset_id: asset.id }],
-              qty_counted: data.qty_counted ?? (Number(l.qty_counted ?? 0) + 1),
+              qty_counted: data.qty_counted != null ? Number(data.qty_counted) : (l.qty_counted ?? 0) + 1,
             };
           })
         );
@@ -343,11 +389,13 @@ export function MobileCountClient({
       if (!query.trim()) {
         setCatalogResults([]);
         setIsSearching(false);
+        setSearchError(null);
         return;
       }
 
       catalogSearchRef.current = setTimeout(async () => {
         setIsSearching(true);
+        setSearchError(null);
         try {
           const res = await fetch(
             withBypass(`/api/m/count/search?q=${encodeURIComponent(query.trim())}`, bypassSecret),
@@ -359,14 +407,24 @@ export function MobileCountClient({
             }
           );
 
-          if (res.ok) {
-            const { data } = await res.json();
-            // Filter out items already in the count
-            const existingIds = new Set(lines.map((l) => l.catalog_item_id));
-            setCatalogResults((data || []).filter((item: any) => !existingIds.has(item.id)));
+          if (!res.ok) {
+            setCatalogResults([]);
+            setSearchError(
+              res.status === 401
+                ? 'Session expired — reopen the link from desktop.'
+                : 'Search failed — check signal and try again.'
+            );
+            return;
           }
+
+          const { data } = await res.json();
+          // Filter out items already in the count
+          const existingIds = new Set(lines.map((l) => l.catalog_item_id));
+          setCatalogResults((data || []).filter((item: any) => !existingIds.has(item.id)));
         } catch (err) {
           console.error('Catalog search error:', err);
+          setCatalogResults([]);
+          setSearchError('Search failed — check signal and try again.');
         } finally {
           setIsSearching(false);
         }
@@ -391,7 +449,7 @@ export function MobileCountClient({
           const data = await res.json().catch(() => ({}));
           if (res.status === 401) {
             setState('error');
-            setErrorMessage('Session expired');
+            setErrorMessage(EXPIRED_MESSAGE);
             return;
           }
           throw new Error(apiErrorMessage(data, 'Failed to add item'));
@@ -403,7 +461,7 @@ export function MobileCountClient({
           id: data.id,
           catalog_item_id: catalogItemId,
           catalog_item: data.catalog_item,
-          qty_expected: data.qty_expected ?? 0,
+          qty_expected: Number(data.qty_expected ?? 0),
           qty_counted: null,
         };
         setLines((prev) => [...prev, newLine]);
@@ -487,7 +545,7 @@ export function MobileCountClient({
               id: data.id,
               catalog_item_id: catalogItemId,
               catalog_item: data.catalog_item,
-              qty_expected: data.qty_expected ?? 0,
+              qty_expected: Number(data.qty_expected ?? 0),
               qty_counted: null,
             };
             setLines((prev) => [...prev, newLine]);
@@ -505,9 +563,9 @@ export function MobileCountClient({
           return;
         }
 
-        // qty_counted arrives as a numeric STRING from the validate route; coerce
-        // or "3" + 1 becomes "31" and the record route (z.number()) 400s.
-        const newQty = Number(line.qty_counted ?? 0) + 1;
+        // Lines are normalized to numbers at every state entry point, so plain
+        // arithmetic is safe here (the record route's z.number() would 400 on "31").
+        const newQty = (line.qty_counted ?? 0) + 1;
         await handleRecordCount(catalogItemId, newQty);
 
         const itemName = line.catalog_item?.name || line.catalog_item?.sku || decodedText;
@@ -545,18 +603,25 @@ export function MobileCountClient({
       if (!proceed) return;
     }
 
+    // Keep the idempotency key stable across retries of this submit attempt so
+    // a retry after a timeout/failure replays instead of double-submitting.
+    if (!submitKeyRef.current) submitKeyRef.current = crypto.randomUUID();
+
     setIsSubmitting(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const res = await fetch(withBypass('/api/m/count/submit', bypassSecret), {
         method: 'POST',
-        headers: mobileHeaders(),
+        headers: { ...mobileHeaders(), 'X-Idempotency-Key': submitKeyRef.current },
+        signal: controller.signal,
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) {
           setState('error');
-          setErrorMessage('Session expired');
+          setErrorMessage(EXPIRED_MESSAGE);
           return;
         }
         alert(apiErrorMessage(data, 'Failed to submit count'));
@@ -564,10 +629,16 @@ export function MobileCountClient({
       }
 
       setIsSubmitted(true);
+      submitKeyRef.current = null;
     } catch (err: any) {
       console.error('Submit error:', err);
-      alert('Failed to submit. Check your connection and try again.');
+      alert(
+        err?.name === 'AbortError'
+          ? 'Network timeout — check signal and try again.'
+          : 'Failed to submit. Check your connection and try again.'
+      );
     } finally {
+      clearTimeout(timeout);
       setIsSubmitting(false);
     }
   }, [isSubmitting, isSubmitted, lines, bypassSecret, mobileHeaders]);
@@ -629,6 +700,24 @@ export function MobileCountClient({
 
   return (
     <>
+      {connectionWarning && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 2000,
+          padding: '10px 16px', background: '#fef3c7', borderBottom: '1px solid #fde68a',
+          color: '#92400e', fontSize: '13px', fontWeight: 500, textAlign: 'center',
+        }}>
+          Connection problem — your session may expire. Counts will retry.
+        </div>
+      )}
+      {saveError && (
+        <div style={{
+          position: 'fixed', top: connectionWarning ? '40px' : 0, left: 0, right: 0, zIndex: 2000,
+          padding: '10px 16px', background: '#fee2e2', borderBottom: '1px solid #fecaca',
+          color: '#b91c1c', fontSize: '13px', fontWeight: 500, textAlign: 'center',
+        }}>
+          {saveError}
+        </div>
+      )}
       <MobileCountShell
         countNumber={cycleCount?.count_number || ''}
         locationName={cycleCount?.location?.name || 'Unknown'}
@@ -674,11 +763,16 @@ export function MobileCountClient({
             </div>
 
             {/* Search results */}
-            {(isSearching || catalogResults.length > 0) && (
+            {(isSearching || catalogResults.length > 0 || searchError) && (
               <div style={{ marginTop: '8px', maxHeight: '200px', overflowY: 'auto' }}>
                 {isSearching && catalogResults.length === 0 && (
                   <div style={{ padding: '12px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
                     Searching...
+                  </div>
+                )}
+                {!isSearching && searchError && (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#dc2626', fontSize: '13px', fontWeight: 500 }}>
+                    {searchError}
                   </div>
                 )}
                 {catalogResults.map((item) => (
@@ -720,7 +814,7 @@ export function MobileCountClient({
                     </button>
                   </div>
                 ))}
-                {!isSearching && catalogSearch.trim() && catalogResults.length === 0 && (
+                {!isSearching && !searchError && catalogSearch.trim() && catalogResults.length === 0 && (
                   <div style={{ padding: '12px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
                     No items found
                   </div>
@@ -845,7 +939,7 @@ export function MobileCountClient({
             onClose={() => setShowAddItem(false)}
             onItemCreated={(countLine, newCategory) => {
               if (countLine) {
-                setLines((prev) => [...prev, countLine]);
+                setLines((prev) => [...prev, normalizeLine(countLine)]);
                 setHighlightItemId(countLine.catalog_item_id);
                 setTimeout(() => setHighlightItemId(null), 3000);
               }
@@ -864,7 +958,7 @@ export function MobileCountClient({
             isOpen={showCatalogBrowser}
             onClose={() => setShowCatalogBrowser(false)}
             onItemAdded={(newLine) => {
-              setLines((prev) => [...prev, newLine]);
+              setLines((prev) => [...prev, normalizeLine(newLine)]);
               setHighlightItemId(newLine.catalog_item_id);
               setTimeout(() => setHighlightItemId(null), 3000);
             }}
