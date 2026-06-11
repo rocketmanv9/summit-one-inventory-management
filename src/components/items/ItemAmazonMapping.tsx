@@ -26,7 +26,17 @@ const usd = (n: number | string | null) => {
   return v === null || Number.isNaN(v) ? null : v.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 };
 
-export function ItemAmazonMapping({ catalogItemId }: { catalogItemId: string }) {
+const asinUrl = (asin: string) => `https://www.amazon.com/dp/${asin}`;
+
+export function ItemAmazonMapping({
+  catalogItemId,
+  onMappingChange,
+}: {
+  catalogItemId: string;
+  /** Notifies the parent of the current Amazon URL (or null) so it can surface
+   *  the link elsewhere — e.g. as a pinned reference link. */
+  onMappingChange?: (link: { asin: string; url: string } | null) => void;
+}) {
   const [mapping, setMapping] = useState<Mapping | null>(null);
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
@@ -41,13 +51,14 @@ export function ItemAmazonMapping({ catalogItemId }: { catalogItemId: string }) 
       if (res.ok) {
         const found = (json.data || []).find((m: Mapping) => m.catalog_item_id === catalogItemId) || null;
         setMapping(found);
+        onMappingChange?.(found ? { asin: found.supplier_sku, url: asinUrl(found.supplier_sku) } : null);
       }
     } catch {
       /* silent — surfaced on the action paths */
     } finally {
       setLoading(false);
     }
-  }, [catalogItemId]);
+  }, [catalogItemId, onMappingChange]);
 
   useEffect(() => {
     load();
@@ -107,6 +118,7 @@ export function ItemAmazonMapping({ catalogItemId }: { catalogItemId: string }) 
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error?.message || 'Could not remove the Amazon link.');
       setMapping(null);
+      onMappingChange?.(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not remove the Amazon link.');
     } finally {
@@ -135,7 +147,7 @@ export function ItemAmazonMapping({ catalogItemId }: { catalogItemId: string }) 
             <div className="text-sm font-medium flex items-center gap-1.5">
               Linked to Amazon
               <a
-                href={`https://www.amazon.com/dp/${mapping.supplier_sku}`}
+                href={asinUrl(mapping.supplier_sku)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-blue-600 hover:underline font-mono text-xs"

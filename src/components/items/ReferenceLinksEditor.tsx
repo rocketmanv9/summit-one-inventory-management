@@ -3,19 +3,33 @@
 import { ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { normalizeHref, type ReferenceLink } from '@/lib/items/reference-links';
 
+/** A non-editable link surfaced alongside the user's links (e.g. the item's
+ *  Amazon product page, derived from its Amazon mapping). Managed elsewhere. */
+export interface PinnedLink {
+  label: string;
+  url: string;
+  hint?: string;
+}
+
 /**
  * Add / edit / remove reference links on an item. Controlled — the parent owns
  * the `links` array and persistence. Used by the item detail page and the
  * new-item wizard.
+ *
+ * `pinnedLinks` are read-only entries shown above the editable list (the user
+ * can open them but not edit/remove them here — they're owned by another panel,
+ * like the Amazon Ordering link).
  */
 export function ReferenceLinksEditor({
   links,
   onChange,
   disabled,
+  pinnedLinks = [],
 }: {
   links: ReferenceLink[];
   onChange: (links: ReferenceLink[]) => void;
   disabled?: boolean;
+  pinnedLinks?: PinnedLink[];
 }) {
   const update = (i: number, patch: Partial<ReferenceLink>) =>
     onChange(links.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -24,7 +38,43 @@ export function ReferenceLinksEditor({
 
   return (
     <div className="space-y-2">
-      {links.length === 0 && (
+      {pinnedLinks.map((pinned, i) => {
+        const href = normalizeHref(pinned.url);
+        return (
+          <div
+            key={`pinned-${i}`}
+            className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2"
+          >
+            <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+              {pinned.label}
+            </span>
+            <a
+              href={href || undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 truncate font-mono text-sm text-blue-700 hover:underline"
+              title={pinned.url}
+            >
+              {pinned.url}
+            </a>
+            {pinned.hint && <span className="text-xs text-muted-foreground">{pinned.hint}</span>}
+            <a
+              href={href || undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open link in new tab"
+              aria-disabled={!href}
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-muted-foreground transition-colors ${
+                href ? 'hover:bg-muted' : 'pointer-events-none opacity-30'
+              }`}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </div>
+        );
+      })}
+
+      {links.length === 0 && pinnedLinks.length === 0 && (
         <p className="text-xs text-muted-foreground">
           No links yet. Add a product page, spec sheet, or supplier URL.
         </p>

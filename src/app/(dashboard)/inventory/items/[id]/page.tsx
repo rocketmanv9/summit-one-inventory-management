@@ -99,6 +99,9 @@ export default function ItemDetailPage() {
   const [linksDirty, setLinksDirty] = useState(false);
   const [linksSaving, setLinksSaving] = useState(false);
   const [linksMsg, setLinksMsg] = useState('');
+  // Amazon product link, derived from this item's Amazon mapping and surfaced as
+  // a read-only pinned entry inside Reference Links.
+  const [amazonLink, setAmazonLink] = useState<{ asin: string; url: string } | null>(null);
 
   useEffect(() => {
     if (!params.id) return;
@@ -478,11 +481,12 @@ export default function ItemDetailPage() {
             links={links}
             onChange={(next) => { setLinks(next); setLinksDirty(true); }}
             disabled={linksSaving}
+            pinnedLinks={amazonLink ? [{ label: 'Amazon', url: amazonLink.url, hint: amazonLink.asin }] : []}
           />
         </div>
 
         {/* Amazon ordering link for this item */}
-        <ItemAmazonMapping catalogItemId={params.id} />
+        <ItemAmazonMapping catalogItemId={params.id} onMappingChange={setAmazonLink} />
 
         {/* Scanner overlay */}
         <BarcodeScannerOverlay
