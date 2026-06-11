@@ -10,6 +10,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
@@ -65,6 +66,12 @@ export default function ItemsPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [pendingCategoryId, setPendingCategoryId] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; lastEventId: string | null } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [deactivateTarget, setDeactivateTarget] = useState<{ id: string; name: string; lastEventId: string } | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
+  const [deactivateError, setDeactivateError] = useState('');
 
   const [imageRefreshKey, setImageRefreshKey] = useState(0);
   const itemIds = items.map(i => i.id);
@@ -94,10 +101,16 @@ export default function ItemsPage() {
     window.location.href = '/inventory/categories';
   };
 
-  const handleDelete = async (itemId: string, itemName: string, lastEventId: string | null) => {
-    if (!confirm(`Are you sure you want to delete "${itemName}"?`)) {
-      return;
-    }
+  const handleDelete = (itemId: string, itemName: string, lastEventId: string | null) => {
+    setDeleteError('');
+    setDeleteTarget({ id: itemId, name: itemName, lastEventId });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const { id: itemId, name: itemName, lastEventId } = deleteTarget;
+    setDeleting(true);
+    setDeleteError('');
 
     try {
       if (!lastEventId) {
@@ -106,27 +119,36 @@ export default function ItemsPage() {
 
       await InventoryRPC.deleteCatalogItem(itemId, lastEventId);
 
+      setDeleteTarget(null);
       fetchItems(); // Refresh the list
     } catch (error: any) {
       // Items with transaction history can't be hard-deleted (the ledger FKs are
       // ON DELETE RESTRICT). Offer to deactivate instead so the user isn't stuck.
       const msg: string = error?.message || '';
       if (msg.includes("can't be permanently deleted") && lastEventId) {
-        if (
-          confirm(
-            `"${itemName}" has transaction history and can't be permanently deleted.\n\nDeactivate it instead? It will be marked inactive and hidden from active use, but its history is preserved.`,
-          )
-        ) {
-          try {
-            await InventoryRPC.updateCatalogItem(itemId, { active: false } as any, lastEventId);
-            fetchItems();
-          } catch (deactErr: any) {
-            alert(`Error deactivating: ${deactErr.message}`);
-          }
-        }
-        return;
+        setDeleteTarget(null);
+        setDeactivateError('');
+        setDeactivateTarget({ id: itemId, name: itemName, lastEventId });
+      } else {
+        setDeleteError(errMessage(error, 'Failed to delete item'));
       }
-      alert(`Error: ${errMessage(error, 'Failed to delete item')}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const confirmDeactivate = async () => {
+    if (!deactivateTarget) return;
+    setDeactivating(true);
+    setDeactivateError('');
+    try {
+      await InventoryRPC.updateCatalogItem(deactivateTarget.id, { active: false } as any, deactivateTarget.lastEventId);
+      setDeactivateTarget(null);
+      fetchItems();
+    } catch (deactErr: any) {
+      setDeactivateError(`Error deactivating: ${deactErr.message}`);
+    } finally {
+      setDeactivating(false);
     }
   };
 
@@ -381,6 +403,36 @@ export default function ItemsPage() {
             }
           }}
         />
+
+        {/* Delete item confirmation */}
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title="Delete item"
+          message={deleteTarget ? `Are you sure you want to delete "${deleteTarget.name}"?` : ''}
+          confirmLabel="Delete"
+          loadingLabel="Deleting..."
+          destructive
+          loading={deleting}
+          error={deleteError}
+          onConfirm={confirmDelete}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
+        />
+
+        {/* Deactivate fallback for items with transaction history */}
+        <ConfirmDialog
+          open={!!deactivateTarget}
+          title="Deactivate item instead?"
+          message={deactivateTarget
+            ? `"${deactivateTarget.name}" has transaction history and can't be permanently deleted.\n\nDeactivate it instead? It will be marked inactive and hidden from active use, but its history is preserved.`
+            : ''}
+          confirmLabel="Deactivate"
+          loadingLabel="Deactivating..."
+          destructive
+          loading={deactivating}
+          error={deactivateError}
+          onConfirm={confirmDeactivate}
+          onCancel={() => { setDeactivateTarget(null); setDeactivateError(''); }}
+        />
       </div>
     </AppShell>
   );
@@ -538,6 +590,7 @@ function CreateItemModal({
   const [amazonPreferred, setAmazonPreferred] = useState(false);
   const [amazonSaving, setAmazonSaving] = useState(false);
   const [amazonError, setAmazonError] = useState('');
+  const [showRemoveMappingConfirm, setShowRemoveMappingConfirm] = useState(false);
 
   // Initial stock state (for new items only)
   const [initialStockLocation, setInitialStockLocation] = useState('');
@@ -745,7 +798,7 @@ function CreateItemModal({
 
   const handleRemoveAmazonMapping = async () => {
     if (!amazonMapping?.id) return;
-    if (!confirm('Remove Amazon ASIN mapping for this item?')) return;
+    setShowRemoveMappingConfirm(false);
     setAmazonSaving(true);
     setAmazonError('');
     try {
@@ -1466,7 +1519,7 @@ function CreateItemModal({
                     </div>
                     <button
                       type="button"
-                      onClick={handleRemoveAmazonMapping}
+                      onClick={() => setShowRemoveMappingConfirm(true)}
                       disabled={amazonSaving}
                       className="text-xs text-red-600 hover:text-red-800 font-medium"
                     >
@@ -1635,6 +1688,18 @@ function CreateItemModal({
           </div>
         </form>
       </div>
+
+      {/* Remove Amazon mapping confirmation (errors surface via amazonError above) */}
+      <ConfirmDialog
+        open={showRemoveMappingConfirm}
+        title="Remove Amazon mapping"
+        message="Remove Amazon ASIN mapping for this item?"
+        confirmLabel="Remove"
+        loadingLabel="Removing..."
+        destructive
+        onConfirm={() => { void handleRemoveAmazonMapping(); }}
+        onCancel={() => setShowRemoveMappingConfirm(false)}
+      />
     </div>
   );
 }

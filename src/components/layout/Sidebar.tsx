@@ -20,6 +20,8 @@ import {
   Globe,
   PackageSearch,
   TrendingUp,
+  Tags,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -61,6 +63,7 @@ const navigation: NavSection[] = [
     ],
   },
   {
+    // What you have: catalog + where it lives.
     title: 'Inventory',
     items: [
       {
@@ -74,6 +77,11 @@ const navigation: NavSection[] = [
         icon: Package,
       },
       {
+        title: 'Categories',
+        href: '/inventory/categories',
+        icon: Tags,
+      },
+      {
         title: 'Locations',
         href: '/inventory/locations',
         icon: MapPin,
@@ -82,6 +90,17 @@ const navigation: NavSection[] = [
         title: 'Assets',
         href: '/inventory/assets',
         icon: Truck,
+      },
+    ],
+  },
+  {
+    // Buying workflow: orders + the vendors behind them.
+    title: 'Purchasing',
+    items: [
+      {
+        title: 'Purchase Orders',
+        href: '/inventory/purchasing',
+        icon: ShoppingCart,
       },
       {
         title: 'Vendors',
@@ -101,12 +120,13 @@ const navigation: NavSection[] = [
     ],
   },
   {
+    // Day-to-day stock movement and verification.
     title: 'Operations',
     items: [
       {
-        title: 'Network',
-        href: '/operations/globe',
-        icon: Globe,
+        title: 'Transfers',
+        href: '/inventory/transfers',
+        icon: ArrowLeftRight,
       },
       {
         title: 'Reservations',
@@ -114,19 +134,14 @@ const navigation: NavSection[] = [
         icon: CalendarCheck,
       },
       {
-        title: 'Transfers',
-        href: '/inventory/transfers',
-        icon: ArrowLeftRight,
-      },
-      {
-        title: 'Purchasing',
-        href: '/inventory/purchasing',
-        icon: ShoppingCart,
-      },
-      {
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
+      },
+      {
+        title: 'Network',
+        href: '/operations/globe',
+        icon: Globe,
       },
     ],
   },
@@ -137,6 +152,11 @@ const navigation: NavSection[] = [
         title: 'Ledger',
         href: '/inventory/audit',
         icon: History,
+      },
+      {
+        title: 'Data Integrity',
+        href: '/inventory/integrity',
+        icon: ShieldCheck,
       },
     ],
   },

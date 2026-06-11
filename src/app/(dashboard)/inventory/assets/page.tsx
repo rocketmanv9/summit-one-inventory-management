@@ -18,6 +18,7 @@ import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
 import { AssetTransferModal } from '@/components/assets/AssetTransferModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -67,6 +68,9 @@ export default function AssetsPage() {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
   const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const assetIds = assets.map(a => a.id);
   const { imageMap } = useEntityImages('asset', assetIds);
@@ -106,23 +110,31 @@ export default function AssetsPage() {
     }
   };
 
-  const handleDeleteAsset = async (asset: Asset) => {
-    if (!confirm(`Delete asset ${asset.asset_tag}? This cannot be undone.`)) {
-      return;
-    }
+  const handleDeleteAsset = (asset: Asset) => {
+    setDeleteError('');
+    setDeleteTarget(asset);
+  };
+
+  const confirmDeleteAsset = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
 
     try {
-      if (!asset.last_event_id) {
-        alert('Missing last_event_id. Please refresh and try again.');
+      if (!deleteTarget.last_event_id) {
+        setDeleteError('Missing last_event_id. Please refresh and try again.');
         return;
       }
 
-      await InventoryRPC.deleteAsset(asset.id, asset.last_event_id);
+      await InventoryRPC.deleteAsset(deleteTarget.id, deleteTarget.last_event_id);
 
+      setDeleteTarget(null);
       await fetchAssets();
     } catch (error) {
       console.error('Error deleting asset:', error);
-      alert('Failed to delete asset');
+      setDeleteError('Failed to delete asset');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -430,6 +442,20 @@ export default function AssetsPage() {
             }}
           />
         )}
+
+        {/* Delete asset confirmation */}
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title="Delete asset"
+          message={deleteTarget ? `Delete asset ${deleteTarget.asset_tag}? This cannot be undone.` : ''}
+          confirmLabel="Delete"
+          loadingLabel="Deleting..."
+          destructive
+          loading={deleting}
+          error={deleteError}
+          onConfirm={confirmDeleteAsset}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
+        />
       </div>
     </AppShell>
   );

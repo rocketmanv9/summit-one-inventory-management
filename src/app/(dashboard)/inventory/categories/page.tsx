@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { CategoryModal } from '@/components/modals/CategoryModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
@@ -23,6 +24,9 @@ export default function CategoriesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Category | undefined>();
   const [reassignCount, setReassignCount] = useState(0);
   const [reassignError, setReassignError] = useState('');
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const formatDate = (value?: string | null) => {
     if (!value) return '-';
@@ -58,19 +62,32 @@ export default function CategoriesPage() {
         return;
       }
 
-      if (!confirm('Are you sure you want to delete this category?')) {
-        return;
-      }
-
-      if (!category.last_event_id) {
-        throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
-      }
-
-      await InventoryRPC.deleteItemCategory(category.id, category.last_event_id);
-      fetchCategories();
+      setDeleteError('');
+      setConfirmDeleteTarget(category);
     } catch (err) {
       console.error('Error deleting category:', err);
       alert(err instanceof Error ? err.message : 'Failed to delete category');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+
+    try {
+      if (!confirmDeleteTarget.last_event_id) {
+        throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
+      }
+
+      await InventoryRPC.deleteItemCategory(confirmDeleteTarget.id, confirmDeleteTarget.last_event_id);
+      setConfirmDeleteTarget(null);
+      fetchCategories();
+    } catch (err) {
+      console.error('Error deleting category:', err);
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete category');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -205,6 +222,20 @@ export default function CategoriesPage() {
             onError={(message) => setReassignError(message)}
           />
         )}
+
+        {/* Delete category confirmation (no items attached) */}
+        <ConfirmDialog
+          open={!!confirmDeleteTarget}
+          title="Delete category"
+          message="Are you sure you want to delete this category?"
+          confirmLabel="Delete"
+          loadingLabel="Deleting..."
+          destructive
+          loading={deleting}
+          error={deleteError}
+          onConfirm={confirmDelete}
+          onCancel={() => { setConfirmDeleteTarget(null); setDeleteError(''); }}
+        />
       </div>
     </AppShell>
   );

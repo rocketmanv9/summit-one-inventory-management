@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
@@ -98,6 +101,7 @@ type ActiveTab = 'my-vendors' | 'catalog';
 /* -------------------------------------------------------------------------- */
 
 export default function VendorsPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ActiveTab>('my-vendors');
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [catalogVendors, setCatalogVendors] = useState<CatalogVendor[]>([]);
@@ -114,6 +118,9 @@ export default function VendorsPage() {
   const [adopting, setAdopting] = useState(false);
   const [notesVendor, setNotesVendor] = useState<Vendor | null>(null);
   const [detailVendorId, setDetailVendorId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<Vendor | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState('');
 
   /* ---- Fetching ---- */
 
@@ -165,19 +172,29 @@ export default function VendorsPage() {
 
   /* ---- Handlers ---- */
 
-  const handleRemove = async (vendor: Vendor) => {
-    if (!confirm(`Remove "${vendor.name}" from your vendors?`)) return;
+  const handleRemove = (vendor: Vendor) => {
+    setRemoveError('');
+    setRemoveTarget(vendor);
+  };
+
+  const confirmRemove = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    setRemoveError('');
 
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendor.id}`, {
+      const res = await fetch(`/api/inventory/vendors/${removeTarget.id}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
       if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to remove vendor'));
+      setRemoveTarget(null);
       await fetchVendors();
     } catch (err) {
       console.error('Error removing vendor:', err);
-      alert(errMessage(err, 'Failed to remove vendor'));
+      setRemoveError(errMessage(err, 'Failed to remove vendor'));
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -384,6 +401,7 @@ export default function VendorsPage() {
               loading={loading}
               emptyMessage="No vendors yet. Add from the catalog or create a custom entry."
               rowKey={(row) => row.id}
+              onRowClick={(row) => router.push(`/inventory/vendors/${row.id}`)}
             />
           </>
         )}
@@ -526,6 +544,20 @@ export default function VendorsPage() {
             onClose={() => setDetailVendorId(null)}
           />
         )}
+
+        {/* Remove Vendor Confirmation */}
+        <ConfirmDialog
+          open={!!removeTarget}
+          title="Remove vendor"
+          message={removeTarget ? `Remove "${removeTarget.name}" from your vendors?` : ''}
+          confirmLabel="Remove"
+          loadingLabel="Removing..."
+          destructive
+          loading={removing}
+          error={removeError}
+          onConfirm={confirmRemove}
+          onCancel={() => { setRemoveTarget(null); setRemoveError(''); }}
+        />
       </div>
     </AppShell>
   );
@@ -549,6 +581,10 @@ function VendorDetailModal({
   const [showAddAddress, setShowAddAddress] = useState(false);
   const [editingContact, setEditingContact] = useState<VendorContact | null>(null);
   const [showAddContact, setShowAddContact] = useState(false);
+  // Pending delete confirmation for an address or contact.
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: 'address' | 'contact'; id: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Proximity tab: rank this vendor's addresses against one of the tenant's
   // own locations ("which of their branches is closest to my site?").
@@ -614,33 +650,34 @@ function VendorDetailModal({
   );
   const selectedLoc = myLocations.find((l) => l.id === selectedLocId) || null;
 
-  const handleDeleteAddress = async (addressId: string) => {
-    if (!confirm('Delete this address?')) return;
-    try {
-      const res = await fetch(`/api/inventory/vendors/${vendorId}/addresses/${addressId}`, {
-        method: 'DELETE',
-        headers: { 'X-Idempotency-Key': crypto.randomUUID() },
-      });
-      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to delete address'));
-      await fetchVendor();
-    } catch (err) {
-      console.error('Error deleting address:', err);
-      alert(errMessage(err, 'Failed to delete address'));
-    }
+  const handleDeleteAddress = (addressId: string) => {
+    setDeleteError('');
+    setDeleteTarget({ kind: 'address', id: addressId });
   };
 
-  const handleDeleteContact = async (contactId: string) => {
-    if (!confirm('Delete this contact?')) return;
+  const handleDeleteContact = (contactId: string) => {
+    setDeleteError('');
+    setDeleteTarget({ kind: 'contact', id: contactId });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const { kind, id } = deleteTarget;
+    setDeleting(true);
+    setDeleteError('');
     try {
-      const res = await fetch(`/api/inventory/vendors/${vendorId}/contacts/${contactId}`, {
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/${kind === 'address' ? 'addresses' : 'contacts'}/${id}`, {
         method: 'DELETE',
         headers: { 'X-Idempotency-Key': crypto.randomUUID() },
       });
-      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to delete contact'));
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, `Failed to delete ${kind}`));
+      setDeleteTarget(null);
       await fetchVendor();
     } catch (err) {
-      console.error('Error deleting contact:', err);
-      alert(errMessage(err, 'Failed to delete contact'));
+      console.error(`Error deleting ${kind}:`, err);
+      setDeleteError(errMessage(err, `Failed to delete ${kind}`));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -660,6 +697,12 @@ function VendorDetailModal({
                 {vendor.is_custom ? 'Custom' : 'Catalog'}
               </span>
             )}
+            <Link
+              href={`/inventory/vendors/${vendorId}`}
+              className="text-xs font-medium text-primary hover:underline whitespace-nowrap"
+            >
+              Full profile &rarr;
+            </Link>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">X</button>
         </div>
@@ -966,6 +1009,20 @@ function VendorDetailModal({
           onComplete={() => { setShowAddContact(false); setEditingContact(null); fetchVendor(); }}
         />
       )}
+
+      {/* Delete address/contact confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={deleteTarget?.kind === 'contact' ? 'Delete contact' : 'Delete address'}
+        message={deleteTarget?.kind === 'contact' ? 'Delete this contact?' : 'Delete this address?'}
+        confirmLabel="Delete"
+        loadingLabel="Deleting..."
+        destructive
+        loading={deleting}
+        error={deleteError}
+        onConfirm={confirmDelete}
+        onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
+      />
     </div>
   );
 }

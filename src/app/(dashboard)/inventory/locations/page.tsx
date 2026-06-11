@@ -11,6 +11,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { LocationTypeModal } from '@/components/modals/LocationTypeModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { geocodeAddress } from '@/lib/geocode';
@@ -49,6 +50,9 @@ export default function LocationsPage() {
   const [showQuickAddType, setShowQuickAddType] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     fetchLocationTypes();
@@ -78,17 +82,23 @@ export default function LocationsPage() {
     }
   };
 
-  const handleDelete = async (location: Location) => {
-    if (!confirm(`Are you sure you want to delete location "${location.name}"?\n\nThis cannot be undone.`)) {
-      return;
-    }
+  const handleDelete = (location: Location) => {
+    setDeleteError('');
+    setDeleteTarget(location);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
 
     try {
-      if (!location.last_event_id) {
+      if (!deleteTarget.last_event_id) {
         throw AppError.badRequest('Missing last_event_id for this location. Please refresh and try again.');
       }
 
-      await InventoryRPC.deleteLocation(location.id, location.last_event_id);
+      await InventoryRPC.deleteLocation(deleteTarget.id, deleteTarget.last_event_id);
+      setDeleteTarget(null);
       fetchLocations();
     } catch (err: any) {
       // Chassis error envelope may be { error: { message } } or { error: 'msg' } —
@@ -98,7 +108,9 @@ export default function LocationsPage() {
         (typeof err?.error === 'string' ? err.error : undefined) ??
         (typeof err?.message === 'string' ? err.message : undefined) ??
         'Failed to delete location.';
-      alert(message);
+      setDeleteError(message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -276,6 +288,20 @@ export default function LocationsPage() {
             setShowQuickAddType(false);
             fetchLocationTypes();
           }}
+        />
+
+        {/* Delete location confirmation */}
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title="Delete location"
+          message={deleteTarget ? `Are you sure you want to delete location "${deleteTarget.name}"?\n\nThis cannot be undone.` : ''}
+          confirmLabel="Delete"
+          loadingLabel="Deleting..."
+          destructive
+          loading={deleting}
+          error={deleteError}
+          onConfirm={confirmDelete}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
         />
       </div>
     </AppShell>
