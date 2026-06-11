@@ -7,6 +7,7 @@ import { SettingsNav } from '@/components/settings/SettingsNav';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { GmailIntegration } from '@/components/settings/GmailIntegration';
+import { AmazonInboundConnection } from '@/components/settings/AmazonInboundConnection';
 import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart, Sparkles, Wand2, Mail } from 'lucide-react';
 
 const API = '/api/settings/integrations/printify';
@@ -1222,6 +1223,13 @@ export default function IntegrationsPage() {
             )}
           </div>
         </div>
+
+        {/* Amazon inbound connection — order confirmations + carrier ship tracking */}
+        {amazonStatus === 'connected' && (
+          <div className="mt-6">
+            <AmazonInboundConnection />
+          </div>
+        )}
 
         {/* Amazon Business Item Mappings */}
         {amazonStatus === 'connected' && (
