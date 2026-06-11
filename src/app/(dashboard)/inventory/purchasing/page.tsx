@@ -573,6 +573,64 @@ function PODetailPanel({
   }>>([]);
   const [loadingReceipts, setLoadingReceipts] = useState(true);
 
+  // The parent list is fetched once, but a PO's lines/status can change AFTER
+  // the panel is open — most notably Amazon's order-confirmation webhook lands
+  // server-to-server several minutes after the order is placed and reprices the
+  // lines to Amazon's authoritative total. Re-read the header + lines on open
+  // and poll while the order is still in a confirmable window so the panel shows
+  // the corrected price instead of whatever was typed at creation.
+  const [livePo, setLivePo] = useState<PurchaseOrder>(po);
+  const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
+  const [confirmedAt, setConfirmedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLivePo(po);
+    setConfirmedTotal(null);
+    setConfirmedAt(null);
+    let alive = true;
+    const client = createBrowserAuthedClient();
+    const sc = client.schema('supply_chain');
+    const inv = client.schema('inventory');
+
+    const refetch = async () => {
+      const [{ data: header }, { data: lines }, { data: order }] = await Promise.all([
+        sc.from('purchase_orders').select('*').eq('id', po.id).maybeSingle(),
+        sc.from('purchase_order_lines').select('*').eq('po_id', po.id).order('line_number'),
+        inv
+          .from('punchout_orders')
+          .select('metadata')
+          .eq('purchase_order_id', po.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      if (!alive) return;
+      if (header) {
+        setLivePo((prev) => ({
+          ...prev,
+          ...(header as PurchaseOrder),
+          purchase_order_lines: (lines as PurchaseOrder['purchase_order_lines']) ?? prev.purchase_order_lines,
+        }));
+      }
+      const conf = (order as any)?.metadata?.order_confirmation;
+      if (conf && conf.rejected !== true && conf.items_total != null) {
+        setConfirmedTotal(Number(conf.items_total));
+        setConfirmedAt(conf.received_at ?? null);
+      }
+    };
+
+    refetch();
+
+    // Stop polling once the order can no longer be re-confirmed/repriced.
+    const terminal = ['fully_received', 'closed', 'cancelled', 'voided'];
+    if (terminal.includes(po.status)) return () => { alive = false; };
+    const timer = setInterval(refetch, 15000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [po.id, po.status]);
+
   useEffect(() => {
     fetchReceipts();
   }, [po.id]);
@@ -599,7 +657,7 @@ function PODetailPanel({
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2">
           <span className="font-mono font-medium text-lg">{po.po_number}</span>
-          <StatusChip status={poStatusChipLabel(po.status)} />
+          <StatusChip status={poStatusChipLabel(livePo.status)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -624,9 +682,19 @@ function PODetailPanel({
         )}
 
         <div className="border-t pt-4">
-          <h4 className="font-medium mb-2">Line Items</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="font-medium">Line Items</h4>
+            {confirmedTotal != null && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-green-50 border border-green-200 px-2 py-0.5 text-xs text-green-700"
+                title={confirmedAt ? `Confirmed ${new Date(confirmedAt).toLocaleString()}` : 'Confirmed by Amazon'}
+              >
+                ✓ Amazon confirmed ${confirmedTotal.toFixed(2)}
+              </span>
+            )}
+          </div>
           <div className="space-y-2">
-            {po.purchase_order_lines?.map((line) => {
+            {livePo.purchase_order_lines?.map((line) => {
               const item = line.catalog_item_id ? catalogItems.get(line.catalog_item_id) : undefined;
               return (
                 <div key={line.id} className="p-3 bg-muted/30 rounded-lg">
