@@ -8,6 +8,11 @@ import { createBrowserAuthedClient } from '@/supabase/client';
 import { useRouter } from 'next/navigation';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { InventoryRPC } from '@/lib/rpc/inventory';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { authenticatedFetch } from '@/lib/api-client';
+import { StatusChip } from '@/components/ui/StatusChip';
+import { poBucket, poStatusChipLabel } from '@/lib/po/po-status';
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
@@ -110,6 +115,9 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="p-8">
+        {/* Status Overview */}
+        <StatusOverview />
+
         {/* Quick Actions */}
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
@@ -186,6 +194,227 @@ export default function DashboardPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+interface LowStockRow {
+  catalog_item_id: string;
+  item_name: string;
+  item_sku: string;
+  total_available: number;
+  reorder_point: number;
+  severity: string;
+}
+
+interface OpenPoRow {
+  id: string;
+  po_number: string;
+  vendor_name_snapshot?: string;
+  status: string;
+  created_at: string;
+}
+
+interface CycleCountRow {
+  id: string;
+  count_number: string;
+  status: string;
+  created_at: string;
+  location?: { name: string };
+}
+
+/** Cycle count statuses that still need attention. */
+const PENDING_COUNT_STATUSES = ['draft', 'in_progress', 'under_review'];
+
+/**
+ * Actionable status strip for the no-default-dashboard fallback view:
+ * low-stock alerts, open POs, and pending cycle counts. Each card loads
+ * independently so one failed source doesn't blank the others.
+ */
+function StatusOverview() {
+  const [lowStock, setLowStock] = useState<LowStockRow[] | null>(null);
+  const [lowStockError, setLowStockError] = useState(false);
+  const [openPos, setOpenPos] = useState<OpenPoRow[] | null>(null);
+  const [openPosError, setOpenPosError] = useState(false);
+  const [pendingCounts, setPendingCounts] = useState<CycleCountRow[] | null>(null);
+  const [pendingCountsError, setPendingCountsError] = useState(false);
+
+  useEffect(() => {
+    InventoryRPC.getLowStockItems()
+      .then((data) => setLowStock(data || []))
+      .catch((err) => {
+        console.error('Error loading low stock items:', err);
+        setLowStockError(true);
+      });
+
+    SupplyChainRPC.getPurchaseOrders()
+      .then((data) => {
+        const open = (data || []).filter((po: OpenPoRow) =>
+          ['draft', 'sent', 'partially_received'].includes(poBucket(po.status))
+        );
+        setOpenPos(open);
+      })
+      .catch((err) => {
+        console.error('Error loading purchase orders:', err);
+        setOpenPosError(true);
+      });
+
+    authenticatedFetch('/api/inventory/cycle-counts')
+      .then(async (res) => {
+        if (!res.ok) throw AppError.internal('Failed to fetch cycle counts');
+        const { data } = await res.json();
+        setPendingCounts(
+          (data || []).filter((c: CycleCountRow) => PENDING_COUNT_STATUSES.includes(c.status))
+        );
+      })
+      .catch((err) => {
+        console.error('Error loading cycle counts:', err);
+        setPendingCountsError(true);
+      });
+  }, []);
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">Today&apos;s Status</h2>
+      <div className="grid gap-4 md:grid-cols-3">
+        {/* Low Stock */}
+        <StatusCard
+          title="Low Stock"
+          count={lowStock?.length}
+          countClass="text-red-600"
+          loading={lowStock === null && !lowStockError}
+          error={lowStockError}
+          href="/inventory/stock"
+          linkLabel="View stock"
+          emptyText="All items are adequately stocked"
+        >
+          {lowStock?.slice(0, 3).map((item) => (
+            <Link
+              key={item.catalog_item_id}
+              href={`/inventory/items/${item.catalog_item_id}`}
+              className="flex items-center justify-between gap-2 py-1.5 hover:bg-gray-50 rounded px-1 -mx-1"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-gray-900 truncate">{item.item_name}</div>
+                <div className="text-xs text-gray-500">
+                  Available <span className="font-semibold text-red-600">{item.total_available}</span>
+                  {' / reorder at '}{item.reorder_point}
+                </div>
+              </div>
+              <span
+                className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${
+                  item.severity === 'critical'
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-yellow-100 text-yellow-800'
+                }`}
+              >
+                {item.severity}
+              </span>
+            </Link>
+          ))}
+        </StatusCard>
+
+        {/* Open POs */}
+        <StatusCard
+          title="Open POs"
+          count={openPos?.length}
+          countClass="text-blue-600"
+          loading={openPos === null && !openPosError}
+          error={openPosError}
+          href="/inventory/purchasing"
+          linkLabel="View purchasing"
+          emptyText="No open purchase orders"
+        >
+          {openPos?.slice(0, 3).map((po) => (
+            <div key={po.id} className="flex items-center justify-between gap-2 py-1.5">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-gray-900 truncate">{po.po_number}</div>
+                <div className="text-xs text-gray-500 truncate">
+                  {po.vendor_name_snapshot || 'No vendor'}
+                </div>
+              </div>
+              <StatusChip status={poStatusChipLabel(po.status)} showDot={false} />
+            </div>
+          ))}
+        </StatusCard>
+
+        {/* Pending Cycle Counts */}
+        <StatusCard
+          title="Pending Cycle Counts"
+          count={pendingCounts?.length}
+          countClass="text-purple-600"
+          loading={pendingCounts === null && !pendingCountsError}
+          error={pendingCountsError}
+          href="/inventory/cycle-counts"
+          linkLabel="View cycle counts"
+          emptyText="No counts awaiting action"
+        >
+          {pendingCounts?.slice(0, 3).map((count) => (
+            <div key={count.id} className="flex items-center justify-between gap-2 py-1.5">
+              <div className="min-w-0">
+                <div className="text-sm font-mono font-medium text-gray-900 truncate">
+                  {count.count_number}
+                </div>
+                <div className="text-xs text-gray-500 truncate">{count.location?.name || '-'}</div>
+              </div>
+              <StatusChip status={count.status} showDot={false} />
+            </div>
+          ))}
+        </StatusCard>
+      </div>
+    </div>
+  );
+}
+
+function StatusCard({
+  title,
+  count,
+  countClass,
+  loading,
+  error,
+  href,
+  linkLabel,
+  emptyText,
+  children,
+}: {
+  title: string;
+  count?: number;
+  countClass: string;
+  loading: boolean;
+  error: boolean;
+  href: string;
+  linkLabel: string;
+  emptyText: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-6">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        {!loading && !error && (
+          <span className={`text-2xl font-bold ${countClass}`}>{count ?? 0}</span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="animate-pulse space-y-2 py-2">
+          <div className="h-3 bg-gray-200 rounded"></div>
+          <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+        </div>
+      ) : error ? (
+        <p className="text-sm text-red-600 py-2">Failed to load</p>
+      ) : count === 0 ? (
+        <p className="text-sm text-gray-500 py-2">{emptyText}</p>
+      ) : (
+        <div className="divide-y divide-gray-100">{children}</div>
+      )}
+
+      <Link
+        href={href}
+        className="mt-3 inline-block text-sm text-blue-600 hover:text-blue-800 font-medium"
+      >
+        {linkLabel} →
+      </Link>
+    </div>
   );
 }
 
