@@ -2,7 +2,8 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MobileSessionQRDialog } from '@/components/cycle-counts/MobileSessionQRDialog';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -64,16 +65,40 @@ interface CycleCount {
   };
 }
 
-export default function CycleCountsPage() {
+interface CreateModalInitialValues {
+  locationId?: string;
+  countType?: string;
+  itemIds?: string[];
+}
+
+function CycleCountsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createInitialValues, setCreateInitialValues] = useState<CreateModalInitialValues | null>(null);
   const [selectedCount, setSelectedCount] = useState<CycleCount | null>(null);
 
   useEffect(() => {
     fetchCycleCounts();
   }, [filters]);
+
+  // Deep-link support: ?create=1&location=<location_id>&item=<catalog_item_id>
+  // auto-opens the create modal prefilled, then clears the params so refresh doesn't re-trigger.
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return;
+    const locationId = searchParams.get('location') || undefined;
+    const itemId = searchParams.get('item') || undefined;
+    setCreateInitialValues({
+      locationId,
+      countType: 'spot_check',
+      itemIds: itemId ? [itemId] : undefined,
+    });
+    setShowCreateModal(true);
+    router.replace('/inventory/cycle-counts', { scroll: false });
+  }, [searchParams, router]);
 
   const fetchCycleCounts = async () => {
     setLoading(true);
@@ -356,15 +381,30 @@ export default function CycleCountsPage() {
 
         {showCreateModal && (
           <CreateCycleCountModal
-            onClose={() => setShowCreateModal(false)}
+            initialLocationId={createInitialValues?.locationId}
+            initialCountType={createInitialValues?.countType}
+            initialItemIds={createInitialValues?.itemIds}
+            onClose={() => {
+              setShowCreateModal(false);
+              setCreateInitialValues(null);
+            }}
             onCreated={() => {
               setShowCreateModal(false);
+              setCreateInitialValues(null);
               fetchCycleCounts();
             }}
           />
         )}
       </div>
     </AppShell>
+  );
+}
+
+export default function CycleCountsPage() {
+  return (
+    <Suspense fallback={null}>
+      <CycleCountsPageContent />
+    </Suspense>
   );
 }
 
@@ -1134,15 +1174,21 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   );
 }
 
-function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialCountType, initialItemIds }: {
+  onClose: () => void;
+  onCreated: () => void;
+  initialLocationId?: string;
+  initialCountType?: string;
+  initialItemIds?: string[];
+}) {
   const [form, setForm] = useState({
-    location_id: '',
-    count_type: 'full',
+    location_id: initialLocationId || '',
+    count_type: initialCountType || 'full',
     is_blind: false,
     scheduled_for: '',
     include_assets: true,
     include_bulk_items: true,
-    specific_items: [] as string[],
+    specific_items: initialItemIds || ([] as string[]),
     notes: '',
   });
   const [saving, setSaving] = useState(false);
@@ -1287,6 +1333,18 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
               </button>
               <button
                 type="button"
+                onClick={() => setForm({ ...form, count_type: 'spot_check' })}
+                className={`p-4 border-2 rounded-lg text-center transition-all ${
+                  form.count_type === 'spot_check'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium">Spot Check</div>
+                <div className="text-xs text-muted-foreground mt-1">Quick check of specific items</div>
+              </button>
+              <button
+                type="button"
                 onClick={() => setForm({ ...form, count_type: 'initial' })}
                 className={`p-4 border-2 rounded-lg text-center transition-all ${
                   form.count_type === 'initial'
@@ -1299,6 +1357,25 @@ function CreateCycleCountModal({ onClose, onCreated }: { onClose: () => void; on
               </button>
             </div>
           </div>
+
+          {/* Pre-scoped Items (from deep link / suggestion) */}
+          {form.specific_items.length > 0 && (
+            <div className="flex items-start justify-between gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-sm text-blue-700">
+                <div className="font-medium">Scoped to {form.specific_items.length} specific item{form.specific_items.length === 1 ? '' : 's'}</div>
+                <p className="text-xs mt-1">
+                  Only the pre-selected item{form.specific_items.length === 1 ? '' : 's'} will be included in this count.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, specific_items: [] })}
+                className="text-xs text-blue-600 hover:text-blue-800 underline shrink-0"
+              >
+                Count all items instead
+              </button>
+            </div>
+          )}
 
           {/* Scheduled Date/Time */}
           <div>

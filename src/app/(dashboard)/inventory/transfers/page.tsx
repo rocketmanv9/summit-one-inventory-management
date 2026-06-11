@@ -2,7 +2,8 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -50,7 +51,29 @@ type CatalogItemOption = {
   tracking_mode?: string | null;
 };
 
+type CreatePrefill = {
+  fromLocationId?: string;
+  toLocationId?: string;
+  itemId?: string;
+  qty?: number;
+};
+
 export default function TransfersPage() {
+  return (
+    <Suspense fallback={
+      <AppShell>
+        <div className="py-8 text-center text-muted-foreground">Loading...</div>
+      </AppShell>
+    }>
+      <TransfersPageContent />
+    </Suspense>
+  );
+}
+
+function TransfersPageContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -62,6 +85,28 @@ export default function TransfersPage() {
   const [partialReceiveTransfer, setPartialReceiveTransfer] = useState<Transfer | null>(null);
   const [showFixMistakeModal, setShowFixMistakeModal] = useState(false);
   const [fixMistakeTransfer, setFixMistakeTransfer] = useState<Transfer | null>(null);
+  const [createPrefill, setCreatePrefill] = useState<CreatePrefill | null>(null);
+  const consumedCreateParams = useRef(false);
+
+  // Auto-open the create modal once when arriving with ?create=1 (e.g. from the
+  // Transfer Suggestions widget), then clear the params so refresh doesn't re-open it.
+  useEffect(() => {
+    if (consumedCreateParams.current) return;
+    if (searchParams.get('create') !== '1') return;
+    consumedCreateParams.current = true;
+
+    const from = searchParams.get('from') || undefined;
+    const to = searchParams.get('to') || undefined;
+    const item = searchParams.get('item') || undefined;
+    const qtyParam = searchParams.get('qty');
+    const qty = qtyParam !== null && Number.isFinite(Number(qtyParam)) && Number(qtyParam) > 0
+      ? Number(qtyParam)
+      : undefined;
+
+    setCreatePrefill({ fromLocationId: from, toLocationId: to, itemId: item, qty });
+    setShowCreateModal(true);
+    router.replace(pathname, { scroll: false });
+  }, [searchParams, router, pathname]);
 
   useEffect(() => {
     fetchTransfers();
@@ -471,9 +516,17 @@ export default function TransfersPage() {
 
         {showCreateModal && (
           <CreateTransferModal
-            onClose={() => setShowCreateModal(false)}
+            initialFromLocationId={createPrefill?.fromLocationId}
+            initialToLocationId={createPrefill?.toLocationId}
+            initialItemId={createPrefill?.itemId}
+            initialQty={createPrefill?.qty}
+            onClose={() => {
+              setShowCreateModal(false);
+              setCreatePrefill(null);
+            }}
             onCreated={() => {
               setShowCreateModal(false);
+              setCreatePrefill(null);
               fetchTransfers();
             }}
           />
@@ -1009,13 +1062,31 @@ function TransferDetailPanel({ transfer, onClose }: { transfer: Transfer; onClos
   );
 }
 
-function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateTransferModal({
+  onClose,
+  onCreated,
+  initialFromLocationId,
+  initialToLocationId,
+  initialItemId,
+  initialQty,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  initialFromLocationId?: string;
+  initialToLocationId?: string;
+  initialItemId?: string;
+  initialQty?: number;
+}) {
   const uomLabels = useUOMLabelMap();
   const [form, setForm] = useState({
-    from_location_id: '',
-    to_location_id: '',
+    from_location_id: initialFromLocationId || '',
+    to_location_id: initialToLocationId || '',
     notes: '',
-    lines: [{ catalog_item_id: '', qty: '', asset_ids: [] as string[] }],
+    lines: [{
+      catalog_item_id: initialItemId || '',
+      qty: initialQty != null ? String(initialQty) : '',
+      asset_ids: [] as string[],
+    }],
   });
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [items, setItems] = useState<Array<{
@@ -1029,6 +1100,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const prefillReconciled = useRef(!initialItemId);
 
   // Load locations on mount
   useEffect(() => {
@@ -1057,7 +1129,37 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
       setLoadingItems(true);
       try {
         const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
-        setItems((data || []) as any);
+        const loaded = ((data || []) as any[]);
+        setItems(loaded as any);
+
+        // Reconcile a prefilled item once options are loaded (e.g. opened from
+        // the Transfer Suggestions widget): clear it if it isn't stocked at the
+        // from-location, or load assets if it's serialized.
+        if (!prefillReconciled.current && initialItemId) {
+          prefillReconciled.current = true;
+          const match = loaded.find((it) => it.catalog_item_id === initialItemId);
+          if (!match) {
+            setForm((prev) => ({
+              ...prev,
+              lines: prev.lines.map((line, idx) =>
+                idx === 0 && line.catalog_item_id === initialItemId
+                  ? { ...line, catalog_item_id: '', qty: '' }
+                  : line
+              ),
+            }));
+          } else if (isSerializedMode(match.catalog_items?.tracking_mode)) {
+            // Serialized items select assets instead of a free qty
+            setForm((prev) => ({
+              ...prev,
+              lines: prev.lines.map((line, idx) =>
+                idx === 0 && line.catalog_item_id === initialItemId
+                  ? { ...line, qty: '', asset_ids: [] }
+                  : line
+              ),
+            }));
+            loadAssetsForLine(0, initialItemId);
+          }
+        }
       } catch (err) {
         console.error('[CreateTransferModal] Error loading items:', err);
         setItems([]);

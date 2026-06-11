@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
@@ -66,7 +67,11 @@ export function DeadStockWidget({ widget }: { widget: DashboardWidget }) {
       </div>
       <div className="space-y-2 max-h-48 overflow-y-auto">
         {data.map((item) => (
-          <div key={`${item.catalog_item_id}-${item.location_id}`} className="flex items-center justify-between text-sm border-b pb-1">
+          <Link
+            key={`${item.catalog_item_id}-${item.location_id}`}
+            href={`/inventory/items/${item.catalog_item_id}`}
+            className="flex items-center justify-between text-sm border-b pb-1 rounded -mx-1 px-1 hover:bg-muted/50 transition-colors"
+          >
             <div className="flex-1 min-w-0">
               <div className="font-medium truncate">{item.item_name}</div>
               <div className="text-xs text-muted-foreground">{item.sku} - {item.location_name}</div>
@@ -80,7 +85,7 @@ export function DeadStockWidget({ widget }: { widget: DashboardWidget }) {
                 {item.days_since_movement}d
               </span>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
     </div>

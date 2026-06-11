@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
@@ -59,30 +60,67 @@ export function InventoryForecastWidget({ widget }: { widget: DashboardWidget })
     { on_hand: 0, reserved: 0, available: 0, incoming: 0, demand: 0, net: 0 }
   );
 
-  const metrics = [
-    { label: 'On Hand', value: totals.on_hand, color: 'text-blue-600' },
-    { label: 'Reserved', value: totals.reserved, color: 'text-orange-600' },
-    { label: 'Available', value: totals.available, color: 'text-green-600' },
-    { label: 'Incoming POs', value: totals.incoming, color: 'text-purple-600' },
+  const metrics: Array<{ label: string; value: number; color: string; href?: string }> = [
+    { label: 'On Hand', value: totals.on_hand, color: 'text-blue-600', href: '/inventory/stock' },
+    { label: 'Reserved', value: totals.reserved, color: 'text-orange-600', href: '/inventory/reservations' },
+    { label: 'Available', value: totals.available, color: 'text-green-600', href: '/inventory/stock' },
+    { label: 'Incoming POs', value: totals.incoming, color: 'text-purple-600', href: '/inventory/purchasing' },
     { label: 'Future Demand', value: totals.demand, color: 'text-red-600' },
     { label: 'Net Position', value: totals.net, color: totals.net >= 0 ? 'text-green-600' : 'text-red-600' },
   ];
 
+  const negativeItems = data.filter(d => d.net_position < 0);
+
   return (
     <div className="p-4">
       <div className="grid grid-cols-3 gap-3">
-        {metrics.map((m) => (
-          <div key={m.label} className="text-center p-2 rounded bg-muted/30">
-            <div className="text-xs text-muted-foreground">{m.label}</div>
-            <div className={`text-lg font-semibold ${m.color}`}>
-              {Math.round(m.value).toLocaleString()}
+        {metrics.map((m) => {
+          const tile = (
+            <>
+              <div className="text-xs text-muted-foreground">{m.label}</div>
+              <div className={`text-lg font-semibold ${m.color}`}>
+                {Math.round(m.value).toLocaleString()}
+              </div>
+            </>
+          );
+          return m.href ? (
+            <Link
+              key={m.label}
+              href={m.href}
+              className="block text-center p-2 rounded bg-muted/30 hover:bg-muted/60 transition-colors"
+            >
+              {tile}
+            </Link>
+          ) : (
+            <div key={m.label} className="text-center p-2 rounded bg-muted/30">
+              {tile}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {data.filter(d => d.net_position < 0).length > 0 && (
+      {negativeItems.length > 0 && (
         <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-          {data.filter(d => d.net_position < 0).length} item(s) have negative net position
+          <div>{negativeItems.length} item(s) have negative net position:</div>
+          <ul className="mt-1 space-y-0.5">
+            {negativeItems.slice(0, 3).map((item) => (
+              <li key={item.catalog_item_id} className="flex items-center justify-between gap-2">
+                {item.catalog_item_id ? (
+                  <Link
+                    href={`/inventory/items/${item.catalog_item_id}`}
+                    className="font-medium truncate underline hover:text-red-900"
+                  >
+                    {item.item_name}
+                  </Link>
+                ) : (
+                  <span className="font-medium truncate">{item.item_name}</span>
+                )}
+                <span className="shrink-0">{Math.round(item.net_position).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+          {negativeItems.length > 3 && (
+            <div className="mt-1 text-red-600">+{negativeItems.length - 3} more</div>
+          )}
         </div>
       )}
     </div>

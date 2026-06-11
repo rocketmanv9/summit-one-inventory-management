@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
 import { Package, AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
+import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
 
 interface InventorySummary {
@@ -88,6 +89,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: Package,
       color: 'text-blue-600',
       bgColor: 'bg-blue-50',
+      href: '/inventory/items',
     },
     {
       label: 'On Hand',
@@ -95,6 +97,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: TrendingUp,
       color: 'text-green-600',
       bgColor: 'bg-green-50',
+      href: '/inventory/stock',
     },
     {
       label: 'Available',
@@ -102,6 +105,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: Package,
       color: 'text-emerald-600',
       bgColor: 'bg-emerald-50',
+      href: '/inventory/stock',
     },
     {
       label: 'Reserved',
@@ -109,6 +113,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: DollarSign,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50',
+      href: '/inventory/reservations',
     },
     {
       label: 'Low Stock',
@@ -116,6 +121,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: AlertTriangle,
       color: 'text-yellow-600',
       bgColor: 'bg-yellow-50',
+      href: '/inventory/alerts',
     },
     {
       label: 'Out of Stock',
@@ -123,6 +129,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: AlertTriangle,
       color: 'text-red-600',
       bgColor: 'bg-red-50',
+      href: '/inventory/stock',
     },
   ];
 
@@ -140,9 +147,10 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
           {metrics.map((metric, index) => {
             const Icon = metric.icon;
             return (
-              <div
+              <Link
                 key={index}
-                className="p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all"
+                href={metric.href}
+                className="block p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-gray-600">
@@ -155,19 +163,22 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
                 <div className={`text-2xl font-bold ${metric.color}`}>
                   {metric.value}
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
 
         {/* Additional Info */}
         <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="flex items-center justify-between text-sm">
+          <Link
+            href="/inventory/locations"
+            className="flex items-center justify-between text-sm rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50 transition-colors"
+          >
             <span className="text-gray-600">Active Locations</span>
             <span className="font-semibold text-gray-900">
               {summary.total_locations}
             </span>
-          </div>
+          </Link>
         </div>
       </div>
 

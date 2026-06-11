@@ -1,11 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
 
 export function TransferSuggestions({ widget }: { widget: DashboardWidget }) {
+  const router = useRouter();
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +63,16 @@ export function TransferSuggestions({ widget }: { widget: DashboardWidget }) {
       {data.map((item, idx) => (
         <div key={idx} className="text-sm border-b pb-2">
           <div className="flex items-center justify-between">
-            <span className="font-medium truncate">{item.item_name}</span>
+            {item.catalog_item_id ? (
+              <Link
+                href={`/inventory/items/${item.catalog_item_id}`}
+                className="font-medium truncate hover:underline"
+              >
+                {item.item_name}
+              </Link>
+            ) : (
+              <span className="font-medium truncate">{item.item_name}</span>
+            )}
             <span className="text-xs text-muted-foreground ml-2 shrink-0">{item.sku}</span>
           </div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
@@ -76,8 +88,15 @@ export function TransferSuggestions({ widget }: { widget: DashboardWidget }) {
             </span>
             <button
               onClick={() => {
-                // Navigate to create transfer page with pre-filled data
-                window.location.href = `/inventory/transfers?from=${item.from_location_id}&to=${item.to_location_id}`;
+                // Open the create transfer modal with pre-filled data
+                const params = new URLSearchParams({
+                  create: '1',
+                  from: item.from_location_id,
+                  to: item.to_location_id,
+                  item: item.catalog_item_id,
+                  qty: String(Math.round(item.suggested_qty)),
+                });
+                router.push(`/inventory/transfers?${params.toString()}`);
               }}
               className="px-2 py-0.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
             >

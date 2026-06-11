@@ -1,11 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
 
 export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
+  const router = useRouter();
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +67,16 @@ export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold">
                 {item.priority_score}
               </span>
-              <span className="font-medium truncate">{item.item_name}</span>
+              {item.catalog_item_id ? (
+                <Link
+                  href={`/inventory/items/${item.catalog_item_id}`}
+                  className="font-medium truncate hover:text-primary hover:underline"
+                >
+                  {item.item_name}
+                </Link>
+              ) : (
+                <span className="font-medium truncate">{item.item_name}</span>
+              )}
             </div>
             <div className="text-xs text-muted-foreground mt-0.5 ml-8">
               {item.sku} | {item.location_name}
@@ -80,10 +92,25 @@ export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
               </div>
             )}
           </div>
-          <div className="text-right ml-2 shrink-0 text-xs text-muted-foreground">
-            {item.days_since_last_count < 999
-              ? `${item.days_since_last_count}d ago`
-              : 'Never counted'}
+          <div className="flex flex-col items-end gap-1 ml-2 shrink-0">
+            <div className="text-xs text-muted-foreground">
+              {item.days_since_last_count < 999
+                ? `${item.days_since_last_count}d ago`
+                : 'Never counted'}
+            </div>
+            {item.location_id && (
+              <button
+                type="button"
+                onClick={() => {
+                  const params = new URLSearchParams({ create: '1', location: item.location_id });
+                  if (item.catalog_item_id) params.set('item', item.catalog_item_id);
+                  router.push(`/inventory/cycle-counts?${params.toString()}`);
+                }}
+                className="px-2 py-0.5 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/10 transition-colors"
+              >
+                Count
+              </button>
+            )}
           </div>
         </div>
       ))}

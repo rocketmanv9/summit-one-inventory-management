@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
@@ -79,7 +80,11 @@ export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
                 : 'bg-green-500';
 
           return (
-            <div key={loc.location_id} className="space-y-1">
+            <Link
+              key={loc.location_id}
+              href={`/inventory/locations/${loc.location_id}`}
+              className="block space-y-1 rounded -mx-1 px-1 py-0.5 hover:bg-muted/50 transition-colors"
+            >
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium truncate">{loc.location_name}</span>
                 <span className="text-xs text-muted-foreground ml-2 shrink-0">
@@ -93,7 +98,7 @@ export function LocationCapacity({ widget }: { widget: DashboardWidget }) {
                 />
               </div>
               <div className="text-xs text-right text-muted-foreground">{pct}%</div>
-            </div>
+            </Link>
           );
         })}
       </div>
