@@ -17,6 +17,7 @@ import { updatePurchaseOrderStatus, deletePurchaseOrder, updatePurchaseOrder } f
 import { PlaceOrderModal } from '@/components/modals/PlaceOrderModal';
 import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
 import { ReceivePOModal } from '@/components/modals/ReceivePOModal';
+import { ReceiveMobileQRDialog } from '@/components/mobile/ReceiveMobileQRDialog';
 import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import { MySpendCard } from '@/components/spend/MySpendCard';
@@ -71,6 +72,8 @@ export default function PurchasingPage() {
   // Send-confirm modal target (PO id) and receive-materials modal target.
   const [sendPoId, setSendPoId] = useState<string | null>(null);
   const [receivePO, setReceivePO] = useState<PurchaseOrder | null>(null);
+  // QR modal for tokenized mobile receiving (tenant-wide, not tied to one PO).
+  const [showReceiveQR, setShowReceiveQR] = useState(false);
   // "Create & Send" hands off here; once the new row loads we route it through
   // the vendor-aware send path (email vs. integration punchout).
   const [pendingSendPoId, setPendingSendPoId] = useState<string | null>(null);
@@ -383,12 +386,20 @@ export default function PurchasingPage() {
           title="Purchase Orders"
           description="Manage purchase orders and track vendor deliveries. Example: Create a PO for 500 tons of asphalt from Acme Materials, track delivery status, and receive partial shipments as they arrive at your yard."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Create PO
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowReceiveQR(true)}
+                className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
+              >
+                Receive on Phone
+              </button>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Create PO
+              </button>
+            </div>
           }
         />
 
@@ -516,6 +527,12 @@ export default function PurchasingPage() {
           onSent={() => {
             if (sendPoId) markPoSent(sendPoId);
           }}
+        />
+
+        {/* QR for phone receiving — tenant-wide session covering all open POs. */}
+        <ReceiveMobileQRDialog
+          isOpen={showReceiveQR}
+          onClose={() => setShowReceiveQR(false)}
         />
 
         <ReceivePOModal
