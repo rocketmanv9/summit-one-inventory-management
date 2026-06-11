@@ -3,6 +3,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
@@ -621,9 +622,12 @@ function PODetailPanel({
 
     refetch();
 
-    // Stop polling once the order can no longer be re-confirmed/repriced.
-    const terminal = ['fully_received', 'closed', 'cancelled', 'voided'];
-    if (terminal.includes(po.status)) return () => { alive = false; };
+    // Poll only while the order is still in a confirmable window — the
+    // pre-receipt buckets (draft, sent). Once the PO is received (even
+    // partially) or cancelled, Amazon can no longer re-confirm/reprice it,
+    // so the single refetch on open above is enough.
+    const bucket = poBucket(po.status);
+    if (bucket !== 'draft' && bucket !== 'sent') return () => { alive = false; };
     const timer = setInterval(refetch, 15000);
     return () => {
       alive = false;
@@ -1071,7 +1075,10 @@ function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newV
 
               {form.vendor_id && !useFreetextLines && vendorItems.length === 0 && (
                 <p className="text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded p-2">
-                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or map items on the Vendor Items page.
+                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or{' '}
+                  <Link href="/inventory/vendor-items" className="font-medium underline hover:text-blue-700">
+                    Map items for this vendor →
+                  </Link>
                 </p>
               )}
 
@@ -1464,7 +1471,10 @@ function EditPOModal({ po, onClose, onUpdated, onAddVendor, newVendorId }: { po:
 
               {form.vendor_id && !useFreetextLines && vendorItems.length === 0 && (
                 <p className="text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded p-2">
-                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or map items on the Vendor Items page.
+                  No catalog items mapped to this vendor. Use &quot;free-text items&quot; to add items by description, or{' '}
+                  <Link href="/inventory/vendor-items" className="font-medium underline hover:text-blue-700">
+                    Map items for this vendor →
+                  </Link>
                 </p>
               )}
 

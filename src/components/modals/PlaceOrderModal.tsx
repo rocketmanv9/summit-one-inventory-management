@@ -81,6 +81,10 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
   }>>([]);
   const [punchoutTotal, setPunchoutTotal] = useState(0);
   const [userEmail, setUserEmail] = useState('');
+  // Inline validation for the punchout email — the button stays enabled so a
+  // click without an email gives feedback instead of silently doing nothing.
+  const [emailError, setEmailError] = useState('');
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadGuidance = useCallback(async () => {
@@ -175,6 +179,15 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
   }, []);
 
   const startPunchout = useCallback(async () => {
+    // Validate the session email BEFORE opening the Amazon tab — and keep this
+    // synchronous so the window.open below stays inside the click gesture.
+    const email = userEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailError('Enter your email to start the punchout session');
+      emailInputRef.current?.focus();
+      return;
+    }
+    setEmailError('');
     setIsLoading(true);
     // Open the Amazon tab synchronously inside the click gesture. If we wait until
     // after the awaited fetch below, the browser no longer treats it as user-initiated
@@ -227,7 +240,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
           'X-Idempotency-Key': crypto.randomUUID(),
         },
         body: JSON.stringify({
-          user_email: userEmail,
+          user_email: email,
           location_id: locationId,
           catalog_items: catalogItems,
         }),
@@ -319,9 +332,18 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         throw new Error(err.error?.message || err.error || 'Failed to submit order');
       }
 
-      toast.success('Order submitted to Amazon', {
-        description: 'PO has been marked as placed'
-      });
+      // The Amazon order can succeed while the PO-status update fails — the
+      // route reports that as a warning rather than an error. Surface it so
+      // the user knows to verify instead of trusting a stale 'draft' row.
+      const result = await resp.json().catch(() => null);
+      const warning = result?.data?.warning;
+      if (warning) {
+        toast.warning('Order submitted to Amazon', { description: warning });
+      } else {
+        toast.success('Order submitted to Amazon', {
+          description: 'PO has been marked as placed'
+        });
+      }
 
       onSuccess?.();
       onClose();
@@ -725,15 +747,23 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
                     <Input
                       id="user_email"
                       type="email"
+                      ref={emailInputRef}
                       value={userEmail}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserEmail(e.target.value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        setUserEmail(e.target.value);
+                        if (emailError) setEmailError('');
+                      }}
                       placeholder="you@company.com"
+                      aria-invalid={!!emailError}
                     />
+                    {emailError && (
+                      <p className="text-xs text-red-600">{emailError}</p>
+                    )}
                   </div>
 
                   <Button
                     onClick={startPunchout}
-                    disabled={isLoading || !userEmail}
+                    disabled={isLoading}
                     className="w-full"
                   >
                     {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

@@ -174,14 +174,18 @@ export function SendPOEmailModal({ open, poId, onClose, onSent }: SendPOEmailMod
               </div>
             )}
 
+            {!preview.has_recipient && (
+              <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
+                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                <span><strong>{preview.vendor_name}</strong> has no email on file — enter one below (and add it to the vendor later).</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium mb-1">To (vendor email) *</label>
               <input type="email" value={recipient} onChange={(e) => setRecipient(e.target.value)}
                 placeholder="vendor@example.com"
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm" />
-              {!preview.has_recipient && (
-                <p className="text-xs text-amber-700 mt-1">{preview.vendor_name} has no email on file — enter one (and add it to the vendor later).</p>
-              )}
             </div>
 
             <div>

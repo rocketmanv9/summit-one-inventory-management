@@ -301,6 +301,11 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
         status_code: parsedResponse.statusCode,
         status_text: parsedResponse.statusText,
       },
+      // The Amazon order itself succeeded, but surfacing a failed PO-status
+      // update lets the user verify instead of trusting a stale 'draft' row.
+      warning: poId && !poMarkedOrdered
+        ? 'Order placed with Amazon, but the PO status could not be updated — refresh and verify.'
+        : null,
     },
     status: 200,
     events: [

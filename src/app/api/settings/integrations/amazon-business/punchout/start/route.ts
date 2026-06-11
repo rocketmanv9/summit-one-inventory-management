@@ -144,6 +144,12 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   // secret in the URL (same mechanism the mobile-count QR links use) so Amazon's
   // POST clears protection. Without this the punchout return silently never lands.
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (!bypass) {
+    log.warn('amazon.punchout.no_bypass_token', {
+      message:
+        'punchout return URL has no protection-bypass token; Amazon return POST may be blocked by deployment protection',
+    });
+  }
   const browserFormPostUrl =
     `${proto}://${host}/api/webhooks/amazon-business/punchout-return` +
     (bypass ? `?x-vercel-protection-bypass=${bypass}&x-vercel-set-bypass-cookie=true` : '');
