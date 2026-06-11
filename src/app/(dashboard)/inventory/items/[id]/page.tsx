@@ -25,6 +25,7 @@ import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
+import { ItemAmazonMapping } from '@/components/items/ItemAmazonMapping';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
@@ -479,6 +480,9 @@ export default function ItemDetailPage() {
             disabled={linksSaving}
           />
         </div>
+
+        {/* Amazon ordering link for this item */}
+        <ItemAmazonMapping catalogItemId={params.id} />
 
         {/* Scanner overlay */}
         <BarcodeScannerOverlay

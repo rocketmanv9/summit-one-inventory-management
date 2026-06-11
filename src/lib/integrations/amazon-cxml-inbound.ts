@@ -88,8 +88,19 @@ export interface ParsedConfirmation {
   confirmationType: string | null;
   /** Amazon's own order id, when present on a DocumentReference. */
   amazonOrderId: string | null;
-  /** Per-line confirmation statuses. */
+  /** Per-line confirmation statuses (lineNumber + Amazon's confirmed quantity). */
   items: Array<{ lineNumber: number; quantity: number; status: string }>;
+  /** Authoritative header money (Amazon's actual numbers), when present. */
+  itemsTotal: number | null; // <Total> — goods subtotal Amazon will charge
+  shipping: number | null;
+  tax: number | null;
+}
+
+/** First <Money> inside a named child element of a block (header-scoped). */
+function moneyIn(block: string, tag: string): number | null {
+  const m = block.match(new RegExp(`<${tag}\\b[^>]*>\\s*<Money\\b[^>]*>([\\d.]+)<\\/Money>`, 'i'));
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isFinite(n) ? n : null;
 }
 
 export function parseConfirmationRequest(xml: string): ParsedConfirmation {
@@ -101,18 +112,28 @@ export function parseConfirmationRequest(xml: string): ParsedConfirmation {
     xml.match(/<OrderReference[^>]*>[\s\S]*?<DocumentReference[^>]*payloadID="([^"]+)"/i)?.[1]?.trim() ??
     null;
 
+  // Header money (Total/Shipping/Tax) — scope to the ConfirmationHeader so we
+  // don't pick up the nested per-line Shipping/Tax elements.
+  const headerBlock = xml.match(/<ConfirmationHeader\b[\s\S]*?<\/ConfirmationHeader>/i)?.[0] ?? '';
+  const itemsTotal = moneyIn(headerBlock, 'Total');
+  const shipping = moneyIn(headerBlock, 'Shipping');
+  const tax = moneyIn(headerBlock, 'Tax');
+
+  // Per-line confirmed quantities live on <ConfirmationItem lineNumber=".." quantity="..">,
+  // with the status on the nested <ConfirmationStatus type="..">.
   const items: ParsedConfirmation['items'] = [];
-  const itemPattern = /<ConfirmationStatus\b([^>]*)\/?>/gi;
+  const itemPattern = /<ConfirmationItem\b([^>]*)>([\s\S]*?)<\/ConfirmationItem>/gi;
   let m: RegExpExecArray | null;
   while ((m = itemPattern.exec(xml)) !== null) {
     const attrs = m[1];
+    const body = m[2];
     const qty = parseInt(attrs.match(/quantity="([^"]+)"/i)?.[1] ?? '0', 10);
-    const status = attrs.match(/\btype="([^"]+)"/i)?.[1]?.trim() ?? 'unknown';
     const line = parseInt(attrs.match(/lineNumber="([^"]+)"/i)?.[1] ?? '0', 10);
+    const status = body.match(/<ConfirmationStatus\b[^>]*\btype="([^"]+)"/i)?.[1]?.trim() ?? 'detail';
     items.push({ lineNumber: isNaN(line) ? 0 : line, quantity: isNaN(qty) ? 0 : qty, status });
   }
 
-  return { orderId, confirmationType, amazonOrderId, items };
+  return { orderId, confirmationType, amazonOrderId, items, itemsTotal, shipping, tax };
 }
 
 // ── ShipNoticeRequest parser (Ship Notification / ASN) ────────────────────

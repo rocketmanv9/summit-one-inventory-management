@@ -76,6 +76,54 @@ export async function POST(req: NextRequest) {
         .eq('id', po.id);
     }
 
+    // 4b. Reconcile PO lines to what Amazon actually confirmed — corrected
+    //     quantities (per ConfirmationItem) and a reprice so the line totals sum
+    //     to Amazon's authoritative goods <Total> (not our pre-order estimate).
+    //     Idempotent: the reprice only runs when totals disagree, so a repeated
+    //     confirmation is a no-op.
+    if (!isRejected && conf.itemsTotal != null && conf.itemsTotal > 0) {
+      const { data: lines } = await sc
+        .from('purchase_order_lines')
+        .select('id, line_number, qty_ordered, unit_cost, estimated_unit_cost')
+        .eq('tenant_id', tenantId)
+        .eq('po_id', po.id);
+
+      const rows = (lines ?? []) as any[];
+      if (rows.length) {
+        const qtyByLine = new Map(
+          (conf.items || [])
+            .filter((i) => i.lineNumber > 0 && i.quantity > 0)
+            .map((i) => [i.lineNumber, i.quantity]),
+        );
+        for (const ln of rows) {
+          const cq = qtyByLine.get(ln.line_number);
+          if (cq != null && Number(ln.qty_ordered) !== cq) {
+            ln.qty_ordered = cq;
+            await sc.from('purchase_order_lines').update({ qty_ordered: cq }).eq('id', ln.id);
+          }
+        }
+        const ext = (l: any) => Number(l.qty_ordered) * Number(l.unit_cost ?? l.estimated_unit_cost ?? 0);
+        const current = rows.reduce((s, l) => s + ext(l), 0);
+        if (Math.abs(current - conf.itemsTotal) > 0.01) {
+          if (current > 0) {
+            const scale = conf.itemsTotal / current;
+            for (const ln of rows) {
+              const base = Number(ln.unit_cost ?? ln.estimated_unit_cost ?? 0);
+              await sc.from('purchase_order_lines')
+                .update({ unit_cost: Math.round(base * scale * 10000) / 10000 })
+                .eq('id', ln.id);
+            }
+          } else {
+            const totalQty = rows.reduce((s, l) => s + Number(l.qty_ordered), 0) || 1;
+            const even = Math.round((conf.itemsTotal / totalQty) * 10000) / 10000;
+            for (const ln of rows) {
+              await sc.from('purchase_order_lines').update({ unit_cost: even }).eq('id', ln.id);
+            }
+          }
+        }
+      }
+    }
+
     // 5. Record the confirmation detail on the linked punchout order (if any).
     const { data: order } = await inv
       .from('punchout_orders')
@@ -98,6 +146,9 @@ export async function POST(req: NextRequest) {
               rejected: isRejected,
               amazon_order_id: conf.amazonOrderId,
               items: conf.items,
+              items_total: conf.itemsTotal,
+              shipping: conf.shipping,
+              tax: conf.tax,
               received_at: new Date().toISOString(),
               raw: xml.slice(0, 20000),
             },

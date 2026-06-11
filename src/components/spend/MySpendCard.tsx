@@ -23,6 +23,7 @@ interface MySpend {
   per_po_limit: number | null;
   per_po_limit_source: 'you' | 'position' | 'company' | null;
   budget: Budget | null;
+  month_spend: number;
 }
 
 const usd = (n: number | null | undefined) =>
@@ -103,9 +104,13 @@ export function MySpendCard({ compact = false }: { compact?: boolean }) {
           </div>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          No recurring budget set — you have no periodic spending cap.
-        </p>
+        <div>
+          <div className="flex items-end justify-between mb-1">
+            <span className="text-2xl font-semibold">{usd(data.month_spend)}</span>
+            <span className="text-xs text-muted-foreground">spent this month</span>
+          </div>
+          <p className="text-xs text-muted-foreground">No recurring budget cap set.</p>
+        </div>
       )}
 
       {/* Per-PO approval cap */}

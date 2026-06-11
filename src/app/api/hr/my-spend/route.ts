@@ -77,6 +77,17 @@ export const GET = createSessionReadRoute(async ({ session }) => {
       }
     : null;
 
+  // Month-to-date spend so users without a recurring budget still see a number.
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const monthStart = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-01`;
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const monthEnd = `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-01`;
+  const { data: ms } = await supabase
+    .schema('supply_chain')
+    .rpc('user_period_spend', { p_tenant: tenantId, p_user: userId, p_start: monthStart, p_end: monthEnd });
+  const monthSpend = num(ms) ?? 0;
+
   return Response.json({
     data: {
       name: me?.name ?? null,
@@ -84,6 +95,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
       per_po_limit: perPoLimit,
       per_po_limit_source: perPoSource,
       budget,
+      month_spend: monthSpend,
     },
   });
 }, { serviceName: SERVICE_NAME });
