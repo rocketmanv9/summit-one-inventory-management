@@ -146,21 +146,33 @@ export async function loadPOContext(
   let shipToName: string | null = null;
   let shipToAddress: string | null = null;
   if (po.delivery_location_id) {
-    const { data: loc } = await inv
+    // NOTE: the structured columns are address_line_1 / address_line_2 (underscore
+    // before the digit). An earlier select used address_line1 / address_line2,
+    // which made PostgREST reject the whole query — silently blanking the entire
+    // Ship-To block (name included) on every PO PDF and email.
+    const { data: loc, error: locErr } = await inv
       .from('locations')
-      .select('name, address_line1, address_line2, city, state, postal_code')
+      .select('name, address_line_1, address_line_2, city, state, postal_code, shipping_address, address')
       .eq('id', po.delivery_location_id)
       .limit(1)
       .maybeSingle();
+    if (locErr) {
+      // Don't kill the PO over a ship-to lookup, but make the failure visible.
+      console.error('loadPOContext: ship-to location lookup failed', locErr.message);
+    }
     if (loc) {
       shipToName = loc.name ?? null;
-      shipToAddress = formatAddress({
-        street1: loc.address_line1,
-        street2: loc.address_line2,
-        city: loc.city,
-        state: loc.state,
-        zip: loc.postal_code,
-      });
+      shipToAddress =
+        formatAddress({
+          street1: loc.address_line_1,
+          street2: loc.address_line_2,
+          city: loc.city,
+          state: loc.state,
+          zip: loc.postal_code,
+        }) ||
+        // Fall back to the free-text shipping/address fields if the structured
+        // ones aren't populated for this location.
+        (loc.shipping_address?.trim() || loc.address?.trim() || null);
     }
   }
 
