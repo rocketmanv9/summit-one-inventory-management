@@ -19,6 +19,7 @@ import { ReceivePOModal } from '@/components/modals/ReceivePOModal';
 import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import { MySpendCard } from '@/components/spend/MySpendCard';
+import { useSession } from '@/hooks/useSession';
 import {
   poBucket,
   poStatusChipLabel,
@@ -123,10 +124,16 @@ export default function PurchasingPage() {
     }
   };
 
+  const { session: meSession } = useSession();
+  const currentUserId = meSession?.userId;
+
   // Cancelled/voided POs are hidden from the active list unless explicitly filtered.
   const bucketFilter = (filters.status || '') as PoBucket | '';
+  const buyerFilter = filters.buyer || '';
   const displayedOrders = orders.filter((o) => {
     const bucket = poBucket(o.status);
+    const createdBy = (o as PurchaseOrder & { created_by_user_id?: string | null }).created_by_user_id;
+    if (buyerFilter === 'mine' && createdBy !== currentUserId) return false;
     if (bucketFilter) return bucket === bucketFilter;
     return bucket !== 'cancelled';
   });
@@ -356,6 +363,14 @@ export default function PurchasingPage() {
         { value: 'partially_received', label: 'Partially Received' },
         { value: 'received', label: 'Received' },
         { value: 'cancelled', label: 'Cancelled' },
+      ],
+    },
+    {
+      key: 'buyer',
+      label: 'Buyer',
+      type: 'select' as const,
+      options: [
+        { value: 'mine', label: 'Created by me' },
       ],
     },
   ];
