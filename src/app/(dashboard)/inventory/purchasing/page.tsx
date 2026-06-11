@@ -18,6 +18,7 @@ import { SendPOEmailModal } from '@/components/modals/SendPOEmailModal';
 import { ReceivePOModal } from '@/components/modals/ReceivePOModal';
 import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
+import { MySpendCard } from '@/components/spend/MySpendCard';
 import {
   poBucket,
   poStatusChipLabel,
@@ -374,6 +375,10 @@ export default function PurchasingPage() {
             </button>
           }
         />
+
+        <div className="max-w-md">
+          <MySpendCard />
+        </div>
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">

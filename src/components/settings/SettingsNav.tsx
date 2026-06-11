@@ -7,6 +7,7 @@ import { useSession } from '@/hooks/useSession';
 
 const SETTINGS_TABS = [
   { label: 'General', href: '/settings' },
+  { label: 'My Spending', href: '/settings/my-spending' },
   { label: 'People & Limits', href: '/settings/people' },
   { label: 'Branding', href: '/settings/branding' },
   { label: 'Device Management', href: '/settings/device-management' },
