@@ -26,6 +26,8 @@ const DATE_MIN_CONFIDENCE = 0.7;
 const EMAIL_SETTABLE_STATUS = new Set(['acknowledged', 'cancelled']);
 const ACK_FROM = new Set(['placed', 'approved']);
 const TERMINAL = new Set(['fully_received', 'closed', 'cancelled']);
+/** States a tracking number must never pull back to in_transit (mirrors the Amazon ship-notice webhook). */
+const TRANSIT_LOCKED = new Set(['partially_received', 'fully_received', 'received', 'closed', 'cancelled', 'voided', 'in_transit']);
 
 export interface POSnapshot {
   id: string;
@@ -71,7 +73,12 @@ function planAction(action: ReplyAction, po: POSnapshot): PlannedAction {
     changes.external_order_number = action.external_order_number;
     applyable.external_order_number = action.external_order_number;
   }
-  if (action.tracking_number) changes.tracking_number = action.tracking_number; // display only
+  if (action.tracking_number) {
+    // Stored as a supply_chain.po_shipments row so the globe map can draw
+    // the in-transit package, mirroring the Amazon ship-notice webhook.
+    changes.tracking_number = action.tracking_number;
+    applyable.tracking_number = action.tracking_number;
+  }
   if (action.items?.length) changes.items = action.items; // display only
 
   // Status transitions.
@@ -142,6 +149,37 @@ export async function applyChangesToPO(
     } else if (changes.status === 'cancelled' && !TERMINAL.has(po.status)) {
       update.status = 'cancelled';
       labels.push('status → cancelled');
+    }
+  }
+
+  // A tracking number means the order shipped: record the shipment (feeds the
+  // globe map) and advance the PO to in_transit unless a later state is locked
+  // in — the same behavior as the Amazon ship-notice webhook.
+  if (typeof changes.tracking_number === 'string' && changes.tracking_number.trim()) {
+    const trackingNumber = changes.tracking_number.trim();
+    const deliveryDate =
+      (typeof changes.expected_delivery_date === 'string' && changes.expected_delivery_date) ||
+      po.expected_delivery_date ||
+      null;
+
+    const { error: shipErr } = await sc(admin)
+      .from('po_shipments')
+      .upsert({
+        tenant_id: tenantId,
+        purchase_order_id: po.id,
+        tracking_number: trackingNumber,
+        ship_date: new Date().toISOString(),
+        delivery_date: deliveryDate,
+        source: 'email',
+        last_event_id: `email_ship_${po.id}_${trackingNumber}`,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'tenant_id,purchase_order_id,tracking_number' });
+    if (shipErr) throw AppError.internal(`Failed to record shipment: ${shipErr.message}`);
+    labels.push(`tracking # ${trackingNumber}`);
+
+    if (!TRANSIT_LOCKED.has((po.status || '').toLowerCase()) && update.status !== 'cancelled') {
+      update.status = 'in_transit';
+      labels.push('status → in transit');
     }
   }
 

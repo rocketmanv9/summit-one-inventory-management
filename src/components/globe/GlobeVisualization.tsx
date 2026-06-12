@@ -326,9 +326,45 @@ export function GlobeVisualization({
       for (const po of data.purchaseOrders) {
         const vendor = vendorMap.get(po.vendor_id);
         const location = po.delivery_location_id ? locationMap.get(po.delivery_location_id) : null;
-        if (!vendor || !location) continue;
+        if (!location) continue;
 
         const inTransit = po.status === 'in_transit';
+
+        // Vendors with no geocode (e.g. Amazon Business has no street address)
+        // can't anchor an arc — show their in-transit packages as a marker
+        // hovering just above the delivery location instead.
+        if (!vendor) {
+          if (!inTransit) continue;
+          const shipment = po.shipments?.length ? po.shipments[po.shipments.length - 1] : null;
+          const etaSource = shipment?.delivery_date || po.expected_delivery_date;
+          const eta = etaSource
+            ? new Date(etaSource).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : null;
+
+          lookup.set(po.id, {
+            id: po.id,
+            startLat: location.latitude,
+            startLng: location.longitude,
+            endLat: location.latitude,
+            endLng: location.longitude,
+            type: 'po',
+            status: po.status,
+            data: po,
+          });
+          shipmentFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [location.longitude, location.latitude + 0.012] },
+            properties: {
+              id: po.id,
+              shipmentPo: true,
+              poNumber: po.po_number,
+              carrier: shipment?.carrier || 'Carrier',
+              tracking: shipment?.tracking_number || '',
+              etaLabel: eta ? `arrives ${eta}` : 'in transit',
+            },
+          });
+          continue;
+        }
 
         const arc: GlobeArc = {
           id: po.id,

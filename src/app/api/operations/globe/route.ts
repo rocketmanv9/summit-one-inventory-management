@@ -114,28 +114,46 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     }
     purchaseOrders = poData || [];
 
-    // Attach Amazon shipment tracking (carrier / tracking # / ETA from the
-    // ship-notice webhook) so in-transit packages can be drawn on the map.
+    // Attach shipment tracking so in-transit packages can be drawn on the
+    // map: Amazon ship-notice data lives in punchout_orders.metadata, and
+    // email-AI-extracted tracking for everyone else lives in po_shipments.
     if (purchaseOrders.length > 0) {
-      const { data: punchouts, error: punchErr } = await inv
-        .from('punchout_orders')
-        .select('purchase_order_id, metadata')
-        .in('purchase_order_id', purchaseOrders.map((po: any) => po.id))
-        .limit(500);
+      const poIds = purchaseOrders.map((po: any) => po.id);
+      const [punchRes, shipRes] = await Promise.all([
+        inv
+          .from('punchout_orders')
+          .select('purchase_order_id, metadata')
+          .in('purchase_order_id', poIds)
+          .limit(500),
+        sc
+          .from('po_shipments')
+          .select('purchase_order_id, carrier, tracking_number, ship_date, delivery_date')
+          .in('purchase_order_id', poIds)
+          .limit(500),
+      ]);
 
-      if (punchErr) {
+      if (punchRes.error || shipRes.error) {
         // Tracking is enrichment — log and continue rather than failing the map
-        log.warn('globe.shipments_failed', { error: punchErr.message });
+        log.warn('globe.shipments_failed', {
+          error: punchRes.error?.message || shipRes.error?.message,
+        });
       } else {
         const shipmentsByPo = new Map<string, any[]>();
-        for (const p of punchouts || []) {
-          const shipments = Array.isArray(p.metadata?.shipments) ? p.metadata.shipments : [];
+        const add = (poId: string, shipments: any[]) => {
           if (shipments.length > 0) {
-            shipmentsByPo.set(p.purchase_order_id, [
-              ...(shipmentsByPo.get(p.purchase_order_id) || []),
-              ...shipments,
-            ]);
+            shipmentsByPo.set(poId, [...(shipmentsByPo.get(poId) || []), ...shipments]);
           }
+        };
+        for (const p of punchRes.data || []) {
+          add(p.purchase_order_id, Array.isArray(p.metadata?.shipments) ? p.metadata.shipments : []);
+        }
+        for (const s of shipRes.data || []) {
+          add(s.purchase_order_id, [{
+            carrier: s.carrier,
+            tracking_number: s.tracking_number,
+            ship_date: s.ship_date,
+            delivery_date: s.delivery_date,
+          }]);
         }
         purchaseOrders = purchaseOrders.map((po: any) => ({
           ...po,
