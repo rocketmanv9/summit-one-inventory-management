@@ -11,7 +11,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
@@ -76,6 +76,32 @@ export default function ItemsPage() {
   const [imageRefreshKey, setImageRefreshKey] = useState(0);
   const itemIds = items.map(i => i.id);
   const { imageMap } = useEntityImages('catalog_item', itemIds, imageRefreshKey);
+
+  // Location filter: list of locations + the item-ids present at the chosen one.
+  const [locationOptions, setLocationOptions] = useState<{ value: string; label: string }[]>([]);
+  const [locationItemIds, setLocationItemIds] = useState<Set<string> | null>(null);
+  const [labelDialog, setLabelDialog] = useState<BarcodeLabelItem[] | null>(null);
+
+  useEffect(() => {
+    InventoryRPC.getLocations()
+      .then((locs) => setLocationOptions((locs || []).map((l: any) => ({ value: l.id, label: l.name }))))
+      .catch((err) => console.error('Error loading locations:', err));
+  }, []);
+
+  // When a location is picked, pull its snapshot and keep the set of item-ids
+  // there so we can filter the catalog to "what's at this location".
+  useEffect(() => {
+    const locId = filters.location_id;
+    if (!locId) { setLocationItemIds(null); return; }
+    let cancelled = false;
+    InventoryRPC.getLocationInventorySnapshot(locId)
+      .then((snap) => {
+        if (cancelled) return;
+        setLocationItemIds(new Set((snap.items || []).map((i: any) => i.item_id)));
+      })
+      .catch((err) => { if (!cancelled) { console.error('Error loading location items:', err); setLocationItemIds(new Set()); } });
+    return () => { cancelled = true; };
+  }, [filters.location_id]);
 
   useEffect(() => {
     fetchItems();
@@ -294,6 +320,12 @@ export default function ItemsPage() {
         { value: 'both', label: 'Both' },
       ],
     },
+    {
+      key: 'location_id',
+      label: 'At Location',
+      type: 'select' as const,
+      options: locationOptions,
+    },
   ];
 
   const filteredItems = items.filter((item) => {
@@ -306,8 +338,23 @@ export default function ItemsPage() {
     if (filters.tracking_mode && item.tracking_mode !== filters.tracking_mode) {
       return false;
     }
+    // Location filter: only items present at the selected location.
+    if (filters.location_id && locationItemIds && !locationItemIds.has(item.id)) {
+      return false;
+    }
     return true;
   });
+
+  const printFilteredLabels = () => {
+    const labels: BarcodeLabelItem[] = filteredItems
+      .filter((i) => (i as any).barcode || i.sku)
+      .map((i) => ({ code: ((i as any).barcode || i.sku) as string, label: i.name }));
+    if (labels.length === 0) {
+      alert('No items with a barcode/SKU in the current view.');
+      return;
+    }
+    setLabelDialog(labels);
+  };
 
   return (
     <AppShell>
@@ -317,6 +364,13 @@ export default function ItemsPage() {
           description="Manage your inventory catalog. Example: Define items like 'Hot Mix Asphalt (HMA)', 'Ready-Mix Concrete 3000 PSI', 'Rebar #4', 'Aggregate Base', or 'Diesel Fuel' - each with SKUs, units (tons, yards, gallons), and categories."
           actions={
             <div className="flex gap-3">
+              <button
+                onClick={printFilteredLabels}
+                className="px-4 py-2 border border-blue-300 text-blue-700 rounded-md hover:bg-blue-50 transition-colors flex items-center gap-2"
+                title="Print labels for the items currently shown"
+              >
+                🏷️ Print Labels ({filteredItems.length})
+              </button>
               <button
                 onClick={() => setScannerOpen(true)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-2"
@@ -348,6 +402,20 @@ export default function ItemsPage() {
           onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
           onClear={() => setFilters({})}
         />
+
+        {filters.location_id && locationItemIds && (
+          <div className="text-sm text-muted-foreground -mt-2">
+            Showing {filteredItems.length} item{filteredItems.length === 1 ? '' : 's'} at the selected location.
+          </div>
+        )}
+
+        {labelDialog && (
+          <BarcodeLabelDialog
+            items={labelDialog}
+            entityType="item"
+            onClose={() => setLabelDialog(null)}
+          />
+        )}
 
         <DataTable
           data={filteredItems}

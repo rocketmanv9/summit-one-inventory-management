@@ -80,20 +80,31 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
           /* Print ONLY the labels: hide the whole app, reveal the overlay. */
           body * { visibility: hidden !important; }
           .barcode-print-overlay, .barcode-print-overlay * { visibility: visible !important; }
+          /* Kill the fixed/flex-centered overlay so labels start at the top and
+             the page grows to fit ALL of them (not one centered screen). */
           .barcode-print-overlay {
             visibility: visible !important;
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
+            right: 0 !important;
             width: 100% !important;
-            background: none !important;
+            height: auto !important;
+            min-height: 0 !important;
             display: block !important;
+            align-items: initial !important;
+            justify-content: initial !important;
+            background: none !important;
             overflow: visible !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
-          /* Drop the modal's fixed size + scroll so every label flows to a page. */
           .barcode-print-modal {
+            position: static !important;
             max-width: none !important;
             max-height: none !important;
+            width: 100% !important;
+            height: auto !important;
             overflow: visible !important;
             margin: 0 !important;
             box-shadow: none !important;
