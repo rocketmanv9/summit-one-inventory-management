@@ -11,6 +11,7 @@ import { MobileAddItemSheet } from '@/components/mobile/MobileAddItemSheet';
 import { MobileCatalogBrowser } from '@/components/mobile/MobileCatalogBrowser';
 import { MobileAddCategoryModal } from '@/components/mobile/MobileAddCategoryModal';
 import { apiErrorMessage } from '@/lib/api-error';
+import { scanFx } from '@/lib/mobile/scan-fx';
 
 interface CycleCountMeta {
   id: string;
@@ -75,30 +76,6 @@ function normalizeLine(line: CountLine): CountLine {
 
 function bypassHeaders(secret: string): Record<string, string> {
   return secret ? { 'x-vercel-protection-bypass': secret } : {};
-}
-
-// Short beep + vibration so counters get scan feedback without looking at the
-// screen. Both are best-effort — iOS may block audio until a user gesture.
-let sharedAudioCtx: AudioContext | null = null;
-function scanFx(ok: boolean) {
-  try {
-    navigator.vibrate?.(ok ? 40 : [70, 50, 70]);
-  } catch { /* unsupported */ }
-  try {
-    const Ctor = window.AudioContext || (window as any).webkitAudioContext;
-    if (!Ctor) return;
-    if (!sharedAudioCtx) sharedAudioCtx = new Ctor();
-    const ctx = sharedAudioCtx;
-    if (ctx.state === 'suspended') void ctx.resume();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = ok ? 880 : 200;
-    gain.gain.value = 0.08;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + (ok ? 0.09 : 0.2));
-  } catch { /* unsupported */ }
 }
 
 function withBypass(url: string, secret: string): string {

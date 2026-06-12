@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { MobileSessionExpired } from '@/components/mobile/MobileSessionExpired';
+import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { apiErrorMessage } from '@/lib/api-error';
+import { scanFx } from '@/lib/mobile/scan-fx';
 
 interface ReceiveLine {
   id: string;
@@ -122,10 +124,64 @@ export function MobileReceiveClient({
   const submitKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
+  // Scanner state (PO detail screen): scan a SKU off the delivery label to
+  // count units in. Matching is client-side against the open PO's lines —
+  // there is no barcode lookup endpoint on the receiving session.
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanFeedback, setScanFeedback] = useState<string | null>(null);
+  const scanFeedbackTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [highlightLineId, setHighlightLineId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  // All / To check / Checked chips on the PO detail line list.
+  const [lineFilter, setLineFilter] = useState<'all' | 'unchecked' | 'checked'>('all');
+
   const jwtRef = useRef(jwt);
   jwtRef.current = jwt;
 
+  // Synchronous mirror of qtyByLine so back-to-back scans of the same line
+  // read the qty the previous scan just wrote instead of a stale render
+  // snapshot. Every qty mutation goes through applyQty to keep ref and state
+  // in lockstep. (Unlike the count flow, scan increments here are pure client
+  // state — the server write happens once at submit — so a per-line promise
+  // chain isn't needed; the synchronous mirror alone makes scans lossless.)
+  const qtyRef = useRef<Record<string, string>>({});
+  const applyQty = useCallback(
+    (updater: (prev: Record<string, string>) => Record<string, string>) => {
+      qtyRef.current = updater(qtyRef.current);
+      setQtyByLine(qtyRef.current);
+    },
+    []
+  );
+
+  // Lines the operator has explicitly verified this session (scanned, stepped,
+  // or typed). Drives the All/To check/Checked chips, and lets the FIRST scan
+  // of a line replace the outstanding prefill with a count-up from 1 instead
+  // of incrementing past it. Ref + state kept in lockstep (scans read the ref
+  // synchronously).
+  const checkedRef = useRef<Set<string>>(new Set());
+  const [checkedLines, setCheckedLines] = useState<Set<string>>(new Set());
+  const markChecked = useCallback((lineId: string) => {
+    if (checkedRef.current.has(lineId)) return;
+    const next = new Set(checkedRef.current);
+    next.add(lineId);
+    checkedRef.current = next;
+    setCheckedLines(next);
+  }, []);
+  const resetChecked = useCallback(() => {
+    checkedRef.current = new Set();
+    setCheckedLines(new Set());
+  }, []);
+
   const selectedPo = selectedPoId ? pos.find((p) => p.id === selectedPoId) || null : null;
+
+  // Scroll the scanned line into view so the highlight is visible when the
+  // scanner overlay closes.
+  useEffect(() => {
+    if (highlightLineId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightLineId]);
 
   // Only validate client-side if no server-provided data.
   useEffect(() => {
@@ -261,16 +317,22 @@ export function MobileReceiveClient({
     // Prefill every line with its full outstanding quantity.
     const init: Record<string, string> = {};
     for (const l of po.lines) init[l.id] = String(l.outstanding);
-    setQtyByLine(init);
+    applyQty(() => init);
     // A new PO selection is a new submit attempt set.
     submitKeyRef.current = null;
     setActionError(null);
+    resetChecked();
+    setLineFilter('all');
+    setHighlightLineId(null);
   };
 
   const backToList = async (refresh: boolean) => {
     setSelectedPoId(null);
     setSuccess(null);
     setActionError(null);
+    setScannerOpen(false);
+    setScanFeedback(null);
+    setHighlightLineId(null);
     if (refresh) {
       setIsRefreshingPos(true);
       await fetchPos();
@@ -282,7 +344,71 @@ export function MobileReceiveClient({
     if (!selectedPo) return;
     const next: Record<string, string> = {};
     for (const l of selectedPo.lines) next[l.id] = String(l.outstanding);
-    setQtyByLine(next);
+    applyQty(() => next);
+  };
+
+  const showScanFeedback = useCallback((message: string) => {
+    setScanFeedback(message);
+    if (scanFeedbackTimerRef.current) clearTimeout(scanFeedbackTimerRef.current);
+    scanFeedbackTimerRef.current = setTimeout(() => setScanFeedback(null), 2000);
+  }, []);
+
+  // Big-thumb +/- buttons: adjust by whole units, clamped at 0. Pure client
+  // state (server write happens at submit), so the update is immediate.
+  const stepLine = (l: ReceiveLine, delta: number) => {
+    try { navigator.vibrate?.(10); } catch { /* unsupported */ }
+    markChecked(l.id);
+    applyQty((prev) => {
+      const current = parseFloat(prev[l.id] ?? '');
+      const base = Number.isFinite(current) ? current : 0;
+      const next = Math.max(0, Math.round((base + delta) * 100) / 100);
+      return { ...prev, [l.id]: String(next) };
+    });
+  };
+
+  // Scan a code off the delivery → match it to a PO line by SKU (exact name
+  // as a fallback for hand-typed entries). The first scan of a line replaces
+  // the outstanding prefill with 1 (count-up workflow); subsequent scans
+  // increment. Reads go through qtyRef/checkedRef so rapid scans of the same
+  // line never compute from a stale snapshot. Success feedback fires only
+  // after the qty state actually changed.
+  // Not memoized on purpose: BarcodeScannerOverlay keeps onScan in a ref, so
+  // it always calls the latest closure (fresh selectedPo).
+  const handleBarcodeScan = (decodedText: string) => {
+    if (!selectedPo) return;
+    const code = decodedText.trim().toLowerCase();
+    if (!code) return;
+
+    const line =
+      selectedPo.lines.find((l) => l.sku && l.sku.trim().toLowerCase() === code) ||
+      selectedPo.lines.find((l) => l.name.trim().toLowerCase() === code);
+
+    if (!line) {
+      scanFx(false);
+      showScanFeedback(`Not on this PO: ${decodedText}`);
+      return;
+    }
+
+    const wasChecked = checkedRef.current.has(line.id);
+    const current = parseFloat(qtyRef.current[line.id] ?? '');
+    const base = wasChecked && Number.isFinite(current) ? current : 0;
+    const next = Math.round((base + 1) * 100) / 100;
+
+    // Mirror the server's over-receipt rule client-side: don't let scanning
+    // push a line into an un-submittable state.
+    if (next > line.outstanding && !line.allow_over_delivery) {
+      scanFx(false);
+      showScanFeedback(`Not allowed: ${line.name} is already at outstanding (${line.outstanding})`);
+      return;
+    }
+
+    markChecked(line.id);
+    applyQty((prev) => ({ ...prev, [line.id]: String(next) }));
+    scanFx(true);
+    showScanFeedback(`${line.name} → ${next}`);
+    setHighlightLineId(line.id);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightLineId(null), 3000);
   };
 
   const lineQty = (lineId: string): number => {
@@ -354,11 +480,14 @@ export function MobileReceiveClient({
         showActionError(/OVER_RECEIPT/i.test(base) ? `Over-receipt blocked: ${base}` : base);
         // 4xx means the server rejected this payload — a retry needs a new key.
         if (res.status >= 400 && res.status < 500) submitKeyRef.current = null;
+        scanFx(false);
         return;
       }
 
       const { data } = await res.json();
       submitKeyRef.current = null;
+      // Success feedback only after the server confirmed the receipt posted.
+      scanFx(true);
       setSuccess({
         po_number: data.po_number || selectedPo.po_number,
         receipt_number: data.receipt_number || null,
@@ -370,6 +499,7 @@ export function MobileReceiveClient({
       // Refresh the list in the background so fully-received POs drop off.
       fetchPos();
     } catch (err: any) {
+      scanFx(false);
       showActionError(
         err?.name === 'AbortError'
           ? `Timed out receiving ${selectedPo.po_number} — check signal and tap Confirm again (it won't double-receive).`
@@ -536,6 +666,14 @@ export function MobileReceiveClient({
 
   // ── Screen 2: PO detail ──
   if (selectedPo) {
+    const checkedCount = selectedPo.lines.filter((l) => checkedLines.has(l.id)).length;
+    const uncheckedCount = selectedPo.lines.length - checkedCount;
+    const visibleLines = selectedPo.lines.filter((l) => {
+      if (lineFilter === 'unchecked') return !checkedLines.has(l.id);
+      if (lineFilter === 'checked') return checkedLines.has(l.id);
+      return true;
+    });
+
     return (
       <>
         {banners}
@@ -566,6 +704,20 @@ export function MobileReceiveClient({
               </div>
               <button
                 className="m-btn"
+                onClick={() => setScannerOpen(true)}
+                aria-label="Scan item barcode"
+                style={{
+                  width: '40px', height: '40px', flexShrink: 0, borderRadius: '10px',
+                  background: '#eff6ff', border: '1.5px solid #93c5fd',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                }}
+              >
+                <svg width="20" height="20" fill="none" stroke="#1d4ed8" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                </svg>
+              </button>
+              <button
+                className="m-btn"
                 onClick={receiveAll}
                 style={{
                   padding: '10px 14px', borderRadius: '10px', flexShrink: 0,
@@ -576,20 +728,63 @@ export function MobileReceiveClient({
                 Receive All
               </button>
             </div>
+
+            {/* Quick filters — track which lines have been verified against the
+                truck without scrolling a long list. */}
+            {selectedPo.lines.length > 1 && (
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                {([
+                  ['all', `All (${selectedPo.lines.length})`],
+                  ['unchecked', `To check (${uncheckedCount})`],
+                  ['checked', `Checked (${checkedCount})`],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="m-btn"
+                    onClick={() => setLineFilter(key)}
+                    style={{
+                      flex: 1,
+                      padding: '8px 4px',
+                      borderRadius: '9999px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      border: lineFilter === key ? '1.5px solid #2563eb' : '1.5px solid #e5e7eb',
+                      background: lineFilter === key ? '#eff6ff' : '#fff',
+                      color: lineFilter === key ? '#1d4ed8' : '#6b7280',
+                      cursor: 'pointer',
+                      WebkitTapHighlightColor: 'transparent',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Lines */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 120px', WebkitOverflowScrolling: 'touch' as any }}>
-            {selectedPo.lines.map((l) => {
+            {visibleLines.map((l) => {
               const blocked = isOverBlocked(l);
               const overOk = isOverAllowed(l);
+              const isChecked = checkedLines.has(l.id);
+              const isHighlighted = highlightLineId === l.id;
+              const minusDisabled = lineQty(l.id) <= 0;
               return (
-                <div key={l.id} style={{
-                  background: '#fff', borderRadius: '12px', padding: '14px',
-                  marginBottom: '8px',
-                  border: blocked ? '1.5px solid #fca5a5' : '1px solid #e5e7eb',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <div
+                  key={l.id}
+                  ref={isHighlighted ? highlightRef : undefined}
+                  style={{
+                    background: '#fff', borderRadius: '12px', padding: '14px',
+                    marginBottom: '8px',
+                    border: blocked ? '1.5px solid #fca5a5' : '1px solid #e5e7eb',
+                    boxShadow: isHighlighted ? '0 0 0 2px #3b82f6, 0 0 0 4px rgba(59,130,246,0.3)' : undefined,
+                    transition: 'box-shadow 0.2s',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: '15px', fontWeight: 600, color: '#111827' }}>{l.name}</div>
                       <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
@@ -601,6 +796,40 @@ export function MobileReceiveClient({
                         {l.outstanding} outstanding
                       </div>
                     </div>
+                    {isChecked && (
+                      <div style={{
+                        width: '24px', height: '24px', background: '#22c55e', borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                      }}>
+                        <svg width="14" height="14" fill="none" stroke="#fff" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      className="m-btn"
+                      aria-label="Decrease quantity"
+                      onClick={() => stepLine(l, -1)}
+                      disabled={minusDisabled}
+                      style={{
+                        width: '48px', height: '52px', flexShrink: 0, borderRadius: '12px',
+                        border: '2px solid #d1d5db',
+                        background: minusDisabled ? '#f3f4f6' : '#fff',
+                        color: minusDisabled ? '#d1d5db' : '#374151',
+                        fontSize: '24px', fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: minusDisabled ? 'default' : 'pointer',
+                        WebkitTapHighlightColor: 'transparent',
+                        touchAction: 'manipulation',
+                        userSelect: 'none' as const,
+                      }}
+                    >
+                      −
+                    </button>
                     <input
                       className="m-input-qty"
                       type="number"
@@ -608,16 +837,38 @@ export function MobileReceiveClient({
                       min="0"
                       step="0.01"
                       value={qtyByLine[l.id] ?? ''}
-                      onChange={(e) => setQtyByLine((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                      onChange={(e) => {
+                        markChecked(l.id);
+                        const val = e.target.value;
+                        applyQty((prev) => ({ ...prev, [l.id]: val }));
+                      }}
                       onFocus={(e) => e.target.select()}
                       style={{
-                        width: '88px', flexShrink: 0, padding: '14px 10px',
-                        borderRadius: '10px', textAlign: 'right',
+                        flex: 1, minWidth: 0, padding: '14px 10px',
+                        borderRadius: '10px', textAlign: 'center',
                         fontSize: '18px', fontWeight: 700,
                         border: blocked ? '2px solid #ef4444' : '2px solid #d1d5db',
                         background: blocked ? '#fef2f2' : '#fff',
                       }}
                     />
+                    <button
+                      type="button"
+                      className="m-btn"
+                      aria-label="Increase quantity"
+                      onClick={() => stepLine(l, 1)}
+                      style={{
+                        width: '48px', height: '52px', flexShrink: 0, borderRadius: '12px',
+                        border: '2px solid #d1d5db', background: '#fff', color: '#374151',
+                        fontSize: '24px', fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer',
+                        WebkitTapHighlightColor: 'transparent',
+                        touchAction: 'manipulation',
+                        userSelect: 'none' as const,
+                      }}
+                    >
+                      +
+                    </button>
                   </div>
                   {blocked && (
                     <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#dc2626', textAlign: 'right', fontWeight: 600 }}>
@@ -632,6 +883,16 @@ export function MobileReceiveClient({
                 </div>
               );
             })}
+
+            {visibleLines.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '48px 24px', color: '#9ca3af' }}>
+                <p style={{ fontSize: '14px', fontWeight: 500, margin: 0 }}>
+                  {lineFilter === 'unchecked'
+                    ? 'Every line has been checked — confirm below.'
+                    : 'No lines checked yet — scan a label or adjust a quantity.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Bottom action bar */}
@@ -655,6 +916,14 @@ export function MobileReceiveClient({
             </button>
           </div>
         </div>
+
+        <BarcodeScannerOverlay
+          isOpen={scannerOpen}
+          onClose={() => { setScannerOpen(false); setScanFeedback(null); }}
+          onScan={handleBarcodeScan}
+          continuous
+          scanFeedback={scanFeedback}
+        />
       </>
     );
   }
