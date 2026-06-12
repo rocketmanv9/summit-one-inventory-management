@@ -9,6 +9,7 @@ const SETTINGS_TABS = [
   { label: 'General', href: '/settings' },
   { label: 'My Spending', href: '/settings/my-spending' },
   { label: 'People & Limits', href: '/settings/people' },
+  { label: 'Count Qualifications', href: '/settings/count-qualifications' },
   { label: 'Branding', href: '/settings/branding' },
   { label: 'Device Management', href: '/settings/device-management' },
   { label: 'Integrations', href: '/settings/integrations' },

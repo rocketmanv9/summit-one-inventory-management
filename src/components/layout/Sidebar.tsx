@@ -13,6 +13,7 @@ import {
   Bug,
   Bot,
   CalendarCheck,
+  CalendarDays,
   ArrowLeftRight,
   Users,
   Boxes,
@@ -137,6 +138,11 @@ const navigation: NavSection[] = [
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
+      },
+      {
+        title: 'Count Schedule',
+        href: '/inventory/count-schedule',
+        icon: CalendarDays,
       },
       {
         title: 'Network',
