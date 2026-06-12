@@ -27,12 +27,14 @@ interface MobileCountAssetRowProps {
   onRecordAssets: (lineId: string, assetIds: string[]) => Promise<void>;
   onAddSerial?: (lineId: string, serial: string) => Promise<void>;
   onScanSerial?: (lineId: string) => void;
+  onMarkPresent?: (lineId: string) => Promise<void>;
 }
 
-export function MobileCountAssetRow({ line, onRecordAssets, onAddSerial, onScanSerial }: MobileCountAssetRowProps) {
+export function MobileCountAssetRow({ line, onRecordAssets, onAddSerial, onScanSerial, onMarkPresent }: MobileCountAssetRowProps) {
   const [saving, setSaving] = useState(false);
   const [serialInput, setSerialInput] = useState('');
   const [adding, setAdding] = useState(false);
+  const [marking, setMarking] = useState(false);
   const countedIds = new Set(line.counted_assets?.map((ca) => ca.asset_id) || []);
   const assets = line.expected_assets || [];
   const foundCount = countedIds.size;
@@ -196,8 +198,30 @@ export function MobileCountAssetRow({ line, onRecordAssets, onAddSerial, onScanS
 
         {assets.length === 0 && (
           <div style={emptyStyle}>
-            No serials recorded yet — scan or enter one below to add it.
+            No units recorded yet — mark one present below, or scan/enter a serial.
           </div>
+        )}
+
+        {/* Mark one present without a serial — for initial counts where you can
+            see the item but don't have a tag/serial yet. Creates an untagged
+            asset you can serial-tag and label later. */}
+        {onMarkPresent && (
+          <button
+            type="button"
+            onClick={async () => {
+              setMarking(true);
+              try { await onMarkPresent(line.id); } finally { setMarking(false); }
+            }}
+            disabled={marking}
+            style={{
+              width: '100%', marginTop: '4px', padding: '12px', borderRadius: '10px',
+              border: '1.5px solid #86efac', background: '#f0fdf4', fontSize: '14px',
+              fontWeight: 600, color: '#15803d', cursor: 'pointer',
+              WebkitTapHighlightColor: 'transparent', opacity: marking ? 0.6 : 1,
+            }}
+          >
+            {marking ? 'Marking…' : '+ Mark 1 present (no serial)'}
+          </button>
         )}
 
         {/* Scan / add a serial that isn't yet in the system. */}

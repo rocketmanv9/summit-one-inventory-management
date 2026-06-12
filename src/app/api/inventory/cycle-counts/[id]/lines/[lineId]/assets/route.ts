@@ -117,7 +117,10 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/cycle-counts/:id/lines/:lineId/assets' });
 
 const AddSerialSchema = z.object({
-  serial: z.string().min(1).max(100),
+  serial: z.string().min(1).max(100).optional(),
+  placeholder: z.boolean().optional(),
+}).refine((d) => !!d.serial || d.placeholder === true, {
+  message: 'Provide a serial, or set placeholder to mark one present without a serial.',
 });
 
 // PUT — type/add a serial for a serialized line on desktop. Creates the asset
@@ -127,8 +130,7 @@ const AddSerialSchema = z.object({
 export const PUT = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const cycleCountId = getCycleCountId(req);
   const lineId = getLineId(req);
-  const { serial } = AddSerialSchema.parse(await req.json());
-  const tag = serial.trim();
+  const { serial, placeholder } = AddSerialSchema.parse(await req.json());
   const inv = (supabase as any).schema('inventory');
 
   const { data: line, error: lineError } = await inv
@@ -140,16 +142,23 @@ export const PUT = createSessionWriteRoute(async ({ ctx, req, log, supabase, ide
     .maybeSingle();
   if (lineError || !line) throw AppError.notFound('Count line not found');
 
-  const { data: existingAsset } = await inv
-    .from('assets')
-    .select('id, asset_tag, serial_number, status')
-    .eq('tenant_id', ctx.tenantId)
-    .eq('catalog_item_id', line.catalog_item_id)
-    .or(`serial_number.eq.${tag},asset_tag.eq.${tag}`)
-    .limit(1)
-    .maybeSingle();
+  // Placeholder = present, no serial yet: a fresh untagged asset (taggable
+  // later). Otherwise match/create by the typed serial.
+  const tag = serial?.trim() || `NOSERIAL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
-  let asset = existingAsset;
+  let asset = null;
+  if (!placeholder && serial) {
+    const { data: existingAsset } = await inv
+      .from('assets')
+      .select('id, asset_tag, serial_number, status')
+      .eq('tenant_id', ctx.tenantId)
+      .eq('catalog_item_id', line.catalog_item_id)
+      .or(`serial_number.eq.${tag},asset_tag.eq.${tag}`)
+      .limit(1)
+      .maybeSingle();
+    asset = existingAsset;
+  }
+
   if (!asset) {
     const { data: newAsset, error: createError } = await inv
       .from('assets')
@@ -157,7 +166,7 @@ export const PUT = createSessionWriteRoute(async ({ ctx, req, log, supabase, ide
         tenant_id: ctx.tenantId,
         catalog_item_id: line.catalog_item_id,
         asset_tag: tag,
-        serial_number: tag,
+        serial_number: placeholder ? null : tag,
         status: 'available',
         location_id: line.location_id,
         last_event_id: `cc_serial_${idempotencyKey}`,

@@ -39,6 +39,7 @@ interface MobileCountItemListProps {
   onRecordAssets: (lineId: string, assetIds: string[]) => Promise<void>;
   onAddSerial?: (lineId: string, serial: string) => Promise<void>;
   onScanSerial?: (lineId: string) => void;
+  onMarkPresent?: (lineId: string) => Promise<void>;
 }
 
 type CountFilter = 'all' | 'remaining' | 'counted';
@@ -52,6 +53,7 @@ export function MobileCountItemList({
   onRecordAssets,
   onAddSerial,
   onScanSerial,
+  onMarkPresent,
 }: MobileCountItemListProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CountFilter>('all');
@@ -204,7 +206,7 @@ export function MobileCountItemList({
               style={isHighlighted ? s.highlightRing : undefined}
             >
               {isSerialized ? (
-                <MobileCountAssetRow line={line} onRecordAssets={onRecordAssets} onAddSerial={onAddSerial} onScanSerial={onScanSerial} />
+                <MobileCountAssetRow line={line} onRecordAssets={onRecordAssets} onAddSerial={onAddSerial} onScanSerial={onScanSerial} onMarkPresent={onMarkPresent} />
               ) : (
                 <MobileCountItemRow line={line} isBlind={isBlind} isInitial={isInitial} onRecordCount={onRecordCount} />
               )}

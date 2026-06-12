@@ -8,7 +8,12 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const RecordSerialSchema = z.object({
   line_id: z.string().uuid(),
-  serial: z.string().min(1).max(100),
+  // Either provide a serial, or set placeholder to record an untagged present
+  // unit (you can see the item but don't have/know the serial yet).
+  serial: z.string().min(1).max(100).optional(),
+  placeholder: z.boolean().optional(),
+}).refine((d) => !!d.serial || d.placeholder === true, {
+  message: 'Provide a serial, or set placeholder to mark one present without a serial.',
 });
 
 /**
@@ -19,8 +24,7 @@ const RecordSerialSchema = z.object({
  */
 export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
   const session = await requireMobileSession(req);
-  const { line_id, serial } = RecordSerialSchema.parse(await req.json());
-  const tag = serial.trim();
+  const { line_id, serial, placeholder } = RecordSerialSchema.parse(await req.json());
 
   const inv = (supabase as any).schema('inventory');
 
@@ -34,17 +38,24 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
     .maybeSingle();
   if (lineError || !line) throw AppError.notFound('Count line not found');
 
-  // Find an existing asset for this item by serial/tag, else create one.
-  const { data: existingAsset } = await inv
-    .from('assets')
-    .select('id, asset_tag, serial_number, status')
-    .eq('tenant_id', session.tenantId)
-    .eq('catalog_item_id', line.catalog_item_id)
-    .or(`serial_number.eq.${tag},asset_tag.eq.${tag}`)
-    .limit(1)
-    .maybeSingle();
+  // Placeholder = "one is present, no serial yet": always a fresh untagged
+  // asset record (unique tag) you can serial-tag later. Otherwise match/create
+  // by the typed serial.
+  const tag = serial?.trim() || `NOSERIAL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
-  let asset = existingAsset;
+  let asset = null;
+  if (!placeholder && serial) {
+    const { data: existingAsset } = await inv
+      .from('assets')
+      .select('id, asset_tag, serial_number, status')
+      .eq('tenant_id', session.tenantId)
+      .eq('catalog_item_id', line.catalog_item_id)
+      .or(`serial_number.eq.${tag},asset_tag.eq.${tag}`)
+      .limit(1)
+      .maybeSingle();
+    asset = existingAsset;
+  }
+
   let created = false;
   if (!asset) {
     const { data: newAsset, error: createError } = await inv
@@ -53,7 +64,8 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
         tenant_id: session.tenantId,
         catalog_item_id: line.catalog_item_id,
         asset_tag: tag,
-        serial_number: tag,
+        // Untagged placeholders carry no serial_number — only a temp tag.
+        serial_number: placeholder ? null : tag,
         status: 'available',
         location_id: line.location_id,
         last_event_id: `cc_serial_${idempotencyKey}`,

@@ -367,16 +367,17 @@ export function MobileCountClient({
   );
 
   // Scan/enter a serial for a serialized line → creates the asset (if new) and
-  // marks it present. Used by both the manual input and the per-line scanner.
+  // marks it present. Used by the manual input and the per-line scanner.
+  // placeholder=true marks one present with no serial (untagged, taggable later).
   const handleAddSerial = useCallback(
-    async (lineId: string, serial: string) => {
+    async (lineId: string, serial: string, placeholder = false) => {
       const s = serial.trim();
-      if (!s) return;
+      if (!s && !placeholder) return;
       try {
         const res = await fetch(withBypass('/api/m/count/record-serial', bypassSecret), {
           method: 'POST',
           headers: mobileHeaders(),
-          body: JSON.stringify({ line_id: lineId, serial: s }),
+          body: JSON.stringify(placeholder ? { line_id: lineId, placeholder: true } : { line_id: lineId, serial: s }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -403,7 +404,7 @@ export function MobileCountClient({
           })
         );
         scanFx(true);
-        setScanFeedback(`Added ${asset.asset_tag || s}`);
+        setScanFeedback(placeholder ? 'Marked 1 present (no serial)' : `Added ${asset.asset_tag || s}`);
         setTimeout(() => setScanFeedback(null), 2000);
       } catch (err: any) {
         scanFx(false);
@@ -991,6 +992,7 @@ export function MobileCountClient({
           onRecordAssets={handleRecordAssets}
           onAddSerial={handleAddSerial}
           onScanSerial={handleScanSerial}
+          onMarkPresent={(lineId) => handleAddSerial(lineId, '', true)}
         />
       </MobileCountShell>
 

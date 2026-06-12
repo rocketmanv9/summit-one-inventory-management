@@ -481,13 +481,13 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
 
   // Type/add a serial for a serialized line without a scanner — creates the
   // asset if it's new and marks it present (additive).
-  const addSerialToLine = async (lineId: string, serial: string) => {
+  const addSerialToLine = async (lineId: string, serial: string, placeholder = false) => {
     const tag = serial.trim();
-    if (!tag) return;
+    if (!tag && !placeholder) return;
     try {
       const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/assets`, {
         method: 'PUT',
-        body: { serial: tag },
+        body: placeholder ? { placeholder: true } : { serial: tag },
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -687,6 +687,15 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                               Add
                             </button>
                           </form>
+                          {/* No serial yet? Just mark one present — creates an
+                              untagged unit you can serial-tag and label later. */}
+                          <button
+                            type="button"
+                            onClick={() => addSerialToLine(line.id, '', true)}
+                            className="mt-2 w-full px-3 py-1.5 bg-green-50 border border-green-300 text-green-700 rounded text-sm font-medium hover:bg-green-100"
+                          >
+                            + Mark 1 present (no serial)
+                          </button>
                           {line.qty_counted !== null && !cycleCount.is_blind && (
                             <div className="text-xs text-gray-600 mt-2">
                               Found: <span className="font-medium">{line.qty_counted}</span> / Expected: {line.qty_expected}
