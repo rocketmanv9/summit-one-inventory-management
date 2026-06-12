@@ -595,9 +595,11 @@ export function MobileCountClient({
 
         let line = linesRef.current.find((l) => l.catalog_item_id === catalogItemId);
 
-        // For initial counts, auto-add the item if not already in the list
-        if (!line && isInitial) {
-          setScanFeedback('Adding item...');
+        // Item isn't on the count list but it's physically here — add it as a
+        // discovered line (expected qty comes from the location's stock
+        // balance, so the scan shows up as a normal variance for review).
+        if (!line) {
+          setScanFeedback('Adding to count...');
           try {
             const res = await fetch(withBypass('/api/m/count/add-item', bypassSecret), {
               method: 'POST',
@@ -645,7 +647,7 @@ export function MobileCountClient({
         setTimeout(() => setScanFeedback(null), 2000);
       }
     },
-    [lookupBarcode, queueScanIncrement, handleAddSerial, isInitial, bypassSecret, mobileHeaders, applyLines]
+    [lookupBarcode, queueScanIncrement, handleAddSerial, bypassSecret, mobileHeaders, applyLines]
   );
 
   // Open the camera scanner aimed at a specific serialized line.
