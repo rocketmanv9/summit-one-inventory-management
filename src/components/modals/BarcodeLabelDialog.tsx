@@ -70,7 +70,37 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
   const tapeLengthMm = PTOUCH_LENGTH_MM[format];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="barcode-print-overlay fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      {/* Always-on: the modal is a fixed, scrollable (max-h/overflow) box, which
+          clips printing to a single screen — so only one label came out. During
+          print, neutralize the overlay + scroll container so every label flows
+          onto its own page. */}
+      <style>{`
+        @media print {
+          /* Print ONLY the labels: hide the whole app, reveal the overlay. */
+          body * { visibility: hidden !important; }
+          .barcode-print-overlay, .barcode-print-overlay * { visibility: visible !important; }
+          .barcode-print-overlay {
+            visibility: visible !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: none !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+          /* Drop the modal's fixed size + scroll so every label flows to a page. */
+          .barcode-print-modal {
+            max-width: none !important;
+            max-height: none !important;
+            overflow: visible !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+          }
+        }
+      `}</style>
       {output === 'ptouch' && (
         // Size each label as its own tape-dimensioned page so the P-touch
         // driver feeds and cuts between labels. mm units keep print exact.
@@ -82,7 +112,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
           }
         `}</style>
       )}
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="barcode-print-modal bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header - hidden during print */}
         <div className="px-6 py-4 border-b print:hidden">
           <div className="flex items-center justify-between mb-4">
