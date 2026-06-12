@@ -115,3 +115,96 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     }],
   };
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/cycle-counts/:id/lines/:lineId/assets' });
+
+const AddSerialSchema = z.object({
+  serial: z.string().min(1).max(100),
+});
+
+// PUT — type/add a serial for a serialized line on desktop. Creates the asset
+// if it doesn't exist yet (you found one not in the system) and marks it
+// present, additively. Desktop equivalent of the mobile record-serial flow —
+// so you don't need a scanner to record a serialized item.
+export const PUT = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+  const cycleCountId = getCycleCountId(req);
+  const lineId = getLineId(req);
+  const { serial } = AddSerialSchema.parse(await req.json());
+  const tag = serial.trim();
+  const inv = (supabase as any).schema('inventory');
+
+  const { data: line, error: lineError } = await inv
+    .from('cycle_count_lines')
+    .select('id, cycle_count_id, line_number, catalog_item_id, location_id')
+    .eq('id', lineId)
+    .eq('cycle_count_id', cycleCountId)
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle();
+  if (lineError || !line) throw AppError.notFound('Count line not found');
+
+  const { data: existingAsset } = await inv
+    .from('assets')
+    .select('id, asset_tag, serial_number, status')
+    .eq('tenant_id', ctx.tenantId)
+    .eq('catalog_item_id', line.catalog_item_id)
+    .or(`serial_number.eq.${tag},asset_tag.eq.${tag}`)
+    .limit(1)
+    .maybeSingle();
+
+  let asset = existingAsset;
+  if (!asset) {
+    const { data: newAsset, error: createError } = await inv
+      .from('assets')
+      .upsert({
+        tenant_id: ctx.tenantId,
+        catalog_item_id: line.catalog_item_id,
+        asset_tag: tag,
+        serial_number: tag,
+        status: 'available',
+        location_id: line.location_id,
+        last_event_id: `cc_serial_${idempotencyKey}`,
+      }, { onConflict: 'tenant_id,asset_tag' })
+      .select('id, asset_tag, serial_number, status')
+      .single();
+    if (createError) throw AppError.internal(createError.message);
+    asset = newAsset;
+  }
+
+  const { error: upsertError } = await inv
+    .from('cycle_count_asset_lines')
+    .upsert({
+      tenant_id: ctx.tenantId,
+      cycle_count_id: cycleCountId,
+      cycle_count_line_id: line.id,
+      line_number: line.line_number,
+      asset_id: asset.id,
+      expected_present: false,
+      counted_present: true,
+      scanned_by_user_id: ctx.userId,
+      scanned_at: new Date().toISOString(),
+      last_event_id: `cc_asset_${idempotencyKey}`,
+    }, { onConflict: 'cycle_count_id,asset_id' });
+  if (upsertError) throw AppError.internal(upsertError.message);
+
+  const { count } = await inv
+    .from('cycle_count_asset_lines')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', ctx.tenantId)
+    .eq('cycle_count_line_id', line.id)
+    .eq('counted_present', true);
+
+  await inv
+    .from('cycle_count_lines')
+    .update({ qty_counted: count ?? 1, counted_at: new Date().toISOString(), counted_by_user_id: ctx.userId, updated_at: new Date().toISOString() })
+    .eq('id', line.id);
+
+  log.info('cycle_count_line.serial_added', { lineId, assetId: asset.id });
+
+  return {
+    data: { asset, qty_counted: count ?? 1 },
+    status: 200,
+    events: [{
+      event_name: 'cycle_count_line.serial_added',
+      payload: { line_id: lineId, asset_id: asset.id },
+      last_event_id: idempotencyKey,
+    }],
+  };
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'PUT /api/inventory/cycle-counts/:id/lines/:lineId/assets' });

@@ -479,6 +479,26 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
     }
   };
 
+  // Type/add a serial for a serialized line without a scanner — creates the
+  // asset if it's new and marks it present (additive).
+  const addSerialToLine = async (lineId: string, serial: string) => {
+    const tag = serial.trim();
+    if (!tag) return;
+    try {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/assets`, {
+        method: 'PUT',
+        body: { serial: tag },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to add serial');
+      }
+      fetchCountLines();
+    } catch (error: any) {
+      alert(error.message || 'Failed to add serial');
+    }
+  };
+
   const updateCountLine = async (lineId: string, actualQty: number | null) => {
     try {
       const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}`, {
@@ -642,8 +662,31 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                               })}
                             </div>
                           ) : (
-                            <div className="text-xs text-gray-500">No assets expected at this location</div>
+                            <div className="text-xs text-gray-500">No assets expected at this location — type a serial / tag below to add one.</div>
                           )}
+                          {/* Manual entry — no scanner needed. Type a serial/tag and Enter or Add. */}
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const input = (e.currentTarget.elements.namedItem('serial') as HTMLInputElement);
+                              if (input?.value.trim()) {
+                                addSerialToLine(line.id, input.value);
+                                input.value = '';
+                              }
+                            }}
+                            className="flex gap-2 mt-2"
+                          >
+                            <input
+                              name="serial"
+                              type="text"
+                              placeholder="Enter serial / asset tag"
+                              autoComplete="off"
+                              className="flex-1 px-2 py-1 border rounded text-sm"
+                            />
+                            <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">
+                              Add
+                            </button>
+                          </form>
                           {line.qty_counted !== null && !cycleCount.is_blind && (
                             <div className="text-xs text-gray-600 mt-2">
                               Found: <span className="font-medium">{line.qty_counted}</span> / Expected: {line.qty_expected}
