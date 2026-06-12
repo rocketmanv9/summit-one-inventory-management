@@ -2,6 +2,7 @@ import { z } from 'zod';
 import OpenAI from 'openai';
 import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { notifyCountAssignment, type AssignedCountInfo } from '@/lib/counts/assignment-email';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -168,10 +169,11 @@ async function aiRefine(
   }
 }
 
-export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }): Promise<{
+export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fetch, idempotencyKey }): Promise<{
   data: any;
   status: number;
   events: Array<{ event_name: string; payload: any; last_event_id: string }>;
+  afterCommit?: () => Promise<void>;
 }> => {
   const body = AutoScheduleSchema.parse(await req.json());
   const inv = (supabase as any).schema('inventory');
@@ -263,6 +265,23 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   log.info('count_schedule.auto.generated', { count: inserted?.length ?? 0 });
 
+  // One digest email per assignee covering only the rows actually inserted
+  // (ignoreDuplicates means some planned rows may have been skipped).
+  const templateById = new Map(templates.map((t: any) => [t.id, t]));
+  const countsByAssignee = new Map<string, AssignedCountInfo[]>();
+  for (const row of inserted || []) {
+    if (!row.assigned_to_user_id) continue;
+    const t: any = templateById.get(row.template_id);
+    if (!countsByAssignee.has(row.assigned_to_user_id)) {
+      countsByAssignee.set(row.assigned_to_user_id, []);
+    }
+    countsByAssignee.get(row.assigned_to_user_id)!.push({
+      templateName: t?.name || 'Cycle count',
+      locationName: t?.location?.name,
+      scheduledDate: row.scheduled_date,
+    });
+  }
+
   return {
     data: { entries: plan, created: inserted?.length ?? 0 },
     status: 201,
@@ -271,5 +290,18 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       payload: { created: inserted?.length ?? 0, horizon_days: body.horizon_days },
       last_event_id: idempotencyKey,
     }],
+    afterCommit: async () => {
+      for (const [assigneeUserId, counts] of countsByAssignee) {
+        await notifyCountAssignment({
+          fetchImpl: fetch,
+          supabase,
+          log,
+          tenantId: ctx.tenantId,
+          assigneeUserId,
+          actorUserId: ctx.userId,
+          counts,
+        });
+      }
+    },
   };
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/count-schedule/auto' });

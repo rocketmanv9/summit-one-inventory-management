@@ -13,6 +13,7 @@ import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { authenticatedFetch } from '@/lib/api-client';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { poBucket, poStatusChipLabel } from '@/lib/po/po-status';
+import { MyAssignedCounts } from '@/components/counts/MyAssignedCounts';
 
 export default function DashboardPage() {
   const { dashboards, loading, error } = useDashboards();
@@ -115,6 +116,9 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="p-8">
+        {/* Counts assigned to me */}
+        <MyAssignedCounts />
+
         {/* Status Overview */}
         <StatusOverview />
 

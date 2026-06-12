@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { EditableDashboardGrid } from '@/components/dashboards/EditableDashboardGrid';
 import { AddWidgetModal } from '@/components/dashboards/AddWidgetModal';
 import { CountInsightsTab } from '@/components/insights/CountInsightsTab';
+import { MyAssignedCounts } from '@/components/counts/MyAssignedCounts';
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { createBrowserAuthedClient } from '@/supabase/client';
@@ -327,6 +328,8 @@ export default function DashboardDetailPage() {
           </div>
           </div>
         </div>
+
+        {view === 'dashboard' && <MyAssignedCounts />}
 
         {/* Flippable body: dashboard grid on the front, count stats on the back */}
         <div style={{ perspective: '2000px' }}>

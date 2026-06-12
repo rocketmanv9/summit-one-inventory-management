@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { notifyCountAssignment, assertQualifiedCounter } from '@/lib/counts/assignment-email';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -61,8 +62,12 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   return Response.json({ data: enriched });
 }, { serviceName: SERVICE_NAME });
 
-export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fetch, idempotencyKey }) => {
   const body = CreateEntrySchema.parse(await req.json());
+
+  if (body.assigned_to_user_id) {
+    await assertQualifiedCounter(supabase, ctx.tenantId, body.assigned_to_user_id);
+  }
 
   const inv = (supabase as any).schema('inventory');
   const { data, error } = await inv
@@ -85,6 +90,14 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   log.info('count_schedule.created', { entryId: data.id, date: body.scheduled_date });
 
+  // Resolve template/location names for the notification email
+  const { data: template } = await inv
+    .from('cycle_count_templates')
+    .select('name, count_type, location:locations(name)')
+    .eq('id', body.template_id)
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle();
+
   return {
     data,
     status: 201,
@@ -93,5 +106,22 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       payload: { entry_id: data.id, template_id: body.template_id, scheduled_date: body.scheduled_date },
       last_event_id: idempotencyKey,
     }],
+    afterCommit: async () => {
+      if (!body.assigned_to_user_id) return;
+      await notifyCountAssignment({
+        fetchImpl: fetch,
+        supabase,
+        log,
+        tenantId: ctx.tenantId,
+        assigneeUserId: body.assigned_to_user_id,
+        actorUserId: ctx.userId,
+        counts: [{
+          templateName: template?.name || 'Cycle count',
+          locationName: template?.location?.name,
+          countType: template?.count_type,
+          scheduledDate: body.scheduled_date,
+        }],
+      });
+    },
   };
 }, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/count-schedule' });
