@@ -8,6 +8,7 @@
  */
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { sendEmail, isEmailConfigured } from '@/lib/email/send';
+import { insertNotification } from '@/lib/notifications';
 
 type FetchLike = typeof fetch;
 
@@ -59,7 +60,22 @@ export async function notifyCountAssignment(opts: {
 }): Promise<void> {
   const { fetchImpl, supabase, log, tenantId, assigneeUserId, actorUserId, counts, delegated } = opts;
 
-  if (!isEmailConfigured() || counts.length === 0 || assigneeUserId === actorUserId) return;
+  if (counts.length === 0 || assigneeUserId === actorUserId) return;
+
+  // In-app notification first — it works even when email isn't configured.
+  const verb = delegated ? 'delegated' : 'assigned';
+  await insertNotification(supabase, log, {
+    tenantId,
+    userId: assigneeUserId,
+    type: 'count_assigned',
+    title: counts.length === 1
+      ? `Cycle count ${verb} to you: ${counts[0].templateName}`
+      : `${counts.length} cycle counts ${verb} to you`,
+    body: counts.map(describeCount).join(' · '),
+    link: '/inventory/count-schedule',
+  });
+
+  if (!isEmailConfigured()) return;
 
   try {
     const lookupIds = [...new Set([assigneeUserId, actorUserId].filter(Boolean))] as string[];
@@ -78,7 +94,6 @@ export async function notifyCountAssignment(opts: {
     const actor = (users || []).find((u: any) => u.user_id === actorUserId);
     const actorName = actor?.name || actor?.email || 'A teammate';
 
-    const verb = delegated ? 'delegated' : 'assigned';
     const subject = counts.length === 1
       ? `Cycle count ${verb} to you: ${counts[0].templateName}${counts[0].scheduledDate ? ` on ${formatDate(counts[0].scheduledDate)}` : ''}`
       : `${counts.length} cycle counts ${verb} to you`;

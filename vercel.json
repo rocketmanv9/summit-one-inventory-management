@@ -18,6 +18,14 @@
     {
       "path": "/api/system/cron/integrity-check",
       "schedule": "30 11 * * *"
+    },
+    {
+      "path": "/api/system/cron/receipt-nudges",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/system/cron/schema-drift-audit",
+      "schedule": "0 9 * * *"
     }
   ]
 }

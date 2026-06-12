@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
+import { Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { useAiPanel } from '@/lib/ai/panel-store';
 import { useTenantBranding } from '@/lib/tenant-branding';
 
@@ -100,12 +101,7 @@ export function TopNav() {
           </button>
 
           {/* Notifications */}
-          <button
-            className="relative rounded-lg p-2 hover:bg-muted"
-            aria-label="Notifications"
-          >
-            <Bell className="h-5 w-5" />
-          </button>
+          <NotificationsBell />
 
           {/* Divider */}
           <div className="h-6 w-px bg-border" />

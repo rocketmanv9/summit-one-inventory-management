@@ -16,6 +16,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { getAdminClient } from '@/utils/supabase/admin';
 import { sendEmail, isEmailConfigured } from '@/lib/email/send';
+import { insertNotification } from '@/lib/notifications';
 
 type FetchLike = typeof fetch;
 type Logger = { info: (msg: string, meta?: any) => void; warn: (msg: string, meta?: any) => void };
@@ -239,6 +240,18 @@ export async function materializeDueCounts(args: {
   }
 
   for (const [key, counts] of byAssignee) {
+    // In-app notification regardless of email configuration.
+    for (const c of counts) {
+      await insertNotification(admin, log, {
+        tenantId: c.tenantId,
+        userId: c.assigneeUserId,
+        type: 'count_ready',
+        title: `Count ready to start: ${c.templateName}`,
+        body: `${c.locationName ? `At ${c.locationName}. ` : ''}${c.countNumber ? `Count ${c.countNumber}.` : ''}`,
+        link: '/inventory/cycle-counts',
+        eventKey: `count_ready_${c.entryId}`,
+      });
+    }
     if (!isEmailConfigured()) {
       summary.emailsSkipped++;
       continue;
