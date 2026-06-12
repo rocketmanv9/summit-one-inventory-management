@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
@@ -29,6 +29,33 @@ const TTL_OPTIONS = [
   { value: 1440, label: '24 hours' },
 ];
 
+function formatTime(dateString: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(dateString));
+}
+
+function formatRemaining(ms: number): string {
+  if (ms <= 0) return 'Expired';
+  const totalMins = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  const secs = Math.floor((ms % 60000) / 1000);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+/**
+ * QR handoff for a mobile count session, styled after the fleet app's
+ * PhoneHandoffQR: the QR appears as soon as the dialog opens, changing the
+ * duration regenerates it immediately (revoking the one it replaces), and a
+ * live countdown swaps to a regenerate button when the session expires.
+ * The link itself stays multi-hour and shareable — counts are handed to a
+ * counter, not scanned at the desk — so Copy Link remains first-class.
+ */
 export function MobileSessionQRDialog({
   isOpen,
   onClose,
@@ -43,18 +70,12 @@ export function MobileSessionQRDialog({
   const [activeSessions, setActiveSessions] = useState<MobileSession[]>([]);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  const [msLeft, setMsLeft] = useState<number | null>(null);
+  // Session this dialog instance created — replaced (and revoked) when the
+  // duration changes so duration-shopping doesn't litter active sessions.
+  const ownSessionIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchActiveSessions();
-      setQrDataUrl('');
-      setSessionUrl('');
-      setSessionData(null);
-      setError('');
-    }
-  }, [isOpen, cycleCountId]);
-
-  const fetchActiveSessions = async () => {
+  const fetchActiveSessions = useCallback(async () => {
     try {
       const res = await authenticatedFetch(
         `/api/inventory/cycle-counts/${cycleCountId}/mobile-session`
@@ -64,29 +85,39 @@ export function MobileSessionQRDialog({
     } catch {
       // Silently fail - non-critical
     }
-  };
+  }, [cycleCountId]);
 
-  const generateSession = async () => {
+  const generateSession = useCallback(async (ttlMinutes: number) => {
     setGenerating(true);
     setError('');
-
     try {
+      // Replace rather than stack: revoke the session this dialog just made.
+      if (ownSessionIdRef.current) {
+        await apiWrite(
+          `/api/inventory/cycle-counts/${cycleCountId}/mobile-session/${ownSessionIdRef.current}`,
+          { method: 'DELETE' }
+        ).catch(() => {});
+        ownSessionIdRef.current = null;
+      }
+
       const res = await apiWrite(
         `/api/inventory/cycle-counts/${cycleCountId}/mobile-session`,
-        { method: 'POST', body: { ttl_minutes: ttl } }
+        { method: 'POST', body: { ttl_minutes: ttlMinutes } }
       );
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to generate session');
+        const msg = typeof data?.error === 'string' ? data.error : data?.error?.message;
+        throw new Error(msg || 'Failed to generate session');
       }
 
       const { data } = await res.json();
       const fullUrl = `${window.location.origin}${data.url}`;
       setSessionUrl(fullUrl);
       setSessionData(data);
+      ownSessionIdRef.current = data.session_id;
+      setMsLeft(new Date(data.expires_at).getTime() - Date.now());
 
-      // Generate QR code
       const QRCode = (await import('qrcode')).default;
       const dataUrl = await QRCode.toDataURL(fullUrl, {
         width: 300,
@@ -95,13 +126,42 @@ export function MobileSessionQRDialog({
       });
       setQrDataUrl(dataUrl);
 
-      // Refresh active sessions list
       fetchActiveSessions();
     } catch (err: any) {
       setError(err.message || 'Failed to generate mobile session');
     } finally {
       setGenerating(false);
     }
+  }, [cycleCountId, fetchActiveSessions]);
+
+  // The QR is the whole point of the dialog — mint it the moment it opens.
+  useEffect(() => {
+    if (isOpen) {
+      setQrDataUrl('');
+      setSessionUrl('');
+      setSessionData(null);
+      setError('');
+      setMsLeft(null);
+      ownSessionIdRef.current = null;
+      fetchActiveSessions();
+      generateSession(ttl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, cycleCountId]);
+
+  // Tick the countdown while a session is showing.
+  useEffect(() => {
+    if (!sessionData) return;
+    const expires = new Date(sessionData.expires_at).getTime();
+    const id = setInterval(() => setMsLeft(expires - Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [sessionData]);
+
+  const expired = msLeft !== null && msLeft <= 0;
+
+  const handleTtlChange = (value: number) => {
+    setTtl(value);
+    generateSession(value);
   };
 
   const revokeSession = async (sessionId: string) => {
@@ -115,11 +175,12 @@ export function MobileSessionQRDialog({
         throw new Error('Failed to revoke session');
       }
 
-      // If we revoked the one we just generated, clear the QR
       if (sessionData?.session_id === sessionId) {
         setQrDataUrl('');
         setSessionUrl('');
         setSessionData(null);
+        setMsLeft(null);
+        ownSessionIdRef.current = null;
       }
 
       fetchActiveSessions();
@@ -146,21 +207,14 @@ export function MobileSessionQRDialog({
     }
   };
 
-  const formatTime = (dateString: string) => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(new Date(dateString));
-  };
+  const otherSessions = activeSessions.filter((s) => s.id !== ownSessionIdRef.current);
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50" />
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto z-50 p-6">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-2">
             <Dialog.Title className="text-lg font-semibold">
               Mobile Count - {cycleCountNumber}
             </Dialog.Title>
@@ -169,8 +223,8 @@ export function MobileSessionQRDialog({
             </Dialog.Close>
           </div>
 
-          <Dialog.Description className="text-sm text-gray-600 mb-6">
-            Generate a QR code to start counting from a mobile device without logging in.
+          <Dialog.Description className="text-sm text-gray-600 mb-4">
+            Scan with a phone to start counting — no login needed.
           </Dialog.Description>
 
           {error && (
@@ -179,38 +233,26 @@ export function MobileSessionQRDialog({
             </div>
           )}
 
-          {!qrDataUrl ? (
-            /* Generation form */
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Session Duration</label>
-                <select
-                  value={ttl}
-                  onChange={(e) => setTtl(Number(e.target.value))}
-                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                >
-                  {TTL_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  The mobile link will expire after this period. You can revoke it early.
-                </p>
-              </div>
-
-              <button
-                onClick={generateSession}
+          <div className="space-y-4">
+            {/* Duration — changing it swaps the QR immediately */}
+            <div className="flex items-center justify-center gap-2 text-sm">
+              <label className="text-gray-600">Phone can count for</label>
+              <select
+                value={ttl}
+                onChange={(e) => handleTtlChange(Number(e.target.value))}
                 disabled={generating}
-                className="w-full py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                className="px-2 py-1 border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {generating ? 'Generating...' : 'Generate Mobile Link'}
-              </button>
+                {TTL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : (
-            /* QR code display */
-            <div className="space-y-4">
+
+            {/* QR */}
+            {qrDataUrl && !expired ? (
               <div className="flex justify-center">
                 <img
                   src={qrDataUrl}
@@ -218,12 +260,37 @@ export function MobileSessionQRDialog({
                   className="w-64 h-64 border rounded-lg"
                 />
               </div>
-
-              <div className="text-center text-sm text-gray-600">
-                Scan this QR code with your phone
+            ) : (
+              <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-lg border bg-gray-50">
+                {generating ? (
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
+                ) : expired ? (
+                  <button
+                    onClick={() => generateSession(ttl)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+                  >
+                    Session expired — make a new one
+                  </button>
+                ) : null}
               </div>
+            )}
 
-              {/* Copyable URL */}
+            {/* Countdown + regenerate */}
+            {sessionData && !expired && msLeft !== null && (
+              <p className="text-center text-xs text-gray-500">
+                Session valid for {formatRemaining(msLeft)} (until {formatTime(sessionData.expires_at)}) ·{' '}
+                <button
+                  onClick={() => generateSession(ttl)}
+                  disabled={generating}
+                  className="text-blue-600 hover:underline"
+                >
+                  regenerate
+                </button>
+              </p>
+            )}
+
+            {/* Copyable URL — for texting the link to the counter instead */}
+            {sessionUrl && !expired && (
               <div className="flex items-center gap-2 bg-gray-50 border rounded-lg p-2">
                 <code className="flex-1 text-xs text-gray-700 truncate">
                   {sessionUrl}
@@ -235,64 +302,42 @@ export function MobileSessionQRDialog({
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
+            )}
 
-              {/* Expiry info */}
-              {sessionData && (
-                <div className="text-center text-xs text-gray-500">
-                  Expires: {formatTime(sessionData.expires_at)}
-                </div>
-              )}
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+              Anyone with this link or QR can record counts on {cycleCountNumber} until it
+              expires — only share it with the person doing the counting.
+            </p>
+          </div>
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setQrDataUrl('');
-                    setSessionUrl('');
-                    setSessionData(null);
-                  }}
-                  className="flex-1 py-2 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50"
-                >
-                  Generate New
-                </button>
-                {sessionData && (
-                  <button
-                    onClick={() => revokeSession(sessionData.session_id)}
-                    className="flex-1 py-2 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm font-medium hover:bg-red-100"
-                  >
-                    Revoke
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Active sessions list */}
-          {activeSessions.length > 0 && (
+          {/* Other active sessions */}
+          {otherSessions.length > 0 && (
             <div className="mt-6 pt-4 border-t">
-              <div className="text-sm font-medium mb-2">Active Sessions</div>
+              <div className="text-sm font-medium mb-2">Other Active Sessions</div>
               <div className="space-y-2">
-                {activeSessions.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center justify-between p-2 bg-gray-50 rounded-lg text-xs"
-                  >
-                    <div>
-                      <div className="font-medium">
-                        Created {formatTime(s.created_at)}
-                      </div>
-                      <div className="text-gray-500">
-                        Expires {formatTime(s.expires_at)}
-                        {s.last_used_at && ` | Last used ${formatTime(s.last_used_at)}`}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => revokeSession(s.id)}
-                      className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-xs font-medium"
+                {otherSessions
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between p-2 bg-gray-50 rounded-lg text-xs"
                     >
-                      Revoke
-                    </button>
-                  </div>
-                ))}
+                      <div>
+                        <div className="font-medium">
+                          Created {formatTime(s.created_at)}
+                        </div>
+                        <div className="text-gray-500">
+                          Expires {formatTime(s.expires_at)}
+                          {s.last_used_at && ` | Last used ${formatTime(s.last_used_at)}`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => revokeSession(s.id)}
+                        className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-xs font-medium"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
               </div>
             </div>
           )}
