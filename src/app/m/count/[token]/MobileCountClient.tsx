@@ -78,6 +78,21 @@ function bypassHeaders(secret: string): Record<string, string> {
   return secret ? { 'x-vercel-protection-bypass': secret } : {};
 }
 
+// add-item returns `data.lines` (one per variant for a parent, else one line).
+// Map them all to CountLine so every variant lands in the list.
+function linesFromAddResponse(data: any): CountLine[] {
+  const raw = Array.isArray(data?.lines) && data.lines.length > 0 ? data.lines : [data];
+  return raw
+    .filter((l: any) => l && l.id)
+    .map((l: any) => normalizeLine({
+      id: l.id,
+      catalog_item_id: l.catalog_item_id,
+      catalog_item: l.catalog_item,
+      qty_expected: Number(l.qty_expected ?? 0),
+      qty_counted: null,
+    }));
+}
+
 function withBypass(url: string, secret: string): string {
   if (!secret) return url;
   const sep = url.includes('?') ? '&' : '?';
@@ -474,20 +489,17 @@ export function MobileCountClient({
         }
 
         const { data } = await res.json();
-        // Append new line to local state
-        const newLine: CountLine = {
-          id: data.id,
-          catalog_item_id: catalogItemId,
-          catalog_item: data.catalog_item,
-          qty_expected: Number(data.qty_expected ?? 0),
-          qty_counted: null,
-        };
-        applyLines((prev) => [...prev, newLine]);
+        // Append every returned line (one per variant for a parent item).
+        const newLines = linesFromAddResponse(data);
+        const existing = new Set(linesRef.current.map((l) => l.catalog_item_id));
+        const toAdd = newLines.filter((l) => !existing.has(l.catalog_item_id));
+        applyLines((prev) => [...prev, ...toAdd]);
 
         // Remove from search results
         setCatalogResults((prev) => prev.filter((item) => item.id !== catalogItemId));
 
-        setHighlightItemId(catalogItemId);
+        const highlightId = toAdd[0]?.catalog_item_id || catalogItemId;
+        setHighlightItemId(highlightId);
         setTimeout(() => setHighlightItemId(null), 3000);
       } catch (err: any) {
         console.error('Add item error:', err);
@@ -592,15 +604,22 @@ export function MobileCountClient({
             }
 
             const { data } = await res.json();
-            const newLine: CountLine = {
-              id: data.id,
-              catalog_item_id: catalogItemId,
-              catalog_item: data.catalog_item,
-              qty_expected: Number(data.qty_expected ?? 0),
-              qty_counted: null,
-            };
-            applyLines((prev) => [...prev, newLine]);
-            line = newLine;
+            const newLines = linesFromAddResponse(data);
+            const existing = new Set(linesRef.current.map((l) => l.catalog_item_id));
+            const toAdd = newLines.filter((l) => !existing.has(l.catalog_item_id));
+            applyLines((prev) => [...prev, ...toAdd]);
+            // Scanning a parent expands to several variant lines — there's no
+            // single quantity to bump, so surface them and let the counter
+            // pick the right variant rather than guessing.
+            if (toAdd.length !== 1 || toAdd[0].catalog_item_id !== catalogItemId) {
+              scanFx(true);
+              setScanFeedback(`Added ${toAdd.length} variant${toAdd.length === 1 ? '' : 's'} — enter each below`);
+              setTimeout(() => setScanFeedback(null), 2500);
+              setHighlightItemId(toAdd[0]?.catalog_item_id || null);
+              setTimeout(() => setHighlightItemId(null), 3000);
+              return;
+            }
+            line = toAdd[0];
           } catch {
             scanFx(false);
             setScanFeedback('Failed to add item');
