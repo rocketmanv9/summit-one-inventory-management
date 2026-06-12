@@ -144,6 +144,16 @@ const defaultState: WizardState = {
   initial_cost: '',
 };
 
+// ASIN from a pasted Amazon URL (/dp/, /gp/product/, /gp/aw/d/ forms) or a
+// bare 10-character ASIN.
+const AMAZON_ASIN_RE = /(?:\/dp\/|\/gp\/product\/|\/gp\/aw\/d\/)([A-Z0-9]{10})(?=[/?]|$)/i;
+function extractAsin(input: string): string | null {
+  const trimmed = input.trim();
+  if (/^[A-Z0-9]{10}$/i.test(trimmed)) return trimmed.toUpperCase();
+  const m = trimmed.match(AMAZON_ASIN_RE);
+  return m ? m[1].toUpperCase() : null;
+}
+
 // Ordered variant combos, mirroring inventory.generate_variant_combos. Each
 // combo's key is the attribute signature used to look up per-variant
 // quantities in variantQtys. Shared by StepSupply and StepReview.
@@ -748,6 +758,7 @@ export default function NewItemWizardPage() {
             vendors={vendors}
             locations={locations}
             updateForm={updateForm}
+            updateFormDirect={updateFormDirect}
             onAddVendor={() => setShowVendorModal(true)}
             onAddLocation={() => setShowLocationModal(true)}
             variantQtys={variantQtys}
@@ -1619,6 +1630,7 @@ function StepSupply({
   vendors,
   locations,
   updateForm,
+  updateFormDirect,
   onAddVendor,
   onAddLocation,
   variantQtys,
@@ -1628,6 +1640,7 @@ function StepSupply({
   vendors: Vendor[];
   locations: Location[];
   updateForm: (field: keyof WizardState, value: string) => void;
+  updateFormDirect: <K extends keyof WizardState>(field: K, value: WizardState[K]) => void;
   onAddVendor: () => void;
   onAddLocation: () => void;
   variantQtys: Record<string, string>;
@@ -1638,6 +1651,41 @@ function StepSupply({
   const [stockOpen, setStockOpen] = useState(!!form.location_id);
   const selectedVendor = vendors.find(v => v.id === form.vendor_id);
   const isAmazonVendor = selectedVendor?.code === 'AMAZON-BIZ';
+
+  // Amazon quick-map: paste a product URL (or bare ASIN) and the vendor,
+  // ASIN, and a reference link are filled in one go.
+  const [amazonInput, setAmazonInput] = useState('');
+  const [amazonStatus, setAmazonStatus] = useState<'idle' | 'mapped' | 'no_vendor' | 'invalid'>('idle');
+  const amazonVendor = vendors.find(v => v.code === 'AMAZON-BIZ');
+
+  const handleAmazonInput = (value: string) => {
+    setAmazonInput(value);
+    if (!value.trim()) {
+      setAmazonStatus('idle');
+      return;
+    }
+    const asin = extractAsin(value);
+    if (!asin) {
+      setAmazonStatus('invalid');
+      return;
+    }
+    if (!amazonVendor) {
+      setAmazonStatus('no_vendor');
+      return;
+    }
+    updateForm('vendor_id', amazonVendor.id);
+    updateForm('vendor_sku', asin);
+    setVendorOpen(true);
+    // Keep the listing handy on the item itself for reordering.
+    if (/^https?:\/\//i.test(value.trim())) {
+      const url = value.trim();
+      const exists = form.reference_links.some((l) => l.url === url);
+      if (!exists) {
+        updateFormDirect('reference_links', [...form.reference_links, { label: 'Amazon', url }]);
+      }
+    }
+    setAmazonStatus('mapped');
+  };
 
   // Ordered variant combos, mirroring inventory.generate_variant_combos so each
   // row maps to a created variant by its attribute signature (= combo.key).
@@ -1655,6 +1703,35 @@ function StepSupply({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Amazon quick-map */}
+        <div className="rounded-md border border-dashed border-orange-200 bg-orange-50/40 p-4 space-y-2">
+          <h4 className="text-sm font-semibold flex items-center gap-2 text-orange-800">
+            <ShoppingCart className="h-4 w-4" /> Order it on Amazon?
+          </h4>
+          <Input
+            value={amazonInput}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleAmazonInput(e.target.value)}
+            placeholder="Paste the Amazon product link (or ASIN) — vendor + mapping fill in automatically"
+          />
+          {amazonStatus === 'mapped' && (
+            <p className="text-xs text-green-700 flex items-center gap-1">
+              <Check className="h-3 w-3" />
+              ASIN <span className="font-mono font-semibold">{form.vendor_sku}</span> mapped to Amazon
+              Business and the link saved to the item&apos;s references.
+            </p>
+          )}
+          {amazonStatus === 'invalid' && (
+            <p className="text-xs text-amber-600">
+              Couldn&apos;t find an ASIN in that — paste a product URL containing /dp/ or /gp/product/, or the 10-character ASIN itself.
+            </p>
+          )}
+          {amazonStatus === 'no_vendor' && (
+            <p className="text-xs text-amber-600">
+              No Amazon Business vendor found. Connect Amazon Business in Settings → Integrations first.
+            </p>
+          )}
+        </div>
+
         {/* Vendor section */}
         <div className="rounded-md border">
           <button
