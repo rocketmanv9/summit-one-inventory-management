@@ -3,7 +3,7 @@
  * Bounded Context: Operations (Globe visualization, network view)
  */
 
-import { getStoredAccessToken } from '@/lib/auth-token';
+import { loadAccessToken } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 export interface GlobeLocation {
@@ -47,14 +47,24 @@ export interface GlobeVendor {
   longitude: number;
 }
 
+export interface GlobeShipment {
+  carrier: string | null;
+  tracking_number: string | null;
+  shipment_id?: string | null;
+  ship_date: string | null;
+  delivery_date: string | null;
+}
+
 export interface GlobePurchaseOrder {
   id: string;
   po_number: string;
   status: string;
   needed_by_date: string | null;
+  expected_delivery_date?: string | null;
   vendor_id: string;
   delivery_location_id: string | null;
   created_at: string;
+  shipments?: GlobeShipment[];
 }
 
 export interface GlobeData {
@@ -75,7 +85,10 @@ export interface GlobeFilters {
 
 export const OperationsRPC = {
   async getGlobeData(filters?: GlobeFilters): Promise<GlobeData> {
-    const token = getStoredAccessToken();
+    // Await the loader (not the sync cache read) — on a hard refresh this
+    // fetches a token from the session cookie instead of failing because
+    // the in-memory cache hasn't hydrated yet.
+    const token = await loadAccessToken();
     if (!token) {
       throw AppError.unauthorized('Authentication required');
     }

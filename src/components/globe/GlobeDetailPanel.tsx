@@ -227,6 +227,43 @@ function ArcDetail({ arc }: { arc: GlobeArc }) {
         </div>
       )}
 
+      {(po.shipments?.length ?? 0) > 0 && (
+        <div>
+          <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">📦 Shipments</label>
+          <div className="mt-1 space-y-2">
+            {po.shipments!.map((s, i) => {
+              // Amazon Logistics TBA numbers track on Amazon's own page
+              const trackUrl = s.tracking_number?.startsWith('TBA')
+                ? `https://track.amazon.com/tracking/${s.tracking_number}`
+                : null;
+              return (
+                <div key={s.tracking_number || i} className="p-2 bg-sky-50 border border-sky-200 rounded-md text-sm">
+                  <div className="font-medium text-sky-900">{s.carrier || 'Carrier'}</div>
+                  {s.tracking_number && (
+                    trackUrl ? (
+                      <a
+                        href={trackUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-mono text-sky-700 underline hover:text-sky-900 break-all"
+                      >
+                        {s.tracking_number} ↗
+                      </a>
+                    ) : (
+                      <div className="text-xs font-mono text-sky-700 break-all">{s.tracking_number}</div>
+                    )
+                  )}
+                  <div className="text-xs text-sky-700 mt-0.5">
+                    {s.ship_date && <>Shipped {new Date(s.ship_date).toLocaleDateString()}</>}
+                    {s.delivery_date && <> · Arrives {new Date(s.delivery_date).toLocaleDateString()}</>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div>
         <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Created</label>
         <p className="text-sm text-gray-700 mt-1">{new Date(po.created_at).toLocaleDateString()}</p>

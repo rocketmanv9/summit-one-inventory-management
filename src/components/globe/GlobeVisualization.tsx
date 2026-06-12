@@ -62,6 +62,7 @@ const LOCATION_TYPE_COLORS: Record<string, string> = {
 const VENDOR_COLOR = '#22c55e';   // green
 const DEFAULT_LOCATION_COLOR = '#3b82f6'; // blue fallback
 const PO_COLOR = '#a855f7';       // purple
+const PO_TRANSIT_COLOR = '#38bdf8'; // sky — shipments on the move
 
 const STATUS_COLORS: Record<string, string> = {
   draft: '#f59e0b',
@@ -86,6 +87,8 @@ const INTERACTIVE_LAYERS = [
   'transfer-lines-solid',
   'transfer-lines-dashed',
   'po-lines',
+  'po-lines-transit',
+  'shipment-points',
 ];
 
 // ---------- Layer styles ----------
@@ -146,10 +149,54 @@ const transferLinesDashedLayer = {
 const poLinesLayer = {
   id: 'po-lines',
   type: 'line' as const,
+  filter: ['!=', ['get', 'inTransit'], true],
   paint: {
     'line-color': PO_COLOR,
     'line-width': 2,
     'line-opacity': 0.7,
+  },
+} satisfies LayerProps;
+
+const poLinesTransitLayer = {
+  id: 'po-lines-transit',
+  type: 'line' as const,
+  filter: ['==', ['get', 'inTransit'], true],
+  paint: {
+    'line-color': PO_TRANSIT_COLOR,
+    'line-width': 3,
+    'line-opacity': 0.9,
+    'line-dasharray': [2, 1.5],
+  },
+} satisfies LayerProps;
+
+// In-flight packages: emoji markers positioned along the PO route
+const shipmentPointsLayer = {
+  id: 'shipment-points',
+  type: 'symbol' as const,
+  layout: {
+    'text-field': '📦',
+    'text-size': 22,
+    'text-allow-overlap': true,
+    'text-ignore-placement': true,
+  },
+} satisfies LayerProps;
+
+const shipmentLabelLayer = {
+  id: 'shipment-labels',
+  type: 'symbol' as const,
+  layout: {
+    'text-field': ['get', 'etaLabel'],
+    'text-size': 10,
+    'text-offset': [0, 1.6],
+    'text-anchor': 'top' as const,
+    'text-allow-overlap': true,
+    'text-ignore-placement': true,
+    'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+  },
+  paint: {
+    'text-color': '#bae6fd',
+    'text-halo-color': '#0c4a6e',
+    'text-halo-width': 1.5,
   },
 } satisfies LayerProps;
 
@@ -265,19 +312,23 @@ export function GlobeVisualization({
     return { transferGeoJSON: geojson, transferLookup: lookup };
   }, [data.transfers, visibleLayers.transfers]);
 
-  // ── Build PO lines ──
-  const { poGeoJSON, poLookup } = useMemo(() => {
+  // ── Build PO lines + in-flight package markers ──
+  const { poGeoJSON, poLookup, shipmentGeoJSON } = useMemo(() => {
     const features: Feature[] = [];
+    const shipmentFeatures: Feature[] = [];
     const lookup: globalThis.Map<string, GlobeArc> = new globalThis.Map();
 
     if (visibleLayers.pos) {
       const vendorMap: globalThis.Map<string, GlobeVendor> = new globalThis.Map(data.vendors.map((v) => [v.id, v]));
       const locationMap: globalThis.Map<string, GlobeLocation> = new globalThis.Map(data.locations.map((l) => [l.id, l]));
+      const now = Date.now();
 
       for (const po of data.purchaseOrders) {
         const vendor = vendorMap.get(po.vendor_id);
         const location = po.delivery_location_id ? locationMap.get(po.delivery_location_id) : null;
         if (!vendor || !location) continue;
+
+        const inTransit = po.status === 'in_transit';
 
         const arc: GlobeArc = {
           id: po.id,
@@ -300,13 +351,45 @@ export function GlobeVisualization({
               [location.longitude, location.latitude],
             ],
           },
-          properties: { id: po.id, arcType: 'po' },
+          properties: { id: po.id, arcType: 'po', inTransit },
         });
+
+        // Place a package marker along the route. Carriers don't expose live
+        // GPS, so the position is estimated from time elapsed between the
+        // ship date and the promised delivery date.
+        const shipment = inTransit && po.shipments?.length ? po.shipments[po.shipments.length - 1] : null;
+        if (shipment) {
+          const shipTs = shipment.ship_date ? new Date(shipment.ship_date).getTime() : NaN;
+          const etaTs = shipment.delivery_date ? new Date(shipment.delivery_date).getTime() : NaN;
+          let progress = 0.5;
+          if (!isNaN(shipTs) && !isNaN(etaTs) && etaTs > shipTs) {
+            progress = Math.max(0.06, Math.min(0.94, (now - shipTs) / (etaTs - shipTs)));
+          }
+          const lng = vendor.longitude + (location.longitude - vendor.longitude) * progress;
+          const lat = vendor.latitude + (location.latitude - vendor.latitude) * progress;
+          const eta = shipment.delivery_date
+            ? new Date(shipment.delivery_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : null;
+
+          shipmentFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+            properties: {
+              id: po.id,
+              shipmentPo: true,
+              poNumber: po.po_number,
+              carrier: shipment.carrier || 'Carrier',
+              tracking: shipment.tracking_number || '',
+              etaLabel: eta ? `arrives ${eta}` : 'in transit',
+            },
+          });
+        }
       }
     }
 
     const geojson: FeatureCollection = { type: 'FeatureCollection', features };
-    return { poGeoJSON: geojson, poLookup: lookup };
+    const shipGeojson: FeatureCollection = { type: 'FeatureCollection', features: shipmentFeatures };
+    return { poGeoJSON: geojson, poLookup: lookup, shipmentGeoJSON: shipGeojson };
   }, [data.purchaseOrders, data.vendors, data.locations, visibleLayers.pos]);
 
   // ── Click handler ──
@@ -315,7 +398,7 @@ export function GlobeVisualization({
       const feature = (e as MapMouseEvent & { features?: Array<{ properties?: Record<string, unknown> }> }).features?.[0];
       if (!feature?.properties) return;
 
-      const { id, pointType, arcType } = feature.properties;
+      const { id, pointType, arcType, shipmentPo } = feature.properties;
 
       if (pointType) {
         const point = pointsLookup.get(id as string);
@@ -323,7 +406,7 @@ export function GlobeVisualization({
       } else if (arcType === 'transfer') {
         const arc = transferLookup.get(id as string);
         if (arc) onArcClick?.(arc);
-      } else if (arcType === 'po') {
+      } else if (arcType === 'po' || shipmentPo) {
         const arc = poLookup.get(id as string);
         if (arc) onArcClick?.(arc);
       }
@@ -342,7 +425,17 @@ export function GlobeVisualization({
       }
 
       setCursor('pointer');
-      const { id, pointType, arcType } = feature.properties;
+      const { id, pointType, arcType, shipmentPo, poNumber, carrier, tracking, etaLabel } = feature.properties;
+
+      if (shipmentPo) {
+        setHoverInfo({
+          lng: e.lngLat.lng,
+          lat: e.lngLat.lat,
+          name: `📦 PO ${poNumber} — ${carrier}`,
+          typeLabel: [etaLabel, tracking].filter(Boolean).join(' · '),
+        });
+        return;
+      }
 
       if (pointType) {
         const point = pointsLookup.get(id as string);
@@ -407,12 +500,19 @@ export function GlobeVisualization({
       {/* PO lines */}
       <Source id="pos" type="geojson" data={poGeoJSON}>
         <Layer {...poLinesLayer} />
+        <Layer {...poLinesTransitLayer} />
       </Source>
 
       {/* Points (on top of lines) */}
       <Source id="points" type="geojson" data={pointsGeoJSON}>
         <Layer {...pointsCircleLayer} />
         <Layer {...pointsLabelLayer} />
+      </Source>
+
+      {/* In-flight packages (topmost) */}
+      <Source id="shipments" type="geojson" data={shipmentGeoJSON}>
+        <Layer {...shipmentPointsLayer} />
+        <Layer {...shipmentLabelLayer} />
       </Source>
 
       {/* Hover popup */}

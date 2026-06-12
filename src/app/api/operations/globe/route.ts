@@ -88,12 +88,14 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     vendors = vendorData || [];
   }
 
-  // Fetch purchase orders with vendor/location links (if requested)
+  // Fetch purchase orders with vendor/location links (if requested).
+  // Voided (soft-deleted drafts) and cancelled POs never belong on the map.
   let purchaseOrders: any[] = [];
   if (showPOs) {
     let poQuery = sc
       .from('purchase_orders')
-      .select('id, po_number, status, needed_by_date, vendor_id, delivery_location_id, created_at')
+      .select('id, po_number, status, needed_by_date, expected_delivery_date, vendor_id, delivery_location_id, created_at')
+      .not('status', 'in', '(voided,cancelled)')
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -111,6 +113,36 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
       throw AppError.internal(poErr.message);
     }
     purchaseOrders = poData || [];
+
+    // Attach Amazon shipment tracking (carrier / tracking # / ETA from the
+    // ship-notice webhook) so in-transit packages can be drawn on the map.
+    if (purchaseOrders.length > 0) {
+      const { data: punchouts, error: punchErr } = await inv
+        .from('punchout_orders')
+        .select('purchase_order_id, metadata')
+        .in('purchase_order_id', purchaseOrders.map((po: any) => po.id))
+        .limit(500);
+
+      if (punchErr) {
+        // Tracking is enrichment — log and continue rather than failing the map
+        log.warn('globe.shipments_failed', { error: punchErr.message });
+      } else {
+        const shipmentsByPo = new Map<string, any[]>();
+        for (const p of punchouts || []) {
+          const shipments = Array.isArray(p.metadata?.shipments) ? p.metadata.shipments : [];
+          if (shipments.length > 0) {
+            shipmentsByPo.set(p.purchase_order_id, [
+              ...(shipmentsByPo.get(p.purchase_order_id) || []),
+              ...shipments,
+            ]);
+          }
+        }
+        purchaseOrders = purchaseOrders.map((po: any) => ({
+          ...po,
+          shipments: shipmentsByPo.get(po.id) || [],
+        }));
+      }
+    }
   }
 
   return Response.json({
