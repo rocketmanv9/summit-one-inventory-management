@@ -12,10 +12,11 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, PackageCheck, AlertCircle } from 'lucide-react';
+import { Loader2, PackageCheck, AlertCircle, Printer, Check } from 'lucide-react';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { receivePurchaseOrderLines } from '@/lib/api/purchase-orders';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 
 interface POLine {
   id: string;
@@ -47,6 +48,9 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   const [qtyByLine, setQtyByLine] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // After a successful receive: offer to print labels for what just arrived.
+  const [receivedLabels, setReceivedLabels] = useState<BarcodeLabelItem[] | null>(null);
+  const [showLabelDialog, setShowLabelDialog] = useState(false);
 
   // Outstanding quantity per line (numeric strings from PostgREST → coerce).
   const lines = useMemo(() => (po?.purchase_order_lines || []).map((l) => {
@@ -85,6 +89,8 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     if (!open || !po) return;
     setError('');
     setSaving(false);
+    setReceivedLabels(null);
+    setShowLabelDialog(false);
     // Default every receivable line to its full outstanding quantity.
     const init: Record<string, string> = {};
     for (const l of receivable) init[l.id] = String(l.outstanding);
@@ -147,7 +153,15 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
         if (freeErr) throw freeErr;
       }
       onReceived();
-      onClose();
+      // Stay open on a success panel offering labels for what just arrived.
+      const labels: BarcodeLabelItem[] = catalogToReceive
+        .map((r) => {
+          const item = catalogItems.get(r.catalog_item_id);
+          const code = item?.barcode || item?.sku;
+          return code ? { code, label: item?.name || code } : null;
+        })
+        .filter((l): l is BarcodeLabelItem => l !== null);
+      setReceivedLabels(labels);
     } catch (err: any) {
       // Surface guardrail errors (e.g. OVER_RECEIPT_BLOCKED) and chassis envelopes
       // ({ error: { message } }) — never render '[object Object]'.
@@ -170,6 +184,47 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
         </div>
 
+        {/* Success panel: stock is in — suggest printing labels for it */}
+        {receivedLabels !== null ? (
+          <div className="p-6 space-y-4 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+              <Check className="h-6 w-6 text-green-600" />
+            </div>
+            <div>
+              <h4 className="font-semibold">Received and posted to inventory</h4>
+              <p className="text-sm text-muted-foreground mt-1">
+                Stock levels and the PO status are updated.
+                {receivedLabels.length > 0 && ' Want labels for what just arrived?'}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              {receivedLabels.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowLabelDialog(true)}
+                  className="flex-1 px-4 py-2 border rounded-md hover:bg-gray-50 text-sm font-medium flex items-center justify-center gap-1.5"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print Labels ({receivedLabels.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-sm font-medium"
+              >
+                Done
+              </button>
+            </div>
+            {showLabelDialog && (
+              <BarcodeLabelDialog
+                items={receivedLabels}
+                entityType="item"
+                onClose={() => setShowLabelDialog(false)}
+              />
+            )}
+          </div>
+        ) : (
         <div className="p-6 space-y-4">
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
@@ -258,6 +313,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
