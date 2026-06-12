@@ -31,10 +31,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   }
   if (!entry.template) throw AppError.internal('Schedule entry has no template');
 
+  // A 'partial' template scoped to "everything at the location" maps to a
+  // full count — the RPC requires an item scope for partial.
+  const effectiveType =
+    entry.template.count_type === 'partial' && !entry.template.catalog_item_ids?.length
+      ? 'full'
+      : entry.template.count_type;
+
   const { data: countId, error: rpcErr } = await inv.rpc('rpc_inv_cycle_count_start', {
     p_tenant_id: ctx.tenantId,
     p_location_id: entry.template.location_id,
-    p_count_type: entry.template.count_type,
+    p_count_type: effectiveType,
     p_catalog_item_ids: entry.template.catalog_item_ids || null,
     p_counted_by_user_id: entry.assigned_to_user_id || ctx.userId,
     p_last_event_id: idempotencyKey,
