@@ -22,7 +22,8 @@ interface Template {
 
 interface ScheduleEntry {
   id: string;
-  template_id: string;
+  ad_hoc?: boolean;
+  template_id: string | null;
   scheduled_date: string;
   assigned_to_user_id: string | null;
   status: 'planned' | 'generated' | 'completed' | 'skipped';
@@ -358,7 +359,9 @@ function EntryDetailModal({ entry, qualifiedUsers, onClose, onChanged }: {
   const [date, setDate] = useState(entry.scheduled_date);
   const [assignee, setAssignee] = useState(entry.assigned_to_user_id || '');
   const [busy, setBusy] = useState(false);
-  const editable = entry.status === 'planned';
+  // Ad-hoc entries are a read-only mirror of a directly-created count — they
+  // have no schedule row to PATCH/DELETE, so never expose edit controls.
+  const editable = entry.status === 'planned' && !entry.ad_hoc;
 
   const patchEntry = async (body: Record<string, unknown>) => {
     setBusy(true);
@@ -505,9 +508,19 @@ function EntryDetailModal({ entry, qualifiedUsers, onClose, onChanged }: {
               </>
             )}
             {!editable && (
-              <button onClick={onClose} className="flex-1 px-4 py-2 border rounded-md hover:bg-gray-50 font-medium">
-                Close
-              </button>
+              <>
+                {entry.cycle_count_id && (
+                  <button
+                    onClick={() => router.push('/inventory/cycle-counts')}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+                  >
+                    View Count
+                  </button>
+                )}
+                <button onClick={onClose} className="flex-1 px-4 py-2 border rounded-md hover:bg-gray-50 font-medium">
+                  Close
+                </button>
+              </>
             )}
           </div>
         </div>
