@@ -12,6 +12,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { LocationTypeModal } from '@/components/modals/LocationTypeModal';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { geocodeAddress } from '@/lib/geocode';
@@ -51,6 +52,8 @@ export default function LocationsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Location | null>(null);
+  const [labelDialog, setLabelDialog] = useState<BarcodeLabelItem[] | null>(null);
+  const [labelLoading, setLabelLoading] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
@@ -111,6 +114,32 @@ export default function LocationsPage() {
       setDeleteError(message);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // One-click bulk labels straight from the list: fetch everything stocked at
+  // the location (items by SKU, assets by tag) and open the label dialog.
+  const handlePrintLabels = async (row: Location) => {
+    setLabelLoading(row.id);
+    try {
+      const snapshot = await InventoryRPC.getLocationInventorySnapshot(row.id);
+      const items: BarcodeLabelItem[] = [
+        ...(snapshot.items || [])
+          .filter((i) => i.sku)
+          .map((i) => ({ code: i.sku as string, label: i.item_name })),
+        ...(snapshot.assets || [])
+          .filter((a) => a.asset_tag)
+          .map((a) => ({ code: a.asset_tag, label: a.item_name || a.asset_tag })),
+      ];
+      if (items.length === 0) {
+        alert(`Nothing to print at "${row.name}" yet — add stock (or run an initial count) first.`);
+        return;
+      }
+      setLabelDialog(items);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to load location items');
+    } finally {
+      setLabelLoading(null);
     }
   };
 
@@ -186,6 +215,16 @@ export default function LocationsPage() {
       header: 'Actions',
       render: (row: Location) => (
         <div className="flex gap-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePrintLabels(row);
+            }}
+            disabled={labelLoading === row.id}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium disabled:opacity-50"
+          >
+            {labelLoading === row.id ? 'Loading…' : 'Labels'}
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -289,6 +328,15 @@ export default function LocationsPage() {
             fetchLocationTypes();
           }}
         />
+
+        {/* Bulk labels for everything at a location */}
+        {labelDialog && (
+          <BarcodeLabelDialog
+            items={labelDialog}
+            entityType="item"
+            onClose={() => setLabelDialog(null)}
+          />
+        )}
 
         {/* Delete location confirmation */}
         <ConfirmDialog
