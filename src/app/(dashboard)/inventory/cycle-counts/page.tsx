@@ -539,6 +539,11 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   };
 
   const handleVarianceDecision = async (lineId: string, decision: string, reason?: string) => {
+    // Patch just this line in place — no refetch, so the panel doesn't reload
+    // and your scroll position is preserved after each decision.
+    setCountLines((prev) => prev.map((l) =>
+      l.id === lineId ? { ...l, decision_status: decision, decision_reason: reason ?? l.decision_reason } : l
+    ));
     try {
       const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${lineId}/decide`, {
         method: 'POST',
@@ -548,9 +553,34 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
         const data = await res.json();
         throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to record decision');
       }
-      fetchCountLines();
     } catch (error: any) {
       alert(error.message || 'Error recording variance decision');
+      fetchCountLines(); // resync on failure
+    }
+  };
+
+  // Initial counts: every counted line is a "variance" against expected 0 —
+  // that's the whole point, so one click accepts them all as initial stock.
+  const acceptAllInitialStock = async () => {
+    const pending = countLines.filter((l) =>
+      l.qty_counted !== null && (!l.decision_status || l.decision_status === 'pending')
+    );
+    if (pending.length === 0) return;
+    setCountLines((prev) => prev.map((l) =>
+      pending.some((p) => p.id === l.id)
+        ? { ...l, decision_status: 'accepted', decision_reason: 'initial_stock' }
+        : l
+    ));
+    try {
+      await Promise.all(pending.map((l) =>
+        apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/lines/${l.id}/decide`, {
+          method: 'POST',
+          body: { decision: 'accepted', reason: 'initial_stock' },
+        })
+      ));
+    } catch (error: any) {
+      alert(error.message || 'Error accepting lines');
+      fetchCountLines();
     }
   };
 
@@ -641,7 +671,29 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                 </div>
               </div>
             ) : (
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+              <div className="space-y-2">
+                {/* Initial count under review: everything counted is a variance
+                    vs expected 0 — that's expected, so accept them all at once. */}
+                {cycleCount.status === 'under_review' && cycleCount.count_type === 'initial' && (() => {
+                  const pending = countLines.filter((l) =>
+                    l.qty_counted !== null && (!l.decision_status || l.decision_status === 'pending')
+                  ).length;
+                  if (pending === 0) return null;
+                  return (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between gap-3">
+                      <div className="text-sm text-green-800">
+                        This is an initial count — every line is new stock. Accept all {pending} at once.
+                      </div>
+                      <button
+                        onClick={acceptAllInitialStock}
+                        className="shrink-0 px-3 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700"
+                      >
+                        Accept All as Initial Stock
+                      </button>
+                    </div>
+                  );
+                })()}
+                <div className="space-y-2 max-h-96 overflow-y-auto">
                 {countLines.map((line) => (
                   <div key={line.id} className="p-3 border rounded-lg hover:bg-gray-50">
                     <div className="flex items-start justify-between mb-2">
@@ -882,6 +934,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                     )}
                   </div>
                 ))}
+                </div>
               </div>
             )}
           </div>
