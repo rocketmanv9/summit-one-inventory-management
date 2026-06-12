@@ -16,6 +16,28 @@ function hasRequiredCookies(request: NextRequest) {
   return Boolean(accessToken);
 }
 
+// Routing check only — signature verification happens in requireAuthContext()
+// on every API call. Here we just need to know whether the token carries a
+// tenant so users without one bounce back to the portal instead of landing
+// in an app where every request 403s.
+function tokenHasTenant(request: NextRequest): boolean {
+  const token = request.cookies.get('access_token')?.value;
+  if (!token) return false;
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    return Boolean(json?.app_metadata?.tenant_id);
+  } catch {
+    return false;
+  }
+}
+
+function portalRedirect(request: NextRequest) {
+  const coreLoginUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || '/';
+  const redirectUrl = new URL(coreLoginUrl, request.nextUrl.origin);
+  return NextResponse.redirect(redirectUrl);
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -29,14 +51,16 @@ export async function middleware(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    if (!tokenHasTenant(request)) {
+      return NextResponse.json({ error: 'No tenant context' }, { status: 403 });
+    }
+
     return NextResponse.next();
   }
 
   const authenticated = hasRequiredCookies(request);
-  if (!authenticated) {
-    const coreLoginUrl = process.env.NEXT_PUBLIC_CORE_APP_URL || '/';
-    const redirectUrl = new URL(coreLoginUrl, request.nextUrl.origin);
-    return NextResponse.redirect(redirectUrl);
+  if (!authenticated || !tokenHasTenant(request)) {
+    return portalRedirect(request);
   }
 
   return NextResponse.next();
