@@ -74,9 +74,18 @@ will NOT reproduce stage. Promotion needs a deliberate baseline.
 - `tests/delete-fk-handling.test.ts` guards DELETE routes.
 - `tests/ai-tool-deps.test.ts` guards AI tool RPC/table references.
 
-## Current audit baseline (2026-06-12)
-42 lint errors / 10 pattern findings. Notable load-bearing breakage to fix
-in Phase 2 (broken TODAY on stage, will error when the code path runs):
+## Audit status: ✅ ZERO (burned down 2026-06-12)
+The 42 lint errors and 10 pattern findings were eliminated the same day
+(migration `20260612000008_audit_burndown.sql`): dead functions dropped
+(test scaffolding, legacy v1 receive chain, expenses stubs, broken RFID
+bulk-session RPCs, the 6-arg cycle-count overload), every root-only JWT
+tenant read COALESCEd, and the load-bearing breakage below fixed —
+including removing direct stock_balances writes from issue/reversal
+(double-count vs the trigger). `rpc_schema_drift_audit()` now returns 0/0
+and the receiving E2E still passes. **Phase 2's function cleanup is done**;
+the emit_event overload dedup remains. The nightly audit keeps it at zero.
+
+Original Phase-2 list (all addressed):
 - `inventory.rpc_issue_inventory` — inserts inventory_events columns that
   don't exist (same drift class as the receiving bug).
 - `supply_chain.rpc_reverse_receipt_from_inventory` — same.
