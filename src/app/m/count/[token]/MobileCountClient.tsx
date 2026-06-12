@@ -77,6 +77,30 @@ function bypassHeaders(secret: string): Record<string, string> {
   return secret ? { 'x-vercel-protection-bypass': secret } : {};
 }
 
+// Short beep + vibration so counters get scan feedback without looking at the
+// screen. Both are best-effort — iOS may block audio until a user gesture.
+let sharedAudioCtx: AudioContext | null = null;
+function scanFx(ok: boolean) {
+  try {
+    navigator.vibrate?.(ok ? 40 : [70, 50, 70]);
+  } catch { /* unsupported */ }
+  try {
+    const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!Ctor) return;
+    if (!sharedAudioCtx) sharedAudioCtx = new Ctor();
+    const ctx = sharedAudioCtx;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = ok ? 880 : 200;
+    gain.gain.value = 0.08;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + (ok ? 0.09 : 0.2));
+  } catch { /* unsupported */ }
+}
+
 function withBypass(url: string, secret: string): string {
   if (!secret) return url;
   const sep = url.includes('?') ? '&' : '?';
@@ -139,6 +163,17 @@ export function MobileCountClient({
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const isInitial = cycleCount?.count_type === 'initial';
 
+  // Synchronous mirror of `lines` so back-to-back scans of the same item read
+  // the qty the previous scan just wrote instead of a stale render snapshot.
+  // Every mutation goes through applyLines to keep ref and state in lockstep.
+  const linesRef = useRef<CountLine[]>(initialData?.lines?.map(normalizeLine) || []);
+  const applyLines = useCallback((updater: (prev: CountLine[]) => CountLine[]) => {
+    linesRef.current = updater(linesRef.current);
+    setLines(linesRef.current);
+  }, []);
+  // Per-item promise chains serialize scan increments so they can't interleave.
+  const scanChainRef = useRef<Map<string, Promise<void>>>(new Map());
+
   useEffect(() => setMounted(true), []);
 
   // Only validate client-side if no server-provided data
@@ -197,7 +232,7 @@ export function MobileCountClient({
       setJwt(data.jwt);
       setExpiresAt(data.expires_at);
       setCycleCount(data.cycle_count);
-      setLines((data.lines || []).map(normalizeLine));
+      applyLines(() => (data.lines || []).map(normalizeLine));
       setState('counting');
     } catch (err: any) {
       clearTimeout(timeout);
@@ -258,10 +293,12 @@ export function MobileCountClient({
     saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 6000);
   }, []);
 
+  // Returns true only when the server confirmed the save — callers must not
+  // show success feedback otherwise.
   const handleRecordCount = useCallback(
-    async (catalogItemId: string, qty: number) => {
+    async (catalogItemId: string, qty: number): Promise<boolean> => {
       const itemName =
-        lines.find((l) => l.catalog_item_id === catalogItemId)?.catalog_item?.name || 'item';
+        linesRef.current.find((l) => l.catalog_item_id === catalogItemId)?.catalog_item?.name || 'item';
       try {
         const res = await fetch(withBypass('/api/m/count/record', bypassSecret), {
           method: 'POST',
@@ -274,25 +311,27 @@ export function MobileCountClient({
           if (res.status === 401) {
             setState('error');
             setErrorMessage(EXPIRED_MESSAGE);
-            return;
+            return false;
           }
           throw new Error(apiErrorMessage(data, 'Failed to record count'));
         }
 
         // Local state only updates after the server confirms the save.
-        setLines((prev) =>
+        applyLines((prev) =>
           prev.map((line) =>
             line.catalog_item_id === catalogItemId ? { ...line, qty_counted: qty } : line
           )
         );
+        return true;
       } catch (err: any) {
         console.error('Record count error:', err);
         showSaveError(`Couldn't save count for "${itemName}" — check signal and re-enter the quantity.`);
         setScanFeedback(`Save failed: ${itemName}`);
         setTimeout(() => setScanFeedback(null), 2000);
+        return false;
       }
     },
-    [mobileHeaders, bypassSecret, lines, showSaveError]
+    [mobileHeaders, bypassSecret, applyLines, showSaveError]
   );
 
   const handleRecordAssets = useCallback(
@@ -316,7 +355,7 @@ export function MobileCountClient({
           throw new Error(apiErrorMessage(data, 'Failed to record assets'));
         }
 
-        setLines((prev) =>
+        applyLines((prev) =>
           prev.map((line) =>
             line.id === lineId
               ? {
@@ -332,7 +371,7 @@ export function MobileCountClient({
         showSaveError(`Couldn't save assets for "${itemName}" — check signal and try again.`);
       }
     },
-    [mobileHeaders, bypassSecret, lines, showSaveError]
+    [mobileHeaders, bypassSecret, lines, applyLines, showSaveError]
   );
 
   // Scan/enter a serial for a serialized line → creates the asset (if new) and
@@ -354,7 +393,7 @@ export function MobileCountClient({
         }
         const { data } = await res.json();
         const asset = data.asset;
-        setLines((prev) =>
+        applyLines((prev) =>
           prev.map((l) => {
             if (l.id !== lineId) return l;
             const expected = l.expected_assets || [];
@@ -371,13 +410,15 @@ export function MobileCountClient({
             };
           })
         );
+        scanFx(true);
         setScanFeedback(`Added ${asset.asset_tag || s}`);
         setTimeout(() => setScanFeedback(null), 2000);
       } catch (err: any) {
+        scanFx(false);
         alert(err.message || 'Failed to record serial');
       }
     },
-    [mobileHeaders, bypassSecret]
+    [mobileHeaders, bypassSecret, applyLines]
   );
 
   // Search catalog items for initial counts
@@ -464,7 +505,7 @@ export function MobileCountClient({
           qty_expected: Number(data.qty_expected ?? 0),
           qty_counted: null,
         };
-        setLines((prev) => [...prev, newLine]);
+        applyLines((prev) => [...prev, newLine]);
 
         // Remove from search results
         setCatalogResults((prev) => prev.filter((item) => item.id !== catalogItemId));
@@ -478,7 +519,7 @@ export function MobileCountClient({
         setAddingItemId(null);
       }
     },
-    [addingItemId, mobileHeaders, bypassSecret]
+    [addingItemId, mobileHeaders, bypassSecret, applyLines]
   );
 
   const lookupBarcode = useCallback(
@@ -504,6 +545,35 @@ export function MobileCountClient({
     [jwt, bypassSecret]
   );
 
+  // Record one scanned unit. Increments are serialized per item through a
+  // promise chain and read the live linesRef, so two quick scans of the same
+  // barcode become +1 then +1 — never the same qty written twice. Success
+  // feedback (toast/beep/highlight) only fires after the server confirms.
+  const queueScanIncrement = useCallback(
+    (catalogItemId: string, fallbackLabel: string) => {
+      const prev = scanChainRef.current.get(catalogItemId) || Promise.resolve();
+      const next = prev.then(async () => {
+        const line = linesRef.current.find((l) => l.catalog_item_id === catalogItemId);
+        if (!line) return;
+        const newQty = (line.qty_counted ?? 0) + 1;
+        const saved = await handleRecordCount(catalogItemId, newQty);
+        if (saved) {
+          scanFx(true);
+          const itemName = line.catalog_item?.name || line.catalog_item?.sku || fallbackLabel;
+          setScanFeedback(`${itemName} → ${newQty}`);
+          setTimeout(() => setScanFeedback(null), 2000);
+          setHighlightItemId(catalogItemId);
+          setTimeout(() => setHighlightItemId(null), 3000);
+        } else {
+          scanFx(false);
+        }
+      });
+      scanChainRef.current.set(catalogItemId, next.catch(() => {}));
+      return next;
+    },
+    [handleRecordCount]
+  );
+
   const handleBarcodeScan = useCallback(
     async (decodedText: string) => {
       // Targeted serial scan from a serialized line → record the serial there.
@@ -517,12 +587,13 @@ export function MobileCountClient({
         const catalogItemId = await lookupBarcode(decodedText);
 
         if (!catalogItemId) {
+          scanFx(false);
           setScanFeedback(`Not found: ${decodedText}`);
           setTimeout(() => setScanFeedback(null), 2000);
           return;
         }
 
-        let line = lines.find((l) => l.catalog_item_id === catalogItemId);
+        let line = linesRef.current.find((l) => l.catalog_item_id === catalogItemId);
 
         // For initial counts, auto-add the item if not already in the list
         if (!line && isInitial) {
@@ -535,6 +606,7 @@ export function MobileCountClient({
             });
 
             if (!res.ok) {
+              scanFx(false);
               setScanFeedback('Failed to add item');
               setTimeout(() => setScanFeedback(null), 2000);
               return;
@@ -548,9 +620,10 @@ export function MobileCountClient({
               qty_expected: Number(data.qty_expected ?? 0),
               qty_counted: null,
             };
-            setLines((prev) => [...prev, newLine]);
+            applyLines((prev) => [...prev, newLine]);
             line = newLine;
           } catch {
+            scanFx(false);
             setScanFeedback('Failed to add item');
             setTimeout(() => setScanFeedback(null), 2000);
             return;
@@ -558,29 +631,21 @@ export function MobileCountClient({
         }
 
         if (!line) {
+          scanFx(false);
           setScanFeedback(`Not in count list: ${decodedText}`);
           setTimeout(() => setScanFeedback(null), 2000);
           return;
         }
 
-        // Lines are normalized to numbers at every state entry point, so plain
-        // arithmetic is safe here (the record route's z.number() would 400 on "31").
-        const newQty = (line.qty_counted ?? 0) + 1;
-        await handleRecordCount(catalogItemId, newQty);
-
-        const itemName = line.catalog_item?.name || line.catalog_item?.sku || decodedText;
-        setScanFeedback(`${itemName} → ${newQty}`);
-        setTimeout(() => setScanFeedback(null), 2000);
-
-        setHighlightItemId(catalogItemId);
-        setTimeout(() => setHighlightItemId(null), 3000);
+        await queueScanIncrement(catalogItemId, decodedText);
       } catch (err) {
         console.error('Barcode lookup error:', err);
+        scanFx(false);
         setScanFeedback('Scan error — try again');
         setTimeout(() => setScanFeedback(null), 2000);
       }
     },
-    [lookupBarcode, lines, handleRecordCount, handleAddSerial, isInitial, bypassSecret, mobileHeaders]
+    [lookupBarcode, queueScanIncrement, handleAddSerial, isInitial, bypassSecret, mobileHeaders, applyLines]
   );
 
   // Open the camera scanner aimed at a specific serialized line.
@@ -593,13 +658,21 @@ export function MobileCountClient({
     if (isSubmitting || isSubmitted) return;
 
     const uncountedCount = lines.filter((l) => l.qty_counted === null).length;
+    // Surface variances at submit time so fat-fingered quantities get a second
+    // look before review (expected quantities are meaningless on initial/blind).
+    const varianceCount = !isInitial && !cycleCount?.is_blind
+      ? lines.filter((l) => l.qty_counted !== null && l.qty_counted !== l.qty_expected).length
+      : 0;
+    const varianceNote = varianceCount > 0
+      ? `\n${varianceCount} item(s) differ from the expected quantity — double-check before submitting.`
+      : '';
     if (uncountedCount > 0) {
       const proceed = confirm(
-        `${uncountedCount} item(s) haven't been counted yet. Submit anyway?`
+        `${uncountedCount} item(s) haven't been counted yet.${varianceNote}\nSubmit anyway?`
       );
       if (!proceed) return;
     } else {
-      const proceed = confirm('Submit this count for review?');
+      const proceed = confirm(`Submit this count for review?${varianceNote}`);
       if (!proceed) return;
     }
 
@@ -641,7 +714,7 @@ export function MobileCountClient({
       clearTimeout(timeout);
       setIsSubmitting(false);
     }
-  }, [isSubmitting, isSubmitted, lines, bypassSecret, mobileHeaders]);
+  }, [isSubmitting, isSubmitted, lines, isInitial, cycleCount, bypassSecret, mobileHeaders]);
 
   if (state === 'loading') {
     return (
@@ -939,7 +1012,7 @@ export function MobileCountClient({
             onClose={() => setShowAddItem(false)}
             onItemCreated={(countLine, newCategory) => {
               if (countLine) {
-                setLines((prev) => [...prev, normalizeLine(countLine)]);
+                applyLines((prev) => [...prev, normalizeLine(countLine)]);
                 setHighlightItemId(countLine.catalog_item_id);
                 setTimeout(() => setHighlightItemId(null), 3000);
               }
@@ -958,7 +1031,7 @@ export function MobileCountClient({
             isOpen={showCatalogBrowser}
             onClose={() => setShowCatalogBrowser(false)}
             onItemAdded={(newLine) => {
-              setLines((prev) => [...prev, normalizeLine(newLine)]);
+              applyLines((prev) => [...prev, normalizeLine(newLine)]);
               setHighlightItemId(newLine.catalog_item_id);
               setTimeout(() => setHighlightItemId(null), 3000);
             }}

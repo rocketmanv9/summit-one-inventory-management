@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, type CSSProperties } from 'react';
+import { useState, useRef, useEffect, useCallback, type CSSProperties } from 'react';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 interface CountLine {
@@ -22,15 +22,27 @@ interface MobileCountItemRowProps {
   line: CountLine;
   isBlind: boolean;
   isInitial?: boolean;
-  onRecordCount: (catalogItemId: string, qty: number) => Promise<void>;
+  onRecordCount: (catalogItemId: string, qty: number) => Promise<boolean | void>;
 }
 
 export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordCount }: MobileCountItemRowProps) {
   const uomLabels = useUOMLabelMap();
   const [value, setValue] = useState(line.qty_counted?.toString() ?? '');
   const [saving, setSaving] = useState(false);
+  const [focused, setFocused] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const isCounted = line.qty_counted !== null;
+  const variance = isCounted ? (line.qty_counted ?? 0) - line.qty_expected : 0;
+  const showVariance = !isBlind && !isInitial && isCounted && variance !== 0;
+
+  // Scans update qty_counted from outside this row. Sync the input whenever
+  // the user isn't actively typing, so a later blur can't re-save a stale
+  // number over the scanned quantity.
+  useEffect(() => {
+    if (focused) return;
+    const propVal = line.qty_counted == null ? '' : String(line.qty_counted);
+    setValue((current) => (current === propVal ? current : propVal));
+  }, [line.qty_counted, focused]);
 
   const save = useCallback(async (qty: string) => {
     const num = parseFloat(qty);
@@ -44,23 +56,39 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
     }
   }, [line.catalog_item_id, onRecordCount]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setValue(val);
-
+  const scheduleSave = useCallback((val: string, delayMs: number) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       if (val !== '' && !isNaN(parseFloat(val))) {
         save(val);
       }
-    }, 800);
+    }, delayMs);
+  }, [save]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setValue(val);
+    scheduleSave(val, 800);
   };
 
   const handleBlur = () => {
+    setFocused(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (value !== '' && !isNaN(parseFloat(value))) {
       save(value);
     }
+  };
+
+  // Big-thumb +/- buttons: adjust by whole units, save shortly after the last
+  // tap so a burst of taps becomes one write.
+  const handleStep = (delta: number) => {
+    try { navigator.vibrate?.(10); } catch { /* unsupported */ }
+    const current = parseFloat(value);
+    const base = isNaN(current) ? (line.qty_counted ?? 0) : current;
+    const next = Math.max(0, Math.round((base + delta) * 100) / 100);
+    const nextStr = String(next);
+    setValue(nextStr);
+    scheduleSave(nextStr, 450);
   };
 
   const cardStyle: CSSProperties = {
@@ -95,7 +123,6 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
   };
 
   const checkCircle: CSSProperties = {
-    marginLeft: '12px',
     width: '24px',
     height: '24px',
     background: '#22c55e',
@@ -107,10 +134,21 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
   };
 
+  const varianceChip: CSSProperties = {
+    fontSize: '12px',
+    fontWeight: 700,
+    padding: '3px 8px',
+    borderRadius: '9999px',
+    background: '#fef3c7',
+    color: '#92400e',
+    border: '1px solid #fde68a',
+    whiteSpace: 'nowrap',
+  };
+
   const inputRow: CSSProperties = {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
+    gap: '10px',
   };
 
   const expectedBadge: CSSProperties = {
@@ -127,9 +165,28 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
     color: '#374151',
   };
 
+  const stepBtn = (disabled: boolean): CSSProperties => ({
+    width: '48px',
+    height: '52px',
+    flexShrink: 0,
+    borderRadius: '12px',
+    border: '2px solid #d1d5db',
+    background: disabled ? '#f3f4f6' : '#fff',
+    color: disabled ? '#d1d5db' : '#374151',
+    fontSize: '24px',
+    fontWeight: 700,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: disabled ? 'default' : 'pointer',
+    WebkitTapHighlightColor: 'transparent',
+    touchAction: 'manipulation',
+    userSelect: 'none' as const,
+  });
+
   const inputStyle: CSSProperties = {
     width: '100%',
-    padding: '14px 16px',
+    padding: '14px 8px',
     fontSize: '20px',
     fontWeight: 700,
     border: saving
@@ -146,6 +203,8 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
     appearance: 'none' as any,
     transition: 'border-color 0.2s, background 0.2s',
   };
+
+  const minusDisabled = (parseFloat(value) || 0) <= 0 && !isCounted;
 
   return (
     <div style={cardStyle}>
@@ -172,13 +231,18 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
             </div>
           )}
         </div>
-        {isCounted && (
-          <div style={checkCircle}>
-            <svg width="14" height="14" fill="none" stroke="#fff" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
+          {showVariance && (
+            <span style={varianceChip}>{variance > 0 ? `+${variance}` : variance}</span>
+          )}
+          {isCounted && (
+            <div style={checkCircle}>
+              <svg width="14" height="14" fill="none" stroke="#fff" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={inputRow}>
@@ -188,12 +252,23 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
             {line.catalog_item?.uom_term_id ? ` ${uomLabels[line.catalog_item.uom_term_id] || ''}` : ''}
           </div>
         )}
-        <div style={{ flex: 1 }}>
+        <button
+          type="button"
+          className="m-btn"
+          aria-label="Decrease quantity"
+          onClick={() => handleStep(-1)}
+          disabled={minusDisabled}
+          style={stepBtn(minusDisabled)}
+        >
+          −
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <input
             type="number"
             inputMode="decimal"
             value={value}
             onChange={handleChange}
+            onFocus={() => setFocused(true)}
             onBlur={handleBlur}
             placeholder="0"
             step="0.01"
@@ -202,6 +277,15 @@ export function MobileCountItemRow({ line, isBlind, isInitial = false, onRecordC
             style={inputStyle}
           />
         </div>
+        <button
+          type="button"
+          className="m-btn"
+          aria-label="Increase quantity"
+          onClick={() => handleStep(1)}
+          style={stepBtn(false)}
+        >
+          +
+        </button>
       </div>
     </div>
   );
