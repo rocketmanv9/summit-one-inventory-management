@@ -12,6 +12,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 
 const COUNT_TYPE_LABELS: Record<string, string> = {
   full: 'Full Inventory',
@@ -417,6 +418,31 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   const [countLines, setCountLines] = useState<any[]>([]);
   const [loadingLines, setLoadingLines] = useState(true);
   const [showMobileDialog, setShowMobileDialog] = useState(false);
+  const [labelItems, setLabelItems] = useState<BarcodeLabelItem[] | null>(null);
+  const [labelLoading, setLabelLoading] = useState(false);
+
+  // After approval, print labels for everything counted — assigns real tags
+  // to any "mark present (no serial)" placeholders at print time.
+  const handlePrintLabels = async () => {
+    setLabelLoading(true);
+    try {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/labels`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to build labels');
+      }
+      const items: BarcodeLabelItem[] = data.data?.items || [];
+      if (items.length === 0) {
+        alert('Nothing to print — no counted items with a barcode/SKU or tagged units.');
+        return;
+      }
+      setLabelItems(items);
+    } catch (err: any) {
+      alert(err.message || 'Failed to build labels');
+    } finally {
+      setLabelLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (cycleCount.status === 'in_progress' || cycleCount.status === 'under_review') {
@@ -946,6 +972,37 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
           </div>
         </div>
 
+        {/* Print labels — available once the count is approved/posted/closed.
+            Assigns real tags to "mark present (no serial)" placeholders. */}
+        {(cycleCount.status === 'approved' || cycleCount.status === 'posted' || cycleCount.status === 'closed') && (
+          <div className="border-t pt-4 space-y-3">
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="text-sm font-medium text-green-900 mb-1">Count Posted — Print Labels</div>
+              <div className="text-sm text-green-700">
+                Print labels for everything counted. Items marked present without a serial get a real
+                asset tag assigned now, so you can label and apply them.
+              </div>
+            </div>
+            <button
+              onClick={handlePrintLabels}
+              disabled={labelLoading}
+              className="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 font-medium flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              {labelLoading ? 'Preparing labels…' : 'Print Labels for This Count'}
+            </button>
+            {labelItems && (
+              <BarcodeLabelDialog
+                items={labelItems}
+                entityType="item"
+                onClose={() => setLabelItems(null)}
+              />
+            )}
+          </div>
+        )}
+
         {/* Next Steps */}
         {cycleCount.status === 'draft' && (
           <div className="border-t pt-4 space-y-3">
@@ -1188,6 +1245,8 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                     alert('✓ Cycle count posted successfully! No adjustments needed.');
                   }
 
+                  // Reopen the now-posted count to print its labels.
+                  alert('Reopen this count to print labels for everything you just counted.');
                   onUpdate();
                   onClose();
                 } catch (error: any) {
