@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 import {
   LayoutDashboard,
   Package,
@@ -23,6 +24,7 @@ import {
   TrendingUp,
   Tags,
   ShieldCheck,
+  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
@@ -34,6 +36,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   badge?: number;
   requiresDeveloper?: boolean;
+  // Secondary pages tucked under this one — hidden until the group is expanded.
+  children?: NavItem[];
 }
 
 interface NavSection {
@@ -76,11 +80,9 @@ const navigation: NavSection[] = [
         title: 'Items',
         href: '/inventory/items',
         icon: Package,
-      },
-      {
-        title: 'Categories',
-        href: '/inventory/categories',
-        icon: Tags,
+        children: [
+          { title: 'Categories', href: '/inventory/categories', icon: Tags },
+        ],
       },
       {
         title: 'Locations',
@@ -107,16 +109,10 @@ const navigation: NavSection[] = [
         title: 'Vendors',
         href: '/inventory/vendors',
         icon: Users,
-      },
-      {
-        title: 'Vendor Items',
-        href: '/inventory/vendor-items',
-        icon: PackageSearch,
-      },
-      {
-        title: 'Vendor Performance',
-        href: '/inventory/vendor-performance',
-        icon: TrendingUp,
+        children: [
+          { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
+          { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp },
+        ],
       },
     ],
   },
@@ -138,11 +134,9 @@ const navigation: NavSection[] = [
         title: 'Cycle Counts',
         href: '/inventory/cycle-counts',
         icon: ClipboardCheck,
-      },
-      {
-        title: 'Count Schedule',
-        href: '/inventory/count-schedule',
-        icon: CalendarDays,
+        children: [
+          { title: 'Count Schedule', href: '/inventory/count-schedule', icon: CalendarDays },
+        ],
       },
       {
         title: 'Network',
@@ -158,11 +152,9 @@ const navigation: NavSection[] = [
         title: 'Ledger',
         href: '/inventory/audit',
         icon: History,
-      },
-      {
-        title: 'Data Integrity',
-        href: '/inventory/integrity',
-        icon: ShieldCheck,
+        children: [
+          { title: 'Data Integrity', href: '/inventory/integrity', icon: ShieldCheck },
+        ],
       },
     ],
   },
@@ -175,6 +167,12 @@ export function Sidebar() {
   const { branding } = useTenantBranding();
 
   const logoUrl = branding.logo_url ?? null;
+
+  // Groups the user has manually toggled open; groups also auto-open when the
+  // active route is the parent or one of its children.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (href: string) =>
+    setOpenGroups((prev) => ({ ...prev, [href]: !prev[href] }));
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">
@@ -218,26 +216,70 @@ export function Sidebar() {
               {visibleItems.map((item) => {
                 const isActive = pathname === item.href;
                 const Icon = item.icon;
+                const children = (item.children || []).filter(
+                  (c) => !c.requiresDeveloper || isDeveloper
+                );
+                const childActive = children.some((c) => pathname === c.href);
+                const expanded = childActive || isActive || openGroups[item.href];
 
                 return (
                   <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    <div className="flex items-center">
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          'flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                        )}
+                      >
+                        <Icon className="h-4 w-4 flex-shrink-0" />
+                        <span className="flex-1">{item.title}</span>
+                        {item.badge && (
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
+                            {item.badge}
+                          </span>
+                        )}
+                      </Link>
+                      {children.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(item.href)}
+                          aria-label={expanded ? `Collapse ${item.title}` : `Expand ${item.title}`}
+                          className="ml-0.5 rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        >
+                          <ChevronDown
+                            className={cn('h-4 w-4 transition-transform', expanded ? '' : '-rotate-90')}
+                          />
+                        </button>
                       )}
-                    >
-                      <Icon className="h-4 w-4 flex-shrink-0" />
-                      <span className="flex-1">{item.title}</span>
-                      {item.badge && (
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
-                          {item.badge}
-                        </span>
-                      )}
-                    </Link>
+                    </div>
+
+                    {children.length > 0 && expanded && (
+                      <ul className="mt-1 ml-4 space-y-1 border-l border-sidebar-border pl-3">
+                        {children.map((child) => {
+                          const ChildIcon = child.icon;
+                          const childIsActive = pathname === child.href;
+                          return (
+                            <li key={child.href}>
+                              <Link
+                                href={child.href}
+                                className={cn(
+                                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                                  childIsActive
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                                )}
+                              >
+                                <ChildIcon className="h-4 w-4 flex-shrink-0" />
+                                <span className="flex-1">{child.title}</span>
+                              </Link>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </li>
                 );
               })}
