@@ -2,6 +2,7 @@
 
 import { Sidebar } from './Sidebar';
 import { TopNav } from './TopNav';
+import { PageTabs } from './PageTabs';
 import { AiPanelProvider, useAiPanel } from '@/lib/ai/panel-store';
 import { AiSidePanel } from '@/components/ai/AiSidePanel';
 import { TenantBrandingProvider } from '@/lib/tenant-branding';
@@ -29,6 +30,7 @@ function AppShellInner({ children }: AppShellProps) {
         {/* Page content - Scrollable */}
         <main className="flex-1 overflow-y-auto bg-muted/30">
           <div className="container mx-auto p-6">
+            <PageTabs />
             {children}
           </div>
         </main>
