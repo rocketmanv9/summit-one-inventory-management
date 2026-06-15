@@ -44,6 +44,16 @@ export default function TestPage() {
             locally and ask you to review before it goes anywhere.
           </p>
 
+          <div className="bg-teal-50 border border-teal-100 rounded-md p-4 space-y-2">
+            <p className="text-sm font-semibold text-teal-800">🦅 Apex Predator Mode</p>
+            <p className="text-sm text-teal-700 leading-relaxed">
+              At the top of the food chain, apex predators keep ecosystems in balance — they
+              hunt precisely, waste nothing, and leave the environment healthier than they found
+              it. That&apos;s the standard this assistant holds itself to: targeted fixes, zero
+              collateral damage, and a codebase that&apos;s a little better with every commit.
+            </p>
+          </div>
+
           <div className="pt-2 border-t text-sm text-gray-500">
             This tab is just here to say hello. You can reach me any time via the <strong>Assistant ↗</strong> link in the top-right of this nav.
           </div>
