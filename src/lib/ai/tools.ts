@@ -573,6 +573,21 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'query_usage_trends',
+      description: 'Get month-by-month material usage (consumption) and on-hand history for consumable items, to spot seasonal patterns. Use for "what do we use most in spring?", "when do we burn through crackfill?", "usage trends", "seasonal demand", or "what should I stock up on before summer?".',
+      parameters: {
+        type: 'object',
+        properties: {
+          months: { type: 'number', description: 'How many months of history to analyze (default 13, max 36).' },
+          item: { type: 'string', description: 'Optional item name to focus on (fuzzy-matched). Omit for the whole catalog.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'query_reorder_suggestions',
       description: 'Get recommended reorder quantities based on current stock vs reorder points. Shows shortage, suggested order qty, and preferred vendor. Use for "what should I reorder?" or "reorder suggestions".',
       parameters: { type: 'object', properties: {}, required: [] },

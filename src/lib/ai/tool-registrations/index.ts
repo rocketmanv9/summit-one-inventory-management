@@ -23,6 +23,7 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   query_dead_stock: ['analytics'],
   query_velocity_analysis: ['analytics'],
   query_movement_summary: ['analytics'],
+  query_usage_trends: ['analytics'],
   query_reorder_suggestions: ['analytics'],
   query_forecast: ['analytics'],
   query_inventory_turnover: ['analytics'],

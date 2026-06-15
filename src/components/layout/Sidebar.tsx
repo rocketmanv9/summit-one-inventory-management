@@ -52,7 +52,12 @@ const navigation: NavSection[] = [
     // What you have: catalog + where it lives.
     title: 'Inventory',
     items: [
-      { title: 'Stock Balances', href: '/inventory/stock', icon: Boxes },
+      {
+        title: 'Stock Balances',
+        href: '/inventory/stock',
+        icon: Boxes,
+        tabHrefs: ['/inventory/usage-trends'],
+      },
       {
         title: 'Items',
         href: '/inventory/items',

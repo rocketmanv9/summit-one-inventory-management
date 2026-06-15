@@ -8,6 +8,8 @@ import {
   CalendarDays,
   History,
   ShieldCheck,
+  Boxes,
+  LineChart,
 } from 'lucide-react';
 
 export interface PageTab {
@@ -19,6 +21,10 @@ export interface PageTab {
 // Groups of sibling pages that share one sidebar link and switch via tabs.
 // The first tab in each group is the "parent" the sidebar points at.
 export const TAB_GROUPS: PageTab[][] = [
+  [
+    { title: 'Stock Balances', href: '/inventory/stock', icon: Boxes },
+    { title: 'Usage Trends', href: '/inventory/usage-trends', icon: LineChart },
+  ],
   [
     { title: 'Items', href: '/inventory/items', icon: Package },
     { title: 'Categories', href: '/inventory/categories', icon: Tags },

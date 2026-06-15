@@ -161,6 +161,7 @@
     "rpc_post_receipt_to_inventory_v2",
     "rpc_report_dead_stock",
     "rpc_report_forecast",
+    "rpc_report_monthly_usage",
     "rpc_report_movement_summary",
     "rpc_report_reorder_suggestions",
     "rpc_report_stock_valuation",

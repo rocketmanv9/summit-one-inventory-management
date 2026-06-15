@@ -48,6 +48,7 @@ const SERVER_TOOLS = new Set([
   'query_dead_stock',
   'query_velocity_analysis',
   'query_movement_summary',
+  'query_usage_trends',
   'query_reorder_suggestions',
   'query_forecast',
   'query_inventory_turnover',
@@ -150,6 +151,8 @@ async function executeServerToolInner(
       return queryVelocityAnalysis(ctx);
     case 'query_movement_summary':
       return queryMovementSummary(params, ctx);
+    case 'query_usage_trends':
+      return queryUsageTrends(params, ctx);
     case 'query_reorder_suggestions':
       return queryReorderSuggestions(ctx);
     case 'query_forecast':
@@ -460,6 +463,80 @@ async function queryMovementSummary(
           color: '#ef4444',
         },
       ],
+    },
+  };
+}
+
+async function queryUsageTrends(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const months = Math.min(Math.max(Number(params.months) || 13, 3), 36);
+  const { data, error } = await inventorySchema(ctx.supabase)
+    .rpc('rpc_report_monthly_usage', { p_tenant_id: ctx.tenantId, p_months: months });
+
+  if (error || !data) {
+    return {
+      text: 'Failed to fetch usage trends.',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Query failed' },
+    };
+  }
+
+  let rows = data as any[];
+
+  // Optional fuzzy item focus.
+  const itemFilter = (params.item || '').trim().toLowerCase();
+  if (itemFilter) {
+    rows = rows.filter(
+      (r: any) =>
+        String(r.name || '').toLowerCase().includes(itemFilter) ||
+        String(r.sku || '').toLowerCase().includes(itemFilter)
+    );
+  }
+
+  // Aggregate usage by month across the (optionally filtered) items.
+  const monthMap = new Map<string, number>();
+  const itemTotals = new Map<string, { name: string; total: number }>();
+  for (const r of rows) {
+    const mo = String(r.month);
+    const usage = Number(r.usage_qty) || 0;
+    monthMap.set(mo, (monthMap.get(mo) || 0) + usage);
+    const it = itemTotals.get(r.catalog_item_id) || { name: r.name, total: 0 };
+    it.total += usage;
+    itemTotals.set(r.catalog_item_id, it);
+  }
+
+  const monthsSorted = Array.from(monthMap.keys()).sort();
+  const labels = monthsSorted.map((m) => {
+    const [y, mm] = m.split('-');
+    return new Date(Number(y), Number(mm) - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  });
+  const series = monthsSorted.map((m) => monthMap.get(m) || 0);
+
+  // Peak month + busiest items for the natural-language summary.
+  let peakIdx = -1;
+  for (let i = 0; i < series.length; i++) if (peakIdx < 0 || series[i] > series[peakIdx]) peakIdx = i;
+  const peakLabel = peakIdx >= 0 ? labels[peakIdx] : 'n/a';
+  const peakVal = peakIdx >= 0 ? series[peakIdx] : 0;
+  const totalUsage = series.reduce((s, v) => s + v, 0);
+  const topItems = Array.from(itemTotals.values())
+    .filter((i) => i.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5);
+
+  const scope = itemFilter ? `for "${params.item}"` : 'across consumable items';
+  const summary =
+    totalUsage > 0
+      ? `Usage trends ${scope} over the last ${months} months: ${formatNumber(totalUsage)} units total. Peak month was ${peakLabel} (${formatNumber(peakVal)} units). Heaviest items: ${topItems.map((i) => `${i.name} (${formatNumber(i.total)})`).join(', ')}.`
+      : `No consumption recorded ${scope} in the last ${months} months — items haven't been issued or consumed yet, so there's no seasonal pattern to report.`;
+
+  return {
+    text: summary,
+    dataDisplay: {
+      displayType: 'chart',
+      chartType: 'bar',
+      labels,
+      datasets: [{ label: 'Units used', data: series, color: '#6366f1' }],
     },
   };
 }
