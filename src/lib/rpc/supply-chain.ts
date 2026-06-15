@@ -120,6 +120,8 @@ export interface TenantSettings {
   vendor_auto_approve_limits: Record<string, number> | null;
   /** How the proactive agent handles reorder needs: notify | auto_draft | auto_send. */
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  /** What Isabelle is allowed to do, per capability: off | ask | auto. */
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;

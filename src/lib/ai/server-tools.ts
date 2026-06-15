@@ -552,16 +552,73 @@ async function queryUsageTrends(
   };
 }
 
+// ─── Agent permissions (Settings: what Isabelle is allowed to do) ──────
+// Maps each tool to a capability the user controls in Settings, each set to
+// off | ask | auto. See migration 20260615000003_agent_permissions.
+type PermLevel = 'off' | 'ask' | 'auto';
+
+export const TOOL_CAPABILITY: Record<string, string> = {
+  adjust_stock: 'stock_adjust',
+  adjust_stock_delta: 'stock_adjust',
+  issue_inventory: 'stock_issue',
+  create_transfer: 'transfer',
+  create_reservation: 'reserve',
+  release_reservation: 'reserve',
+  add_vendor: 'create_records',
+  add_item: 'create_records',
+  add_location: 'create_records',
+  add_category: 'create_records',
+  create_asset: 'create_records',
+  create_po: 'purchase_orders',
+};
+
+const CAPABILITY_LABEL: Record<string, string> = {
+  stock_adjust: 'stock adjustments',
+  stock_issue: 'issuing stock',
+  transfer: 'stock transfers',
+  reserve: 'reservations',
+  create_records: 'creating records',
+  purchase_orders: 'purchase orders',
+};
+
+async function getAgentPermission(ctx: ServerToolContext, capability: string): Promise<PermLevel> {
+  try {
+    const { data } = await (ctx.supabase as any)
+      .schema('supply_chain')
+      .from('tenant_settings')
+      .select('agent_permissions')
+      .eq('tenant_id', ctx.tenantId)
+      .maybeSingle();
+    const level = data?.agent_permissions?.[capability];
+    if (level === 'off' || level === 'ask' || level === 'auto') return level;
+  } catch {
+    /* fall through to safe default */
+  }
+  return 'ask';
+}
+
+function permissionDeniedResult(capability: string): ServerToolResult {
+  const label = CAPABILITY_LABEL[capability] || capability;
+  return {
+    text: `I'm not allowed to do that — ${label} is turned off for me in Settings → Assistant. An admin can enable it there.`,
+    dataDisplay: { displayType: 'metric', label: 'Disabled in Settings', value: label },
+  };
+}
+
 // ─── Inventory write actions (adjust / issue / transfer / reserve) ─────
-// Confirm-gated: without confirm=true we return a preview for the user to
-// approve. On confirm we POST to /api/ai/execute-action, which runs the
-// mutation under the user's session (proper tenant/actor auth + outbox events).
+// Gated by the tenant's agent_permissions: off → refuse, ask → preview &
+// confirm, auto → run immediately. On execution we POST to /api/ai/execute-action,
+// which runs the mutation under the user's session (proper tenant/actor auth +
+// outbox events).
 async function executeInventoryAction(
   action: string,
   params: Record<string, any>,
   ctx: ServerToolContext
 ): Promise<ServerToolResult> {
-  const confirmed = params.confirm === true || params.confirm === 'true';
+  const capability = TOOL_CAPABILITY[action] || 'stock_adjust';
+  const level = await getAgentPermission(ctx, capability);
+  if (level === 'off') return permissionDeniedResult(capability);
+  const confirmed = level === 'auto' || params.confirm === true || params.confirm === 'true';
 
   const describe = (): string => {
     const d = Number(params.delta);

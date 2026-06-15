@@ -19,6 +19,7 @@ interface TenantSettings {
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: 'manual' | 'sequential' | 'hybrid' | 'import';
   vendor_code_required: boolean;
   vendor_code_case: 'upper' | 'lower' | 'preserve';
@@ -51,6 +52,7 @@ type SettingsForm = {
   auto_approve_enabled: boolean;
   auto_approve_limit: string;
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;
@@ -85,6 +87,14 @@ export default function SettingsPage() {
     auto_approve_enabled: true,
     auto_approve_limit: '',
     reorder_mode: 'auto_draft',
+    agent_permissions: {
+      stock_adjust: 'ask',
+      stock_issue: 'ask',
+      transfer: 'ask',
+      reserve: 'ask',
+      create_records: 'auto',
+      purchase_orders: 'ask',
+    },
     vendor_code_strategy: 'manual',
     vendor_code_required: false,
     vendor_code_case: 'preserve',
@@ -135,6 +145,15 @@ export default function SettingsPage() {
           auto_approve_enabled: data.auto_approve_enabled ?? true,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
           reorder_mode: data.reorder_mode || 'auto_draft',
+          agent_permissions: {
+            stock_adjust: 'ask',
+            stock_issue: 'ask',
+            transfer: 'ask',
+            reserve: 'ask',
+            create_records: 'auto',
+            purchase_orders: 'ask',
+            ...(data.agent_permissions || {}),
+          },
           vendor_code_strategy: data.vendor_code_strategy || 'manual',
           vendor_code_required: data.vendor_code_required || false,
           vendor_code_case: data.vendor_code_case || 'preserve',
@@ -195,6 +214,7 @@ export default function SettingsPage() {
         auto_approve_enabled: form.auto_approve_enabled,
         auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
         reorder_mode: form.reorder_mode,
+        agent_permissions: form.agent_permissions,
         vendor_auto_approve_limits: vendorLimitsObj,
         vendor_code_strategy: form.vendor_code_strategy,
         vendor_code_required: form.vendor_code_required,
@@ -396,6 +416,56 @@ export default function SettingsPage() {
                     <div className="text-sm text-gray-500">{opt.desc}</div>
                   </div>
                 </label>
+              ))}
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">What Isabelle can do</label>
+                <p className="text-sm text-gray-500">
+                  Control which actions the assistant can take. <strong>Off</strong> = she won&apos;t do
+                  it, <strong>Ask first</strong> = she previews and waits for your OK, <strong>Auto</strong>
+                  = she just does it.
+                </p>
+              </div>
+              {([
+                { key: 'stock_adjust', label: 'Adjust stock levels', desc: 'Set or correct on-hand quantities.' },
+                { key: 'stock_issue', label: 'Issue stock', desc: 'Release stock to jobs, trucks, or people.' },
+                { key: 'transfer', label: 'Transfer stock', desc: 'Move stock between locations.' },
+                { key: 'reserve', label: 'Reservations', desc: 'Reserve stock and release reservations.' },
+                { key: 'create_records', label: 'Create records', desc: 'Add vendors, items, locations, categories, assets.' },
+                { key: 'purchase_orders', label: 'Purchase orders', desc: 'Create draft purchase orders.' },
+              ] as const).map((cap) => (
+                <div key={cap.key} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{cap.label}</div>
+                    <div className="text-sm text-gray-500">{cap.desc}</div>
+                  </div>
+                  <div className="flex flex-shrink-0 rounded-lg border p-0.5">
+                    {(['off', 'ask', 'auto'] as const).map((lvl) => {
+                      const active = (form.agent_permissions[cap.key] || 'ask') === lvl;
+                      const labels: Record<string, string> = { off: 'Off', ask: 'Ask first', auto: 'Auto' };
+                      return (
+                        <button
+                          key={lvl}
+                          type="button"
+                          disabled={!isAdmin}
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              agent_permissions: { ...form.agent_permissions, [cap.key]: lvl },
+                            })
+                          }
+                          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                            active ? 'bg-primary text-primary-foreground' : 'text-gray-600 hover:bg-gray-100'
+                          } ${!isAdmin ? 'cursor-not-allowed opacity-60' : ''}`}
+                        >
+                          {labels[lvl]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
 
