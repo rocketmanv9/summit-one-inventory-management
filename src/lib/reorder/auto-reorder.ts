@@ -212,17 +212,23 @@ export async function runAutoReorderForAllTenants(args: {
   const { data: settingsRows, error: settingsError } = await admin
     .schema('supply_chain')
     .from('tenant_settings')
-    .select('tenant_id')
+    .select('tenant_id, reorder_mode')
     .order('created_at', { ascending: true })
     .limit(1000);
   if (settingsError) {
     throw AppError.internal(`Failed to enumerate tenants from tenant_settings: ${settingsError.message}`);
   }
 
-  const tenantIds = [...new Set(((settingsRows ?? []) as any[]).map((r) => r.tenant_id as string))].slice(
-    0,
-    args.maxTenants ?? 15,
-  );
+  // Only tenants who opted into automatic draft creation. 'notify' tenants get
+  // an in-app heads-up from the agent-suggestions cron instead — no POs made
+  // on their behalf here.
+  const tenantIds = [
+    ...new Set(
+      ((settingsRows ?? []) as any[])
+        .filter((r) => (r.reorder_mode || 'auto_draft') !== 'notify')
+        .map((r) => r.tenant_id as string),
+    ),
+  ].slice(0, args.maxTenants ?? 15);
 
   const summary: AutoReorderSummary = {
     runId,

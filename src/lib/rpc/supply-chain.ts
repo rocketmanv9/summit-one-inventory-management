@@ -118,6 +118,8 @@ export interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  /** How the proactive agent handles reorder needs: notify | auto_draft | auto_send. */
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;

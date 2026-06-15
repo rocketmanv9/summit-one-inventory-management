@@ -18,6 +18,7 @@ interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
   vendor_code_strategy: 'manual' | 'sequential' | 'hybrid' | 'import';
   vendor_code_required: boolean;
   vendor_code_case: 'upper' | 'lower' | 'preserve';
@@ -49,6 +50,7 @@ type SettingsForm = {
   cycle_count_number_prefix: string;
   auto_approve_enabled: boolean;
   auto_approve_limit: string;
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;
@@ -82,6 +84,7 @@ export default function SettingsPage() {
     cycle_count_number_prefix: 'CC',
     auto_approve_enabled: true,
     auto_approve_limit: '',
+    reorder_mode: 'auto_draft',
     vendor_code_strategy: 'manual',
     vendor_code_required: false,
     vendor_code_case: 'preserve',
@@ -131,6 +134,7 @@ export default function SettingsPage() {
           cycle_count_number_prefix: data.cycle_count_number_prefix || 'CC',
           auto_approve_enabled: data.auto_approve_enabled ?? true,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
+          reorder_mode: data.reorder_mode || 'auto_draft',
           vendor_code_strategy: data.vendor_code_strategy || 'manual',
           vendor_code_required: data.vendor_code_required || false,
           vendor_code_case: data.vendor_code_case || 'preserve',
@@ -190,6 +194,7 @@ export default function SettingsPage() {
         cycle_count_number_prefix: form.cycle_count_number_prefix || null,
         auto_approve_enabled: form.auto_approve_enabled,
         auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
+        reorder_mode: form.reorder_mode,
         vendor_auto_approve_limits: vendorLimitsObj,
         vendor_code_strategy: form.vendor_code_strategy,
         vendor_code_required: form.vendor_code_required,
@@ -342,6 +347,56 @@ export default function SettingsPage() {
                   Optional prefix to add before the number (e.g., "PO" → PO-26-0001)
                 </p>
               </div>
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">When stock runs low</label>
+                <p className="text-sm text-gray-500">
+                  How Isabelle handles reorder needs found by the daily scan. Reorder alerts and
+                  unusual-usage flags always appear in your notifications either way.
+                </p>
+              </div>
+              {([
+                {
+                  value: 'notify',
+                  title: 'Notify me only',
+                  desc: 'Just flag what needs reordering. You (or Isabelle, on request) create the PO.',
+                },
+                {
+                  value: 'auto_draft',
+                  title: 'Auto-create draft POs',
+                  desc: 'Build draft purchase orders automatically for you to review. Nothing is sent until you approve.',
+                },
+                {
+                  value: 'auto_send',
+                  title: 'Auto-create & send',
+                  desc: 'Create and send POs to vendors automatically. (Currently creates drafts — auto-send to vendors is coming soon.)',
+                },
+              ] as const).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors ${
+                    form.reorder_mode === opt.value
+                      ? 'border-primary bg-primary/5'
+                      : 'border-gray-200 hover:border-gray-300'
+                  } ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="reorder_mode"
+                    value={opt.value}
+                    checked={form.reorder_mode === opt.value}
+                    onChange={() => setForm({ ...form, reorder_mode: opt.value })}
+                    className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary"
+                    disabled={!isAdmin}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{opt.title}</div>
+                    <div className="text-sm text-gray-500">{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
             </div>
 
             <div className="space-y-4 border-t pt-4">
