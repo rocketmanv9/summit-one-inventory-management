@@ -10,10 +10,20 @@ interface Category {
   sku_prefix?: string;
 }
 
+interface ItemMatch {
+  id: string;
+  name: string;
+  sku?: string | null;
+  tracking_mode?: string;
+}
+
 interface MobileAddItemSheetProps {
   isOpen: boolean;
   onClose: () => void;
   onItemCreated: (line: any, newCategory?: Category) => void;
+  // Add an item that already exists in the catalog to the count instead of
+  // creating a duplicate. Returns once the item has been added.
+  onUseExisting: (catalogItemId: string) => Promise<void> | void;
   jwt: string;
   bypassSecret: string;
   categories: Category[];
@@ -33,6 +43,7 @@ export function MobileAddItemSheet({
   isOpen,
   onClose,
   onItemCreated,
+  onUseExisting,
   jwt,
   bypassSecret,
   categories,
@@ -51,6 +62,8 @@ export function MobileAddItemSheet({
   const [suggesting, setSuggesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [matches, setMatches] = useState<ItemMatch[]>([]);
+  const [usingExistingId, setUsingExistingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -70,6 +83,8 @@ export function MobileAddItemSheet({
     setSuggesting(false);
     setSaving(false);
     setError('');
+    setMatches([]);
+    setUsingExistingId(null);
   };
 
   const handleClose = () => {
@@ -128,7 +143,11 @@ export function MobileAddItemSheet({
         throw new Error(apiErrorMessage(data, 'AI suggestion failed'));
       }
 
-      const { suggestion } = await res.json();
+      const { suggestion, matches: foundMatches } = await res.json();
+
+      // Surface existing catalog items this likely already is, so the user can
+      // reuse one instead of creating a duplicate.
+      setMatches(Array.isArray(foundMatches) ? foundMatches : []);
 
       // Auto-fill fields
       if (suggestion.name && !name.trim()) setName(suggestion.name);
@@ -158,6 +177,20 @@ export function MobileAddItemSheet({
   const handleNameBlur = () => {
     if (name.trim() && !description && !suggesting) {
       fetchSuggestions(imageData, name);
+    }
+  };
+
+  const handleUseExisting = async (match: ItemMatch) => {
+    if (usingExistingId) return;
+    setUsingExistingId(match.id);
+    setError('');
+    try {
+      await onUseExisting(match.id);
+      resetForm();
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to add existing item');
+      setUsingExistingId(null);
     }
   };
 
@@ -357,6 +390,52 @@ export function MobileAddItemSheet({
       gap: '8px',
       marginBottom: '14px',
     },
+    matchCard: {
+      background: '#fff',
+      border: '1.5px solid #fcd34d',
+      borderRadius: '14px',
+      padding: '14px 16px',
+      marginBottom: '14px',
+    },
+    matchTitle: {
+      fontSize: '13px',
+      fontWeight: 700,
+      color: '#92400e',
+      marginBottom: '2px',
+    },
+    matchSubtitle: {
+      fontSize: '12px',
+      color: '#6b7280',
+      marginBottom: '10px',
+    },
+    matchRow: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '10px',
+      padding: '10px 0',
+      borderTop: '1px solid #f3f4f6',
+    },
+    matchName: {
+      fontSize: '14px',
+      fontWeight: 600,
+      color: '#111827',
+    },
+    matchMeta: {
+      fontSize: '12px',
+      color: '#6b7280',
+    },
+    useBtn: {
+      flexShrink: 0,
+      padding: '8px 14px',
+      background: '#16a34a',
+      color: '#fff',
+      borderRadius: '10px',
+      fontSize: '13px',
+      fontWeight: 600,
+      border: 'none',
+      cursor: 'pointer',
+    },
     footer: {
       background: 'rgba(255,255,255,0.95)',
       backdropFilter: 'blur(8px)',
@@ -452,8 +531,44 @@ export function MobileAddItemSheet({
           </button>
         </div>
 
+        {/* Existing-item matches — reuse instead of creating a duplicate */}
+        {matches.length > 0 && (
+          <div style={s.matchCard}>
+            <div style={s.matchTitle}>Already in your catalog</div>
+            <div style={s.matchSubtitle}>
+              Tap to add the existing item instead of creating a duplicate.
+            </div>
+            {matches.map((m) => (
+              <div key={m.id} style={s.matchRow}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={s.matchName}>{m.name}</div>
+                  <div style={s.matchMeta}>
+                    {m.sku ? m.sku : 'No SKU'}
+                    {m.tracking_mode ? ` · ${m.tracking_mode}` : ''}
+                  </div>
+                </div>
+                <button
+                  style={{
+                    ...s.useBtn,
+                    ...(usingExistingId ? { background: '#9ca3af', cursor: 'default' } : {}),
+                  }}
+                  onClick={() => handleUseExisting(m)}
+                  disabled={!!usingExistingId}
+                >
+                  {usingExistingId === m.id ? 'Adding…' : 'Use this'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Form fields */}
         <div style={s.card}>
+          {matches.length > 0 && (
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', marginBottom: '10px' }}>
+              Not a match? Create a new item:
+            </div>
+          )}
           <div style={s.fieldGroup}>
             <label style={s.label}>Item Name *</label>
             <input

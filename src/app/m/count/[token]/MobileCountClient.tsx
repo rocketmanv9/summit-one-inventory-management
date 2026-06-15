@@ -1022,6 +1022,10 @@ export function MobileCountClient({
                 );
               }
             }}
+            onUseExisting={async (catalogItemId) => {
+              await handleAddItem(catalogItemId);
+              setShowAddItem(false);
+            }}
             jwt={jwt}
             bypassSecret={bypassSecret}
             categories={categories}
