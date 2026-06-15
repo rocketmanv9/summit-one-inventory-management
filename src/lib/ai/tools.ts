@@ -194,6 +194,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item: { type: 'string', description: 'Item name or SKU' },
           location: { type: 'string', description: 'Location name' },
           quantity: { type: 'number', description: 'New on-hand quantity' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually perform the action.' },
           reason: {
             type: 'string',
             description: 'Reason for adjustment. INFER from language: "lost/missing" → theft, "damaged/broke" → damage, "expired" → expiration, "count shows" → count_variance. Default: other.',
@@ -215,6 +216,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item: { type: 'string', description: 'Item name or SKU' },
           location: { type: 'string', description: 'Location name' },
           delta: { type: 'number', description: 'Quantity to add (positive) or subtract (negative)' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually perform the action.' },
           reason: {
             type: 'string',
             description: 'Reason for adjustment. INFER from language: "lost/missing" → theft, "damaged/broke" → damage, "expired" → expiration, "count shows" → count_variance. Default: other.',
@@ -259,6 +261,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item: { type: 'string', description: 'Item name or SKU' },
           location: { type: 'string', description: 'Location to issue from' },
           quantity: { type: 'number', description: 'Quantity to issue' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually perform the action.' },
           issued_to_type: {
             type: 'string',
             description: 'Who is receiving the material',
@@ -342,6 +345,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item: { type: 'string', description: 'Item name or SKU to transfer' },
           quantity: { type: 'number', description: 'Quantity to transfer' },
           notes: { type: 'string', description: 'Transfer notes' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually perform the action.' },
         },
         required: [],
       },
@@ -405,6 +409,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           item: { type: 'string', description: 'Item name or SKU to reserve' },
           location: { type: 'string', description: 'Location to reserve stock at' },
           quantity: { type: 'number', description: 'Quantity to reserve' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually perform the action.' },
           job_ref: { type: 'string', description: 'Job reference or purpose for the reservation' },
           allocation_type: { type: 'string', description: 'Type of allocation', enum: ['job', 'truck', 'person', 'transfer', 'other'] },
         },

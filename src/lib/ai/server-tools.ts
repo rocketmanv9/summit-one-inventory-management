@@ -88,6 +88,11 @@ const SERVER_TOOLS = new Set([
   'query_stock_by_location',
   'query_integrations',
   'list_catalog_vendors',
+  'adjust_stock',
+  'adjust_stock_delta',
+  'issue_inventory',
+  'create_transfer',
+  'create_reservation',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -231,6 +236,12 @@ async function executeServerToolInner(
       return queryIntegrations(ctx);
     case 'list_catalog_vendors':
       return listCatalogVendors(params, ctx);
+    case 'adjust_stock':
+    case 'adjust_stock_delta':
+    case 'issue_inventory':
+    case 'create_transfer':
+    case 'create_reservation':
+      return executeInventoryAction(toolName, params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -539,6 +550,101 @@ async function queryUsageTrends(
       datasets: [{ label: 'Units used', data: series, color: '#6366f1' }],
     },
   };
+}
+
+// ─── Inventory write actions (adjust / issue / transfer / reserve) ─────
+// Confirm-gated: without confirm=true we return a preview for the user to
+// approve. On confirm we POST to /api/ai/execute-action, which runs the
+// mutation under the user's session (proper tenant/actor auth + outbox events).
+async function executeInventoryAction(
+  action: string,
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const confirmed = params.confirm === true || params.confirm === 'true';
+
+  const describe = (): string => {
+    const d = Number(params.delta);
+    switch (action) {
+      case 'adjust_stock':
+        return `set ${params.item || 'item'} at ${params.location || 'location'} to ${params.quantity}`;
+      case 'adjust_stock_delta':
+        return `${d >= 0 ? 'add' : 'remove'} ${Math.abs(d)} ${d >= 0 ? 'to' : 'from'} ${params.item || 'item'} at ${params.location || 'location'}`;
+      case 'issue_inventory':
+        return `issue ${params.quantity} of ${params.item || 'item'} from ${params.location || 'location'}${params.issued_to_ref ? ` to ${params.issued_to_ref}` : ''}`;
+      case 'create_transfer':
+        return `transfer ${params.quantity} of ${params.item || 'item'} from ${params.from_location || '?'} to ${params.to_location || '?'}`;
+      case 'create_reservation':
+        return `reserve ${params.quantity} of ${params.item || 'item'} at ${params.location || 'location'}${params.job_ref ? ` for ${params.job_ref}` : ''}`;
+      default:
+        return action;
+    }
+  };
+
+  if (!confirmed) {
+    return {
+      text: `Ready to ${describe()}. Confirm and I'll do it.`,
+      dataDisplay: { displayType: 'metric', label: 'Confirm action', value: describe() },
+    };
+  }
+
+  try {
+    const res = await fetch(`${ctx.baseUrl}/api/ai/execute-action`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': ctx.cookieHeader,
+        'Idempotency-Key': `ai-action-${action}-${ctx.tenantId}-${Date.now()}`,
+      },
+      body: JSON.stringify({ action, ...params }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any));
+      const msg = err?.error?.message || err?.error || err?.message || res.statusText;
+      return {
+        text: `Couldn't ${describe()}: ${msg}`,
+        dataDisplay: { displayType: 'metric', label: 'Action failed', value: String(msg) },
+      };
+    }
+
+    const result = await res.json();
+    const d = result.data || {};
+
+    let text: string;
+    const secondary: Array<{ label: string; value: any }> = [];
+    switch (action) {
+      case 'adjust_stock':
+      case 'adjust_stock_delta':
+        text = `Done — ${d.item} at ${d.location} is now ${d.new_qty} (was ${d.previous_qty}).`;
+        secondary.push({ label: 'Item', value: d.item }, { label: 'Location', value: d.location });
+        break;
+      case 'issue_inventory':
+        text = `Issued ${d.quantity} of ${d.item} from ${d.location}${d.issued_to ? ` to ${d.issued_to}` : ''}.`;
+        secondary.push({ label: 'Item', value: d.item }, { label: 'From', value: d.location });
+        break;
+      case 'create_transfer':
+        text = `Transfer created — ${d.quantity} of ${d.item} from ${d.from} to ${d.to}.`;
+        secondary.push({ label: 'From', value: d.from }, { label: 'To', value: d.to });
+        break;
+      case 'create_reservation':
+        text = `Reserved ${d.quantity} of ${d.item} at ${d.location}${d.job_ref ? ` for ${d.job_ref}` : ''}.`;
+        secondary.push({ label: 'Item', value: d.item }, { label: 'Location', value: d.location });
+        break;
+      default:
+        text = 'Action completed.';
+    }
+
+    return {
+      text,
+      dataDisplay: { displayType: 'metric', label: 'Done', value: text, secondaryMetrics: secondary },
+    };
+  } catch (err: any) {
+    return {
+      text: `Couldn't ${describe()}: ${err.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Action failed', value: err.message },
+    };
+  }
 }
 
 async function queryReorderSuggestions(ctx: ServerToolContext): Promise<ServerToolResult> {
