@@ -93,6 +93,7 @@ const SERVER_TOOLS = new Set([
   'issue_inventory',
   'create_transfer',
   'create_reservation',
+  'create_po',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -108,6 +109,15 @@ export async function executeServerTool(
 ): Promise<ServerToolResult> {
   const toolStart = Date.now();
   try {
+    // Universal Settings kill-switch: if this tool's capability is turned off,
+    // refuse before doing anything. (ask/auto gating happens per-tool.)
+    const cap = TOOL_CAPABILITY[toolName];
+    if (cap && (await getAgentPermission(ctx, cap)) === 'off') {
+      const denied = permissionDeniedResult(cap);
+      denied.durationMs = Date.now() - toolStart;
+      return denied;
+    }
+
     const result = await executeServerToolInner(toolName, params, ctx);
     result.durationMs = Date.now() - toolStart;
     return result;
@@ -241,6 +251,7 @@ async function executeServerToolInner(
     case 'issue_inventory':
     case 'create_transfer':
     case 'create_reservation':
+    case 'create_po':
       return executeInventoryAction(toolName, params, ctx);
     default:
       return {
@@ -569,6 +580,10 @@ export const TOOL_CAPABILITY: Record<string, string> = {
   add_location: 'create_records',
   add_category: 'create_records',
   create_asset: 'create_records',
+  // Server-side creators that actually perform the creation.
+  smart_add_location: 'create_records',
+  smart_register_asset: 'create_records',
+  create_item_with_variants: 'create_records',
   create_po: 'purchase_orders',
 };
 
@@ -633,6 +648,13 @@ async function executeInventoryAction(
         return `transfer ${params.quantity} of ${params.item || 'item'} from ${params.from_location || '?'} to ${params.to_location || '?'}`;
       case 'create_reservation':
         return `reserve ${params.quantity} of ${params.item || 'item'} at ${params.location || 'location'}${params.job_ref ? ` for ${params.job_ref}` : ''}`;
+      case 'create_po': {
+        const items = Array.isArray(params.items) ? params.items : [];
+        const lineSummary = items.length
+          ? `: ${items.slice(0, 4).map((l: any) => `${l.quantity} ${l.item}`).join(', ')}${items.length > 4 ? '…' : ''}`
+          : ' (empty draft)';
+        return `create a draft PO for ${params.vendor || 'vendor'}${lineSummary}`;
+      }
       default:
         return action;
     }
@@ -687,6 +709,10 @@ async function executeInventoryAction(
       case 'create_reservation':
         text = `Reserved ${d.quantity} of ${d.item} at ${d.location}${d.job_ref ? ` for ${d.job_ref}` : ''}.`;
         secondary.push({ label: 'Item', value: d.item }, { label: 'Location', value: d.location });
+        break;
+      case 'create_po':
+        text = `Draft PO ${d.po_number || ''} created for ${d.vendor}${d.line_count ? ` with ${d.line_count} line(s)` : ''}. Review it in Purchasing.`;
+        secondary.push({ label: 'Vendor', value: d.vendor }, { label: 'Lines', value: d.line_count ?? 0 });
         break;
       default:
         text = 'Action completed.';

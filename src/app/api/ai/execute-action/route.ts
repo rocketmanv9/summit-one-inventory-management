@@ -13,6 +13,7 @@ const ActionSchema = z.object({
     'issue_inventory',
     'create_transfer',
     'create_reservation',
+    'create_po',
   ]),
   item: z.string().optional(),
   location: z.string().optional(),
@@ -26,6 +27,13 @@ const ActionSchema = z.object({
   issued_to_ref: z.string().optional(),
   job_ref: z.string().optional(),
   allocation_type: z.string().optional(),
+  // create_po
+  vendor: z.string().optional(),
+  items: z.array(z.object({
+    item: z.string(),
+    quantity: z.number(),
+    unit_cost: z.number().optional(),
+  })).optional(),
 });
 
 // POST /api/ai/execute-action
@@ -207,6 +215,61 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         events: [{
           event_name: 'reservation.created_via_ai',
           payload: { reservation_id: data, item_id: item.id, location_id: loc.id, quantity: body.quantity },
+          last_event_id: idempotencyKey,
+        }],
+      };
+    }
+
+    // ── Create a draft purchase order for a vendor ────────────────────
+    case 'create_po': {
+      if (!body.vendor) throw AppError.badRequest('A vendor name is required.');
+      const sc = (supabase as any).schema('supply_chain');
+      const { data: vendors, error: vErr } = await sc
+        .from('vendors')
+        .select('id, name')
+        .ilike('name', `%${body.vendor}%`)
+        .limit(1);
+      if (vErr) throw AppError.internal(`Vendor lookup failed: ${vErr.message}`);
+      if (!vendors || vendors.length === 0) throw AppError.notFound(`Vendor "${body.vendor}" not found.`);
+      const vendor = vendors[0];
+
+      // Resolve each requested item to a line.
+      const lines: any[] = [];
+      for (const reqLine of body.items || []) {
+        const item = await resolveItem(reqLine.item);
+        lines.push({
+          catalog_item_id: item.id,
+          qty_ordered: reqLine.quantity,
+          unit_cost: reqLine.unit_cost ?? null,
+          price_basis: reqLine.unit_cost != null ? 'fixed' : 'unknown',
+        });
+      }
+
+      const { data: po, error: poErr } = await sc.rpc('rpc_create_purchase_order', {
+        p_vendor_id: vendor.id,
+        p_po_number: null,
+        p_delivery_method: 'ship',
+        p_needed_by_date: null,
+        p_cost_context: 'yard',
+        p_job_id: null,
+        p_delivery_location_id: null,
+        p_pickup_location_id: null,
+        p_max_authorized_spend: null,
+        p_vendor_quote_ref: null,
+        p_notes: body.notes || 'Created via Isabelle',
+        p_attachments: [],
+        p_lines: lines,
+      });
+      if (poErr) throw AppError.internal(`PO creation failed: ${poErr.message}`);
+
+      const poId = (po as any)?.po_id || (po as any)?.id || po;
+      const poNumber = (po as any)?.po_number || null;
+      return {
+        data: { po_id: poId, po_number: poNumber, vendor: vendor.name, line_count: lines.length } as Record<string, unknown>,
+        status: 201,
+        events: [{
+          event_name: 'po.created_via_ai',
+          payload: { po_id: poId, po_number: poNumber, vendor_id: vendor.id, line_count: lines.length },
           last_event_id: idempotencyKey,
         }],
       };

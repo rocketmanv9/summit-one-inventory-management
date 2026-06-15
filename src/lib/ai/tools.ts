@@ -280,11 +280,26 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'create_po',
-      description: 'Create a new purchase order',
+      description: 'Create a draft purchase order for a vendor, optionally with line items to order. Returns a preview to confirm before creating unless confirm=true.',
       parameters: {
         type: 'object',
         properties: {
-          vendor: { type: 'string', description: 'Vendor name to order from' },
+          vendor: { type: 'string', description: 'Vendor name to order from (fuzzy-matched)' },
+          items: {
+            type: 'array',
+            description: 'Line items to order. Omit to create an empty draft.',
+            items: {
+              type: 'object',
+              properties: {
+                item: { type: 'string', description: 'Item name or SKU (fuzzy-matched)' },
+                quantity: { type: 'number', description: 'Quantity to order' },
+                unit_cost: { type: 'number', description: 'Unit cost if known (optional)' },
+              },
+              required: ['item', 'quantity'],
+            },
+          },
+          notes: { type: 'string', description: 'Notes for the PO' },
+          confirm: { type: 'boolean', description: 'Defaults to false, which returns a preview for the user to approve. Set true only after the user confirms, to actually create the PO.' },
         },
         required: [],
       },
