@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
@@ -12,7 +13,6 @@ import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
-import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -276,31 +276,16 @@ export default function FleetToolsPage() {
           }
         />
 
-        <AssetFleetTabs />
 
         {/* Sub-tabs */}
-        <div className="flex gap-2 border-b">
-          <button
-            onClick={() => setActiveTab('my-tools')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'my-tools'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            My Tools
-          </button>
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'catalog'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Catalog
-          </button>
-        </div>
+        <SubTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'my-tools', label: 'My Tools' },
+            { value: 'catalog', label: 'Catalog' },
+          ]}
+        />
 
         {/* My Tools tab */}
         {activeTab === 'my-tools' && (

@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { Loader2, RefreshCw, Users, Briefcase, Bot } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
@@ -237,7 +236,6 @@ export default function PeopleSettingsPage() {
   return (
     <AppShell>
       <PageHeader title="People & Limits" description="Positions and users from HR, with purchasing spend limits." />
-      <SettingsNav />
 
       {!isAdmin && (
         <div className="mb-4 rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">

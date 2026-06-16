@@ -2,6 +2,7 @@
 
 import { useDashboards } from '@/hooks/useDashboards';
 import { AppShell } from '@/components/layout/AppShell';
+import { PageHeader } from '@/components/ui/PageHeader';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { createBrowserAuthedClient } from '@/supabase/client';
@@ -116,6 +117,13 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="p-8">
+        <div className="mb-8">
+          <PageHeader
+            title="Dashboards"
+            description="Your custom dashboards and quick actions."
+          />
+        </div>
+
         {/* Counts assigned to me */}
         <MyAssignedCounts />
 

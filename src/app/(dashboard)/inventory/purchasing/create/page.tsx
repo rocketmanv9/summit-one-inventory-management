@@ -4,6 +4,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
@@ -247,10 +248,11 @@ export default function CreatePurchaseOrderPage() {
       <div className="p-6 max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Create Purchase Order</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Add the vendor, delivery location, and line items, then create the order.
-          </p>
+          <PageHeader
+            backHref="/inventory/purchasing"
+            title="Create Purchase Order"
+            description="Add the vendor, delivery location, and line items, then create the order."
+          />
         </div>
 
         {/* Success Message */}

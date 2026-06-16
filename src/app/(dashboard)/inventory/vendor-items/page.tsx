@@ -5,6 +5,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
@@ -245,10 +246,10 @@ export default function VendorItemsPage() {
     <AppShell>
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Vendor Items</h1>
-        <p className="text-gray-600">
-          Manage vendor catalog mappings and pricing. Links your existing catalog items to vendors with vendor-specific SKUs, costs, lead times, and preferred vendor status. Items must exist in your catalog before creating vendor mappings.
-        </p>
+        <PageHeader
+          title="Vendor Items"
+          description="Manage vendor catalog mappings and pricing. Links your existing catalog items to vendors with vendor-specific SKUs, costs, lead times, and preferred vendor status. Items must exist in your catalog before creating vendor mappings."
+        />
       </div>
 
       {/* Filters */}

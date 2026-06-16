@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -149,7 +148,6 @@ export default function DeviceManagementPage() {
         }
       />
 
-      <SettingsNav />
 
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1.95fr]">
         <Card>

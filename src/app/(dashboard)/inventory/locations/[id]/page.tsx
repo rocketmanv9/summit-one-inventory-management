@@ -194,16 +194,10 @@ export default function LocationDetailPage() {
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Back + Header */}
+        {/* Header */}
         <div>
-          <button
-            onClick={() => router.push('/inventory/locations')}
-            className="mb-3 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Locations
-          </button>
           <PageHeader
+            backHref="/inventory/locations"
             title={location.name}
             description={
               [

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Template {
@@ -114,21 +115,14 @@ export default function CountSchedulePage() {
         />
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b">
-          {([['calendar', 'Calendar'], ['templates', 'Templates']] as const).map(([val, label]) => (
-            <button
-              key={val}
-              onClick={() => setTab(val)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === val
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SubTabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { value: 'calendar', label: 'Calendar' },
+            { value: 'templates', label: 'Templates' },
+          ]}
+        />
 
         {tab === 'calendar' ? (
           <CalendarTab templates={templates} qualifiedUsers={qualifiedUsers} />

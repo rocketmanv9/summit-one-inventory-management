@@ -4,13 +4,13 @@ import { useState, useEffect } from 'react';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
-import { AssetFleetTabs } from '@/components/ui/AssetFleetTabs';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -261,31 +261,16 @@ export default function FleetEquipmentPage() {
           }
         />
 
-        <AssetFleetTabs />
 
         {/* Sub-tabs */}
-        <div className="flex gap-2 border-b">
-          <button
-            onClick={() => setActiveTab('my-equipment')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'my-equipment'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            My Equipment
-          </button>
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'catalog'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Catalog
-          </button>
-        </div>
+        <SubTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'my-equipment', label: 'My Equipment' },
+            { value: 'catalog', label: 'Catalog' },
+          ]}
+        />
 
         {/* My Equipment tab */}
         {activeTab === 'my-equipment' && (

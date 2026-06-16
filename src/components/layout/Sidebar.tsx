@@ -2,112 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard,
-  Package,
-  MapPin,
-  Truck,
-  ShoppingCart,
-  ClipboardCheck,
-  Settings,
-  Bug,
-  Bot,
-  CalendarCheck,
-  ArrowLeftRight,
-  Users,
-  Boxes,
-  History,
-  Globe,
-} from 'lucide-react';
+import { Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
 import { useTenantBranding } from '@/lib/tenant-branding';
-
-interface NavItem {
-  title: string;
-  href: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: number;
-  requiresDeveloper?: boolean;
-  // Sibling routes reachable via in-page tabs (see src/lib/page-tabs.ts).
-  // Listed so an active tab still highlights this sidebar link.
-  tabHrefs?: string[];
-}
-
-interface NavSection {
-  title: string;
-  items: NavItem[];
-}
-
-const navigation: NavSection[] = [
-  {
-    title: 'Overview',
-    items: [
-      { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { title: 'Isabelle', href: '/ai', icon: Bot },
-      { title: 'Debug', href: '/debug', icon: Bug, requiresDeveloper: true },
-    ],
-  },
-  {
-    // What you have: catalog + where it lives.
-    title: 'Inventory',
-    items: [
-      {
-        title: 'Stock Balances',
-        href: '/inventory/stock',
-        icon: Boxes,
-        tabHrefs: ['/inventory/usage-trends'],
-      },
-      {
-        title: 'Items',
-        href: '/inventory/items',
-        icon: Package,
-        tabHrefs: ['/inventory/categories'],
-      },
-      { title: 'Locations', href: '/inventory/locations', icon: MapPin },
-      { title: 'Assets', href: '/inventory/assets', icon: Truck },
-    ],
-  },
-  {
-    // Buying workflow: orders + the vendors behind them.
-    title: 'Purchasing',
-    items: [
-      { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
-      {
-        title: 'Vendors',
-        href: '/inventory/vendors',
-        icon: Users,
-        tabHrefs: ['/inventory/vendor-items', '/inventory/vendor-performance'],
-      },
-    ],
-  },
-  {
-    // Day-to-day stock movement and verification.
-    title: 'Operations',
-    items: [
-      { title: 'Transfers', href: '/inventory/transfers', icon: ArrowLeftRight },
-      { title: 'Reservations', href: '/inventory/reservations', icon: CalendarCheck },
-      {
-        title: 'Cycle Counts',
-        href: '/inventory/cycle-counts',
-        icon: ClipboardCheck,
-        tabHrefs: ['/inventory/count-schedule'],
-      },
-      { title: 'Network', href: '/operations/globe', icon: Globe },
-    ],
-  },
-  {
-    title: 'Audit',
-    items: [
-      {
-        title: 'Ledger',
-        href: '/inventory/audit',
-        icon: History,
-        tabHrefs: ['/inventory/integrity'],
-      },
-    ],
-  },
-];
+import { NAV_SECTIONS, SETTINGS_SECTION, DEBUG_ITEM, isSectionActive, matchHref } from '@/lib/nav';
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -117,11 +16,13 @@ export function Sidebar() {
 
   const logoUrl = branding.logo_url ?? null;
 
-  // A link is active for its own route, child routes, or any of its tab siblings.
-  const isItemActive = (item: NavItem): boolean => {
-    const hrefs = [item.href, ...(item.tabHrefs || [])];
-    return hrefs.some((h) => pathname === h || pathname.startsWith(h + '/'));
-  };
+  const footerLinkClass = (active: boolean) =>
+    cn(
+      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+      active
+        ? 'bg-primary text-primary-foreground'
+        : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+    );
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-sidebar border-r border-sidebar-border">
@@ -148,65 +49,44 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Navigation */}
+      {/* Navigation — one link per top-level destination */}
       <nav className="flex-1 overflow-y-auto p-4">
-        {navigation.map((section) => {
-          const visibleItems = section.items.filter(
-            (item) => !item.requiresDeveloper || isDeveloper
-          );
-          if (visibleItems.length === 0) return null;
+        <ul className="space-y-1">
+          {NAV_SECTIONS.map((section) => {
+            const isActive = isSectionActive(pathname, section);
+            const Icon = section.icon;
 
-          return (
-            <div key={section.title} className="mb-6">
-              <h3 className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                {section.title}
-              </h3>
-              <ul className="space-y-1">
-                {visibleItems.map((item) => {
-                  const isActive = isItemActive(item);
-                  const Icon = item.icon;
-
-                  return (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
-                        className={cn(
-                          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                          isActive
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-                        )}
-                      >
-                        <Icon className="h-4 w-4 flex-shrink-0" />
-                        <span className="flex-1">{item.title}</span>
-                        {item.badge && (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
-                            {item.badge}
-                          </span>
-                        )}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          );
-        })}
+            return (
+              <li key={section.href}>
+                <Link
+                  href={section.href}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                  )}
+                >
+                  <Icon className="h-4 w-4 flex-shrink-0" />
+                  <span className="flex-1">{section.title}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       </nav>
 
-      {/* Footer */}
-      <div className="border-t border-sidebar-border p-4">
-        <Link
-          href="/settings"
-          className={cn(
-            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-            pathname.startsWith('/settings')
-              ? 'bg-primary text-primary-foreground'
-              : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-          )}
-        >
-          <Settings className="h-4 w-4" />
-          <span>Settings</span>
+      {/* Footer — Settings, plus Debug for developers */}
+      <div className="space-y-1 border-t border-sidebar-border p-4">
+        {isDeveloper && (
+          <Link href={DEBUG_ITEM.href} className={footerLinkClass(matchHref(pathname, DEBUG_ITEM.href))}>
+            <DEBUG_ITEM.icon className="h-4 w-4" />
+            <span>{DEBUG_ITEM.title}</span>
+          </Link>
+        )}
+        <Link href={SETTINGS_SECTION.href} className={footerLinkClass(isSectionActive(pathname, SETTINGS_SECTION))}>
+          <SETTINGS_SECTION.icon className="h-4 w-4" />
+          <span>{SETTINGS_SECTION.title}</span>
         </Link>
       </div>
     </aside>

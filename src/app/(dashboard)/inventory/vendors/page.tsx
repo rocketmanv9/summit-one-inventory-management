@@ -7,6 +7,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
@@ -363,28 +364,14 @@ export default function VendorsPage() {
         />
 
         {/* Tabs */}
-        <div className="flex gap-2 border-b">
-          <button
-            onClick={() => setActiveTab('my-vendors')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'my-vendors'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            My Vendors
-          </button>
-          <button
-            onClick={() => setActiveTab('catalog')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'catalog'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Catalog
-          </button>
-        </div>
+        <SubTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'my-vendors', label: 'My Vendors' },
+            { value: 'catalog', label: 'Catalog' },
+          ]}
+        />
 
         {/* My Vendors tab */}
         {activeTab === 'my-vendors' && (

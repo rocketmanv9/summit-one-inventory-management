@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { Sparkles, Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 
@@ -314,7 +313,6 @@ export default function SettingsPage() {
         description="Configure purchase order numbering and approval rules"
       />
 
-      <SettingsNav />
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">

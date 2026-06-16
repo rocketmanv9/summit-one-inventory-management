@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import Link from 'next/link';
 import { ScanBarcode, Keyboard, Package, Wrench, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -120,30 +121,15 @@ export default function ScanPage() {
         />
 
         {/* Mode toggle */}
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMode('camera')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              mode === 'camera'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            <ScanBarcode className="h-4 w-4" />
-            Camera
-          </button>
-          <button
-            onClick={() => setMode('manual')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              mode === 'manual'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            <Keyboard className="h-4 w-4" />
-            Manual Entry
-          </button>
-        </div>
+        <SubTabs
+          value={mode}
+          onChange={setMode}
+          aria-label="Scan mode"
+          tabs={[
+            { value: 'camera', label: 'Camera', icon: ScanBarcode },
+            { value: 'manual', label: 'Manual Entry', icon: Keyboard },
+          ]}
+        />
 
         {/* Camera mode */}
         {mode === 'camera' && (

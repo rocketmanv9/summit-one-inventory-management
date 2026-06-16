@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { getStoredAccessToken, parseJwtPayload, getTenantIdFromToken } from '@/lib/auth-token';
 import {
   useTenantBranding,
@@ -156,7 +155,6 @@ export default function BrandingPage() {
         description="Assign your brand palette colors to different parts of the UI"
       />
 
-      <SettingsNav />
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">

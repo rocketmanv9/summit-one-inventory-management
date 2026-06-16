@@ -2,7 +2,6 @@
 
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { Bot } from 'lucide-react';
 
 export default function TestPage() {
@@ -13,7 +12,6 @@ export default function TestPage() {
         description="Configure purchase order numbering and approval rules"
       />
 
-      <SettingsNav />
 
       <div className="max-w-2xl">
         <div className="bg-white rounded-lg border p-6 space-y-4">

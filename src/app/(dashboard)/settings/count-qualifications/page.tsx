@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 
@@ -76,7 +75,6 @@ export default function CountQualificationsPage() {
           title="Count Qualifications"
           description="Choose who is qualified to perform cycle counts — the AI scheduler only assigns counts to qualified people"
         />
-        <SettingsNav />
 
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>

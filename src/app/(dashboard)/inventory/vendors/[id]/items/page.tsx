@@ -4,8 +4,8 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect, useMemo } from 'react';
 import type { FormEvent } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { Plus, Edit, Trash2, Star, Package, ArrowLeft } from 'lucide-react';
+import { useParams } from 'next/navigation';
+import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -49,7 +49,6 @@ interface VendorItem {
 
 export default function VendorItemsPage() {
   const params = useParams();
-  const router = useRouter();
   const vendorId = params.id as string;
   const uomLabels = useUOMLabelMap();
   const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
@@ -223,17 +222,9 @@ export default function VendorItemsPage() {
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Back Button */}
-        <button
-          onClick={() => router.push('/inventory/vendors')}
-          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Vendors
-        </button>
-
         {/* Page Header */}
         <PageHeader
+          backHref="/inventory/vendors"
           title={`${vendor?.name || 'Vendor'} - Catalog Items`}
           description="Link existing catalog items to this vendor with vendor-specific pricing, SKUs, and lead times. Items must be added to your catalog first before mapping to vendors."
           actions={

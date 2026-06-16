@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
@@ -323,38 +324,15 @@ export default function AuditPage() {
           }
         />
 
-        <div className="flex gap-2 border-b">
-          <button
-            onClick={() => setActiveTab('movements')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'movements'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Stock Movements
-          </button>
-          <button
-            onClick={() => setActiveTab('events')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'events'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Inventory Events
-          </button>
-          <button
-            onClick={() => setActiveTab('ledger')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'ledger'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Ledger Explorer
-          </button>
-        </div>
+        <SubTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'movements', label: 'Stock Movements' },
+            { value: 'events', label: 'Inventory Events' },
+            { value: 'ledger', label: 'Ledger Explorer' },
+          ]}
+        />
 
         {activeTab === 'ledger' ? (
           <>

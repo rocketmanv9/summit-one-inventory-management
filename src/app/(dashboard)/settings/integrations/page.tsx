@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SettingsNav } from '@/components/settings/SettingsNav';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { GmailIntegration } from '@/components/settings/GmailIntegration';
@@ -765,7 +765,6 @@ export default function IntegrationsPage() {
         description="Connect third-party services to your organization"
       />
 
-      <SettingsNav />
 
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -775,45 +774,31 @@ export default function IntegrationsPage() {
       )}
 
       {/* ── Integration Tabs ── */}
-      <div className="border-b mb-6">
-        <nav className="-mb-px flex gap-6">
-          <button
-            onClick={() => setActiveTab('amazon')}
-            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
-              activeTab === 'amazon'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
-            }`}
-          >
-            <ShoppingCart className="h-4 w-4" />
-            Amazon Business
-            {amazonStatus === 'connected' && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('printify')}
-            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
-              activeTab === 'printify'
-                ? 'border-green-500 text-green-600'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
-            }`}
-          >
-            <span className="text-sm font-bold">P</span>
-            Printify
-            {connectionStatus === 'connected' && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('gmail')}
-            className={`flex items-center gap-2 pb-3 px-1 border-b-2 text-sm font-medium transition-colors ${
-              activeTab === 'gmail'
-                ? 'border-red-500 text-red-600'
-                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300'
-            }`}
-          >
-            <Mail className="h-4 w-4" />
-            Gmail
-          </button>
-        </nav>
-      </div>
+      <SubTabs
+        value={activeTab}
+        onChange={setActiveTab}
+        aria-label="Integrations"
+        tabs={[
+          {
+            value: 'amazon',
+            label: 'Amazon Business',
+            icon: ShoppingCart,
+            badge:
+              amazonStatus === 'connected' ? (
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              ) : undefined,
+          },
+          {
+            value: 'printify',
+            label: 'Printify',
+            badge:
+              connectionStatus === 'connected' ? (
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              ) : undefined,
+          },
+          { value: 'gmail', label: 'Gmail', icon: Mail },
+        ]}
+      />
 
       <div className="max-w-2xl space-y-6">
         {/* ═══ Gmail Tab ═══ */}

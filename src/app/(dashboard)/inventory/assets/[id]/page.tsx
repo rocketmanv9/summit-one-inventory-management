@@ -134,16 +134,11 @@ export default function AssetDetailPage() {
     <AppShell>
       <div className="space-y-6">
         <div>
-          <button
-            onClick={() => router.push('/inventory/assets')}
-            className="mb-3 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to Assets
-          </button>
           <div className="flex items-start gap-4">
             <EntityImageUpload entityType="asset" entityId={asset.id} size="lg" />
             <div className="flex-1 min-w-0">
               <PageHeader
+                backHref="/inventory/assets"
                 title={asset.asset_tag}
                 description={
                   [
