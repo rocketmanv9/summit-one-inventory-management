@@ -117,17 +117,27 @@ export default function CreatePurchaseOrderPage() {
   const pickerItems = useMemo(() => {
     if (!form.vendor_id) return [];
     const fullById = new Map(items.map((i) => [i.id, i]));
-    return vendorItemRows.map((r) => {
-      const full = fullById.get(r.catalog_item_id);
-      return {
-        id: r.catalog_item_id,
-        name: r.catalog_items?.name || full?.name || 'Item',
-        sku: r.catalog_items?.sku || full?.sku || '',
-        description: full?.description ?? null,
-        uom_term_id: full?.uom_term_id ?? null,
-        is_parent: full?.is_parent,
-      };
-    });
+    const seen = new Set<string>();
+    return vendorItemRows
+      // Drop orphaned mappings (catalog item deleted/missing) and de-dupe items
+      // linked under multiple vendor SKUs — both show up as phantom/extra cards.
+      .filter((r) => {
+        if (!r.catalog_item_id || !r.catalog_items) return false;
+        if (seen.has(r.catalog_item_id)) return false;
+        seen.add(r.catalog_item_id);
+        return true;
+      })
+      .map((r) => {
+        const full = fullById.get(r.catalog_item_id);
+        return {
+          id: r.catalog_item_id,
+          name: r.catalog_items!.name,
+          sku: r.catalog_items!.sku,
+          description: full?.description ?? null,
+          uom_term_id: full?.uom_term_id ?? null,
+          is_parent: full?.is_parent,
+        };
+      });
   }, [form.vendor_id, vendorItemRows, items]);
 
   useEffect(() => {
