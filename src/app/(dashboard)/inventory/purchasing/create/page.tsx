@@ -2,7 +2,7 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -101,6 +101,19 @@ export default function CreatePurchaseOrderPage() {
     return () => {
       cancelled = true;
     };
+  }, [form.vendor_id]);
+
+  // Clear line items when the user switches from one vendor to another, so a
+  // PO can't end up with items the new vendor doesn't carry. Guarded so the
+  // initial vendor (incl. the URL-prefill flow) doesn't wipe a prefilled line.
+  const prevVendorRef = useRef('');
+  useEffect(() => {
+    const prev = prevVendorRef.current;
+    prevVendorRef.current = form.vendor_id;
+    if (prev && form.vendor_id && prev !== form.vendor_id) {
+      setLines([{ catalog_item_id: '', qty_ordered: 0, unit_cost: 0 }]);
+      setLineParentIds({});
+    }
   }, [form.vendor_id]);
 
   // Vendor's price per catalog item — used to prefill a line's unit cost.
