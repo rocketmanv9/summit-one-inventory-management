@@ -17,8 +17,12 @@ import { AlertCircle, Loader2, Search, MapPin, Plus, Trash2 } from 'lucide-react
 import { searchVendorOnline } from '@/lib/ai/client';
 import type { VendorDraft } from '@/lib/vendor-draft';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
+import { InventoryRPC } from '@/lib/rpc/inventory';
 import { geocodeStructured } from '@/lib/geocode';
-import { useVendorTypeTerms } from '@/hooks/useGVTerms';
+import { useVendorTypeTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { ItemPickerModal, type PickerItem } from '@/components/purchasing/ItemPickerModal';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 /* -------------------------------------------------------------------------- */
@@ -156,6 +160,58 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
   const [codeSettings, setCodeSettings] = useState<VendorCodeSettings | null>(null);
 
   const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
+
+  // "Items we buy from them" — pick catalog items to link to this vendor on save.
+  const [catalogItems, setCatalogItems] = useState<PickerItem[]>([]);
+  const [vendorLines, setVendorLines] = useState<
+    Array<{ catalog_item_id: string; name: string; sku: string; vendor_sku: string; unit_cost: string }>
+  >([]);
+  const [showItemPicker, setShowItemPicker] = useState(false);
+  const uomLabels = useUOMLabelMap();
+  const { imageMap: itemImageMap } = useEntityImages(
+    'catalog_item',
+    catalogItems.map((i) => i.id)
+  );
+
+  // Load the catalog (for the picker) and reset the item selection when the modal opens.
+  useEffect(() => {
+    if (!open) return;
+    setVendorLines([]);
+    setShowItemPicker(false);
+    let cancelled = false;
+    InventoryRPC.getCatalogItems({ active: true })
+      .then((rows: any[]) => {
+        if (cancelled) return;
+        setCatalogItems(
+          (rows || []).map((r) => ({
+            id: r.id,
+            name: r.name,
+            sku: r.sku,
+            description: r.description ?? null,
+            uom_term_id: r.uom_term_id ?? null,
+            is_parent: r.is_parent,
+          }))
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const toggleVendorItem = (item: PickerItem) => {
+    setVendorLines((prev) =>
+      prev.some((l) => l.catalog_item_id === item.id)
+        ? prev.filter((l) => l.catalog_item_id !== item.id)
+        : [...prev, { catalog_item_id: item.id, name: item.name, sku: item.sku, vendor_sku: '', unit_cost: '' }]
+    );
+  };
+  const updateVendorLine = (idx: number, field: 'vendor_sku' | 'unit_cost', value: string) => {
+    setVendorLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [field]: value } : l)));
+  };
+  const removeVendorLine = (idx: number) => {
+    setVendorLines((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   /* ---- Vendor code helpers (lifted from AddVendorModal) ---- */
 
@@ -534,6 +590,19 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
         else await subFetch(`/api/inventory/vendors/${vendorId}/contacts`, 'POST', contactBody(c));
       }
 
+      // 6. Link the items we buy from this vendor (idempotent upsert per item).
+      if (vendorLines.length > 0) {
+        setSavingMsg('Linking items…');
+        for (const ln of vendorLines) {
+          await SupplyChainRPC.createVendorItem({
+            vendor_id: vendorId,
+            catalog_item_id: ln.catalog_item_id,
+            vendor_sku: ln.vendor_sku.trim() || null,
+            unit_cost: ln.unit_cost ? Number(ln.unit_cost) : 0,
+          } as any);
+        }
+      }
+
       onSuccess({ id: vendorId, name });
     } catch (err: any) {
       setError(err?.message || 'Failed to save vendor.');
@@ -546,6 +615,7 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
   /* ---- Render ---- */
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -770,6 +840,44 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
               placeholder="Internal notes about this vendor…" disabled={submitting} />
           </div>
 
+          {/* Items we buy from them */}
+          {!isIntegrationVendor && (
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium">Items we buy from them</h4>
+                <Button type="button" variant="outline" size="sm"
+                  onClick={() => setShowItemPicker(true)} disabled={submitting}>
+                  <Plus className="h-4 w-4 mr-1" /> Add items
+                </Button>
+              </div>
+              {vendorLines.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Add the items you order from this vendor so they’re ready to pick when you create a PO.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {vendorLines.map((ln, idx) => (
+                    <div key={ln.catalog_item_id} className="flex items-center gap-2 rounded-md border border-border p-2">
+                      <EntityImageThumbnail url={itemImageMap[ln.catalog_item_id]} alt={ln.name} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{ln.name}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{ln.sku}</div>
+                      </div>
+                      <Input className="w-28" placeholder="Vendor SKU" value={ln.vendor_sku}
+                        onChange={(e) => updateVendorLine(idx, 'vendor_sku', e.target.value)} disabled={submitting} />
+                      <Input className="w-24" type="number" min="0" step="0.01" placeholder="Cost" value={ln.unit_cost}
+                        onChange={(e) => updateVendorLine(idx, 'unit_cost', e.target.value)} disabled={submitting} />
+                      <button type="button" onClick={() => removeVendorLine(idx)}
+                        className="text-muted-foreground hover:text-destructive" aria-label="Remove item">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {error && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
@@ -788,5 +896,17 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <ItemPickerModal
+      open={showItemPicker}
+      onClose={() => setShowItemPicker(false)}
+      items={catalogItems}
+      imageMap={itemImageMap}
+      uomLabels={uomLabels}
+      emptyMessage="No catalog items yet. Create items first, then link them here."
+      selectedIds={vendorLines.map((l) => l.catalog_item_id)}
+      onSelect={toggleVendorItem}
+    />
+    </>
   );
 }
