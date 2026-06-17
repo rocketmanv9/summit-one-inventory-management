@@ -17,6 +17,7 @@ import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { useUOMTerms, useUOMLabelMap, useGVTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
@@ -664,6 +665,12 @@ function CreateItemModal({
   const [initialStockLocation, setInitialStockLocation] = useState('');
   const [initialStockQty, setInitialStockQty] = useState('');
 
+  // Supplier link (for new items only) — who we buy this from.
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
+  const [supplierVendorId, setSupplierVendorId] = useState('');
+  const [supplierVendorSku, setSupplierVendorSku] = useState('');
+  const [supplierUnitCost, setSupplierUnitCost] = useState('');
+
   const formatLocationType = (value: Location['location_type']) => {
     if (!value) return '';
     const raw = typeof value === 'string' ? value : value.name;
@@ -674,6 +681,22 @@ function CreateItemModal({
   useEffect(() => {
     fetchCategories();
   }, []);
+
+  // Load vendors for the supplier picker (new items only).
+  useEffect(() => {
+    if (isEditing) return;
+    let cancelled = false;
+    SupplyChainRPC.getVendors()
+      .then((data) => {
+        if (!cancelled) {
+          setVendors((data || []).map((v) => ({ id: v.id, name: v.name, code: v.code })));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing]);
 
   // When a new category is created via the inline modal, refresh and auto-select it
   useEffect(() => {
@@ -1082,6 +1105,24 @@ function CreateItemModal({
         }
       }
 
+      // Link supplier for new items (creates the vendor_items mapping).
+      if (!isEditing && catalogItemId && supplierVendorId) {
+        try {
+          await SupplyChainRPC.createVendorItem({
+            vendor_id: supplierVendorId,
+            catalog_item_id: catalogItemId,
+            vendor_sku: supplierVendorSku.trim() || null,
+            unit_cost: supplierUnitCost ? Number(supplierUnitCost) : 0,
+          } as any);
+        } catch (vendErr: any) {
+          console.error('Supplier link failed:', vendErr);
+          setError(`Item created but linking the supplier failed: ${vendErr.message}. You can add it later on the vendor's Items page.`);
+          setSaving(false);
+          setTimeout(onCreated, 2000);
+          return;
+        }
+      }
+
       onCreated();
     } catch (err: any) {
       setError(err.message);
@@ -1346,6 +1387,59 @@ function CreateItemModal({
           </div>
 
           {/* Initial Stock section for new items */}
+          {!isEditing && (
+            <div className="border-t pt-4">
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold">Supplier <span className="text-muted-foreground font-normal">(optional)</span></h4>
+                <p className="text-xs text-muted-foreground">
+                  Link who you buy this from so it’s ready to pick when you create a PO.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1">Vendor</label>
+                  <select
+                    value={supplierVendorId}
+                    onChange={(e) => setSupplierVendorId(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded-md text-sm"
+                  >
+                    <option value="">-- None --</option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}{v.code ? ` (${v.code})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Vendor SKU</label>
+                  <input
+                    type="text"
+                    value={supplierVendorSku}
+                    onChange={(e) => setSupplierVendorSku(e.target.value)}
+                    disabled={!supplierVendorId}
+                    placeholder="optional"
+                    className="w-full px-2 py-1.5 border rounded-md text-sm disabled:bg-muted/40"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Unit Cost</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={supplierUnitCost}
+                    onChange={(e) => setSupplierUnitCost(e.target.value)}
+                    disabled={!supplierVendorId}
+                    placeholder="0.00"
+                    className="w-full px-2 py-1.5 border rounded-md text-sm disabled:bg-muted/40"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {!isEditing && (
             <div className="border-t pt-4">
               <div className="mb-3">
