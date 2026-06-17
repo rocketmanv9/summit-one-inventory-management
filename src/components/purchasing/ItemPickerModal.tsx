@@ -1,8 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Search, Check, Layers } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { Package, Search, Check, Layers, SearchX } from 'lucide-react';
 
 export interface PickerItem {
   id: string;
@@ -24,9 +30,9 @@ interface ItemPickerModalProps {
   onSelect: (item: PickerItem) => void;
 }
 
-// Visual, searchable card grid for choosing a catalog item to add to a PO line.
-// Each card shows the item's photo, name, SKU, description and unit so you can
-// see exactly what you're picking instead of scanning a text dropdown.
+// Visual, searchable product gallery for choosing a catalog item to add to a
+// PO line. Uniform square tiles (white bg, object-contain) keep the grid tidy
+// without cropping photos; each card shows name, SKU, description and unit.
 export function ItemPickerModal({
   open,
   onClose,
@@ -52,89 +58,99 @@ export function ItemPickerModal({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Choose an item</DialogTitle>
-        </DialogHeader>
+      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0">
+        {/* Header + search (stays put while the grid scrolls) */}
+        <div className="border-b bg-background px-6 pb-4 pt-6">
+          <DialogHeader>
+            <DialogTitle>Choose an item</DialogTitle>
+            <DialogDescription>
+              {filtered.length} item{filtered.length === 1 ? '' : 's'} · tap a card to add it to this line
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name, SKU or description..."
-            className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-          />
+          <div className="relative mt-4">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name, SKU or description..."
+              className="h-10 w-full rounded-lg border border-input bg-muted/30 pl-9 pr-3 text-sm transition-colors focus:border-primary focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
         </div>
 
         {/* Card grid */}
-        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
-          {filtered.map((item) => {
-            const url = imageMap[item.id];
-            const isAdded = selected.has(item.id);
-            const uom = uomLabels[item.uom_term_id || ''] || item.uom_term_id || '';
+        <div className="max-h-[62vh] overflow-y-auto bg-muted/20 px-6 py-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+            {filtered.map((item) => {
+              const url = imageMap[item.id];
+              const isAdded = selected.has(item.id);
+              const uom = uomLabels[item.uom_term_id || ''] || item.uom_term_id || '';
 
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelect(item)}
-                className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                {/* Photo — object-contain so nothing gets cropped */}
-                <div className="flex h-32 w-full items-center justify-center border-b border-border bg-muted/30 p-2">
-                  {url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={url}
-                      alt={item.name}
-                      className="h-full w-full object-contain"
-                    />
-                  ) : (
-                    <Package className="h-10 w-10 text-muted-foreground/40" />
-                  )}
-                </div>
-
-                {/* Added badge */}
-                {isAdded && (
-                  <span className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground shadow">
-                    <Check className="h-3 w-3" /> Added
-                  </span>
-                )}
-
-                {/* Meta */}
-                <div className="flex flex-1 flex-col gap-1 p-2.5">
-                  <span className="line-clamp-2 text-sm font-semibold leading-snug">
-                    {item.name}
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">{item.sku}</span>
-                  {item.description && (
-                    <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
-                      {item.description}
-                    </span>
-                  )}
-                  <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
-                    {uom && (
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        {uom}
-                      </span>
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item)}
+                  className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  {/* Photo — square white tile, contained so nothing is cropped */}
+                  <div className="relative aspect-square w-full bg-white">
+                    {url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={url}
+                        alt={item.name}
+                        className="h-full w-full object-contain p-3"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-muted/30">
+                        <Package className="h-10 w-10 text-muted-foreground/40" />
+                      </div>
                     )}
-                    {item.is_parent && (
-                      <span className="flex items-center gap-0.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
-                        <Layers className="h-2.5 w-2.5" /> Variants
+                    {isAdded && (
+                      <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground shadow">
+                        <Check className="h-3 w-3" /> Added
                       </span>
                     )}
                   </div>
-                </div>
-              </button>
-            );
-          })}
+
+                  {/* Meta */}
+                  <div className="flex flex-1 flex-col gap-0.5 border-t border-border p-3">
+                    <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+                      {item.name}
+                    </span>
+                    <span className="font-mono text-xs text-muted-foreground">{item.sku}</span>
+                    {item.description && (
+                      <span className="line-clamp-2 text-xs leading-snug text-muted-foreground/80">
+                        {item.description}
+                      </span>
+                    )}
+                    <div className="mt-auto flex flex-wrap items-center gap-1 pt-2">
+                      {uom && (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {uom}
+                        </span>
+                      )}
+                      {item.is_parent && (
+                        <span className="flex items-center gap-0.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                          <Layers className="h-2.5 w-2.5" /> Variants
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
 
           {filtered.length === 0 && (
-            <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
-              No items match &quot;{query}&quot;.
+            <div className="flex flex-col items-center gap-2 py-16 text-center text-muted-foreground">
+              <SearchX className="h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm">
+                No items match <span className="font-medium">&quot;{query}&quot;</span>.
+              </p>
             </div>
           )}
         </div>
