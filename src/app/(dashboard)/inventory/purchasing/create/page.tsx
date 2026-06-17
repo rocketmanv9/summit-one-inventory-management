@@ -29,6 +29,7 @@ interface CatalogItem {
   id: string;
   name: string;
   sku: string;
+  description?: string | null;
   uom_term_id: string | null;
   is_parent?: boolean;
 }

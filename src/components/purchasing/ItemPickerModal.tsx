@@ -8,6 +8,7 @@ export interface PickerItem {
   id: string;
   name: string;
   sku: string;
+  description?: string | null;
   uom_term_id: string | null;
   is_parent?: boolean;
 }
@@ -24,8 +25,8 @@ interface ItemPickerModalProps {
 }
 
 // Visual, searchable card grid for choosing a catalog item to add to a PO line.
-// Each card shows the item's photo, name, SKU and unit so you can see what
-// you're picking instead of scanning a text dropdown.
+// Each card shows the item's photo, name, SKU, description and unit so you can
+// see exactly what you're picking instead of scanning a text dropdown.
 export function ItemPickerModal({
   open,
   onClose,
@@ -42,7 +43,10 @@ export function ItemPickerModal({
     const q = query.trim().toLowerCase();
     if (!q) return items;
     return items.filter(
-      (i) => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q)
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        i.sku.toLowerCase().includes(q) ||
+        (i.description || '').toLowerCase().includes(q)
     );
   }, [items, query]);
 
@@ -60,13 +64,13 @@ export function ItemPickerModal({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or SKU..."
+            placeholder="Search by name, SKU or description..."
             className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
 
         {/* Card grid */}
-        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3 md:grid-cols-4">
+        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
           {filtered.map((item) => {
             const url = imageMap[item.id];
             const isAdded = selected.has(item.id);
@@ -77,36 +81,41 @@ export function ItemPickerModal({
                 key={item.id}
                 type="button"
                 onClick={() => onSelect(item)}
-                className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-primary hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition-colors hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                {/* Photo */}
-                {url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={url}
-                    alt={item.name}
-                    className="h-24 w-full bg-muted object-cover"
-                  />
-                ) : (
-                  <div className="flex h-24 w-full items-center justify-center bg-muted/40">
-                    <Package className="h-8 w-8 text-muted-foreground/40" />
-                  </div>
-                )}
+                {/* Photo — object-contain so nothing gets cropped */}
+                <div className="flex h-32 w-full items-center justify-center border-b border-border bg-muted/30 p-2">
+                  {url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={url}
+                      alt={item.name}
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <Package className="h-10 w-10 text-muted-foreground/40" />
+                  )}
+                </div>
 
                 {/* Added badge */}
                 {isAdded && (
-                  <span className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                  <span className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground shadow">
                     <Check className="h-3 w-3" /> Added
                   </span>
                 )}
 
                 {/* Meta */}
-                <div className="flex flex-1 flex-col gap-0.5 p-2">
-                  <span className="line-clamp-2 text-sm font-medium leading-tight">
+                <div className="flex flex-1 flex-col gap-1 p-2.5">
+                  <span className="line-clamp-2 text-sm font-semibold leading-snug">
                     {item.name}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">{item.sku}</span>
-                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {item.description && (
+                    <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+                      {item.description}
+                    </span>
+                  )}
+                  <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
                     {uom && (
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         {uom}
