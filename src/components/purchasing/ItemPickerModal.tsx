@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,8 @@ interface ItemPickerModalProps {
   uomLabels: Record<string, string>;
   /** IDs already on the order — shown with an "Added" marker. */
   selectedIds?: string[];
+  /** Shown when there are no items at all to pick from (e.g. no vendor chosen). */
+  emptyMessage?: ReactNode;
   onSelect: (item: PickerItem) => void;
 }
 
@@ -40,6 +42,7 @@ export function ItemPickerModal({
   imageMap,
   uomLabels,
   selectedIds = [],
+  emptyMessage,
   onSelect,
 }: ItemPickerModalProps) {
   const [query, setQuery] = useState('');
@@ -148,10 +151,21 @@ export function ItemPickerModal({
 
           {filtered.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-16 text-center text-muted-foreground">
-              <SearchX className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm">
-                No items match <span className="font-medium">&quot;{query}&quot;</span>.
-              </p>
+              {items.length === 0 ? (
+                <>
+                  <Package className="h-8 w-8 text-muted-foreground/40" />
+                  <p className="max-w-xs text-sm">
+                    {emptyMessage ?? 'No items available.'}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <SearchX className="h-8 w-8 text-muted-foreground/40" />
+                  <p className="text-sm">
+                    No items match <span className="font-medium">&quot;{query}&quot;</span>.
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>

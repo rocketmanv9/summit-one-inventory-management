@@ -2,7 +2,7 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -74,6 +74,61 @@ export default function CreatePurchaseOrderPage() {
   // Card-based item picker: which line is currently choosing an item.
   const [pickerLineIndex, setPickerLineIndex] = useState<number | null>(null);
   const { imageMap } = useEntityImages('catalog_item', items.map((i) => i.id));
+
+  // Items linked to the selected vendor (with that vendor's unit cost). The
+  // picker only offers these — you can't order what the vendor doesn't carry.
+  const [vendorItemRows, setVendorItemRows] = useState<
+    Array<{
+      catalog_item_id: string;
+      unit_cost: number;
+      catalog_items?: { id: string; name: string; sku: string } | null;
+    }>
+  >([]);
+
+  useEffect(() => {
+    if (!form.vendor_id) {
+      setVendorItemRows([]);
+      return;
+    }
+    let cancelled = false;
+    SupplyChainRPC.getVendorItemsWithCatalog(form.vendor_id)
+      .then((rows) => {
+        if (!cancelled) setVendorItemRows(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setVendorItemRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.vendor_id]);
+
+  // Vendor's price per catalog item — used to prefill a line's unit cost.
+  const vendorCostByItem = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of vendorItemRows) {
+      if (r.unit_cost != null) m.set(r.catalog_item_id, Number(r.unit_cost));
+    }
+    return m;
+  }, [vendorItemRows]);
+
+  // Picker list = the vendor's items, enriched with description/uom/variant
+  // info from the full catalog when available.
+  const pickerItems = useMemo(() => {
+    if (!form.vendor_id) return [];
+    const fullById = new Map(items.map((i) => [i.id, i]));
+    return vendorItemRows.map((r) => {
+      const full = fullById.get(r.catalog_item_id);
+      return {
+        id: r.catalog_item_id,
+        name: r.catalog_items?.name || full?.name || 'Item',
+        sku: r.catalog_items?.sku || full?.sku || '',
+        description: full?.description ?? null,
+        uom_term_id: full?.uom_term_id ?? null,
+        is_parent: full?.is_parent,
+      };
+    });
+  }, [form.vendor_id, vendorItemRows, items]);
 
   useEffect(() => {
     loadData();
@@ -568,15 +623,24 @@ export default function CreatePurchaseOrderPage() {
       <ItemPickerModal
         open={pickerLineIndex !== null}
         onClose={() => setPickerLineIndex(null)}
-        items={items}
+        items={pickerItems}
         imageMap={imageMap}
         uomLabels={uomLabels}
+        emptyMessage={
+          !form.vendor_id
+            ? 'Choose a vendor above to see the items they supply.'
+            : 'This vendor has no linked items yet. Add them on the vendor’s Items page.'
+        }
         selectedIds={[
           ...lines.map((l) => l.catalog_item_id).filter(Boolean),
           ...Object.values(lineParentIds).filter(Boolean),
         ]}
         onSelect={(item) => {
-          if (pickerLineIndex !== null) handleItemSelect(pickerLineIndex, item.id);
+          if (pickerLineIndex !== null) {
+            handleItemSelect(pickerLineIndex, item.id);
+            const cost = vendorCostByItem.get(item.id);
+            if (cost != null) updateLine(pickerLineIndex, 'unit_cost', cost);
+          }
           setPickerLineIndex(null);
         }}
       />
