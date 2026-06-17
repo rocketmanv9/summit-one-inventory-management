@@ -8,7 +8,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
-import { Plus, AlertCircle, Check } from 'lucide-react';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
+import { Plus, AlertCircle, Check, Package } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface Vendor {
@@ -67,6 +69,10 @@ export default function CreatePurchaseOrderPage() {
   // Track parent selection per line + cached variants per parent
   const [lineParentIds, setLineParentIds] = useState<Record<number, string>>({});
   const [variantsByParent, setVariantsByParent] = useState<Record<string, CatalogItem[]>>({});
+
+  // Card-based item picker: which line is currently choosing an item.
+  const [pickerLineIndex, setPickerLineIndex] = useState<number | null>(null);
+  const { imageMap } = useEntityImages('catalog_item', items.map((i) => i.id));
 
   useEffect(() => {
     loadData();
@@ -397,24 +403,53 @@ export default function CreatePurchaseOrderPage() {
                   ? (variantsByParent[parentId] || []).find(v => v.id === line.catalog_item_id)
                   : items.find((i) => i.id === line.catalog_item_id);
                 const lineTotal = line.qty_ordered * line.unit_cost;
+                // For parent lines show the parent (with its photo) until a variant is picked.
+                const parentItem = parentId ? items.find((i) => i.id === parentId) : undefined;
+                const displayItem = parentItem || selectedItem;
+                const displayImageId = parentId || line.catalog_item_id;
 
                 return (
                   <div key={index} className="space-y-2">
                     <div className="flex gap-3 items-start">
                       <div className="flex-1 space-y-2">
-                        <select
-                          value={parentId || line.catalog_item_id}
-                          onChange={(e) => handleItemSelect(index, e.target.value)}
-                          required
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        <button
+                          type="button"
+                          onClick={() => setPickerLineIndex(index)}
+                          className="flex w-full items-center gap-3 rounded-md border border-gray-300 px-3 py-2 text-left transition-colors hover:border-blue-500 hover:bg-blue-50/40 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
-                          <option value="">Select item...</option>
-                          {items.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name} ({item.sku}){item.is_parent ? ' [has variants]' : ''} - {uomLabels[item.uom_term_id || ''] || item.uom_term_id || 'N/A'}
-                            </option>
-                          ))}
-                        </select>
+                          {displayItem ? (
+                            <>
+                              {imageMap[displayImageId] ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={imageMap[displayImageId]}
+                                  alt={displayItem.name}
+                                  className="h-10 w-10 shrink-0 rounded border border-gray-200 object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-gray-200 bg-gray-50">
+                                  <Package className="h-5 w-5 text-gray-300" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium text-gray-900">
+                                  {displayItem.name}
+                                  {parentItem && ' — choose variant'}
+                                </div>
+                                <div className="truncate font-mono text-xs text-gray-500">{displayItem.sku}</div>
+                              </div>
+                              <span className="text-xs font-medium text-blue-600">Change</span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50">
+                                <Package className="h-5 w-5 text-gray-300" />
+                              </div>
+                              <span className="flex-1 text-sm text-gray-500">Choose item…</span>
+                              <span className="text-xs font-medium text-blue-600">Browse</span>
+                            </>
+                          )}
+                        </button>
 
                         {/* Variant sub-dropdown for parent items */}
                         {parentId && (
@@ -528,6 +563,22 @@ export default function CreatePurchaseOrderPage() {
           </div>
         </form>
       </div>
+
+      <ItemPickerModal
+        open={pickerLineIndex !== null}
+        onClose={() => setPickerLineIndex(null)}
+        items={items}
+        imageMap={imageMap}
+        uomLabels={uomLabels}
+        selectedIds={[
+          ...lines.map((l) => l.catalog_item_id).filter(Boolean),
+          ...Object.values(lineParentIds).filter(Boolean),
+        ]}
+        onSelect={(item) => {
+          if (pickerLineIndex !== null) handleItemSelect(pickerLineIndex, item.id);
+          setPickerLineIndex(null);
+        }}
+      />
     </AppShell>
   );
 }
