@@ -23,8 +23,18 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   log.info('abc_classification.calculated', { method: body.method });
 
+  // The RPC RETURNS TABLE(...) so Supabase hands back an array of rows.
+  // Flatten the single summary row and map *_count -> the keys the page reads.
+  const row = Array.isArray(data) ? data[0] : data;
   return {
-    data: data || { method: body.method },
+    data: {
+      method: body.method,
+      items_classified: row?.items_classified ?? 0,
+      class_a: row?.class_a_count ?? 0,
+      class_b: row?.class_b_count ?? 0,
+      class_c: row?.class_c_count ?? 0,
+      class_d: row?.class_d_count ?? 0,
+    },
     status: 200,
     events: [],
   };

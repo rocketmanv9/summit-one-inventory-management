@@ -12,9 +12,13 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   });
 
   const inv = (supabase as any).schema('inventory');
+  // Read the view, not the raw table: it flattens sku/item_name and computes
+  // management_strategy + review_frequency that the page renders.
   const { data, error } = await inv
-    .from('abc_classification')
-    .select('*, catalog_item:catalog_items(id, name, sku)')
+    .from('v_current_abc_classification')
+    .select(
+      'catalog_item_id, sku, item_name, classification, annual_usage_qty, annual_usage_value, cumulative_value_pct, value_rank, management_strategy, review_frequency'
+    )
     .order('value_rank', { ascending: true })
     .limit(500);
 

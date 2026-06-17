@@ -6,21 +6,31 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const inv = (supabase as any).schema('inventory');
 
-  // Query items below par levels to generate/refresh alerts
-  const { data: itemsBelowPar, error: parError } = await inv
-    .from('v_items_below_par')
-    .select('*')
-    .limit(500);
+  // Actually generate/refresh alerts: scans stock vs reorder points, upserts an
+  // alert per item needing reorder, and auto-dismisses ones that are resolved.
+  // (Previously this only read a view and never wrote any alerts.)
+  const { data, error } = await inv.rpc('generate_reorder_alerts');
 
-  if (parError) {
-    log.error('alerts.refresh_failed', { error: parError.message });
-    throw AppError.internal(parError.message);
+  if (error) {
+    log.error('alerts.refresh_failed', { error: error.message });
+    throw AppError.internal(error.message);
   }
 
-  log.info('alerts.refreshed', { count: itemsBelowPar?.length || 0 });
+  const row = Array.isArray(data) ? data[0] : data;
+  const created = row?.alerts_created ?? 0;
+  const updated = row?.alerts_updated ?? 0;
+  const dismissed = row?.alerts_auto_dismissed ?? 0;
+
+  log.info('alerts.refreshed', { created, updated, dismissed });
 
   return {
-    data: { refreshed: true, alerts_count: itemsBelowPar?.length || 0 },
+    data: {
+      refreshed: true,
+      alerts_count: created + updated,
+      alerts_created: created,
+      alerts_updated: updated,
+      alerts_auto_dismissed: dismissed,
+    },
     status: 200,
     events: [],
   };
