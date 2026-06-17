@@ -95,18 +95,18 @@ export function ItemPickerModal({
                   onClick={() => onSelect(item)}
                   className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
                 >
-                  {/* Photo — square white tile, contained so nothing is cropped */}
-                  <div className="relative aspect-square w-full bg-white">
+                  {/* Photo — 4:3 tile the image fills, so cards read full, not empty */}
+                  <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted">
                     {url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={url}
                         alt={item.name}
-                        className="h-full w-full object-contain p-3"
+                        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
                       />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-muted/30">
-                        <Package className="h-10 w-10 text-muted-foreground/40" />
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Package className="h-9 w-9 text-muted-foreground/40" />
                       </div>
                     )}
                     {isAdded && (
@@ -117,28 +117,29 @@ export function ItemPickerModal({
                   </div>
 
                   {/* Meta */}
-                  <div className="flex flex-1 flex-col gap-0.5 border-t border-border p-3">
-                    <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+                  <div className="flex flex-1 flex-col gap-1 p-2.5">
+                    <span className="line-clamp-2 text-[13px] font-semibold leading-snug text-foreground">
                       {item.name}
                     </span>
-                    <span className="font-mono text-xs text-muted-foreground">{item.sku}</span>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="font-mono">{item.sku}</span>
+                      {uom && (
+                        <>
+                          <span className="text-muted-foreground/40">·</span>
+                          <span>{uom}</span>
+                        </>
+                      )}
+                    </div>
                     {item.description && (
-                      <span className="line-clamp-2 text-xs leading-snug text-muted-foreground/80">
+                      <span className="line-clamp-1 text-xs leading-snug text-muted-foreground/80">
                         {item.description}
                       </span>
                     )}
-                    <div className="mt-auto flex flex-wrap items-center gap-1 pt-2">
-                      {uom && (
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          {uom}
-                        </span>
-                      )}
-                      {item.is_parent && (
-                        <span className="flex items-center gap-0.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
-                          <Layers className="h-2.5 w-2.5" /> Variants
-                        </span>
-                      )}
-                    </div>
+                    {item.is_parent && (
+                      <span className="mt-auto inline-flex w-fit items-center gap-0.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                        <Layers className="h-2.5 w-2.5" /> Variants
+                      </span>
+                    )}
                   </div>
                 </button>
               );
