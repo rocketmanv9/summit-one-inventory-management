@@ -214,7 +214,12 @@ export default function GuardrailSettingsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">UOM Mismatch Policy</label>
+              <label className="block text-sm font-medium mb-1">
+                UOM Mismatch Policy
+                <span className="ml-2 align-middle text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border">
+                  Not enforced yet
+                </span>
+              </label>
               <select
                 value={policy.uom_mismatch_policy}
                 onChange={(e) => setPolicy({ ...policy, uom_mismatch_policy: e.target.value })}
@@ -225,7 +230,10 @@ export default function GuardrailSettingsPage() {
                 <option value="off">Off (no check)</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">
-                Controls validation when receiving in a different UOM than the item&apos;s base UOM.
+                Intended to validate when receiving in a different UOM than the item&apos;s base UOM.
+                Your choice is saved, but this check has no effect yet — it depends on unit-of-measure
+                conversion being wired into the receiving flow (receipt lines store a free-text UOM while
+                items store a UOM term, so the two aren&apos;t comparable today).
               </p>
             </div>
 
