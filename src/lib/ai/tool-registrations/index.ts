@@ -72,6 +72,7 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   check_stock: ['crud'],
   low_stock: ['crud'],
   list_pos: ['crud'],
+  late_orders: ['crud', 'analytics'],
   list_locations: ['crud'],
   list_transfers: ['crud'],
   list_assets: ['crud'],

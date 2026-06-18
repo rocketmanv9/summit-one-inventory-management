@@ -24,15 +24,18 @@ User message -> useAiChat.ts -> OpenAI API -> parseAIResponse -> tool dispatch
 
 ## Adding a New Tool -- Checklist
 
-1. **`src/lib/ai/tools.ts`** -- Add OpenAI function definition
-2. **`src/lib/chat/intents.ts`** -- Add to `IntentType` union
-3. **`src/lib/ai/parse-response.ts`** -- Add to `VALID_INTENTS` set
-4. **`src/lib/chat/actions.ts`** -- Add `case` in `getActionDefinition()` (for client-side tools)
-5. **`src/lib/ai/useAiChat.ts`** -- Add to `AI_PARAM_MAP` and `SMART_DEFAULTS`
-6. **`src/lib/ai/executeAction.ts`** -- Add title in `intentToTitle()`
-7. **`src/lib/ai/types.ts`** -- Add to appropriate classification set (READ/ANALYTICS/WORKFLOW or default MUTATION)
-8. **`src/lib/ai/tool-governance.ts`** -- Add to `ADMIN_ONLY_TOOLS` if destructive
-9. **`src/lib/ai/system-prompt.ts`** -- Add usage examples and rules
+1. **`src/lib/ai/tools.ts`** -- Add OpenAI function definition. This is the single source of truth — `VALID_INTENTS` in `parse-response.ts` is derived from it automatically, so there is no separate list to keep in sync.
+2. **`src/lib/chat/intents.ts`** -- Add to `IntentType` union (TypeScript type only)
+3. **For SERVER tools** -- Add to the `SERVER_TOOLS` set AND a `case` in `executeServerToolInner`'s switch in `src/lib/ai/server-tools.ts`
+4. **For CLIENT tools** -- Add a `case` in `getActionDefinition()` in `src/lib/chat/actions.ts`
+5. **`src/lib/ai/tool-registrations/index.ts`** -- Add to `TAG_MAP` (≥1 tag; the wiring test fails otherwise)
+6. **`src/lib/ai/useAiChat.ts`** -- Add to `AI_PARAM_MAP` and `SMART_DEFAULTS` (client tools)
+7. **`src/lib/ai/executeAction.ts`** -- Add title in `intentToTitle()`
+8. **`src/lib/ai/types.ts`** -- Add to appropriate classification set (READ/ANALYTICS/WORKFLOW or default MUTATION)
+9. **`src/lib/ai/tool-governance.ts`** -- Add to `ADMIN_ONLY_TOOLS` if destructive; add to `TOOL_CAPABILITY` in `server-tools.ts` if it should respect the Settings → Assistant on/ask/auto gate
+10. **`src/lib/ai/system-prompt.ts`** -- Add usage examples and rules
+
+> **Wiring guard:** `tests/ai-tool-wiring.test.ts` iterates the whole registry and fails CI if any tool is half-wired (missing tag/governance, no server switch case, rejected by the intent gate, or capability-gated without a definition). Run `npx vitest run tests/ai-tool-wiring.test.ts` after adding a tool.
 
 ## Confirmation Rules
 
