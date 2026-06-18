@@ -86,7 +86,13 @@ type LocationTypeInsertPayload = Omit<LocationTypeInsert, 'tenant_id'> & { tenan
 type LocationTypeUpdatePayload = Omit<LocationTypeUpdate, 'tenant_id'> & { tenant_id?: string };
 type SkuSettingsInsertPayload = Omit<SkuSettingsInsert, 'tenant_id'> & { tenant_id?: string };
 type LocationWithType = LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null };
-type AssetInsertPayload = Omit<AssetInsert, 'tenant_id'> & { tenant_id?: string };
+type AssetInsertPayload = Omit<AssetInsert, 'tenant_id'> & {
+  tenant_id?: string;
+  // Cross-service sync fields (added ahead of the generated DB types).
+  asset_kind?: string | null;
+  fleet_asset_id?: string | null;
+  source_system?: string | null;
+};
 type AssetUpdatePayload = Omit<AssetUpdate, 'tenant_id'> & { tenant_id?: string };
 type TransferUpdatePayload = {
   from_location_id: string;

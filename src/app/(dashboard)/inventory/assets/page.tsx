@@ -471,6 +471,7 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
     purchase_date: '',
     purchase_cost: '',
     warranty_expires: '',
+    asset_kind: '',
   });
   const [useAutoNumbering, setUseAutoNumbering] = useState(true);
   const [customTags, setCustomTags] = useState('');
@@ -553,6 +554,9 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
           purchase_cost: assetData.purchase_cost,
           warranty_expires: assetData.warranty_expires,
           status: 'available',
+          // Classifies the asset for Fleet sync. vehicle/equipment (and later
+          // tool) mirror to Fleet; blank = inventory-only, never synced out.
+          asset_kind: form.asset_kind || null,
         });
       }
 
@@ -613,6 +617,23 @@ function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComp
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Create multiple assets at once (e.g., 10 leaf blowers)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Fleet Type</label>
+              <select
+                value={form.asset_kind}
+                onChange={(e) => setForm({ ...form, asset_kind: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Inventory only (don&apos;t sync)</option>
+                <option value="equipment">Equipment</option>
+                <option value="vehicle">Vehicle</option>
+                <option value="tool">Tool</option>
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Vehicles &amp; equipment sync to Fleet automatically
               </p>
             </div>
 
