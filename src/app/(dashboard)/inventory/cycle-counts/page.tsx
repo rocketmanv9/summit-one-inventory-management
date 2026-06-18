@@ -81,10 +81,24 @@ function CycleCountsPageContent() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createInitialValues, setCreateInitialValues] = useState<CreateModalInitialValues | null>(null);
   const [selectedCount, setSelectedCount] = useState<CycleCount | null>(null);
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<Record<string, number>>({});
+  // Debounced copy of the search box so we don't fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const PAGE_SIZE = 25;
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(filters.search?.trim() || ''), 300);
+    return () => clearTimeout(t);
+  }, [filters.search]);
+
+  // Any filter/search change resets to the first page.
+  useEffect(() => { setPage(0); }, [filters.status, debouncedSearch]);
 
   useEffect(() => {
     fetchCycleCounts();
-  }, [filters]);
+  }, [filters.status, debouncedSearch, page]);
 
   // Deep-link support: ?create=1&location=<location_id>&item=<catalog_item_id>
   // auto-opens the create modal prefilled, then clears the params so refresh doesn't re-trigger.
@@ -106,14 +120,41 @@ function CycleCountsPageContent() {
     try {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      params.set('limit', String(PAGE_SIZE));
+      params.set('offset', String(page * PAGE_SIZE));
 
       const res = await authenticatedFetch(`/api/inventory/cycle-counts?${params}`);
-      const { data } = await res.json();
+      const { data, total: totalCount, summary: statusSummary } = await res.json();
       setCycleCounts(data || []);
+      setTotal(totalCount || 0);
+      if (statusSummary) setSummary(statusSummary);
     } catch (error) {
       console.error('Error fetching cycle counts:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancelCount = async (cycleCount: CycleCount) => {
+    const reason = prompt(
+      `Cancel cycle count ${cycleCount.count_number}? This voids it — no stock changes are made.\n\nOptional reason:`,
+      ''
+    );
+    // prompt returns null when the user hits Cancel on the dialog → abort.
+    if (reason === null) return;
+    try {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/cancel`, {
+        method: 'POST',
+        body: { reason: reason || undefined },
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to cancel count');
+      }
+      fetchCycleCounts();
+    } catch (error: any) {
+      alert(`Error: ${error.message}`);
     }
   };
 
@@ -271,6 +312,17 @@ function CycleCountsPageContent() {
               View
             </button>
           )}
+          {['draft', 'scheduled', 'in_progress', 'under_review'].includes(row.status) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCancelCount(row);
+              }}
+              className="px-3 py-1.5 text-xs text-red-600 rounded-md hover:bg-red-50 font-medium"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       ),
     },
@@ -296,6 +348,12 @@ function CycleCountsPageContent() {
   };
 
   const filterConfig = [
+    {
+      key: 'search',
+      label: 'Search',
+      type: 'search' as const,
+      placeholder: 'Count # (e.g. CC-0042)',
+    },
     {
       key: 'status',
       label: 'Status',
@@ -332,25 +390,25 @@ function CycleCountsPageContent() {
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="text-2xl font-bold text-blue-700">
-              {cycleCounts.filter(c => c.status === 'draft').length}
+              {summary.draft || 0}
             </div>
             <div className="text-sm text-blue-600">Draft</div>
           </div>
           <div className="p-4 bg-cyan-50 border border-cyan-200 rounded-lg">
             <div className="text-2xl font-bold text-cyan-700">
-              {cycleCounts.filter(c => c.status === 'in_progress').length}
+              {summary.in_progress || 0}
             </div>
             <div className="text-sm text-cyan-600">In Progress</div>
           </div>
           <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
             <div className="text-2xl font-bold text-purple-700">
-              {cycleCounts.filter(c => c.status === 'under_review').length}
+              {summary.under_review || 0}
             </div>
             <div className="text-sm text-purple-600">Under Review</div>
           </div>
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="text-2xl font-bold text-green-700">
-              {cycleCounts.filter(c => c.status === 'posted' || c.status === 'closed').length}
+              {(summary.posted || 0) + (summary.closed || 0)}
             </div>
             <div className="text-sm text-green-600">Completed</div>
           </div>
@@ -371,6 +429,33 @@ function CycleCountsPageContent() {
           rowKey={(row) => row.id}
           onRowClick={setSelectedCount}
         />
+
+        {total > 0 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="text-muted-foreground">
+              {total === 0 ? '0' : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)}`} of {total}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0 || loading}
+                className="px-3 py-1.5 border rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ← Prev
+              </button>
+              <span className="text-muted-foreground">
+                Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+              </span>
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={(page + 1) * PAGE_SIZE >= total || loading}
+                className="px-3 py-1.5 border rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
 
         {selectedCount && (
           <CycleCountDetailPanel
@@ -583,6 +668,34 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
       fetchCountLines();
     }
   };
+
+  // Void the count without posting anything. Valid from draft/in-progress/
+  // under-review — covers the "I opened a count but didn't actually count
+  // anything" case where Approve & Post would otherwise be the only option.
+  const handleCancel = async () => {
+    const reason = prompt(
+      `Cancel cycle count ${cycleCount.count_number}? This voids it — no stock changes are made.\n\nOptional reason:`,
+      ''
+    );
+    if (reason === null) return;
+    try {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${cycleCount.id}/cancel`, {
+        method: 'POST',
+        body: { reason: reason || undefined },
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to cancel count');
+      }
+      onUpdate();
+      onClose();
+    } catch (error: any) {
+      alert(error.message || 'Error cancelling cycle count');
+    }
+  };
+
+  const nothingCounted =
+    countLines.length > 0 && countLines.every((l) => l.qty_counted === null);
 
   return (
     <div className="fixed inset-y-0 right-0 w-[48rem] bg-white shadow-xl border-l z-40 overflow-y-auto">
@@ -1087,9 +1200,15 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
             >
               Start Count
             </button>
+            <button
+              onClick={handleCancel}
+              className="w-full px-4 py-2.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50 font-medium"
+            >
+              Cancel Count
+            </button>
           </div>
         )}
-        
+
         {cycleCount.status === 'in_progress' && (
           <div className="border-t pt-4 space-y-3">
             <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1135,11 +1254,26 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
             >
               Submit for Review
             </button>
+            <button
+              onClick={handleCancel}
+              className="w-full px-4 py-2.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50 font-medium"
+            >
+              Cancel Count
+            </button>
           </div>
         )}
 
         {cycleCount.status === 'under_review' && (
           <div className="border-t pt-4 space-y-3">
+            {nothingCounted && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="text-sm font-medium text-amber-900 mb-1">Nothing was counted</div>
+                <div className="text-sm text-amber-700">
+                  No items in this count have a recorded count. Approving will post no changes —
+                  if this count was opened by mistake, cancel it instead.
+                </div>
+              </div>
+            )}
             {/* Check if all variance has been decided */}
             {(() => {
               const varianceLines = countLines.filter(l => 
@@ -1330,6 +1464,12 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
               }`}
             >
               Approve & Post to Inventory
+            </button>
+            <button
+              onClick={handleCancel}
+              className="w-full px-4 py-2.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50 font-medium"
+            >
+              Cancel Count (no changes posted)
             </button>
           </div>
         )}

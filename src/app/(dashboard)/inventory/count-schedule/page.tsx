@@ -390,7 +390,10 @@ function EntryDetailModal({ entry, qualifiedUsers, onClose, onChanged }: {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Remove this entry from the schedule?')) return;
+    const msg = entry.cycle_count_id
+      ? 'Remove this entry from the calendar? The cycle count it created is kept — cancel that separately from the Cycle Counts list if you want to void it.'
+      : 'Remove this entry from the schedule?';
+    if (!confirm(msg)) return;
     setBusy(true);
     try {
       const res = await apiWrite(`/api/inventory/count-schedule/${entry.id}`, { method: 'DELETE' });
@@ -514,6 +517,18 @@ function EntryDetailModal({ entry, qualifiedUsers, onClose, onChanged }: {
                 <button onClick={onClose} className="flex-1 px-4 py-2 border rounded-md hover:bg-gray-50 font-medium">
                   Close
                 </button>
+                {/* Ad-hoc entries are a read-only mirror of a directly-created
+                    count and have no schedule row to delete; everything else
+                    can be unlinked from the calendar. */}
+                {!entry.ad_hoc && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={busy}
+                    className="px-4 py-2 border border-red-200 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-50 font-medium"
+                  >
+                    Remove
+                  </button>
+                )}
               </>
             )}
           </div>

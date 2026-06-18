@@ -100,13 +100,16 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, f
 export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const entryId = getEntryId(req);
 
+  // Removing an entry only unlinks it from the calendar — any cycle count that
+  // was already generated from it is left intact and still lives in the
+  // cycle-counts list (cancel it there if you want to void it). So we allow
+  // deleting entries in any status, not just 'planned'.
   const inv = (supabase as any).schema('inventory');
   const { error } = await inv
     .from('cycle_count_schedule')
     .delete()
     .eq('id', entryId)
-    .eq('tenant_id', ctx.tenantId)
-    .eq('status', 'planned');
+    .eq('tenant_id', ctx.tenantId);
 
   if (error) {
     rethrowDeleteError(error, 'schedule entry');
