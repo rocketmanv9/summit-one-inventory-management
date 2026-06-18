@@ -786,7 +786,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('assets')
       .select(
-        'id, asset_tag, serial_number, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
+        'id, asset_tag, serial_number, asset_kind, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
       )
       .order('asset_tag');
 

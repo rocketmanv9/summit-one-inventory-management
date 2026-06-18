@@ -41,6 +41,7 @@ type Asset = {
   id: string;
   asset_tag: string;
   serial_number: string | null;
+  asset_kind?: string | null;
   catalog_item_id: string | null;
   location_id: string | null;
   status: string | null;
@@ -160,6 +161,25 @@ export default function AssetsPage() {
       ),
     },
     {
+      key: 'asset_kind',
+      header: 'Type',
+      sortable: true,
+      render: (row: Asset) => {
+        if (!row.asset_kind) return <span className="text-xs text-muted-foreground">—</span>;
+        const styles: Record<string, string> = {
+          vehicle: 'bg-blue-100 text-blue-800',
+          equipment: 'bg-amber-100 text-amber-800',
+          tool: 'bg-emerald-100 text-emerald-800',
+          other: 'bg-gray-100 text-gray-700',
+        };
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${styles[row.asset_kind] || 'bg-gray-100 text-gray-700'}`}>
+            {row.asset_kind}
+          </span>
+        );
+      },
+    },
+    {
       key: 'item',
       header: 'Item',
       sortable: true,
@@ -273,6 +293,18 @@ export default function AssetsPage() {
 
   const filterConfig = [
     {
+      key: 'kind',
+      label: 'Type',
+      type: 'select' as const,
+      options: [
+        { value: 'vehicle', label: 'Vehicles' },
+        { value: 'equipment', label: 'Equipment' },
+        { value: 'tool', label: 'Tools' },
+        { value: 'other', label: 'Other' },
+        { value: 'unclassified', label: 'Unclassified' },
+      ],
+    },
+    {
       key: 'status',
       label: 'Status',
       type: 'select' as const,
@@ -292,6 +324,12 @@ export default function AssetsPage() {
   ];
 
   const filteredAssets = assets.filter((asset) => {
+    if (filters.kind) {
+      // "unclassified" matches assets with no asset_kind set.
+      if (filters.kind === 'unclassified' ? !!asset.asset_kind : asset.asset_kind !== filters.kind) {
+        return false;
+      }
+    }
     if (filters.search) {
       const search = filters.search.toLowerCase();
       if (!asset.asset_tag.toLowerCase().includes(search) &&
