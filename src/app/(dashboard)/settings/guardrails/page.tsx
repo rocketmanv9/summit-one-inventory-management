@@ -214,26 +214,21 @@ export default function GuardrailSettingsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">
-                UOM Mismatch Policy
-                <span className="ml-2 align-middle text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border">
-                  Not enforced yet
-                </span>
-              </label>
+              <label className="block text-sm font-medium mb-1">UOM Mismatch Policy</label>
               <select
                 value={policy.uom_mismatch_policy}
                 onChange={(e) => setPolicy({ ...policy, uom_mismatch_policy: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="block">Block (reject if no conversion)</option>
+                <option value="block">Block (reject mismatched units)</option>
                 <option value="warn">Warn (allow but log)</option>
                 <option value="off">Off (no check)</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">
-                Intended to validate when receiving in a different UOM than the item&apos;s base UOM.
-                Your choice is saved, but this check has no effect yet — it depends on unit-of-measure
-                conversion being wired into the receiving flow (receipt lines store a free-text UOM while
-                items store a UOM term, so the two aren&apos;t comparable today).
+                Checked when posting a receipt whose purchase unit (from the PO line) differs from the
+                item&apos;s stocking unit. <span className="font-medium">Block</span> rejects the receipt,
+                <span className="font-medium"> Warn</span> posts it but logs an exception below. Quantities
+                post as received — unit conversion isn&apos;t applied yet.
               </p>
             </div>
 
