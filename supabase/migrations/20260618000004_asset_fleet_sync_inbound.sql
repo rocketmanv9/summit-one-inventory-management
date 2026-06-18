@@ -103,6 +103,16 @@ BEGIN
         RETURN v_id;
     END IF;
 
+    -- Duplicate fleet data can repeat a serial/vin; inventory enforces both
+    -- unique, so drop a colliding serial/vin on create. The fleet_asset_id link
+    -- still uniquely identifies the asset.
+    IF NULLIF(p_serial, '') IS NOT NULL AND EXISTS (SELECT 1 FROM inventory.assets WHERE tenant_id = p_tenant_id AND serial_number = p_serial) THEN
+        p_serial := NULL;
+    END IF;
+    IF NULLIF(p_vin, '') IS NOT NULL AND EXISTS (SELECT 1 FROM inventory.assets WHERE tenant_id = p_tenant_id AND vin = p_vin) THEN
+        p_vin := NULL;
+    END IF;
+
     -- Create. asset_tag is NOT NULL and tenant-unique in practice; derive a tag
     -- and de-collide with a numeric suffix.
     v_base_tag := COALESCE(NULLIF(p_unit_number, ''), NULLIF(p_name, ''), 'FLEET-' || left(p_fleet_asset_id::text, 8));
