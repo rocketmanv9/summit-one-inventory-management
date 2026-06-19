@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { notifyCountAssignment, assertQualifiedCounter } from '@/lib/counts/assignment-email';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -11,19 +12,30 @@ const CreateCycleCountSchema = z.object({
   is_blind: z.boolean().optional().default(false),
   scheduled_for: z.string().optional(),
   catalog_item_ids: z.array(z.string().uuid()).nullable().optional(),
+  // Optional: assign the count to another qualified counter at creation time.
+  // Defaults to the creator (self-assign) when omitted.
+  assigned_to_user_id: z.string().uuid().optional(),
 });
 
-export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fetch, idempotencyKey }) => {
   const body = CreateCycleCountSchema.parse(await req.json());
 
   const inv = (supabase as any).schema('inventory');
+
+  const assigneeUserId = body.assigned_to_user_id || ctx.userId;
+  if (!assigneeUserId) throw AppError.unauthorized('No user in session context');
+  // Only gate on qualification when handing the count to someone else — a
+  // creator self-assigning (e.g. an admin) isn't required to be a counter.
+  if (body.assigned_to_user_id && body.assigned_to_user_id !== ctx.userId) {
+    await assertQualifiedCounter(supabase, ctx.tenantId, body.assigned_to_user_id);
+  }
 
   const { data, error } = await inv.rpc('rpc_inv_cycle_count_start', {
     p_tenant_id: ctx.tenantId,
     p_location_id: body.location_id,
     p_count_type: body.count_type,
     p_catalog_item_ids: body.catalog_item_ids || null,
-    p_counted_by_user_id: ctx.userId,
+    p_counted_by_user_id: assigneeUserId,
     p_last_event_id: idempotencyKey,
   });
 
@@ -32,12 +44,39 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     throw AppError.internal(error.message);
   }
 
-  log.info('cycle_count.started', { cycleCountId: data, countType: body.count_type });
+  log.info('cycle_count.started', { cycleCountId: data, countType: body.count_type, assigneeUserId });
+
+  // Fetch the human-facing number + location for the task/notification copy.
+  const { data: created } = await inv
+    .from('cycle_counts')
+    .select('count_number, count_type, location:locations(name)')
+    .eq('id', data)
+    .eq('tenant_id', ctx.tenantId)
+    .single();
 
   return {
     data: { id: data },
     status: 201,
     events: [],
+    afterCommit: async () => {
+      await notifyCountAssignment({
+        fetchImpl: fetch,
+        supabase,
+        log,
+        tenantId: ctx.tenantId,
+        assigneeUserId,
+        actorUserId: ctx.userId,
+        // Creating your own count still produces a notification (audit/mobile push).
+        alwaysNotify: true,
+        counts: [{
+          templateName: created?.count_number ? `Count ${created.count_number}` : 'Cycle count',
+          locationName: created?.location?.name,
+          countType: created?.count_type || body.count_type,
+          countNumber: created?.count_number,
+          cycleCountId: data,
+        }],
+      });
+    },
   };
 }, { bodySchema: 'raw', emissionOwner: 'trigger',
   serviceName: SERVICE_NAME,

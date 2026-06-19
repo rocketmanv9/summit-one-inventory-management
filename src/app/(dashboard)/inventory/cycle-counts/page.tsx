@@ -1494,14 +1494,18 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
     include_bulk_items: true,
     specific_items: initialItemIds || ([] as string[]),
     notes: '',
+    assigned_to_user_id: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
   const [loadingLocations, setLoadingLocations] = useState(true);
+  // Qualified counters the count can be assigned to (empty default = assign to me).
+  const [counters, setCounters] = useState<Array<{ user_id: string; name: string | null; email: string | null }>>([]);
 
   useEffect(() => {
     fetchLocations();
+    fetchCounters();
   }, []);
 
   const fetchLocations = async () => {
@@ -1513,6 +1517,16 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
       console.error('Error fetching locations:', error);
     } finally {
       setLoadingLocations(false);
+    }
+  };
+
+  const fetchCounters = async () => {
+    try {
+      const res = await authenticatedFetch('/api/inventory/count-qualified');
+      const { data } = await res.json();
+      setCounters((data || []).filter((u: any) => u.qualified));
+    } catch (error) {
+      console.error('Error fetching qualified counters:', error);
     }
   };
 
@@ -1530,6 +1544,7 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
           is_blind: form.is_blind,
           scheduled_for: form.scheduled_for || undefined,
           catalog_item_ids: form.specific_items.length > 0 ? form.specific_items : null,
+          assigned_to_user_id: form.assigned_to_user_id || undefined,
         },
       });
 
@@ -1604,6 +1619,26 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
             )}
             <p className="text-xs text-muted-foreground mt-1">
               Choose the warehouse, yard, or bin location to count
+            </p>
+          </div>
+
+          {/* Assignee */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Assign to</label>
+            <select
+              value={form.assigned_to_user_id}
+              onChange={(e) => setForm({ ...form, assigned_to_user_id: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">Me</option>
+              {counters.map((u) => (
+                <option key={u.user_id} value={u.user_id}>
+                  {u.name || u.email || u.user_id}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              The assignee gets a task and a notification. Only qualified counters are listed.
             </p>
           </div>
 

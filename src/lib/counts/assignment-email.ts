@@ -18,6 +18,12 @@ export interface AssignedCountInfo {
   scheduledDate?: string | null;
   countType?: string | null;
   countNumber?: string | null;
+  /**
+   * The actual cycle_counts.id, when this assignment is for a materialized
+   * count (create/reassign) rather than a schedule entry. When present, a task
+   * is created/reassigned for the assignee; when absent, only a notification.
+   */
+  cycleCountId?: string | null;
 }
 
 const COUNT_TYPE_LABELS: Record<string, string> = {
@@ -46,6 +52,88 @@ function describeCount(c: AssignedCountInfo): string {
   return parts.join(' ');
 }
 
+/**
+ * Create (or reassign) the task that represents "go do this cycle count".
+ *
+ * One task per count, keyed by `cycle_count_<id>` in last_event_id so it's
+ * idempotent: the first assignment inserts (-> task.created event), a later
+ * reassignment moves it to the new counter (-> task.assigned event). Best-effort
+ * — a task failure must never fail the count mutation that triggered it.
+ */
+async function upsertCountTask(
+  supabase: any,
+  log: { warn: (msg: string, meta?: any) => void },
+  opts: {
+    tenantId: string;
+    assigneeUserId: string;
+    actorUserId?: string | null;
+    info: AssignedCountInfo;
+  },
+): Promise<void> {
+  const { tenantId, assigneeUserId, actorUserId, info } = opts;
+  const cycleCountId = info.cycleCountId;
+  if (!cycleCountId) return; // schedule entries have no count to attach a task to
+
+  const eventKey = `cycle_count_${cycleCountId}`;
+  const title = `Cycle count: ${info.templateName}`;
+  const description = describeCount(info);
+  const link = `/inventory/cycle-counts/${cycleCountId}`;
+
+  try {
+    const { data: existing } = await supabase
+      .from('tasks')
+      .select('id, assigned_to_user_id, status')
+      .eq('tenant_id', tenantId)
+      .eq('last_event_id', eventKey)
+      .maybeSingle();
+
+    if (existing) {
+      const reopen = existing.status === 'done' || existing.status === 'cancelled';
+      // Nothing to do if the same person already holds an open task.
+      if (existing.assigned_to_user_id === assigneeUserId && !reopen) return;
+      const patch: Record<string, any> = {
+        assigned_to_user_id: assigneeUserId,
+        title,
+        description,
+        link,
+      };
+      if (reopen) {
+        patch.status = 'open';
+        patch.completed_at = null;
+        patch.completed_by_user_id = null;
+      }
+      const { error } = await supabase
+        .from('tasks')
+        .update(patch)
+        .eq('id', existing.id)
+        .eq('tenant_id', tenantId);
+      if (error) log.warn('count_task.reassign_failed', { cycleCountId, error: error.message });
+      return;
+    }
+
+    // First assignment — upsert so concurrent retries don't double-insert.
+    const { error } = await supabase
+      .from('tasks')
+      .upsert({
+        tenant_id: tenantId,
+        assigned_to_user_id: assigneeUserId,
+        created_by_user_id: actorUserId ?? null,
+        task_type: 'cycle_count',
+        title,
+        description,
+        status: 'open',
+        priority: 'normal',
+        related_entity_type: 'cycle_count',
+        related_entity_id: cycleCountId,
+        link,
+        last_event_id: eventKey,
+      }, { onConflict: 'tenant_id,last_event_id', ignoreDuplicates: true });
+    if (error) log.warn('count_task.insert_failed', { cycleCountId, error: error.message });
+  } catch (err: any) {
+    log.warn('count_task.failed', { cycleCountId, error: err?.message });
+  }
+}
+
 export async function notifyCountAssignment(opts: {
   fetchImpl: FetchLike;
   supabase: any;
@@ -57,25 +145,56 @@ export async function notifyCountAssignment(opts: {
   counts: AssignedCountInfo[];
   /** True when an existing assignee handed the count to someone else. */
   delegated?: boolean;
+  /**
+   * Notify the assignee even when they assigned the count to themselves.
+   * Tasks are always created regardless of this flag; this only governs the
+   * in-app notification. Email always skips self-assignment.
+   */
+  alwaysNotify?: boolean;
 }): Promise<void> {
-  const { fetchImpl, supabase, log, tenantId, assigneeUserId, actorUserId, counts, delegated } = opts;
+  const { fetchImpl, supabase, log, tenantId, assigneeUserId, actorUserId, counts, delegated, alwaysNotify } = opts;
 
-  if (counts.length === 0 || assigneeUserId === actorUserId) return;
+  if (counts.length === 0) return;
 
-  // In-app notification first — it works even when email isn't configured.
+  const selfAssigned = assigneeUserId === actorUserId;
   const verb = delegated ? 'delegated' : 'assigned';
-  await insertNotification(supabase, log, {
-    tenantId,
-    userId: assigneeUserId,
-    type: 'count_assigned',
-    title: counts.length === 1
-      ? `Cycle count ${verb} to you: ${counts[0].templateName}`
-      : `${counts.length} cycle counts ${verb} to you`,
-    body: counts.map(describeCount).join(' · '),
-    link: '/inventory/count-schedule',
-  });
 
-  if (!isEmailConfigured()) return;
+  // A task is the durable work item — create/reassign one per materialized
+  // count so it lands in the assignee's to-do list (and pushes to mobile via
+  // the tasks_emit_event trigger). Always done, even on self-assignment.
+  for (const c of counts) {
+    await upsertCountTask(supabase, log, {
+      tenantId,
+      assigneeUserId,
+      actorUserId,
+      info: c,
+    });
+  }
+
+  // In-app notification — works even when email isn't configured. Skipped on
+  // self-assignment unless the caller opts in (e.g. creating your own count).
+  if (!selfAssigned || alwaysNotify) {
+    await insertNotification(supabase, log, {
+      tenantId,
+      userId: assigneeUserId,
+      type: 'count_assigned',
+      title: counts.length === 1
+        ? `Cycle count ${verb} to you: ${counts[0].templateName}`
+        : `${counts.length} cycle counts ${verb} to you`,
+      body: counts.map(describeCount).join(' · '),
+      link: counts.length === 1 && counts[0].cycleCountId
+        ? `/inventory/cycle-counts/${counts[0].cycleCountId}`
+        : '/inventory/count-schedule',
+      // One notification per assignment of a given count, so retries/replays
+      // don't stack duplicates in the feed.
+      eventKey: counts.length === 1 && counts[0].cycleCountId
+        ? `count_assigned_${counts[0].cycleCountId}_${assigneeUserId}`
+        : undefined,
+    });
+  }
+
+  // Never email someone about a count they assigned to themselves.
+  if (selfAssigned || !isEmailConfigured()) return;
 
   try {
     const lookupIds = [...new Set([assigneeUserId, actorUserId].filter(Boolean))] as string[];

@@ -86,6 +86,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
           locationName: count.location?.name,
           countType: count.count_type,
           countNumber: count.count_number,
+          cycleCountId: countId,
         }],
       });
     },
