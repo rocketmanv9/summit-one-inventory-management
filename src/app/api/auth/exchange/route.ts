@@ -15,6 +15,12 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const ExchangeSchema = z.object({
   ticket: z.string().min(1),
+  // Optional per the Core SSO ticket-exchange contract. Must match the
+  // target_service the ticket was minted with (Core rejects a mismatch).
+  // Native clients (mobile) pass this explicitly since they hit this JSON
+  // endpoint directly rather than the /auth/callback redirect (which carries
+  // target_service as a query param). Defaults to INTERNAL_JWT_ISSUER.
+  target_service: z.string().min(1).optional(),
 });
 
 /**
@@ -45,7 +51,7 @@ export const POST = createReadRoute(async ({ req }) => {
   } else {
     user = await exchangeTicketWithCore({
       ticket: body.ticket,
-      targetService: process.env.INTERNAL_JWT_ISSUER || undefined,
+      targetService: body.target_service || process.env.INTERNAL_JWT_ISSUER || undefined,
       forwardHeaders: {
         'x-forwarded-for': req.headers.get('x-forwarded-for') || 'unknown',
         'user-agent': req.headers.get('user-agent') || 'unknown',
