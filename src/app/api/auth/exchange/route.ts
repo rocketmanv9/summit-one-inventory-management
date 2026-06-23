@@ -21,6 +21,11 @@ const ExchangeSchema = z.object({
   // endpoint directly rather than the /auth/callback redirect (which carries
   // target_service as a query param). Defaults to INTERNAL_JWT_ISSUER.
   target_service: z.string().min(1).optional(),
+  // Tenant the ticket was minted for. Core requires target_org to match the
+  // ticket's stored target_tenant_id (null must match null). The /auth/callback
+  // redirect carries this as a query param; native clients must send it here or
+  // Core rejects the exchange.
+  target_org: z.string().min(1).optional(),
 });
 
 /**
@@ -51,6 +56,7 @@ export const POST = createReadRoute(async ({ req }) => {
   } else {
     user = await exchangeTicketWithCore({
       ticket: body.ticket,
+      targetOrg: body.target_org,
       targetService: body.target_service || process.env.INTERNAL_JWT_ISSUER || undefined,
       forwardHeaders: {
         'x-forwarded-for': req.headers.get('x-forwarded-for') || 'unknown',
