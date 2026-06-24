@@ -2,14 +2,16 @@ import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { getTenantToolClient } from '@/lib/tools';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { resolveScanCode } from '@/lib/scan/resolve';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
  * GET /api/scan/lookup?code=<value>
  *
- * Scanned barcode lookup — searches assets by asset_tag / serial_number,
- * then falls back to GV tools by id.
+ * Scanned barcode lookup — searches assets by asset_tag / serial_number and
+ * catalog items by barcode / sku (see resolveScanCode), then falls back to GV
+ * tools by id. Tenant-scoped via the chassis session + RLS.
  */
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const url = new URL(req.url);
@@ -21,7 +23,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   log.info('scan.lookup', { code });
 
-  // ── Search inventory assets ───────────────────────────────────────────
+  // ── Search inventory assets + catalog items ───────────────────────────
   const supabase = await createTenantServiceClient({
     url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -29,40 +31,9 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   });
   const inv = (supabase as any).schema('inventory');
 
-  // Try exact match on asset_tag first
-  const { data: assetByTag } = await inv
-    .from('assets')
-    .select('id, asset_tag, serial_number, status, catalog_item_id, location_id, catalog_items(id, name, sku), locations(id, name)')
-    .eq('asset_tag', code)
-    .limit(1)
-    .maybeSingle();
-
-  if (assetByTag) {
-    return Response.json({
-      data: {
-        type: 'asset',
-        entity: assetByTag,
-        href: '/inventory/assets',
-      },
-    });
-  }
-
-  // Try exact match on serial_number
-  const { data: assetBySerial } = await inv
-    .from('assets')
-    .select('id, asset_tag, serial_number, status, catalog_item_id, location_id, catalog_items(id, name, sku), locations(id, name)')
-    .eq('serial_number', code)
-    .limit(1)
-    .maybeSingle();
-
-  if (assetBySerial) {
-    return Response.json({
-      data: {
-        type: 'asset',
-        entity: assetBySerial,
-        href: '/inventory/assets',
-      },
-    });
+  const match = await resolveScanCode(inv, code);
+  if (match) {
+    return Response.json({ data: match });
   }
 
   // ── Search GV tools by id (UUID) ─────────────────────────────────────
