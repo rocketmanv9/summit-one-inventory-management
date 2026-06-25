@@ -17,6 +17,10 @@ import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
 import { AssetTransferModal } from '@/components/assets/AssetTransferModal';
+import { CreateAssetModal } from '@/components/assets/CreateAssetModal';
+import { AssetTypeClassFields } from '@/components/assets/AssetTypeClassFields';
+import { useGVLabelMap } from '@/hooks/useGVTerms';
+import { useEquipmentClassMap } from '@/hooks/useEquipmentClasses';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { Database } from 'types/supabase';
 
@@ -42,6 +46,11 @@ type Asset = {
   asset_tag: string;
   serial_number: string | null;
   asset_kind?: string | null;
+  asset_type_term_id?: string | null;
+  equipment_class_id?: string | null;
+  make?: string | null;
+  model?: string | null;
+  model_year?: number | null;
   catalog_item_id: string | null;
   location_id: string | null;
   status: string | null;
@@ -74,6 +83,15 @@ export default function AssetsPage() {
 
   const assetIds = assets.map(a => a.id);
   const { imageMap } = useEntityImages('asset', assetIds);
+
+  // GV label maps for the Type column. Term ids are unique across domains, so the
+  // three type domains merge cleanly into one term_id → label lookup.
+  const vehicleTypeMap = useGVLabelMap('vehicle_type');
+  const equipmentTypeMap = useGVLabelMap('equipment_type');
+  const toolTypeMap = useGVLabelMap('tool_type');
+  const equipmentClassMap = useEquipmentClassMap();
+  const typeLabel = (termId?: string | null) =>
+    (termId && (vehicleTypeMap[termId] || equipmentTypeMap[termId] || toolTypeMap[termId])) || null;
 
   useEffect(() => {
     fetchAssets();
@@ -172,10 +190,16 @@ export default function AssetsPage() {
           tool: 'bg-emerald-100 text-emerald-800',
           other: 'bg-gray-100 text-gray-700',
         };
+        const tLabel = typeLabel(row.asset_type_term_id);
+        const cLabel = row.equipment_class_id ? equipmentClassMap[row.equipment_class_id] : null;
         return (
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${styles[row.asset_kind] || 'bg-gray-100 text-gray-700'}`}>
-            {row.asset_kind}
-          </span>
+          <div className="space-y-0.5">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${styles[row.asset_kind] || 'bg-gray-100 text-gray-700'}`}>
+              {row.asset_kind}
+            </span>
+            {tLabel && <div className="text-xs text-muted-foreground">{tLabel}</div>}
+            {cLabel && <div className="text-xs text-muted-foreground">{cLabel}</div>}
+          </div>
         );
       },
     },
@@ -183,12 +207,17 @@ export default function AssetsPage() {
       key: 'item',
       header: 'Item',
       sortable: true,
-      render: (row: Asset) => (
-        <div>
-          <div className="font-medium">{row.catalog_item?.name || '-'}</div>
-          <div className="text-xs text-muted-foreground">{row.catalog_item?.sku || ''}</div>
-        </div>
-      ),
+      render: (row: Asset) => {
+        const makeModel = [row.make, row.model].filter(Boolean).join(' ');
+        return (
+          <div>
+            <div className="font-medium">{row.catalog_item?.name || makeModel || '-'}</div>
+            <div className="text-xs text-muted-foreground">
+              {row.catalog_item?.sku || [makeModel && row.catalog_item?.name ? makeModel : '', row.model_year].filter(Boolean).join(' · ') || ''}
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: 'serial_number',
@@ -497,350 +526,6 @@ export default function AssetsPage() {
   );
 }
 
-function CreateAssetModal({ onClose, onComplete }: { onClose: () => void; onComplete: () => void }) {
-  const [catalogItems, setCatalogItems] = useState<CatalogItemOption[]>([]);
-  const [locations, setLocations] = useState<(LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null })[]>([]);
-  const [form, setForm] = useState({
-    catalog_item_id: '',
-    location_id: '',
-    quantity: 1,
-    asset_tag_prefix: '',
-    serial_number_prefix: '',
-    purchase_date: '',
-    purchase_cost: '',
-    warranty_expires: '',
-    asset_kind: '',
-  });
-  const [useAutoNumbering, setUseAutoNumbering] = useState(true);
-  const [customTags, setCustomTags] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    fetchCatalogItems();
-    fetchLocations();
-  }, []);
-
-  const fetchCatalogItems = async () => {
-    try {
-      const data = await InventoryRPC.getCatalogItems({ active: true });
-      setCatalogItems(data || []);
-    } catch (error) {
-      console.error('Error fetching items:', error);
-    }
-  };
-
-  const fetchLocations = async () => {
-    try {
-      const data = await InventoryRPC.getLocations();
-      setLocations(data || []);
-    } catch (error) {
-      console.error('Error fetching locations:', error);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError('');
-
-    try {
-      const quantity = parseInt(form.quantity.toString());
-      let tagsToCreate: string[] = [];
-
-      // Determine asset tags to create
-      if (quantity === 1) {
-        // Single asset - use the prefix as the full tag
-        tagsToCreate = [form.asset_tag_prefix];
-      } else if (useAutoNumbering) {
-        // Auto-numbering mode
-        for (let i = 1; i <= quantity; i++) {
-          tagsToCreate.push(`${form.asset_tag_prefix}${String(i).padStart(3, '0')}`);
-        }
-      } else {
-        // Custom tags mode - parse the textarea
-        tagsToCreate = customTags
-          .split('\n')
-          .map(tag => tag.trim())
-          .filter(tag => tag.length > 0);
-        
-        if (tagsToCreate.length !== quantity) {
-          throw AppError.badRequest(`Expected ${quantity} custom tags, but found ${tagsToCreate.length}`);
-        }
-      }
-      
-      // Create assets sequentially to ensure unique asset tags
-      for (let i = 0; i < tagsToCreate.length; i++) {
-        const assetData = {
-          catalog_item_id: form.catalog_item_id,
-          location_id: form.location_id || null,
-          asset_tag: tagsToCreate[i],
-          serial_number: (useAutoNumbering && quantity > 1 && form.serial_number_prefix)
-            ? `${form.serial_number_prefix}${String(i + 1).padStart(3, '0')}`
-            : form.serial_number_prefix || null,
-          purchase_date: form.purchase_date || null,
-          purchase_cost: form.purchase_cost ? parseFloat(form.purchase_cost) : null,
-          warranty_expires: form.warranty_expires || null,
-        };
-
-        await InventoryRPC.createAsset({
-          catalog_item_id: assetData.catalog_item_id || null,
-          location_id: assetData.location_id,
-          asset_tag: assetData.asset_tag,
-          serial_number: assetData.serial_number,
-          purchase_date: assetData.purchase_date,
-          purchase_cost: assetData.purchase_cost,
-          warranty_expires: assetData.warranty_expires,
-          status: 'available',
-          // Classifies the asset for Fleet sync. vehicle/equipment (and later
-          // tool) mirror to Fleet; blank = inventory-only, never synced out.
-          asset_kind: form.asset_kind || null,
-        });
-      }
-
-      onComplete();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
-          <h3 className="text-lg font-semibold">Create Asset(s)</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">✕</button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium mb-1">Item Type *</label>
-              <select
-                value={form.catalog_item_id}
-                onChange={(e) => setForm({ ...form, catalog_item_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                required
-              >
-                <option value="">Select item type...</option>
-                {catalogItems.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {item.sku} - {item.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground mt-1">
-                Example: "Leaf Blower Pro 3000" - you can create multiple individual assets from this
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Quantity *</label>
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={form.quantity}
-                onChange={(e) => setForm({ ...form, quantity: parseInt(e.target.value) || 1 })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                required
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Create multiple assets at once (e.g., 10 leaf blowers)
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Fleet Type</label>
-              <select
-                value={form.asset_kind}
-                onChange={(e) => setForm({ ...form, asset_kind: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Inventory only (don&apos;t sync)</option>
-                <option value="equipment">Equipment</option>
-                <option value="vehicle">Vehicle</option>
-                <option value="tool">Tool</option>
-              </select>
-              <p className="text-xs text-muted-foreground mt-1">
-                Vehicles &amp; equipment sync to Fleet automatically
-              </p>
-            </div>
-
-            <div className="col-span-2">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium">
-                  {parseInt(form.quantity.toString()) === 1 ? 'Asset Tag *' : 'Asset Tags *'}
-                </label>
-                {parseInt(form.quantity.toString()) > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUseAutoNumbering(!useAutoNumbering);
-                      if (useAutoNumbering) {
-                        // Switching to custom - pre-populate with auto-generated tags
-                        const tags = Array.from({ length: parseInt(form.quantity.toString()) }, (_, i) => 
-                          `${form.asset_tag_prefix}${String(i + 1).padStart(3, '0')}`
-                        ).join('\n');
-                        setCustomTags(tags);
-                      }
-                    }}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    {useAutoNumbering ? '✏️ Customize Tags' : '🔢 Auto-Number'}
-                  </button>
-                )}
-              </div>
-
-              {parseInt(form.quantity.toString()) === 1 || useAutoNumbering ? (
-                <>
-                  <input
-                    type="text"
-                    value={form.asset_tag_prefix}
-                    onChange={(e) => setForm({ ...form, asset_tag_prefix: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder={parseInt(form.quantity.toString()) === 1 ? "LEAF-BLOWER-001" : "LEAF-BLOWER-"}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {parseInt(form.quantity.toString()) === 1 
-                      ? 'Full asset tag for single item'
-                      : `Auto-numbering: ${form.asset_tag_prefix}001, ${form.asset_tag_prefix}002, etc.`}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <textarea
-                    value={customTags}
-                    onChange={(e) => setCustomTags(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary font-mono text-sm"
-                    rows={Math.min(parseInt(form.quantity.toString()), 10)}
-                    placeholder="LEAF-BLOWER-001&#10;LEAF-BLOWER-002&#10;LEAF-BLOWER-003"
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Enter {form.quantity} custom asset tags (one per line). Current: {customTags.split('\n').filter(t => t.trim()).length} tags
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Location</label>
-              <select
-                value={form.location_id}
-                onChange={(e) => setForm({ ...form, location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Select location...</option>
-                {locations.map(loc => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} ({loc.location_type?.name || 'Unknown'})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Serial/RFID Prefix</label>
-              <input
-                type="text"
-                value={form.serial_number_prefix}
-                onChange={(e) => setForm({ ...form, serial_number_prefix: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="RFID-"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Optional: Auto-numbered for bulk creation
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Purchase Date</label>
-              <input
-                type="date"
-                value={form.purchase_date}
-                onChange={(e) => setForm({ ...form, purchase_date: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Purchase Cost (each)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={form.purchase_cost}
-                onChange={(e) => setForm({ ...form, purchase_cost: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="0.00"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Warranty Expires</label>
-              <input
-                type="date"
-                value={form.warranty_expires}
-                onChange={(e) => setForm({ ...form, warranty_expires: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-          </div>
-
-          {parseInt(form.quantity.toString()) > 1 && useAutoNumbering && (
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="font-medium text-blue-900 mb-1">🔢 Auto-Numbering Preview</div>
-              <div className="text-sm text-blue-700">
-                Creating {form.quantity} assets: {form.asset_tag_prefix}001 through {form.asset_tag_prefix}{String(form.quantity).padStart(3, '0')}
-              </div>
-            </div>
-          )}
-
-          {parseInt(form.quantity.toString()) > 1 && !useAutoNumbering && customTags && (
-            <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
-              <div className="font-medium text-purple-900 mb-1">✏️ Custom Tags Preview</div>
-              <div className="text-sm text-purple-700 max-h-32 overflow-y-auto">
-                {customTags.split('\n').filter(t => t.trim()).slice(0, 5).map((tag, i) => (
-                  <div key={i}>{i + 1}. {tag}</div>
-                ))}
-                {customTags.split('\n').filter(t => t.trim()).length > 5 && (
-                  <div className="text-purple-600">... and {customTags.split('\n').filter(t => t.trim()).length - 5} more</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
-            >
-              {saving ? `Creating ${form.quantity} asset(s)...` : `Create ${form.quantity} Asset(s)`}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function EditAssetModal({ 
   asset, 
   onClose, 
@@ -860,9 +545,19 @@ function EditAssetModal({
     purchase_date: asset.purchase_date || '',
     purchase_cost: asset.purchase_cost?.toString() || '',
     warranty_expires: asset.warranty_expires || '',
+    asset_kind: asset.asset_kind || '',
+    asset_type_term_id: asset.asset_type_term_id || '',
+    equipment_class_id: asset.equipment_class_id || '',
+    make: asset.make || '',
+    model: asset.model || '',
+    model_year: asset.model_year?.toString() || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Changing the fleet kind invalidates the GV type/class (different domains).
+  const setAssetKind = (asset_kind: string) =>
+    setForm((f) => ({ ...f, asset_kind, asset_type_term_id: '', equipment_class_id: '' }));
 
   useEffect(() => {
     fetchCatalogItems();
@@ -907,7 +602,13 @@ function EditAssetModal({
           purchase_date: form.purchase_date || null,
           purchase_cost: form.purchase_cost ? parseFloat(form.purchase_cost) : null,
           warranty_expires: form.warranty_expires || null,
-        },
+          asset_kind: form.asset_kind || null,
+          asset_type_term_id: form.asset_type_term_id || null,
+          equipment_class_id: form.asset_kind === 'equipment' ? (form.equipment_class_id || null) : null,
+          make: form.make.trim() || null,
+          model: form.model.trim() || null,
+          model_year: form.model_year ? parseInt(form.model_year, 10) : null,
+        } as any,
         asset.last_event_id
       );
 
@@ -949,6 +650,61 @@ function EditAssetModal({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Fleet Type</label>
+              <select
+                value={form.asset_kind}
+                onChange={(e) => setAssetKind(e.target.value)}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Inventory only (don&apos;t sync)</option>
+                <option value="equipment">Equipment</option>
+                <option value="vehicle">Vehicle</option>
+                <option value="tool">Tool</option>
+              </select>
+            </div>
+
+            <AssetTypeClassFields
+              assetKind={form.asset_kind}
+              typeTermId={form.asset_type_term_id}
+              classId={form.equipment_class_id}
+              onTypeChange={(v) => setForm((f) => ({ ...f, asset_type_term_id: v }))}
+              onClassChange={(v) => setForm((f) => ({ ...f, equipment_class_id: v }))}
+            />
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Make</label>
+              <input
+                type="text"
+                value={form.make}
+                onChange={(e) => setForm({ ...form, make: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. CAT"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Model</label>
+              <input
+                type="text"
+                value={form.model}
+                onChange={(e) => setForm({ ...form, model: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. 279D3"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Model Year</label>
+              <input
+                type="number"
+                value={form.model_year}
+                onChange={(e) => setForm({ ...form, model_year: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="e.g. 2022"
+              />
             </div>
 
             <div>

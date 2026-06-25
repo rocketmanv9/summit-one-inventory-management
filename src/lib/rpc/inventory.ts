@@ -786,7 +786,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('assets')
       .select(
-        'id, asset_tag, serial_number, asset_kind, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
+        'id, asset_tag, serial_number, asset_kind, asset_type_term_id, equipment_class_id, make, model, model_year, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
       )
       .order('asset_tag');
 
@@ -966,7 +966,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase
       .from('assets')
       .select(
-        'id, asset_tag, serial_number, vin, catalog_item_id, location_id, home_location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, created_at, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id, assigned_to_ref, last_movement_at)'
+        'id, asset_tag, serial_number, vin, asset_kind, asset_type_term_id, equipment_class_id, make, model, model_year, catalog_item_id, location_id, home_location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, created_at, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id, assigned_to_ref, last_movement_at)'
       )
       .eq('id', id)
       .maybeSingle();

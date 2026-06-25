@@ -9,6 +9,7 @@ import { FilterBar } from '@/components/ui/FilterBar';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { CreateAssetModal } from '@/components/assets/CreateAssetModal';
 
 interface AssetRow {
   id: string;
@@ -43,6 +44,8 @@ export function AssetKindView({
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showCreate, setShowCreate] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,7 +61,7 @@ export function AssetKindView({
       }
     })();
     return () => { cancelled = true; };
-  }, [kind]);
+  }, [kind, refreshKey]);
 
   const status = (a: AssetRow) => a.asset_state?.current_status || a.status || 'available';
 
@@ -123,9 +126,21 @@ export function AssetKindView({
               <button onClick={adopt} disabled={adopting} className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
                 {adopting ? 'Adding…' : `Add Selected (${selected.size})`}
               </button>
+            ) : tab === 'mine' ? (
+              <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90">
+                + Add {labelSingular}
+              </button>
             ) : null
           }
         />
+
+        {showCreate && (
+          <CreateAssetModal
+            lockedKind={kind}
+            onClose={() => setShowCreate(false)}
+            onComplete={() => { setShowCreate(false); setRefreshKey((k) => k + 1); }}
+          />
+        )}
 
         {catalogEndpoint && (
           <div className="flex gap-2 border-b">

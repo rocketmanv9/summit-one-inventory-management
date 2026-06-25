@@ -85,6 +85,35 @@ export function useQualityTierTerms() {
   return useGVTerms('quality_tier');
 }
 
+/** Vehicle type terms from the GV `vehicle_type` domain */
+export function useVehicleTypeTerms() {
+  return useGVTerms('vehicle_type');
+}
+
+/** Equipment type terms from the GV `equipment_type` domain */
+export function useEquipmentTypeTerms() {
+  return useGVTerms('equipment_type');
+}
+
+/** Tool type terms from the GV `tool_type` domain */
+export function useToolTypeTerms() {
+  return useGVTerms('tool_type');
+}
+
+/**
+ * Maps an asset_kind to the GV term domain that classifies it. Returns '' for
+ * kinds with no GV type domain (e.g. 'other' or unclassified), which `useGVTerms`
+ * treats as a no-op.
+ */
+export function assetKindToTypeDomain(assetKind: string | null | undefined): string {
+  switch (assetKind) {
+    case 'vehicle': return 'vehicle_type';
+    case 'equipment': return 'equipment_type';
+    case 'tool': return 'tool_type';
+    default: return '';
+  }
+}
+
 /** Returns a term_id → label lookup map for UOM terms */
 export function useUOMLabelMap(): Record<string, string> {
   const { terms } = useUOMTerms();

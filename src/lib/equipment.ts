@@ -1,5 +1,7 @@
 import { createEquipmentCatalogClient, createTenantEquipmentClient } from '@rocketmanv9/chassis/equipment';
 import type { EquipmentCatalogClient, TenantEquipmentClient } from '@rocketmanv9/chassis/equipment';
+import { getGVAdminClient } from '@/lib/vendors';
+import { AppError } from '@rocketmanv9/chassis/errors';
 
 /**
  * Lazy singleton catalog client for browsing the platform equipment catalog.
@@ -47,4 +49,31 @@ export function getEquipmentCatalogClient(): EquipmentCatalogClient {
  */
 export async function getTenantEquipmentClient(tenantId: string): Promise<TenantEquipmentClient> {
   return createTenantEquipmentClient(tenantId, { cacheTtlMs: 30_000 });
+}
+
+export interface EquipmentClass {
+  id: string;
+  slug: string;
+  name: string;
+  category: string | null;
+  family_slug: string | null;
+}
+
+/**
+ * List the shared GV `equipment_classes` catalog (the 18-class taxonomy).
+ * This is a standalone global catalog table — not part of the GV term system —
+ * so it is read directly off the GV project via the admin client, mirroring the
+ * vendor catalog pattern. Used to populate the equipment "Class" dropdown.
+ */
+export async function listEquipmentClasses(activeOnly = true): Promise<EquipmentClass[]> {
+  const client = getGVAdminClient();
+  let query = client
+    .from('equipment_classes')
+    .select('id, slug, name, category, family_slug')
+    .order('name');
+  if (activeOnly) query = query.eq('is_active', true);
+
+  const { data, error } = await query;
+  if (error) throw AppError.internal(`Failed to load equipment classes: ${error.message}`);
+  return (data ?? []) as EquipmentClass[];
 }
