@@ -31,6 +31,8 @@ export interface ViewAsPosition {
 interface ViewAsValue {
   /** Admin/developer only — whether the picker should be shown at all. */
   enabled: boolean;
+  /** Server-confirmed admin (local_users.role) — drives edit permission. */
+  isAdmin: boolean;
   loading: boolean;
   positions: ViewAsPosition[];
   capabilities: AccessCapability[];
@@ -54,6 +56,7 @@ const STORAGE_KEY = 'viewAsPositionId';
 // preview, everything visible" instead of crashing.
 const DEFAULT_VALUE: ViewAsValue = {
   enabled: false,
+  isAdmin: false,
   loading: false,
   positions: [],
   capabilities: ACCESS_CAPABILITIES,
@@ -71,7 +74,6 @@ const ViewAsContext = createContext<ViewAsValue>(DEFAULT_VALUE);
 
 export function ViewAsProvider({ children }: { children: React.ReactNode }) {
   const { session } = useSession();
-  const enabled = session?.role === 'admin' || session?.isDeveloper === true;
 
   const [loading, setLoading] = useState(false);
   const [positions, setPositions] = useState<ViewAsPosition[]>([]);
@@ -80,6 +82,14 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
   // The real user's effective capabilities. `null` = full access (admin / no
   // position / unconfigured). Stays null until loaded so nothing flickers hidden.
   const [myCaps, setMyCaps] = useState<Set<string> | null>(null);
+  // Server-confirmed admin (local_users.role). The JWT role claim can be weaker
+  // than the real role, so we trust the server for "can preview / can edit".
+  const [serverIsAdmin, setServerIsAdmin] = useState(false);
+
+  // Who may use the "view as" picker: admins (JWT or server-confirmed) + developers.
+  const enabled = session?.role === 'admin' || session?.isDeveloper === true || serverIsAdmin;
+  // Who may EDIT access (admin only, not dev).
+  const isAdmin = serverIsAdmin || session?.role === 'admin';
 
   // Restore the previewed position once (after mount, to avoid SSR mismatch).
   useEffect(() => {
@@ -97,8 +107,9 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!mounted || !j) return;
-        const c = (j.data ?? j).capabilities;
-        setMyCaps(c === null || c === undefined ? null : new Set<string>(c));
+        const d = j.data ?? j;
+        setMyCaps(d.capabilities === null || d.capabilities === undefined ? null : new Set<string>(d.capabilities));
+        setServerIsAdmin(d.is_admin === true);
       })
       .catch(() => { /* leave full access on failure */ });
     return () => { mounted = false; };
@@ -156,6 +167,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<ViewAsValue>(() => ({
     enabled,
+    isAdmin,
     loading,
     positions,
     capabilities: ACCESS_CAPABILITIES,
@@ -167,7 +179,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
     setSelectedPositionId,
     can,
     refresh,
-  }), [enabled, loading, positions, grants, selectedPositionId, selectedPosition, isPreviewing, allowed, setSelectedPositionId, can, refresh]);
+  }), [enabled, isAdmin, loading, positions, grants, selectedPositionId, selectedPosition, isPreviewing, allowed, setSelectedPositionId, can, refresh]);
 
   return <ViewAsContext.Provider value={value}>{children}</ViewAsContext.Provider>;
 }

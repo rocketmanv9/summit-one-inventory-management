@@ -17,7 +17,14 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     tenantId: session.tenantId!,
   });
 
+  const { data: me } = await supabase
+    .from('local_users').select('role').eq('user_id', session.userId!).eq('tenant_id', session.tenantId!).maybeSingle();
+
   const caps = await resolveUserCapabilities(supabase, session.tenantId!, session.userId!, session.isDeveloper);
 
-  return Response.json({ data: { capabilities: caps === null ? null : Array.from(caps) } });
+  // is_admin is authoritative (local_users.role) — the JWT role claim can be
+  // weaker, so the client trusts this for showing the "view as" picker + editor.
+  return Response.json({
+    data: { capabilities: caps === null ? null : Array.from(caps), is_admin: me?.role === 'admin' },
+  });
 }, { serviceName: SERVICE_NAME });

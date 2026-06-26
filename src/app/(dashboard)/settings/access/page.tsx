@@ -4,7 +4,6 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { useViewAs, type ViewAsPosition } from '@/lib/view-as';
 import { ALL_CAPABILITY_KEYS, CAPABILITY_GROUPS } from '@/lib/access';
 import { AppError } from '@rocketmanv9/chassis/errors';
@@ -30,20 +29,14 @@ export default function PositionAccessPage() {
 }
 
 function AccessEditor() {
-  // The provider already loads positions, the capability catalog, and grants.
-  const { positions, capabilities, grants, refresh, loading } = useViewAs();
+  // The provider already loads positions, the capability catalog, grants, and
+  // the server-confirmed admin flag (which drives edit permission).
+  const { positions, capabilities, grants, refresh, loading, isAdmin } = useViewAs();
 
-  const [isAdmin, setIsAdmin] = useState(false);
   const [draft, setDraft] = useState<Record<string, Set<string>>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
-
-  useEffect(() => {
-    const token = getStoredAccessToken();
-    const payload = token ? parseJwtPayload(token) : null;
-    setIsAdmin(payload?.app_metadata?.role === 'admin');
-  }, []);
 
   // Seed the editable matrix from grants. Unconfigured (no row) = no access =
   // nothing checked (deny by default).
