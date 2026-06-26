@@ -4,6 +4,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { geocodeStructured } from '@/lib/geocode';
 import { rethrowDeleteError } from '@/lib/api/typed-crud';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -37,7 +38,8 @@ const UpdateSchema = z.object({
   longitude: z.number().nullable().optional(),
 });
 
-export const PATCH = createSessionWriteRoute(async ({ req, ctx, body, log, idempotencyKey }) => {
+export const PATCH = createSessionWriteRoute(async ({ req, ctx, body, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const { vendorId, addressId } = ids(req);
   const sc = await tenantSc(ctx.tenantId!);
   const updates = { ...(body as z.infer<typeof UpdateSchema>) };
@@ -59,7 +61,8 @@ export const PATCH = createSessionWriteRoute(async ({ req, ctx, body, log, idemp
   return { data, status: 200, events: [{ event_name: 'vendor_address.updated', payload: { vendor_id: vendorId, address_id: addressId }, last_event_id: idempotencyKey }] };
 }, { bodySchema: UpdateSchema, emissionOwner: 'route', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/vendors/[id]/addresses/[addressId]' });
 
-export const DELETE = createSessionWriteRoute(async ({ req, ctx, log, idempotencyKey }) => {
+export const DELETE = createSessionWriteRoute(async ({ req, ctx, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const { vendorId, addressId } = ids(req);
   const sc = await tenantSc(ctx.tenantId!);
   const { data, error } = await sc.from('vendor_addresses').delete().eq('id', addressId).eq('vendor_id', vendorId).select('id').maybeSingle();

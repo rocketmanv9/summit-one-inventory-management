@@ -6,6 +6,7 @@ import { Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
 import { useTenantBranding } from '@/lib/tenant-branding';
+import { useViewAs } from '@/lib/view-as';
 import { NAV_SECTIONS, SETTINGS_SECTION, DEBUG_ITEM, isSectionActive, matchHref } from '@/lib/nav';
 
 export function Sidebar() {
@@ -13,6 +14,11 @@ export function Sidebar() {
   const { session } = useSession();
   const isDeveloper = session?.isDeveloper === true;
   const { branding } = useTenantBranding();
+  const { can } = useViewAs();
+
+  // In a "view as position" preview, hide sections that position can't access.
+  const visibleSections = NAV_SECTIONS.filter((s) => can(s.capability));
+  const canSettings = can(SETTINGS_SECTION.capability);
 
   const logoUrl = branding.logo_url ?? null;
 
@@ -52,7 +58,7 @@ export function Sidebar() {
       {/* Navigation — one link per top-level destination */}
       <nav className="flex-1 overflow-y-auto p-4">
         <ul className="space-y-1">
-          {NAV_SECTIONS.map((section) => {
+          {visibleSections.map((section) => {
             const isActive = isSectionActive(pathname, section);
             const Icon = section.icon;
 
@@ -84,10 +90,12 @@ export function Sidebar() {
             <span>{DEBUG_ITEM.title}</span>
           </Link>
         )}
-        <Link href={SETTINGS_SECTION.href} className={footerLinkClass(isSectionActive(pathname, SETTINGS_SECTION))}>
-          <SETTINGS_SECTION.icon className="h-4 w-4" />
-          <span>{SETTINGS_SECTION.title}</span>
-        </Link>
+        {canSettings && (
+          <Link href={SETTINGS_SECTION.href} className={footerLinkClass(isSectionActive(pathname, SETTINGS_SECTION))}>
+            <SETTINGS_SECTION.icon className="h-4 w-4" />
+            <span>{SETTINGS_SECTION.title}</span>
+          </Link>
+        )}
       </div>
     </aside>
   );

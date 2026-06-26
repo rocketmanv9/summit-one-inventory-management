@@ -36,14 +36,25 @@
       "Bash(npm ls:*)",
       "Bash(1 --prefix \"C:/Users/grant/summit-one-inventory-management\")",
       "Bash(node -e:*)",
-      "mcp__supabase_beta__execute_sql",
+      "mcp__supabase_core__execute_sql",
       "mcp__supabase__get_project_url",
-      "mcp__supabase_beta__get_project_url",
-      "mcp__supabase_dev__get_project_url",
-      "mcp__supabase_main__get_project_url",
-      "mcp__supabase_stage__get_project_url",
+      "mcp__supabase_core__get_project_url",
+      "mcp__supabase_inventory_dev__get_project_url",
+      "mcp__supabase_inventory_main__get_project_url",
+      "mcp__supabase_inventory_stage__get_project_url",
       "mcp__supabase__list_branches",
       "Bash(claude mcp *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "supabase_beta",
+    "supabase_stage",
+    "supabase_dev",
+    "supabase_main",
+    "supabase_gv_main",
+    "supabase_gv_stage",
+    "supabase_gv_dev",
+    "supabase_hr",
+    "supabase_cc"
+  ]
 }

@@ -29,6 +29,11 @@ import { ItemAmazonMapping } from '@/components/items/ItemAmazonMapping';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import {
+  AdjustStockModal,
+  type AdjustStockForm,
+  type GuardrailBlock,
+} from '@/components/inventory/AdjustStockModal';
 
 type StockSnapshot = Awaited<ReturnType<typeof InventoryRPC.getItemStockSnapshot>>;
 
@@ -102,6 +107,108 @@ export default function ItemDetailPage() {
   // Amazon product link, derived from this item's Amazon mapping and surfaced as
   // a read-only pinned entry inside Reference Links.
   const [amazonLink, setAmazonLink] = useState<{ asin: string; url: string } | null>(null);
+
+  // Adjust-stock modal (opened in-place from this item's page so there's no
+  // dead-end trip to Stock Balances for an item that has no balance yet).
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustForm, setAdjustForm] = useState<AdjustStockForm>({
+    catalog_item_id: '',
+    variant_item_id: '',
+    location_id: '',
+    new_qty: '',
+    reason: '',
+    notes: '',
+    override_reason: '',
+  });
+  const [adjustLocations, setAdjustLocations] = useState<Array<{ id: string; name: string }>>([]);
+  const [adjustSaving, setAdjustSaving] = useState(false);
+  const [adjustError, setAdjustError] = useState('');
+  const [guardrailBlock, setGuardrailBlock] = useState<GuardrailBlock>(null);
+
+  const reloadSnapshot = async () => {
+    const fresh = await InventoryRPC.getItemStockSnapshot(params.id);
+    setSnapshot(fresh);
+  };
+
+  // Lazy-load locations the first time the adjust modal opens.
+  useEffect(() => {
+    if (!showAdjustModal || adjustLocations.length > 0) return;
+    (async () => {
+      try {
+        const locations = await InventoryRPC.getLocations({ active: true });
+        setAdjustLocations((locations || []).map((loc) => ({ id: loc.id, name: loc.name })));
+      } catch (err) {
+        console.error('Error loading locations:', err);
+      }
+    })();
+  }, [showAdjustModal, adjustLocations.length]);
+
+  const openAdjustModal = () => {
+    if (!snapshot?.item) return;
+    setAdjustError('');
+    setGuardrailBlock(null);
+    setAdjustForm({
+      catalog_item_id: snapshot.item.id,
+      variant_item_id: '',
+      location_id: '',
+      new_qty: '',
+      reason: '',
+      notes: '',
+      override_reason: '',
+    });
+    setShowAdjustModal(true);
+  };
+
+  const submitAdjustment = async () => {
+    setAdjustError('');
+    setGuardrailBlock(null);
+    const selected = snapshot?.item;
+    // A parent (variant) item can't hold stock itself — the modal resolves which
+    // child to write into variant_item_id.
+    const targetItemId = selected?.is_parent ? adjustForm.variant_item_id : adjustForm.catalog_item_id;
+    if (!targetItemId || !adjustForm.location_id) {
+      setAdjustError(selected?.is_parent ? 'Select a variant and location.' : 'Select a location.');
+      return;
+    }
+    const qty = Number(adjustForm.new_qty);
+    if (!Number.isFinite(qty)) {
+      setAdjustError('Enter a valid quantity.');
+      return;
+    }
+    if (!adjustForm.reason) {
+      setAdjustError('Select a reason for this adjustment.');
+      return;
+    }
+
+    setAdjustSaving(true);
+    try {
+      const result = await InventoryRPC.adjustInventory({
+        catalog_item_id: targetItemId,
+        location_id: adjustForm.location_id,
+        new_qty: qty,
+        reason: adjustForm.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
+        notes: adjustForm.notes,
+        override_reason: adjustForm.override_reason || undefined,
+      });
+
+      if (!result.success && result.error) {
+        setGuardrailBlock(result.error);
+        return;
+      }
+
+      if (result.override_logged) {
+        alert('Adjustment saved. Override has been logged for audit.');
+      }
+
+      setShowAdjustModal(false);
+      setGuardrailBlock(null);
+      await reloadSnapshot();
+    } catch (err: any) {
+      setAdjustError(err?.message || 'Failed to adjust inventory.');
+    } finally {
+      setAdjustSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!params.id) return;
@@ -359,7 +466,7 @@ export default function ItemDetailPage() {
         {/* Quick Actions */}
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => router.push(`/inventory/stock?item_id=${params.id}`)}
+            onClick={openAdjustModal}
             className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors"
           >
             <BarChart3 className="h-4 w-4" />
@@ -610,6 +717,34 @@ export default function ItemDetailPage() {
           )}
         </div>
       </div>
+      {showAdjustModal && snapshot?.item && (
+        <AdjustStockModal
+          form={adjustForm}
+          items={[{
+            id: snapshot.item.id,
+            name: snapshot.item.name,
+            sku: snapshot.item.sku,
+            is_parent: snapshot.item.is_parent,
+            variant_dimensions: snapshot.item.variant_dimensions,
+            variant_options: snapshot.item.variant_options,
+          }]}
+          locations={adjustLocations}
+          saving={adjustSaving}
+          error={adjustError}
+          guardrailBlock={guardrailBlock}
+          lockItem
+          onClose={() => { setShowAdjustModal(false); setGuardrailBlock(null); }}
+          onChange={(next) => { setAdjustForm((prev) => ({ ...prev, ...next })); setGuardrailBlock(null); }}
+          onSubmit={submitAdjustment}
+          onBatchComplete={async (allSucceeded) => {
+            await reloadSnapshot();
+            if (allSucceeded) {
+              setShowAdjustModal(false);
+              setGuardrailBlock(null);
+            }
+          }}
+        />
+      )}
     </AppShell>
   );
 }

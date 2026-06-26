@@ -5,6 +5,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
+import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -571,22 +572,24 @@ export default function VendorItemsPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={formData.is_preferred}
-                      onChange={(e) =>
-                        setFormData({ ...formData, is_preferred: e.target.checked })
-                      }
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                      <Star className="w-4 h-4" />
-                      Preferred Vendor for this Item
-                    </span>
-                  </label>
-                </div>
+                <CapabilityGate capability="vendors.preferred">
+                  <div>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_preferred}
+                        onChange={(e) =>
+                          setFormData({ ...formData, is_preferred: e.target.checked })
+                        }
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                        <Star className="w-4 h-4" />
+                        Preferred Vendor for this Item
+                      </span>
+                    </label>
+                  </div>
+                </CapabilityGate>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

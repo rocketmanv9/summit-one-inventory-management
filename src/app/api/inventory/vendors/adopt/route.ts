@@ -3,6 +3,7 @@ import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { getGVAdminClient } from '@/lib/vendors';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -13,6 +14,7 @@ const BodySchema = z.object({ catalogVendorIds: z.array(z.string().uuid()).min(1
 // shared catalog. This is the unified path: the GV side is a browse catalog,
 // the tenant's real vendors live in supply_chain.
 export const POST = createSessionWriteRoute(async ({ ctx, body, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const { catalogVendorIds } = body as z.infer<typeof BodySchema>;
   const gv = getGVAdminClient();
   const sc = (supabase as any).schema('supply_chain');

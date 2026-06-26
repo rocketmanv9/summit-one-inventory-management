@@ -2,6 +2,7 @@ import { createSessionReadRoute, createSessionWriteRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -36,7 +37,8 @@ const ContactSchema = z.object({
   title: z.string().nullable().optional(),
 });
 
-export const POST = createSessionWriteRoute(async ({ req, ctx, body, log, idempotencyKey }) => {
+export const POST = createSessionWriteRoute(async ({ req, ctx, body, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const id = vendorId(req);
   const sc = await tenantSc(ctx.tenantId!);
   const input = body as z.infer<typeof ContactSchema>;

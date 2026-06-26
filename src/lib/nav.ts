@@ -57,6 +57,11 @@ export interface NavTab {
   requiresDeveloper?: boolean;
   /** Visible only to admins or developers. */
   requiresAdminOrDev?: boolean;
+  /**
+   * Access capability key (see src/lib/access.ts). Hides the tab in the
+   * "view as" preview and for real users whose position lacks it.
+   */
+  capability?: string;
   /** Opens in a new tab (external tool). */
   external?: boolean;
 }
@@ -68,6 +73,11 @@ export interface NavSection {
   href: string;
   icon: Icon;
   requiresDeveloper?: boolean;
+  /**
+   * Access capability key (see src/lib/access.ts). Gates the section in the
+   * "view as position" preview. Sections without a key are always shown.
+   */
+  capability?: string;
   /** In-page tab strip. A single-tab section shows no strip. */
   tabs: NavTab[];
 }
@@ -78,18 +88,21 @@ export const NAV_SECTIONS: NavSection[] = [
     title: 'Dashboard',
     href: '/dashboard',
     icon: LayoutDashboard,
+    capability: 'dashboard',
     tabs: [{ title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
   },
   {
     title: 'Isabelle',
     href: '/ai',
     icon: Bot,
+    capability: 'isabelle',
     tabs: [{ title: 'Isabelle', href: '/ai', icon: Bot }],
   },
   {
     title: 'Inventory',
     href: '/inventory/stock',
     icon: Boxes,
+    capability: 'inventory',
     tabs: [
       { title: 'Stock Balances', href: '/inventory/stock', icon: Boxes },
       { title: 'Items', href: '/inventory/items', icon: Package },
@@ -105,6 +118,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: 'Assets',
     href: '/inventory/assets',
     icon: Truck,
+    capability: 'assets',
     tabs: [
       { title: 'Assets', href: '/inventory/assets', icon: Truck },
       { title: 'Tools', href: '/fleet/tools', icon: Wrench },
@@ -116,17 +130,19 @@ export const NAV_SECTIONS: NavSection[] = [
     title: 'Purchasing',
     href: '/inventory/purchasing',
     icon: ShoppingCart,
+    capability: 'purchasing',
     tabs: [
       { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
       { title: 'Vendors', href: '/inventory/vendors', icon: Users },
       { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
-      { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp },
+      { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view' },
     ],
   },
   {
     title: 'Operations',
     href: '/inventory/transfers',
     icon: ArrowLeftRight,
+    capability: 'operations',
     tabs: [
       { title: 'Transfers', href: '/inventory/transfers', icon: ArrowLeftRight },
       { title: 'Reservations', href: '/inventory/reservations', icon: CalendarCheck },
@@ -140,6 +156,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: 'Audit',
     href: '/inventory/audit',
     icon: History,
+    capability: 'audit',
     tabs: [
       { title: 'Ledger', href: '/inventory/audit', icon: History },
       { title: 'Data Integrity', href: '/inventory/integrity', icon: ShieldCheck },
@@ -152,10 +169,12 @@ export const SETTINGS_SECTION: NavSection = {
   title: 'Settings',
   href: '/settings',
   icon: Settings,
+  capability: 'settings',
   tabs: [
     { title: 'General', href: '/settings', icon: Settings },
     { title: 'My Spending', href: '/settings/my-spending', icon: Wallet },
     { title: 'People & Limits', href: '/settings/people', icon: Users },
+    { title: 'Position Access', href: '/settings/access', icon: ShieldCheck },
     { title: 'Count Qualifications', href: '/settings/count-qualifications', icon: ClipboardCheck },
     { title: 'Assignment Types', href: '/settings/assignment-types', icon: Tag },
     { title: 'Reservation Types', href: '/settings/reservation-types', icon: CalendarCheck },

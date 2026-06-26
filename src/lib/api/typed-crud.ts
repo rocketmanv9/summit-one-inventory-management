@@ -12,6 +12,7 @@ import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { ZodType } from 'zod';
 import type { EmissionOwner } from '@rocketmanv9/chassis/nextjs';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -57,6 +58,26 @@ interface Base {
   limit?: number;
   /** Human label for FK-violation messages (e.g. 'location'). Defaults to 'record'. */
   entityLabel?: string;
+  /**
+   * Capability enforcement (see src/lib/access-server.ts). When set, the route
+   * rejects (403) unless the real user has `capability` (admins/unconfigured
+   * positions always pass). `when` narrows enforcement to specific bodies — e.g.
+   * only when a privileged field is being set; defaults to always.
+   */
+  requireCapability?: { capability: string; when?: (body: any) => boolean };
+}
+
+/** Run the optional capability gate for a typed-crud route. */
+async function enforceCapability(
+  opts: Base,
+  supabase: any,
+  ctx: { tenantId?: string; userId?: string },
+  body: unknown,
+) {
+  const rc = opts.requireCapability;
+  if (!rc) return;
+  if (rc.when && !rc.when(body as any)) return;
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, rc.capability);
 }
 
 /** GET — list rows for the tenant. */
@@ -75,6 +96,7 @@ export function listRoute(opts: Base) {
 /** POST — create one row. Stamps last_event_id = idempotency key. */
 export function createRoute<T>(opts: Base & { bodySchema: ZodType<T>; mode?: 'insert' | 'upsert'; onConflict?: string }) {
   return createSessionWriteRoute(async ({ ctx, body, supabase, idempotencyKey, log }) => {
+    await enforceCapability(opts, supabase, ctx, body);
     const t = (supabase as any).schema(opts.schema).from(opts.table);
     // Stamp tenant_id: the injected client is service-role (no JWT), so tenant
     // tables with the auto_inject_tenant_id trigger reject inserts that omit it
@@ -92,7 +114,8 @@ export function createRoute<T>(opts: Base & { bodySchema: ZodType<T>; mode?: 'in
 
 /** PATCH /[id] — optimistic-concurrency update (body must include expected_last_event_id). 409 on stale. */
 export function updateRouteOCC<T extends { expected_last_event_id: string }>(opts: Base & { bodySchema: ZodType<T> }) {
-  return createSessionWriteRoute(async ({ req, body, supabase, idempotencyKey, log }) => {
+  return createSessionWriteRoute(async ({ req, ctx, body, supabase, idempotencyKey, log }) => {
+    await enforceCapability(opts, supabase, ctx, body);
     const id = idFromPath(req, opts.segment!);
     const { expected_last_event_id, ...updates } = body as any;
     const { data, error } = await (supabase as any).schema(opts.schema)
@@ -107,7 +130,8 @@ export function updateRouteOCC<T extends { expected_last_event_id: string }>(opt
 
 /** DELETE /[id] — optimistic-concurrency delete (body: { expected_last_event_id }). 409 on stale. */
 export function deleteRouteOCC<T extends { expected_last_event_id: string }>(opts: Base & { bodySchema: ZodType<T> }) {
-  return createSessionWriteRoute(async ({ req, body, supabase, log }) => {
+  return createSessionWriteRoute(async ({ req, ctx, body, supabase, log }) => {
+    await enforceCapability(opts, supabase, ctx, body);
     const id = idFromPath(req, opts.segment!);
     const { data, error } = await (supabase as any).schema(opts.schema)
       .from(opts.table).delete()
@@ -121,7 +145,8 @@ export function deleteRouteOCC<T extends { expected_last_event_id: string }>(opt
 
 /** PATCH /[id] — plain update by id (tenant enforced by RLS; no version check). */
 export function updateRoute<T>(opts: Base & { bodySchema: ZodType<T> }) {
-  return createSessionWriteRoute(async ({ req, body, supabase, idempotencyKey, log }) => {
+  return createSessionWriteRoute(async ({ req, ctx, body, supabase, idempotencyKey, log }) => {
+    await enforceCapability(opts, supabase, ctx, body);
     const id = idFromPath(req, opts.segment!);
     const { data, error } = await (supabase as any).schema(opts.schema)
       .from(opts.table).update({ ...(body as any), last_event_id: idempotencyKey })
@@ -134,7 +159,8 @@ export function updateRoute<T>(opts: Base & { bodySchema: ZodType<T> }) {
 
 /** DELETE /[id] — plain delete by id (tenant enforced by RLS; no version check). */
 export function deleteRoute(opts: Base) {
-  return createSessionWriteRoute(async ({ req, supabase, log }) => {
+  return createSessionWriteRoute(async ({ req, ctx, supabase, log }) => {
+    await enforceCapability(opts, supabase, ctx, undefined);
     const id = idFromPath(req, opts.segment!);
     const { data, error } = await (supabase as any).schema(opts.schema)
       .from(opts.table).delete().eq('id', id).select('id').maybeSingle();

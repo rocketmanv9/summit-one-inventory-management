@@ -1,5 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Expo cache (stray — this is the Next.js web repo, not the mobile shell)
+.expo/
+
 # dependencies
 /node_modules
 /.pnp

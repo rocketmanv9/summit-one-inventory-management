@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/useSession';
+import { useViewAs } from '@/lib/view-as';
 import { findTabGroup, isTabActive, type NavTab } from '@/lib/nav';
 
 // Top-of-page tab strip for the current section's sibling pages. Renders
@@ -12,6 +13,7 @@ import { findTabGroup, isTabActive, type NavTab } from '@/lib/nav';
 export function PageTabs() {
   const pathname = usePathname();
   const { session } = useSession();
+  const { can } = useViewAs();
   const isDeveloper = session?.isDeveloper === true;
   const isAdminOrDev = isDeveloper || session?.role === 'admin';
 
@@ -21,6 +23,7 @@ export function PageTabs() {
   const visible = group.filter((tab) => {
     if (tab.requiresDeveloper && !isDeveloper) return false;
     if (tab.requiresAdminOrDev && !isAdminOrDev) return false;
+    if (!can(tab.capability)) return false;
     return true;
   });
   if (visible.length <= 1) return null;

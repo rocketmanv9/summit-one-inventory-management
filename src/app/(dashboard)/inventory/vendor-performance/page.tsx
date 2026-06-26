@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
+import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { authenticatedFetch } from '@/lib/api-client';
@@ -306,6 +307,7 @@ export default function VendorPerformancePage() {
 
   return (
     <AppShell>
+      <CapabilityGate capability="vendor_performance.view" mode="page">
       <div className="p-6">
         <PageHeader
           title="Vendor Performance Analytics"
@@ -562,6 +564,7 @@ export default function VendorPerformancePage() {
           </div>
         )}
       </div>
+      </CapabilityGate>
     </AppShell>
   );
 }

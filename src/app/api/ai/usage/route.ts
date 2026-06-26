@@ -178,7 +178,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, supabase, log, id
     data: { stored: true },
     status: 201,
     events: [{
-      event_name: 'ai.friction_metrics.stored',
+      event_name: 'ai_friction_metrics.stored',
       payload: { flow_count: body.friction_metrics.flows.length },
       last_event_id: idempotencyKey,
     }],

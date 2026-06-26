@@ -5,6 +5,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
+import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
@@ -393,12 +394,14 @@ export default function PurchasingPage() {
               >
                 Receive on Phone
               </button>
-              <Link
-                href="/inventory/purchasing/create"
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Create PO
-              </Link>
+              <CapabilityGate capability="purchase_orders.manage">
+                <Link
+                  href="/inventory/purchasing/create"
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                  + Create PO
+                </Link>
+              </CapabilityGate>
             </div>
           }
         />

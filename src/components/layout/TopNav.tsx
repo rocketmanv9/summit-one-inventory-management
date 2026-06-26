@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
+import { ViewAsPicker } from '@/components/layout/ViewAsPicker';
 import { useAiPanel } from '@/lib/ai/panel-store';
 import { useTenantBranding } from '@/lib/tenant-branding';
 
@@ -83,6 +84,9 @@ export function TopNav() {
 
         {/* Right side */}
         <div className="flex items-center gap-4">
+          {/* View-as-position picker (admins/devs only) */}
+          <ViewAsPicker />
+
           {/* AI Assistant Toggle */}
           <button
             onClick={aiPanel.toggle}

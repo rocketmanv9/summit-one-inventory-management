@@ -7,6 +7,8 @@ export const PATCH = updateRouteOCC({
   table: 'vendor_items',
   segment: 'vendor-items',
   bodySchema: z.object({ expected_last_event_id: z.string().min(1) }).passthrough(),
+  // Marking an item's vendor as preferred is gated; other edits aren't.
+  requireCapability: { capability: 'vendors.preferred', when: (b) => b?.is_preferred === true },
 });
 
 export const DELETE = deleteRouteOCC({

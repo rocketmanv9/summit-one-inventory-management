@@ -1,6 +1,7 @@
 import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -35,6 +36,10 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
   const body = await req.json();
+  // Setting a vendor as the preferred source for an item is gated.
+  if (body?.is_preferred === true) {
+    await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.preferred');
+  }
   // vendor_items is a VIEW in `inventory`; the real table is in `supply_chain`.
   const sc = (supabase as any).schema('supply_chain');
 

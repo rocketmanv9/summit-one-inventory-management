@@ -3,6 +3,7 @@ import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { pickVendorColumns } from '@/lib/vendor-columns';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -52,6 +53,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 // trigger_vendor_events owns outbox emission; tenant_id must be set explicitly —
 // auto_inject_tenant_id() refuses to inject under the service-role client.
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const body = await req.json();
   const { id: _id, created_at, tenant_id, last_event_id: _lei,
           contacts: _c, addresses: _a, vendor_type_id, is_active, description, ...rest } = body ?? {};

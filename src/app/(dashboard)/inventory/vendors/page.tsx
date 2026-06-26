@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { AppShell } from '@/components/layout/AppShell';
+import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SubTabs } from '@/components/ui/SubTabs';
@@ -295,24 +296,26 @@ export default function VendorsPage() {
           >
             View
           </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setEditingVendor(row); }}
-            className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
-          >
-            Edit
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setNotesVendor(row); }}
-            className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
-          >
-            Notes
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
-            className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
-          >
-            Remove
-          </button>
+          <CapabilityGate capability="vendors.manage">
+            <button
+              onClick={(e) => { e.stopPropagation(); setEditingVendor(row); }}
+              className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
+            >
+              Edit
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setNotesVendor(row); }}
+              className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
+            >
+              Notes
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
+              className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
+            >
+              Remove
+            </button>
+          </CapabilityGate>
         </div>
       ),
     },
@@ -337,28 +340,32 @@ export default function VendorsPage() {
           description="Browse and adopt vendors from the shared platform catalog, or add custom vendor entries."
           actions={
             activeTab === 'my-vendors' ? (
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowDiscoverModal(true)}
-                  className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
-                >
-                  🔍 Find Online
-                </button>
-                <button
-                  onClick={() => setShowAddModal(true)}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-                >
-                  + Add Custom
-                </button>
-              </div>
+              <CapabilityGate capability="vendors.manage">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowDiscoverModal(true)}
+                    className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
+                  >
+                    🔍 Find Online
+                  </button>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                  >
+                    + Add Custom
+                  </button>
+                </div>
+              </CapabilityGate>
             ) : selectedCatalogIds.size > 0 ? (
-              <button
-                onClick={handleAdopt}
-                disabled={adopting}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
-                {adopting ? 'Adding...' : `Add Selected (${selectedCatalogIds.size})`}
-              </button>
+              <CapabilityGate capability="vendors.manage">
+                <button
+                  onClick={handleAdopt}
+                  disabled={adopting}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {adopting ? 'Adding...' : `Add Selected (${selectedCatalogIds.size})`}
+                </button>
+              </CapabilityGate>
             ) : null
           }
         />

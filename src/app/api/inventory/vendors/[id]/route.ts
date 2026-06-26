@@ -2,6 +2,7 @@ import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { pickVendorColumns } from '@/lib/vendor-columns';
+import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -44,7 +45,8 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 // from the Vendors UI and supply_chain names from the RPC layer. OCC is optional:
 // when expected_last_event_id is provided (RPC layer) it's enforced (409 on
 // stale); the UI omits it for a plain by-id update. trigger_vendor_events emits.
-export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
+export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const id = extractId(req);
   const body = await req.json();
   const { expected_last_event_id, id: _id, created_at, tenant_id, last_event_id,
@@ -70,7 +72,8 @@ export const PATCH = createSessionWriteRoute(async ({ req, log, supabase, idempo
 
 // Soft-delete: deactivate the vendor. OCC optional (enforced only if
 // expected_last_event_id is provided). trigger_vendor_events emits.
-export const DELETE = createSessionWriteRoute(async ({ req, log, supabase, idempotencyKey }) => {
+export const DELETE = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {
+  await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const id = extractId(req);
   const body = await req.json().catch(() => ({}));
   const expected = body?.expected_last_event_id;
