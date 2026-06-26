@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
-import { useViewAs } from '@/lib/view-as';
+import { useViewAs, type ViewAsPosition } from '@/lib/view-as';
 import { ALL_CAPABILITY_KEYS, CAPABILITY_GROUPS } from '@/lib/access';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
@@ -13,8 +13,11 @@ const idemKey = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).
 
 /**
  * Position Access editor — a matrix of positions × capabilities. Drives the
- * top-nav "view as position" preview. A position with no row yet is treated as
- * full access (all boxes checked) until you save a narrower set.
+ * top-nav / corner "view as position" picker and real per-position access.
+ *
+ * DENY BY DEFAULT: a position you haven't configured has no access. Positions are
+ * split into "Configured" and "Not configured" groups for clarity. Admins &
+ * developers always keep full access regardless.
  */
 export default function PositionAccessPage() {
   // AccessEditor must live INSIDE AppShell so it can read the ViewAsProvider
@@ -42,27 +45,30 @@ function AccessEditor() {
     setIsAdmin(payload?.app_metadata?.role === 'admin');
   }, []);
 
-  // Seed the editable matrix from grants (absent = full access = all keys).
+  // Seed the editable matrix from grants. Unconfigured (no row) = no access =
+  // nothing checked (deny by default).
   useEffect(() => {
     const next: Record<string, Set<string>> = {};
-    for (const p of positions) {
-      const g = grants[p.id];
-      next[p.id] = new Set(g === undefined ? ALL_CAPABILITY_KEYS : g);
-    }
+    for (const p of positions) next[p.id] = new Set(grants[p.id] ?? []);
     setDraft(next);
   }, [positions, grants]);
 
-  // A row is dirty when its draft differs from the saved grant (treating an
-  // unconfigured position as "all keys").
+  // A position is "configured" once it has a saved capability row.
+  const isConfigured = (id: string) => grants[id] !== undefined;
+
+  // A row is dirty when its draft differs from the saved grant (unconfigured = none).
   const dirty = useMemo(() => {
     const d: Record<string, boolean> = {};
     for (const p of positions) {
-      const saved = new Set(grants[p.id] === undefined ? ALL_CAPABILITY_KEYS : grants[p.id]);
+      const saved = new Set(grants[p.id] ?? []);
       const cur = draft[p.id] ?? new Set<string>();
       d[p.id] = saved.size !== cur.size || [...cur].some((k) => !saved.has(k));
     }
     return d;
   }, [positions, grants, draft]);
+
+  const configured = useMemo(() => positions.filter((p) => isConfigured(p.id)), [positions, grants]);
+  const unconfigured = useMemo(() => positions.filter((p) => !isConfigured(p.id)), [positions, grants]);
 
   const toggle = (positionId: string, key: string) => {
     setDraft((prev) => {
@@ -97,11 +103,69 @@ function AccessEditor() {
     }
   };
 
+  const colSpan = capabilities.length + 2;
+
+  const renderRow = (p: ViewAsPosition) => {
+    const set = draft[p.id] ?? new Set<string>();
+    const configuredRow = isConfigured(p.id);
+    return (
+      <tr key={p.id} className={`border-b last:border-0 ${configuredRow ? '' : 'bg-gray-50'}`}>
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{p.title}</span>
+            {configuredRow ? (
+              <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-green-700">Configured</span>
+            ) : (
+              <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">No access</span>
+            )}
+          </div>
+          <div className="text-xs text-gray-400">
+            {p.role_level ?? '—'}
+            {' · '}
+            <button className="underline hover:text-gray-600" disabled={!isAdmin} onClick={() => setAll(p.id, true)}>all</button>
+            {' / '}
+            <button className="underline hover:text-gray-600" disabled={!isAdmin} onClick={() => setAll(p.id, false)}>none</button>
+          </div>
+        </td>
+        {capabilities.map((c) => (
+          <td key={c.key} className="px-3 py-3 text-center">
+            <input
+              type="checkbox"
+              checked={set.has(c.key)}
+              disabled={!isAdmin}
+              onChange={() => toggle(p.id, c.key)}
+              className="h-4 w-4 cursor-pointer accent-primary"
+            />
+          </td>
+        ))}
+        <td className="px-4 py-3 text-right">
+          <button
+            onClick={() => save(p.id)}
+            disabled={!isAdmin || !dirty[p.id] || savingId === p.id}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
+          >
+            {savingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
+  const groupHeader = (label: string, count: number, hint?: string) => (
+    <tr className="bg-gray-100">
+      <td colSpan={colSpan} className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        {label} <span className="text-gray-400">({count})</span>
+        {hint && <span className="ml-2 normal-case font-normal text-gray-400">{hint}</span>}
+      </td>
+    </tr>
+  );
+
   return (
     <>
       <PageHeader
         title="Position Access"
-        description="Choose which sections each HR position can access. Used by the “View as” preview in the top bar. A position with everything checked has full access."
+        description="Choose which sections & actions each HR position can access. Used by the “View as” picker in the top bar and the corner bubble. Deny by default: a position you haven’t configured has no access until you grant it. Admins & developers always keep full access."
       />
 
       {!isAdmin && (
@@ -119,76 +183,56 @@ function AccessEditor() {
           No positions yet — sync them on <a className="text-primary underline" href="/settings/people">People &amp; Limits</a>.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              {/* Group header row */}
-              <tr className="border-b text-left text-[11px] uppercase tracking-wide text-gray-400">
-                <th className="px-4 pt-3" />
-                {CAPABILITY_GROUPS.map((g) => (
-                  <th key={g.group} colSpan={g.items.length} className="border-l px-3 pt-3 text-center font-semibold">
-                    {g.group}
-                  </th>
-                ))}
-                <th className="px-4 pt-3" />
-              </tr>
-              {/* Capability header row */}
-              <tr className="border-b text-left text-xs uppercase text-gray-400">
-                <th className="px-4 pb-3"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" />Position</th>
-                {capabilities.map((c, i) => (
-                  <th
-                    key={c.key}
-                    className={`px-3 pb-3 text-center align-bottom ${i === 0 || capabilities[i - 1]?.group !== c.group ? 'border-l' : ''}`}
-                    title={c.description}
-                  >
-                    {c.label}
-                  </th>
-                ))}
-                <th className="px-4 pb-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((p) => {
-                const set = draft[p.id] ?? new Set<string>();
-                return (
-                  <tr key={p.id} className="border-b last:border-0">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{p.title}</div>
-                      <div className="text-xs text-gray-400">
-                        {p.role_level ?? '—'}
-                        {' · '}
-                        <button className="underline hover:text-gray-600" disabled={!isAdmin} onClick={() => setAll(p.id, true)}>all</button>
-                        {' / '}
-                        <button className="underline hover:text-gray-600" disabled={!isAdmin} onClick={() => setAll(p.id, false)}>none</button>
-                      </div>
-                    </td>
-                    {capabilities.map((c) => (
-                      <td key={c.key} className="px-3 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={set.has(c.key)}
-                          disabled={!isAdmin}
-                          onChange={() => toggle(p.id, c.key)}
-                          className="h-4 w-4 cursor-pointer accent-primary"
-                        />
-                      </td>
-                    ))}
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => save(p.id)}
-                        disabled={!isAdmin || !dirty[p.id] || savingId === p.id}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
-                      >
-                        {savingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                        Save
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="mb-3 text-sm text-gray-500">
+            <span className="font-medium text-gray-700">{configured.length}</span> configured ·{' '}
+            <span className="font-medium text-gray-700">{unconfigured.length}</span> not configured (no access)
+          </div>
+          <div className="overflow-x-auto rounded-lg border bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                {/* Group header row */}
+                <tr className="border-b text-left text-[11px] uppercase tracking-wide text-gray-400">
+                  <th className="px-4 pt-3" />
+                  {CAPABILITY_GROUPS.map((g) => (
+                    <th key={g.group} colSpan={g.items.length} className="border-l px-3 pt-3 text-center font-semibold">
+                      {g.group}
+                    </th>
+                  ))}
+                  <th className="px-4 pt-3" />
+                </tr>
+                {/* Capability header row */}
+                <tr className="border-b text-left text-xs uppercase text-gray-400">
+                  <th className="px-4 pb-3"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" />Position</th>
+                  {capabilities.map((c, i) => (
+                    <th
+                      key={c.key}
+                      className={`px-3 pb-3 text-center align-bottom ${i === 0 || capabilities[i - 1]?.group !== c.group ? 'border-l' : ''}`}
+                      title={c.description}
+                    >
+                      {c.label}
+                    </th>
+                  ))}
+                  <th className="px-4 pb-3" />
+                </tr>
+              </thead>
+              <tbody>
+                {configured.length > 0 && (
+                  <Fragment key="configured">
+                    {groupHeader('Configured', configured.length)}
+                    {configured.map(renderRow)}
+                  </Fragment>
+                )}
+                {unconfigured.length > 0 && (
+                  <Fragment key="unconfigured">
+                    {groupHeader('Not configured', unconfigured.length, 'no access until granted')}
+                    {unconfigured.map(renderRow)}
+                  </Fragment>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </>
   );

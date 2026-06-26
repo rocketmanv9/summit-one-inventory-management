@@ -17,6 +17,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useSession } from '@/hooks/useSession';
 import {
   ACCESS_CAPABILITIES,
+  ALL_CAPABILITY_KEYS,
   capabilitiesForGrant,
   type AccessCapability,
 } from '@/lib/access';
@@ -60,7 +61,7 @@ const DEFAULT_VALUE: ViewAsValue = {
   selectedPositionId: null,
   selectedPosition: null,
   isPreviewing: false,
-  allowed: capabilitiesForGrant(undefined),
+  allowed: new Set<string>(ALL_CAPABILITY_KEYS),
   setSelectedPositionId: () => {},
   can: () => true,
   refresh: async () => {},
@@ -134,13 +135,16 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
   );
   const isPreviewing = enabled && selectedPosition !== null;
 
-  // The effective capability set for what's currently rendered: the previewed
-  // position's grants when previewing, otherwise the real user's own caps
-  // (null = full access).
+  // The effective capability set for what's currently rendered.
   const allowed = useMemo(() => {
+    // Previewing a position → exactly that position's grants (unconfigured = none).
     if (isPreviewing && selectedPosition) return capabilitiesForGrant(grants[selectedPosition.id]);
-    return myCaps === null ? capabilitiesForGrant(undefined) : myCaps;
-  }, [isPreviewing, selectedPosition, grants, myCaps]);
+    // The real logged-in user. Admins/developers ALWAYS get full access (safety
+    // valve — deny-by-default must never lock them out). Everyone else uses their
+    // resolved caps; `null` = full (admin / no position, decided server-side).
+    if (enabled) return new Set<string>(ALL_CAPABILITY_KEYS);
+    return myCaps === null ? new Set<string>(ALL_CAPABILITY_KEYS) : myCaps;
+  }, [isPreviewing, selectedPosition, grants, myCaps, enabled]);
 
   const can = useCallback(
     (capabilityKey: string | undefined) => {

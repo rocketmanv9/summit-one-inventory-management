@@ -17,7 +17,7 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     tenantId: session.tenantId!,
   });
 
-  const caps = await resolveUserCapabilities(supabase, session.tenantId!, session.userId!);
+  const caps = await resolveUserCapabilities(supabase, session.tenantId!, session.userId!, session.isDeveloper);
 
   return Response.json({ data: { capabilities: caps === null ? null : Array.from(caps) } });
 }, { serviceName: SERVICE_NAME });

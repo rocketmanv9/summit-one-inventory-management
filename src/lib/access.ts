@@ -68,13 +68,15 @@ export function capabilityLabel(key: string): string {
 }
 
 /**
- * The capability set a position can access.
+ * The capability set a position can access — DENY BY DEFAULT.
  *
- * `grant === undefined` means the position is UNCONFIGURED → full access (every
- * capability). An explicit array (even empty) is honored as-is. This matches the
- * DB semantics: no row = full access.
+ * `grant === undefined/null` means the position is UNCONFIGURED → **no access**
+ * (empty set). An explicit array (even empty) is honored as-is. Full access for
+ * admins / developers is NOT represented here — it's applied separately (see
+ * src/lib/view-as.tsx for the client and src/lib/access-server.ts for the
+ * server) so those roles can never lock themselves out.
  */
 export function capabilitiesForGrant(grant: string[] | undefined | null): Set<string> {
-  if (grant === undefined || grant === null) return new Set(ALL_CAPABILITY_KEYS);
+  if (grant === undefined || grant === null) return new Set<string>();
   return new Set(grant);
 }

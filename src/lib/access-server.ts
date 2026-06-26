@@ -11,15 +11,20 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 
 /**
  * The capability set the user effectively has, or `null` for FULL ACCESS.
- * Full access (null) when: the user is an admin, has no position, or the
- * position has no capability row (unconfigured = full access — matches the DB
- * semantics in 20260623000001_position_capabilities.sql).
+ *
+ * DENY BY DEFAULT: a position with no capability row (unconfigured) → **no
+ * access** (empty set). Full access (`null`) only when: the user is a developer,
+ * an admin, or has no position at all (these never get locked out). A configured
+ * position returns exactly its granted keys.
  */
 export async function resolveUserCapabilities(
   supabase: any,
   tenantId: string,
   userId: string,
+  isDeveloper = false,
 ): Promise<Set<string> | null> {
+  if (isDeveloper) return null;                              // developer → full (safety valve)
+
   const { data: user } = await supabase
     .from('local_users')
     .select('role, position_id')
@@ -37,20 +42,22 @@ export async function resolveUserCapabilities(
     .eq('position_id', user.position_id)
     .maybeSingle();
 
-  if (!row) return null;                                     // unconfigured → full
+  if (!row) return new Set<string>();                        // unconfigured position → NO access
   return new Set<string>(row.capability_keys ?? []);
 }
 
 /**
  * Throw 403 unless the user has `capabilityKey` (or full access). Use at the top
- * of a write route handler, before mutating.
+ * of a write route handler, before mutating. (Write routes can't see the
+ * developer flag — admins are still resolved to full here, which is the safety
+ * valve that matters server-side.)
  */
 export async function assertCapability(
   supabase: any,
-  params: { tenantId: string; userId: string },
+  params: { tenantId: string; userId: string; isDeveloper?: boolean },
   capabilityKey: string,
 ): Promise<void> {
-  const caps = await resolveUserCapabilities(supabase, params.tenantId, params.userId);
+  const caps = await resolveUserCapabilities(supabase, params.tenantId, params.userId, params.isDeveloper ?? false);
   if (caps === null) return;                                 // full access
   if (caps.has(capabilityKey)) return;
   throw AppError.forbidden(`Your position does not have permission to ${capabilityKey.replace(/[._]/g, ' ')}.`);
