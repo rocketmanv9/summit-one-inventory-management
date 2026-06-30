@@ -34,6 +34,9 @@ interface ViewAsValue {
   /** Server-confirmed admin (local_users.role) — drives edit permission. */
   isAdmin: boolean;
   loading: boolean;
+  /** True once the real user's capabilities have been resolved from the server.
+   *  The access guard waits for this so it never redirects on the loading state. */
+  ready: boolean;
   positions: ViewAsPosition[];
   capabilities: AccessCapability[];
   /** position_id → granted capability keys (absent = full access). */
@@ -58,6 +61,7 @@ const DEFAULT_VALUE: ViewAsValue = {
   enabled: false,
   isAdmin: false,
   loading: false,
+  ready: false,
   positions: [],
   capabilities: ACCESS_CAPABILITIES,
   grants: {},
@@ -85,6 +89,9 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
   // Server-confirmed admin (local_users.role). The JWT role claim can be weaker
   // than the real role, so we trust the server for "can preview / can edit".
   const [serverIsAdmin, setServerIsAdmin] = useState(false);
+  // Flips true once /api/positions/my-access has answered (success or failure),
+  // so the access guard can tell "still loading" apart from "full access".
+  const [ready, setReady] = useState(false);
 
   // Who may use the "view as" picker: admins (JWT or server-confirmed) + developers.
   const enabled = session?.role === 'admin' || session?.isDeveloper === true || serverIsAdmin;
@@ -111,7 +118,8 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
         setMyCaps(d.capabilities === null || d.capabilities === undefined ? null : new Set<string>(d.capabilities));
         setServerIsAdmin(d.is_admin === true);
       })
-      .catch(() => { /* leave full access on failure */ });
+      .catch(() => { /* leave full access on failure */ })
+      .finally(() => { if (mounted) setReady(true); });
     return () => { mounted = false; };
   }, [session?.userId]);
 
@@ -169,6 +177,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
     enabled,
     isAdmin,
     loading,
+    ready,
     positions,
     capabilities: ACCESS_CAPABILITIES,
     grants,
@@ -179,7 +188,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
     setSelectedPositionId,
     can,
     refresh,
-  }), [enabled, isAdmin, loading, positions, grants, selectedPositionId, selectedPosition, isPreviewing, allowed, setSelectedPositionId, can, refresh]);
+  }), [enabled, isAdmin, loading, ready, positions, grants, selectedPositionId, selectedPosition, isPreviewing, allowed, setSelectedPositionId, can, refresh]);
 
   return <ViewAsContext.Provider value={value}>{children}</ViewAsContext.Provider>;
 }

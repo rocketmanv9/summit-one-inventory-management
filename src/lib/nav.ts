@@ -207,6 +207,9 @@ export const DEBUG_ITEM: NavTab = {
 
 const TAB_OWNERS: NavSection[] = [...NAV_SECTIONS, SETTINGS_SECTION];
 
+/** Every top-level section (sidebar + settings), in nav order. */
+export const ALL_NAV_SECTIONS: NavSection[] = TAB_OWNERS;
+
 /** True when `pathname` is `href` or a child route of it. */
 export function matchHref(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + '/');
@@ -220,6 +223,15 @@ function findOwningSection(pathname: string): NavSection | null {
     }
   }
   return null;
+}
+
+/**
+ * The section that owns `pathname` (sidebar or settings), or null when the path
+ * isn't under any section's tabs. Used by the access guard to find the
+ * capability that gates the current page.
+ */
+export function sectionForPath(pathname: string): NavSection | null {
+  return findOwningSection(pathname);
 }
 
 /** Tabs to show for the current path, or null when there's no strip to show. */
