@@ -18,6 +18,8 @@
  */
 import crypto from 'crypto';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { getAdminClient } from '@/utils/supabase/admin';
+import { getGoogleAccessTokenForUser } from '@/lib/integrations/google-connections';
 import type { ExtractedDocument, PoMatchContext } from './types';
 import { MATCH_AUTO_THRESHOLD, MATCH_SUGGEST_THRESHOLD } from './types';
 import { getDocumentExtractor } from './extraction/extractor';
@@ -34,6 +36,21 @@ const BUCKET = 'purchase-documents';
 const GENERIC_EMAIL_DOMAINS = new Set([
   'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'me.com', 'live.com',
 ]);
+
+/** PO statuses at which the vendor can no longer produce new documents. */
+const TERMINAL_PO_STATUS = new Set(['cancelled', 'voided']);
+/** PO statuses meaning the goods have arrived (order lifecycle effectively done). */
+const RECEIVED_PO_STATUS = new Set(['received', 'fully_received', 'closed', 'partially_received']);
+
+/** Document "rank" — a later, higher-rank document supersedes earlier lower ones. */
+const DOC_RANK: Record<string, number> = {
+  other: 0, warranty: 0,
+  order_confirmation: 1, shipping_notification: 1,
+  packing_slip: 2, delivery_confirmation: 2,
+  receipt: 3, credit_memo: 3, invoice: 4,
+};
+/** Financial documents whose presence (once matched) closes out collection. */
+const FINANCIAL_DOC_TYPES = new Set(['invoice', 'receipt', 'credit_memo']);
 
 // ── PO context ────────────────────────────────────────────────────────────
 
@@ -295,7 +312,207 @@ export async function collectForPurchaseOrder(params: CollectParams): Promise<Co
     }
   }
 
+  // Let a better document (e.g. the invoice) supersede earlier lower-rank ones.
+  if (result.collected > 0) await applySupersession(db, tenantId, poId).catch(() => {});
+
   return result;
+}
+
+/**
+ * When multiple documents are linked to a PO, mark the lower-rank ones that are
+ * still just "matched"/"suggested" (and not reconciled) as superseded by the
+ * highest-rank document present — e.g. an invoice supersedes the earlier order
+ * confirmation. Reconciled documents are never superseded.
+ */
+export async function applySupersession(db: Db, tenantId: string, poId: string): Promise<void> {
+  const sc = db.schema('supply_chain');
+  const { data: docs } = await sc
+    .from('purchase_documents')
+    .select('id, doc_type, match_status, reconciled_at')
+    .eq('tenant_id', tenantId)
+    .eq('purchase_order_id', poId)
+    .in('match_status', ['matched', 'suggested']);
+  if (!docs || docs.length < 2) return;
+
+  const ranked = docs.map((d: any) => ({ ...d, rank: DOC_RANK[d.doc_type] ?? 0 }));
+  const maxRank = Math.max(...ranked.map((d: any) => d.rank));
+  const keeper = ranked.find((d: any) => d.rank === maxRank);
+  if (!keeper) return;
+
+  const losers = ranked.filter((d: any) => d.rank < maxRank && !d.reconciled_at).map((d: any) => d.id);
+  if (!losers.length) return;
+
+  await sc.from('purchase_documents')
+    .update({ match_status: 'superseded', superseded_by_document_id: keeper.id, updated_at: new Date().toISOString() })
+    .in('id', losers)
+    .eq('tenant_id', tenantId);
+}
+
+/** Whether a PO's document collection is "done" (financial doc + goods arrived). */
+export async function evaluatePoCollectionComplete(db: Db, tenantId: string, poId: string, poStatus: string): Promise<boolean> {
+  if (TERMINAL_PO_STATUS.has((poStatus || '').toLowerCase())) return true;
+
+  const sc = db.schema('supply_chain');
+  const { data: fin } = await sc
+    .from('purchase_documents')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('purchase_order_id', poId)
+    .in('doc_type', Array.from(FINANCIAL_DOC_TYPES))
+    .in('match_status', ['matched'])
+    .limit(1)
+    .maybeSingle();
+  if (!fin) return false;
+
+  if (RECEIVED_PO_STATUS.has((poStatus || '').toLowerCase())) return true;
+
+  // Or a delivered shipment.
+  const { data: delivered } = await sc
+    .from('po_shipments')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('purchase_order_id', poId)
+    .not('delivery_date', 'is', null)
+    .limit(1)
+    .maybeSingle();
+  return !!delivered;
+}
+
+// ── Tenant-wide background collection (cron) ────────────────────────────────
+
+export interface TenantCollectResult {
+  tenantId: string;
+  posScanned: number;
+  collected: number;
+  matched: number;
+  reconciled: number;
+  completed: number;
+  skippedNoConnection: boolean;
+}
+
+export interface TenantCollectParams {
+  db: Db;            // admin (service-role) client
+  fetchImpl: FetchLike;
+  tenantId: string;
+  maxPos?: number;
+  newerThanDays?: number;
+}
+
+/**
+ * Sweep a tenant's open POs for new documents. Runs from the collection cron.
+ * Uses each PO creator's (or the tenant shared mailbox's) Gmail connection; if
+ * the tenant has no usable connection at all, returns early.
+ */
+export async function collectForTenant(params: TenantCollectParams): Promise<TenantCollectResult> {
+  const { db, fetchImpl, tenantId } = params;
+  const res: TenantCollectResult = {
+    tenantId, posScanned: 0, collected: 0, matched: 0, reconciled: 0, completed: 0, skippedNoConnection: false,
+  };
+
+  const { data: pos } = await db.schema('supply_chain')
+    .from('purchase_orders')
+    .select('id, status, created_by_user_id')
+    .eq('tenant_id', tenantId)
+    .eq('docs_collection_complete', false)
+    .order('docs_last_collected_at', { ascending: true, nullsFirst: true })
+    .limit(params.maxPos ?? 15);
+
+  for (const po of (pos ?? [])) {
+    if (TERMINAL_PO_STATUS.has((po.status || '').toLowerCase())) {
+      await markCollected(db, tenantId, po.id, true);
+      continue;
+    }
+
+    let accessToken: string;
+    try {
+      const tok = await getGoogleAccessTokenForUser(tenantId, po.created_by_user_id, { fetchImpl });
+      accessToken = tok.accessToken;
+    } catch {
+      // No connection for this user/tenant — no point trying the rest.
+      res.skippedNoConnection = true;
+      break;
+    }
+
+    res.posScanned += 1;
+    try {
+      const c = await collectForPurchaseOrder({
+        db, fetchImpl, accessToken, tenantId,
+        userId: po.created_by_user_id, poId: po.id,
+        newerThanDays: params.newerThanDays ?? 90,
+      });
+      res.collected += c.collected;
+      res.matched += c.matched;
+      res.reconciled += c.reconciled;
+    } catch {
+      // isolate a failing PO; keep sweeping the rest
+    }
+
+    const complete = await evaluatePoCollectionComplete(db, tenantId, po.id, po.status).catch(() => false);
+    await markCollected(db, tenantId, po.id, complete);
+    if (complete) res.completed += 1;
+  }
+
+  return res;
+}
+
+async function markCollected(db: Db, tenantId: string, poId: string, complete: boolean): Promise<void> {
+  await db.schema('supply_chain')
+    .from('purchase_orders')
+    .update({ docs_last_collected_at: new Date().toISOString(), docs_collection_complete: complete })
+    .eq('id', poId)
+    .eq('tenant_id', tenantId);
+}
+
+export interface AllTenantsCollectResult {
+  tenants: number;
+  collected: number;
+  matched: number;
+  reconciled: number;
+  completed: number;
+  perTenant: TenantCollectResult[];
+}
+
+/**
+ * Fan out background collection across every tenant with an active Gmail
+ * connection. Entry point for the collection cron.
+ */
+export async function collectAllTenants(opts: {
+  fetchImpl: FetchLike;
+  maxTenants?: number;
+  maxPosPerTenant?: number;
+  newerThanDays?: number;
+}): Promise<AllTenantsCollectResult> {
+  const admin = getAdminClient();
+  const { data: conns } = await admin
+    .schema('supply_chain')
+    .from('google_connections')
+    .select('tenant_id')
+    .is('revoked_at', null);
+
+  const tenantIds = Array.from(new Set((conns ?? []).map((c: any) => c.tenant_id))).slice(0, opts.maxTenants ?? 15);
+  const perTenant: TenantCollectResult[] = [];
+  for (const tenantId of tenantIds) {
+    try {
+      perTenant.push(await collectForTenant({
+        db: admin,
+        fetchImpl: opts.fetchImpl,
+        tenantId,
+        maxPos: opts.maxPosPerTenant,
+        newerThanDays: opts.newerThanDays,
+      }));
+    } catch {
+      // skip a failing tenant
+    }
+  }
+
+  return {
+    tenants: tenantIds.length,
+    collected: perTenant.reduce((a, r) => a + r.collected, 0),
+    matched: perTenant.reduce((a, r) => a + r.matched, 0),
+    reconciled: perTenant.reduce((a, r) => a + r.reconciled, 0),
+    completed: perTenant.reduce((a, r) => a + r.completed, 0),
+    perTenant,
+  };
 }
 
 // ── Manual upload ───────────────────────────────────────────────────────────

@@ -22,6 +22,8 @@ import { ReceiveMobileQRDialog } from '@/components/mobile/ReceiveMobileQRDialog
 import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import { PurchaseDocuments } from '@/components/purchasing/PurchaseDocuments';
+import { PurchaseTimeline } from '@/components/purchasing/PurchaseTimeline';
+import { DocumentSearchBar } from '@/components/purchasing/DocumentSearchBar';
 import { MySpendCard } from '@/components/spend/MySpendCard';
 import { useSession } from '@/hooks/useSession';
 import {
@@ -443,6 +445,14 @@ export default function PurchasingPage() {
           </div>
         </div>
 
+        {/* Search the receipt repository (invoices, receipts, tracking, amount…). */}
+        <DocumentSearchBar
+          onOpenPo={(poId) => {
+            const match = orders.find((o) => o.id === poId);
+            if (match) setSelectedOrder(match);
+          }}
+        />
+
         <FilterBar
           filters={filterConfig}
           values={filters}
@@ -792,6 +802,9 @@ function PODetailPanel({
             <p className="text-sm text-muted-foreground italic">No receipts yet</p>
           )}
         </div>
+
+        {/* Unified lifecycle timeline: milestones, shipments, receipts, docs. */}
+        <PurchaseTimeline poId={po.id} />
 
         {/* Receipt repository: collected receipts/invoices/shipping docs + reconcile. */}
         <PurchaseDocuments poId={po.id} onChanged={onChanged} />

@@ -24,6 +24,7 @@ import type {
 } from '../types';
 import { PURCHASE_DOC_TYPES } from '../types';
 import { extractPdfText } from './pdf-text';
+import { rasterizePdfPage, heicToJpeg } from './raster';
 
 const EXTRACTION_MODEL = 'gpt-4.1-mini'; // supports both text + vision, low cost
 
@@ -161,21 +162,29 @@ export class OpenAiDocumentExtractor implements DocumentExtractor {
     const isPdf = ct === 'application/pdf' || /\.pdf$/i.test(input.fileName);
     const isHtml = ct.includes('html') || (!!input.html && !input.bytes);
 
-    // 1. Text-first for PDFs.
+    // 1. Text-first for PDFs, vision on the rasterized page if it's scanned.
     if (isPdf && input.bytes) {
       const pdf = await extractPdfText(input.bytes);
       if (pdf && !pdf.likelyScanned && pdf.text.length > 40) {
         return this.fromText(pdf.text, 'pdf_text', input);
       }
-      // Scanned PDF with no text layer — vision rasterization not available in
-      // this slice; record as unsupported so it surfaces for manual handling.
+      // Scanned / text-less PDF → rasterize the first page and read it visually.
+      if (this.apiKey) {
+        const png = await rasterizePdfPage(input.bytes, 1, 2);
+        if (png) return this.fromImage(png, 'image/png', 'pdf_vision');
+      }
       if (pdf) return { ...emptyExtraction('pdf_text'), raw_text_excerpt: pdf.text.slice(0, 500) };
-      // pdfjs unavailable — fall through to unsupported.
       return emptyExtraction('unsupported');
     }
 
-    // 2. Vision for images.
+    // 2. Vision for images (converting HEIC/HEIF first — vision can't read it).
     if (isImage && input.bytes) {
+      const isHeic = ct.includes('heic') || ct.includes('heif') || /\.(heic|heif)$/i.test(input.fileName);
+      if (isHeic) {
+        const jpeg = await heicToJpeg(input.bytes);
+        if (jpeg) return this.fromImage(jpeg, 'image/jpeg');
+        return emptyExtraction('unsupported');
+      }
       return this.fromImage(input.bytes, ct || 'image/jpeg');
     }
 
@@ -219,7 +228,7 @@ export class OpenAiDocumentExtractor implements DocumentExtractor {
     }
   }
 
-  private async fromImage(bytes: Uint8Array, mime: string): Promise<ExtractedDocument> {
+  private async fromImage(bytes: Uint8Array, mime: string, method = 'vision'): Promise<ExtractedDocument> {
     if (!this.apiKey) return emptyExtraction('unsupported');
     try {
       const dataUrl = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
@@ -239,10 +248,10 @@ export class OpenAiDocumentExtractor implements DocumentExtractor {
         ],
       });
       const raw = completion.choices[0]?.message?.content;
-      if (!raw) return emptyExtraction('vision');
-      return normalize(JSON.parse(raw), 'vision', null);
+      if (!raw) return emptyExtraction(method);
+      return normalize(JSON.parse(raw), method, null);
     } catch {
-      return emptyExtraction('vision');
+      return emptyExtraction(method);
     }
   }
 
