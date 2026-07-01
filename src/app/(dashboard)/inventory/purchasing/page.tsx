@@ -21,6 +21,7 @@ import { ReceivePOModal } from '@/components/modals/ReceivePOModal';
 import { ReceiveMobileQRDialog } from '@/components/mobile/ReceiveMobileQRDialog';
 import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu';
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
+import { PurchaseDocuments } from '@/components/purchasing/PurchaseDocuments';
 import { MySpendCard } from '@/components/spend/MySpendCard';
 import { useSession } from '@/hooks/useSession';
 import {
@@ -791,6 +792,9 @@ function PODetailPanel({
             <p className="text-sm text-muted-foreground italic">No receipts yet</p>
           )}
         </div>
+
+        {/* Receipt repository: collected receipts/invoices/shipping docs + reconcile. */}
+        <PurchaseDocuments poId={po.id} onChanged={onChanged} />
 
         {/* AI-tracked vendor replies (acknowledgements, ETAs, backorders, …). */}
         <PurchaseOrderActivity poId={po.id} onChanged={onChanged} />

@@ -157,6 +157,14 @@ export async function listGmailMessages(
   return data.messages ?? [];
 }
 
+/** Metadata for an attachment part on a message (bytes fetched separately). */
+export interface GmailAttachmentMeta {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface GmailMessage {
   id: string;
   threadId: string;
@@ -165,8 +173,12 @@ export interface GmailMessage {
   subject: string | null;
   snippet: string | null;
   bodyText: string | null;
+  /** Raw HTML body (for storing HTML receipts), if present. */
+  bodyHtml: string | null;
   receivedAt: string | null;
   labelIds: string[];
+  /** File attachments (PDFs/images) declared on the message. */
+  attachments: GmailAttachmentMeta[];
 }
 
 export async function getGmailMessage(
@@ -194,9 +206,30 @@ export async function getGmailMessage(
     subject: header('Subject'),
     snippet: data.snippet ?? null,
     bodyText: extractPlainText(data.payload),
+    bodyHtml: extractHtml(data.payload),
     receivedAt: internalDate,
     labelIds: data.labelIds ?? [],
+    attachments: collectAttachments(data.payload),
   };
+}
+
+/**
+ * Download the raw bytes of a single message attachment
+ * (users.messages.attachments.get). Gmail returns base64url-encoded data.
+ */
+export async function getGmailAttachment(
+  fetchImpl: FetchLike,
+  accessToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Uint8Array> {
+  const res = await fetchImpl(`${GMAIL_BASE}/messages/${messageId}/attachments/${attachmentId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  await requireOk(res, 'Gmail get attachment');
+  const data = (await res.json()) as { data?: string };
+  if (!data.data) return new Uint8Array(0);
+  return new Uint8Array(Buffer.from(data.data, 'base64url'));
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -215,6 +248,38 @@ function extractPlainText(payload: any): string | null {
     return stripHtml(Buffer.from(payload.body.data, 'base64url').toString('utf-8'));
   }
   return null;
+}
+
+/** Return the raw text/html body of a message, recursing into MIME parts. */
+function extractHtml(payload: any): string | null {
+  if (!payload) return null;
+  if (payload.mimeType === 'text/html' && payload.body?.data) {
+    return Buffer.from(payload.body.data, 'base64url').toString('utf-8');
+  }
+  for (const part of payload.parts ?? []) {
+    const found = extractHtml(part);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Recursively collect file attachments (parts with a filename + attachmentId). */
+function collectAttachments(payload: any): GmailAttachmentMeta[] {
+  const out: GmailAttachmentMeta[] = [];
+  const walk = (part: any) => {
+    if (!part) return;
+    if (part.filename && part.body?.attachmentId) {
+      out.push({
+        attachmentId: part.body.attachmentId,
+        filename: part.filename,
+        mimeType: part.mimeType || 'application/octet-stream',
+        size: part.body.size ?? 0,
+      });
+    }
+    for (const child of part.parts ?? []) walk(child);
+  };
+  walk(payload);
+  return out;
 }
 
 function stripHtml(html: string): string {
