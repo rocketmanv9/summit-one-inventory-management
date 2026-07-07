@@ -109,7 +109,7 @@ function AccessEditor() {
             {configuredRow ? (
               <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-green-700">Configured</span>
             ) : (
-              <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">No access</span>
+              <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">Not configured — no access</span>
             )}
           </div>
           <div className="text-xs text-gray-400">
@@ -158,8 +158,20 @@ function AccessEditor() {
     <>
       <PageHeader
         title="Position Access"
-        description="Choose which sections & actions each HR position can access. Used by the “View as” picker in the top bar and the corner bubble. Deny by default: a position you haven’t configured has no access until you grant it. Admins & developers always keep full access."
+        description="Choose which sections & actions each HR position can access. Deny by default: a position you haven’t configured has no access until you grant it. Admins & developers always keep full access."
       />
+
+      <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+        <p className="font-medium text-blue-900">How this is enforced</p>
+        <p className="mt-1">
+          <span className="font-medium">Section checkboxes</span> (Dashboard, Inventory, …) control navigation:
+          restricted users don&apos;t see those sections and are bounced if they open a link directly.
+          <span className="font-medium"> Action checkboxes</span> (manage vendors, preferred vendors, purchase
+          orders) are additionally enforced on the server — API calls without the capability are rejected, no
+          matter what the UI shows. The &quot;View as&quot; picker in the top bar previews any position&apos;s
+          view without changing your own access.
+        </p>
+      </div>
 
       {!isAdmin && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

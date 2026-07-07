@@ -32,6 +32,9 @@ type AssignmentTypeRow = {
   type_key: string;
   display_name: string;
   description: string | null;
+  icon: string | null;
+  requires_id: boolean;
+  is_system: boolean;
   is_active: boolean;
   sort_order: number;
   last_event_id: string;
@@ -720,7 +723,7 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('assignment_types')
-      .select('id, type_key, display_name, description, is_active, sort_order, last_event_id')
+      .select('id, type_key, display_name, description, icon, requires_id, is_system, is_active, sort_order, last_event_id')
       .order('sort_order');
 
     if (error) {
@@ -728,6 +731,22 @@ export const InventoryRPC = {
     }
 
     return (data || []) as AssignmentTypeRow[];
+  },
+
+  /**
+   * How many asset assignments reference each assignment type (by
+   * assigned_to_type). Used by the settings page to show "in use" counts.
+   */
+  async getAssignmentTypeUsage(typeKeys: string[]): Promise<Record<string, number>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const entries = await Promise.all(typeKeys.map(async (key) => {
+      const { count, error } = await supabase
+        .from('asset_assignments')
+        .select('id', { count: 'exact', head: true })
+        .eq('assigned_to_type', key);
+      return [key, error ? 0 : (count ?? 0)] as const;
+    }));
+    return Object.fromEntries(entries);
   },
 
   /**
@@ -1949,6 +1968,22 @@ export const InventoryRPC = {
     }
 
     return (data || []) as ReservationTypeRow[];
+  },
+
+  /**
+   * How many reservations reference each reservation type (by allocation_type).
+   * Used by the settings page to show "in use" counts and warn before delete.
+   */
+  async getReservationTypeUsage(typeKeys: string[]): Promise<Record<string, number>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const entries = await Promise.all(typeKeys.map(async (key) => {
+      const { count, error } = await supabase
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('allocation_type', key);
+      return [key, error ? 0 : (count ?? 0)] as const;
+    }));
+    return Object.fromEntries(entries);
   },
 
   /**

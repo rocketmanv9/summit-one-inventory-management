@@ -22,6 +22,7 @@ interface ReservationType {
 
 export default function ReservationTypesSettingsPage() {
   const [types, setTypes] = useState<ReservationType[]>([]);
+  const [usage, setUsage] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -36,6 +37,8 @@ export default function ReservationTypesSettingsPage() {
     try {
       const data = await InventoryRPC.getReservationTypes({ includeInactive: true });
       setTypes((data || []) as ReservationType[]);
+      const counts = await InventoryRPC.getReservationTypeUsage((data || []).map((t) => t.type_key));
+      setUsage(counts);
     } catch (error) {
       console.error('Error fetching reservation types:', error);
     } finally {
@@ -46,6 +49,12 @@ export default function ReservationTypesSettingsPage() {
   const handleDelete = async (type: ReservationType) => {
     if (type.is_system || !type.tenant_id) {
       alert('Cannot delete global reservation types. You can add your own custom types instead.');
+      return;
+    }
+
+    const inUse = usage[type.type_key] ?? 0;
+    if (inUse > 0) {
+      alert(`"${type.display_name}" is used by ${inUse} reservation(s) and can't be deleted. Deactivate it instead to hide it from new reservations.`);
       return;
     }
 
@@ -121,6 +130,20 @@ export default function ReservationTypesSettingsPage() {
       ),
     },
     {
+      key: 'usage',
+      header: 'In Use',
+      render: (row: ReservationType) => {
+        const n = usage[row.type_key] ?? 0;
+        return n > 0 ? (
+          <span className="inline-flex px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
+            {n} reservation{n === 1 ? '' : 's'}
+          </span>
+        ) : (
+          <span className="text-muted-foreground text-sm">—</span>
+        );
+      },
+    },
+    {
       key: 'actions',
       header: 'Actions',
       render: (row: ReservationType) => (
@@ -194,8 +217,12 @@ export default function ReservationTypesSettingsPage() {
             <div className="flex-1">
               <h3 className="font-medium text-blue-900">About Reservation Types</h3>
               <p className="text-sm text-blue-700 mt-1">
-                Global types are provided by default. Add tenant-specific types for your own naming and workflows.
-                Custom types can be deactivated or deleted at any time.
+                Reservation types label <em>why</em> stock is reserved — they show up as the
+                &quot;Allocation Type&quot; dropdown when creating a reservation, and the database rejects
+                any reservation whose type isn&apos;t on this list and active. Global types are provided by
+                default and can&apos;t be changed; add your own custom types for tenant-specific workflows.
+                Deactivating a type hides it from new reservations without touching existing ones; deleting
+                is only possible when nothing references it.
               </p>
             </div>
           </div>

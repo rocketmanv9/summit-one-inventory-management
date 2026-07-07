@@ -34,7 +34,6 @@ import {
   ShieldAlert,
   Tag,
   Ruler,
-  FlaskConical,
   Bug,
 } from 'lucide-react';
 
@@ -170,21 +169,21 @@ export const SETTINGS_SECTION: NavSection = {
   href: '/settings',
   icon: Settings,
   capability: 'settings',
+  // Ordered in loose groups: org & people → inventory rules → connections.
   tabs: [
     { title: 'General', href: '/settings', icon: Settings },
     { title: 'My Spending', href: '/settings/my-spending', icon: Wallet },
     { title: 'People & Limits', href: '/settings/people', icon: Users },
     { title: 'Position Access', href: '/settings/access', icon: ShieldCheck },
     { title: 'Count Qualifications', href: '/settings/count-qualifications', icon: ClipboardCheck },
-    { title: 'Assignment Types', href: '/settings/assignment-types', icon: Tag },
-    { title: 'Reservation Types', href: '/settings/reservation-types', icon: CalendarCheck },
-    { title: 'UOM Conversions', href: '/settings/uom-conversions', icon: Ruler },
-    { title: 'Negative Inventory', href: '/settings/negative-inventory', icon: ShieldAlert },
     { title: 'Guardrails', href: '/settings/guardrails', icon: ShieldCheck },
+    { title: 'Negative Inventory', href: '/settings/negative-inventory', icon: ShieldAlert },
+    { title: 'UOM Conversions', href: '/settings/uom-conversions', icon: Ruler },
+    { title: 'Reservation Types', href: '/settings/reservation-types', icon: CalendarCheck },
+    { title: 'Assignment Types', href: '/settings/assignment-types', icon: Tag },
     { title: 'Branding', href: '/settings/branding', icon: Palette },
     { title: 'Device Management', href: '/settings/device-management', icon: Smartphone },
     { title: 'Integrations', href: '/settings/integrations', icon: Plug },
-    { title: 'Test', href: '/settings/test', icon: FlaskConical, requiresDeveloper: true },
     {
       title: 'Assistant',
       // Externally-hosted OpenClaw maintenance assistant (Cloudflare Access-gated).

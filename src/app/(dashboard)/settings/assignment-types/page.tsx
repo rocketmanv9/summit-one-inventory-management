@@ -25,6 +25,7 @@ interface AssignmentType {
 
 export default function AssignmentTypesSettingsPage() {
   const [types, setTypes] = useState<AssignmentType[]>([]);
+  const [usage, setUsage] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -47,6 +48,8 @@ export default function AssignmentTypesSettingsPage() {
     try {
       const data = await InventoryRPC.getAssignmentTypes();
       setTypes((data || []) as AssignmentType[]);
+      const counts = await InventoryRPC.getAssignmentTypeUsage((data || []).map((t) => t.type_key));
+      setUsage(counts);
     } catch (error) {
       console.error('Error fetching assignment types:', error);
     } finally {
@@ -62,6 +65,12 @@ export default function AssignmentTypesSettingsPage() {
 
     if (type.is_system) {
       alert('Cannot delete system assignment types. You can deactivate them instead.');
+      return;
+    }
+
+    const inUse = usage[type.type_key] ?? 0;
+    if (inUse > 0) {
+      alert(`"${type.display_name}" is used by ${inUse} assignment record(s) and can't be deleted. Deactivate it instead to hide it from new assignments.`);
       return;
     }
 
@@ -150,6 +159,20 @@ export default function AssignmentTypesSettingsPage() {
       ),
     },
     {
+      key: 'usage',
+      header: 'In Use',
+      render: (row: AssignmentType) => {
+        const n = usage[row.type_key] ?? 0;
+        return n > 0 ? (
+          <span className="inline-flex px-2 py-1 text-xs font-medium rounded bg-blue-100 text-blue-800">
+            {n} assignment{n === 1 ? '' : 's'}
+          </span>
+        ) : (
+          <span className="text-muted-foreground text-sm">—</span>
+        );
+      },
+    },
+    {
       key: 'actions',
       header: 'Actions',
       render: (row: AssignmentType) => (
@@ -234,8 +257,11 @@ export default function AssignmentTypesSettingsPage() {
             <div className="flex-1">
               <h3 className="font-medium text-blue-900">About Assignment Types</h3>
               <p className="text-sm text-blue-700 mt-1">
-                Assignment types determine how assets can be assigned. System types (Employee, Vehicle, Job, Yard) cannot be deleted but can be deactivated.
-                Create custom types for your specific needs like "Crew", "Contractor", "Tool Crib", etc.
+                Assignment types are the &quot;assign to&quot; categories offered when you assign an asset
+                (Employee, Vehicle, Job Site, …) — the database rejects any assignment whose type isn&apos;t
+                on this list and active. System types can&apos;t be deleted but can be deactivated to hide
+                them. Create custom types for your specific needs like &quot;Crew&quot;, &quot;Contractor&quot;,
+                or &quot;Tool Crib&quot;. Deleting is only possible when no assignment records reference the type.
               </p>
             </div>
           </div>

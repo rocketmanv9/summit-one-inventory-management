@@ -134,9 +134,16 @@ export default function UomConversionsPage() {
             <div className="flex-1">
               <h3 className="font-medium text-blue-900">About UOM Conversions</h3>
               <p className="text-sm text-blue-700 mt-1">
-                UOM conversions let you express quantities in different units. Bidirectional conversions
-                work both ways automatically. The system can chain conversions (A to B to C) if a direct
-                path is not available.
+                <span className="font-medium">Where these apply:</span> when a receipt is posted and the
+                PO line&apos;s purchase unit differs from the item&apos;s stocking unit, the received quantity
+                (and unit cost) is converted to the stocking unit automatically using these rules. If no
+                conversion exists, the <a href="/settings/guardrails" className="underline">UOM mismatch
+                guardrail</a> decides whether the receipt is blocked or posted as-received with a warning.
+              </p>
+              <p className="text-sm text-blue-700 mt-2">
+                Bidirectional conversions work both ways automatically, and the system can chain two rules
+                (A→B→C) when there is no direct path. Conversions are not yet applied to transfers, counts,
+                or reservations — those always use the stocking unit.
               </p>
             </div>
           </div>
@@ -267,12 +274,35 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
               value={form.conversion_factor}
               onChange={(e) => setForm({ ...form, conversion_factor: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g., 12 (1 DZ = 12 EA)"
+              placeholder="e.g., 12 (1 Dozen = 12 Each)"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              How many &quot;To&quot; units in 1 &quot;From&quot; unit. Example: 1 EA = 1/12 DZ, so factor is 0.0833
+              How many &quot;To&quot; units make up <strong>one</strong> &quot;From&quot; unit.
+              Dozen → Each is 12, not 0.0833.
             </p>
+            {(() => {
+              const factor = parseFloat(form.conversion_factor);
+              const fromLabel = uomTerms.find((t) => t.term_id === form.from_uom_term_id)?.label;
+              const toLabel = uomTerms.find((t) => t.term_id === form.to_uom_term_id)?.label;
+              if (!fromLabel || !toLabel || isNaN(factor) || factor <= 0) return null;
+              if (form.from_uom_term_id === form.to_uom_term_id) {
+                return (
+                  <p className="text-xs text-red-600 mt-2">
+                    From and To are the same unit — a conversion to itself has no effect.
+                  </p>
+                );
+              }
+              return (
+                <div className="mt-2 rounded-md bg-teal-50 border border-teal-200 p-2 text-sm text-teal-900">
+                  <div>1 {fromLabel} = <strong>{factor}</strong> {toLabel}</div>
+                  <div>100 {fromLabel} = <strong>{100 * factor}</strong> {toLabel}</div>
+                  {form.is_bidirectional && (
+                    <div className="text-teal-700">1 {toLabel} = {(1 / factor).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')} {fromLabel} (reverse)</div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-2">

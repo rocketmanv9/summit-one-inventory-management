@@ -149,6 +149,32 @@ export default function NegativeInventoryPage() {
           }
         />
 
+        {/* Effective state — the default applies even with zero rules configured */}
+        {!loading && (
+          <div className="bg-white rounded-lg border p-4">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Currently in force</h3>
+            {(() => {
+              const globalRule = configs.find((c) => c.scope === 'global');
+              const allowRules = configs.filter((c) => c.allow_negative && c.scope !== 'global');
+              const globalAllowed = globalRule?.allow_negative ?? false;
+              return (
+                <p className="text-sm mt-1">
+                  Negative stock is{' '}
+                  <span className={`font-semibold ${globalAllowed ? 'text-green-700' : 'text-red-700'}`}>
+                    {globalAllowed ? 'ALLOWED' : 'BLOCKED'}
+                  </span>{' '}
+                  for all items{globalRule ? '' : ' (built-in default — no global rule saved)'}
+                  {allowRules.length > 0 && (
+                    <>, with {allowRules.length} exception rule{allowRules.length === 1 ? '' : 's'} allowing negatives
+                    for specific {allowRules.some((r) => r.scope === 'category') ? 'categories/items' : 'items'}</>
+                  )}
+                  . Every stock movement that would push a balance below zero is checked against these rules.
+                </p>
+              );
+            })()}
+          </div>
+        )}
+
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">
             <span className="text-blue-600">i</span>

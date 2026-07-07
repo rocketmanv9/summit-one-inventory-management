@@ -8,7 +8,7 @@ import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { GmailIntegration } from '@/components/settings/GmailIntegration';
 import { AmazonInboundConnection } from '@/components/settings/AmazonInboundConnection';
-import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Link, Search, ShoppingCart, Sparkles, Wand2, Mail } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, ExternalLink, Wifi, WifiOff, Unplug, Plus, Trash2, Pencil, Link, Search, ShoppingCart, Sparkles, Wand2, Mail } from 'lucide-react';
 
 const API = '/api/settings/integrations/printify';
 const AMAZON_API = '/api/settings/integrations/amazon-business';
@@ -397,6 +397,25 @@ export default function IntegrationsPage() {
   };
 
   // ── Amazon handlers ─────────────────────────────────────────────────
+
+  const handleDeleteMapping = async (m: Mapping) => {
+    if (!isAdmin) return;
+    if (!confirm(`Delete the Printify mapping for "${m.catalog_item_label}"?`)) return;
+    setMappingError('');
+    try {
+      const res = await fetch(`${API}/mappings/${m.id}`, {
+        method: 'DELETE',
+        headers: { 'X-Idempotency-Key': crypto.randomUUID() },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to delete mapping');
+      }
+      await loadMappings();
+    } catch (err: unknown) {
+      setMappingError(err instanceof Error ? err.message : 'Failed to delete mapping');
+    }
+  };
 
   const handleAmazonConnect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1006,12 +1025,17 @@ export default function IntegrationsPage() {
                           <td className="py-2.5 font-mono text-xs">{m.external_product_id}</td>
                           <td className="py-2.5 font-mono text-xs">{m.external_variant_id}</td>
                           <td className="py-2.5">
-                            <button onClick={() => {
-                              setNewMapping({ catalog_item_id: m.catalog_item_id, printify_product_id: m.external_product_id, printify_variant_id: m.external_variant_id });
-                              setShowAddMapping(true);
-                            }} className="p-1 text-muted-foreground hover:text-foreground" title="Edit mapping">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => {
+                                setNewMapping({ catalog_item_id: m.catalog_item_id, printify_product_id: m.external_product_id, printify_variant_id: m.external_variant_id });
+                                setShowAddMapping(true);
+                              }} className="p-1 text-muted-foreground hover:text-foreground" title="Edit mapping">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button onClick={() => handleDeleteMapping(m)} className="p-1 text-muted-foreground hover:text-red-600" title="Delete mapping">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

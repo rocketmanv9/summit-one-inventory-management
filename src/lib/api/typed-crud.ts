@@ -45,6 +45,12 @@ export function rethrowDeleteError(error: { code?: string; message: string }, en
       `This ${entity} is still referenced by other records (history, transactions, or settings) and can't be deleted. Remove or reassign those first, or deactivate it instead.`,
     );
   }
+  // 23001 (restrict_violation) is raised by our BEFORE DELETE protection
+  // triggers with a user-facing message (system rows, in-use types) — pass it
+  // through as a 409 instead of a generic 500.
+  if (error.code === '23001') {
+    throw AppError.conflict(error.message);
+  }
   throw AppError.internal(error.message);
 }
 

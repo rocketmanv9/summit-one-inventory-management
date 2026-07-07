@@ -44,7 +44,6 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
   const [icon, setIcon] = useState('');
   const [description, setDescription] = useState('');
   const [sortOrder, setSortOrder] = useState('100');
-  const [requiresId, setRequiresId] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,14 +59,12 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
       setIcon(item.icon || '');
       setDescription(item.description || '');
       setSortOrder(String(item.sort_order ?? 100));
-      setRequiresId(item.requires_id !== false);
     } else {
       setTypeKey('');
       setDisplayName('');
       setIcon('');
       setDescription('');
       setSortOrder('100');
-      setRequiresId(true);
     }
   }, [open, item, isEdit]);
 
@@ -96,7 +93,6 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
             description: description.trim() || null,
             icon: icon.trim() || null,
             sort_order: parseInt(sortOrder) || 0,
-            requires_id: requiresId,
           },
           item.last_event_id
         );
@@ -107,7 +103,6 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
           description: description.trim() || null,
           icon: icon.trim() || null,
           sort_order: parseInt(sortOrder) || 100,
-          requires_id: requiresId,
         });
       }
 
@@ -201,19 +196,9 @@ export function AssignmentTypeModal({ open, onClose, onSuccess, item }: Assignme
             <p className="text-xs text-muted-foreground">Lower numbers appear first in lists.</p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="at-requires-id"
-              checked={requiresId}
-              onChange={(e) => setRequiresId(e.target.checked)}
-              className="rounded border-gray-300"
-              disabled={submitting}
-            />
-            <Label htmlFor="at-requires-id" className="font-normal">
-              Require ID/Reference when assigning
-            </Label>
-          </div>
+          {/* "Require ID/Reference" checkbox removed: asset_assignments.assigned_to_id
+              is NOT NULL, so every assignment always requires a target — the flag
+              could never change behavior and only misled users. */}
 
           {error && (
             <Alert variant="destructive">
