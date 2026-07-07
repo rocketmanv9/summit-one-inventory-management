@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { getStoredAccessToken, parseJwtPayload, getTenantIdFromToken } from '@/lib/auth-token';
@@ -85,6 +85,15 @@ export default function BrandingPage() {
     applyCssVariables(preview);
   }, [providerBranding, palette]);
 
+  // The preview mutates GLOBAL CSS variables so the whole app reflects it live.
+  // If the user navigates away without saving, restore the last-saved state —
+  // otherwise unsaved colors linger until the provider's next poll.
+  const restoreRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    restoreRef.current = () => applyPreview(savedAssignments);
+  }, [applyPreview, savedAssignments]);
+  useEffect(() => () => restoreRef.current(), []);
+
   const handleAssignmentChange = (roleKey: string, paletteKey: PaletteKey) => {
     const updated = { ...assignments, [roleKey]: paletteKey };
     setAssignments(updated);
@@ -94,6 +103,13 @@ export default function BrandingPage() {
   const handleReset = () => {
     setAssignments(savedAssignments);
     applyPreview(savedAssignments);
+    setError('');
+    setSuccess('');
+  };
+
+  const handleResetToDefaults = () => {
+    setAssignments({ ...DEFAULT_ASSIGNMENTS });
+    applyPreview({ ...DEFAULT_ASSIGNMENTS });
     setError('');
     setSuccess('');
   };
@@ -152,7 +168,7 @@ export default function BrandingPage() {
     <AppShell>
       <PageHeader
         title="Branding"
-        description="Assign your brand palette colors to different parts of the UI"
+        description="Assign your brand palette colors to different parts of the UI. Changes preview live across the whole app; Save makes them permanent for everyone in your organization."
       />
 
 
@@ -188,6 +204,50 @@ export default function BrandingPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Live app preview — styled with the SAME theme classes the real app
+            uses, so it re-renders instantly as the global CSS vars change. */}
+        <div className="bg-white rounded-lg border p-6 mb-6">
+          <h3 className="text-base font-semibold mb-1">Live Preview</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            A miniature of the app rendered with your current assignments. This is exactly what changes when you save.
+          </p>
+          <div className="rounded-lg border overflow-hidden flex" style={{ minHeight: 220 }}>
+            {/* Mini sidebar */}
+            <div className="w-40 bg-sidebar border-r border-sidebar-border p-3 space-y-1.5 flex-shrink-0">
+              <div className="flex items-center gap-2 pb-2 mb-1 border-b border-sidebar-border">
+                <div className="h-5 w-5 rounded bg-primary" />
+                <span className="text-xs font-semibold text-sidebar-foreground truncate">
+                  {providerBranding.display_name}
+                </span>
+              </div>
+              <div className="rounded-md bg-primary px-2 py-1.5 text-xs font-medium text-primary-foreground">Dashboard</div>
+              <div className="rounded-md px-2 py-1.5 text-xs font-medium text-sidebar-foreground">Inventory</div>
+              <div className="rounded-md px-2 py-1.5 text-xs font-medium text-sidebar-foreground">Purchasing</div>
+            </div>
+            {/* Mini content */}
+            <div className="flex-1 bg-background p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-foreground">Stock Balances</span>
+                <div className="flex gap-2">
+                  <button type="button" className="px-3 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium">Primary Action</button>
+                  <button type="button" className="px-3 py-1 rounded-md bg-secondary text-secondary-foreground text-xs font-medium">Secondary</button>
+                </div>
+              </div>
+              <div className="rounded-lg border bg-card p-3">
+                <div className="text-xs text-muted-foreground mb-1.5">Card on a surface — muted caption text</div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-accent text-accent-foreground">Accent badge</span>
+                  <a className="text-xs font-medium text-primary underline" href="#preview" onClick={(e) => e.preventDefault()}>A themed link</a>
+                </div>
+              </div>
+              <div className="rounded-lg border bg-card p-3">
+                <div className="h-2 rounded bg-muted mb-2" />
+                <div className="h-2 rounded bg-muted w-2/3" />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -245,7 +305,7 @@ export default function BrandingPage() {
               disabled={!isAdmin || saving || !hasChanges}
               className="px-6 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saving ? 'Saving...' : 'Save Assignments'}
+              {saving ? 'Saving...' : 'Save & Apply for Everyone'}
             </button>
             {hasChanges && (
               <button
@@ -254,10 +314,21 @@ export default function BrandingPage() {
                 disabled={!isAdmin}
                 className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Reset
+                Undo Changes
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleResetToDefaults}
+              disabled={!isAdmin}
+              className="px-6 py-2 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Reset to Defaults
+            </button>
           </div>
+          <p className="text-xs text-gray-500 pt-2">
+            Leaving this page without saving reverts the preview. Other users pick up saved changes within a minute.
+          </p>
         </form>
       </div>
     </AppShell>
