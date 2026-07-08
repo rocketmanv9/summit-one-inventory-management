@@ -86,6 +86,50 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
       throw AppError.internal(vendErr.message);
     }
     vendors = vendorData || [];
+
+    // Multi-location vendors keep one row in `vendors` (the primary/HQ pin)
+    // and one `vendor_addresses` row per plant/branch. Emit each geocoded
+    // branch as its own vendor-shaped marker so every location gets a pin;
+    // branches co-located with the primary pin are skipped to avoid stacking.
+    // PO arcs are unaffected — they look up markers by the real vendor id.
+    const { data: branchData, error: branchErr } = await sc
+      .from('vendor_addresses')
+      .select('id, vendor_id, label, city, state, latitude, longitude, vendor:vendor_id(id, name, code, contact_name, contact_email, contact_phone, active, latitude, longitude)')
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null)
+      .limit(500);
+
+    if (branchErr) {
+      // Branch pins are enrichment — log and keep the primary vendor pins
+      log.warn('globe.vendor_branches_failed', { error: branchErr.message });
+    } else {
+      const samePoint = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+      for (const addr of branchData || []) {
+        const vendor = Array.isArray(addr.vendor) ? addr.vendor[0] ?? null : addr.vendor ?? null;
+        if (!vendor || vendor.active === false) continue;
+        if (
+          vendor.latitude != null &&
+          vendor.longitude != null &&
+          samePoint(addr.latitude, vendor.latitude) &&
+          samePoint(addr.longitude, vendor.longitude)
+        ) {
+          continue;
+        }
+        const branchName = (addr.label || '').split(' (')[0] || addr.city || 'Branch';
+        vendors.push({
+          id: addr.id,
+          name: `${vendor.name} — ${branchName}`,
+          code: vendor.code,
+          contact_name: vendor.contact_name,
+          contact_email: vendor.contact_email,
+          contact_phone: vendor.contact_phone,
+          city: addr.city,
+          state: addr.state,
+          latitude: addr.latitude,
+          longitude: addr.longitude,
+        });
+      }
+    }
   }
 
   // Fetch purchase orders with vendor/location links (if requested).
