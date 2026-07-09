@@ -84,6 +84,14 @@ async function applyFleetAsset(
     p_unit_number: row.unit_number ?? null,
     p_status: row.status ?? null,
     p_event_id: `fleet-sync:${fleetAssetId}`,
+    p_make: row.make ?? null,
+    p_model: row.model ?? null,
+    p_model_year: row.model_year ?? null,
+    // Fleet calls it asset_class_term_id; inventory's column is asset_type_term_id.
+    p_asset_type_term_id: row.asset_class_term_id ?? null,
+    p_equipment_class_id: row.equipment_class_id ?? null,
+    p_equipment_model_id: row.equipment_model_id ?? null,
+    p_equipment_variant_id: row.equipment_variant_id ?? null,
   });
 
   if (error) throw AppError.internal(`rpc_apply_fleet_asset_sync failed: ${error.message}`);
