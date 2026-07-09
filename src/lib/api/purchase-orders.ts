@@ -44,7 +44,8 @@ export async function createPurchaseOrder(
       p_vendor_quote_ref: request.vendor_quote_ref || null,
       p_notes: request.notes || null,
       p_attachments: request.attachments || [],
-      p_lines: request.lines
+      p_lines: request.lines,
+      p_vendor_address_id: request.vendor_address_id || null
     });
     
     if (error) {

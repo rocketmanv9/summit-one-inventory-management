@@ -51,6 +51,8 @@ function requireAdminRole(): void {
 
 export interface CreatePurchaseOrderParams {
   vendor_id: string;
+  /** Which vendor branch/plant the PO is priced against (vendor_addresses id) */
+  vendor_address_id?: string;
   po_number?: string;
   delivery_method?: 'ship' | 'pickup';
   needed_by_date?: string;
@@ -240,6 +242,7 @@ export const SupplyChainRPC = {
       p_notes: params.notes ?? null,
       p_attachments: params.attachments ?? [],
       p_lines: params.lines,
+      p_vendor_address_id: params.vendor_address_id ?? null,
     });
 
     if (error) {
@@ -348,7 +351,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
       .from('vendor_items')
-      .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .select('id, vendor_id, catalog_item_id, vendor_address_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
       .order('updated_at', { ascending: false });
 
     if (vendorId) {
@@ -373,7 +376,7 @@ export const SupplyChainRPC = {
 
     const { data: vendorItems, error: viError } = await scSupabase
       .from('vendor_items')
-      .select('id, vendor_sku, unit_cost, catalog_item_id')
+      .select('id, vendor_sku, unit_cost, catalog_item_id, vendor_address_id')
       .eq('vendor_id', vendorId)
       .order('vendor_sku');
 
@@ -405,6 +408,7 @@ export const SupplyChainRPC = {
       vendor_sku: string;
       unit_cost: number;
       catalog_item_id: string;
+      vendor_address_id: string | null;
       catalog_items?: { id: string; name: string; sku: string } | null;
     }>;
   },
@@ -442,13 +446,14 @@ export const SupplyChainRPC = {
   },
 
   /**
-   * Set one price for a material across all (or a subset of) vendors that
-   * carry it. Also refreshes last_known_price / price_checked_at.
+   * Set one price for a material across all (or a selected subset of) the
+   * vendor_items rows that carry it — company defaults and branch overrides
+   * are individual rows. Also refreshes last_known_price / price_checked_at.
    */
-  async bulkUpdateVendorItemPrice(catalogItemId: string, unitCost: number, vendorIds?: string[]) {
-    return writeJson<{ updated: number; vendor_items: Array<Pick<VendorItemRow, 'id' | 'vendor_id' | 'unit_cost'>> }>(
+  async bulkUpdateVendorItemPrice(catalogItemId: string, unitCost: number, vendorItemIds?: string[]) {
+    return writeJson<{ updated: number; vendor_items: Array<Pick<VendorItemRow, 'id' | 'vendor_id' | 'vendor_address_id' | 'unit_cost'>> }>(
       '/api/inventory/vendor-items/bulk-price', 'POST',
-      { catalog_item_id: catalogItemId, unit_cost: unitCost, ...(vendorIds?.length ? { vendor_ids: vendorIds } : {}) },
+      { catalog_item_id: catalogItemId, unit_cost: unitCost, ...(vendorItemIds?.length ? { vendor_item_ids: vendorItemIds } : {}) },
       'Failed to update material pricing');
   },
 

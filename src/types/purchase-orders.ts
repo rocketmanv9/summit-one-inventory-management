@@ -249,6 +249,8 @@ export interface CreatePORequest {
   notes?: string;
   attachments?: POAttachment[];
   expected_delivery_date?: string;
+  // Which vendor branch/plant this PO is priced against (supply_chain.vendor_addresses id)
+  vendor_address_id?: string;
 }
 
 export interface CreatePOLineInput {

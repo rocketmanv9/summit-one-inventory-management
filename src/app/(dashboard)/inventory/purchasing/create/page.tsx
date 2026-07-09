@@ -57,11 +57,18 @@ export default function CreatePurchaseOrderPage() {
 
   const [form, setForm] = useState({
     vendor_id: '',
+    vendor_address_id: '', // '' = company-wide default pricing
     po_number: '',
     delivery_location_id: '',
     expected_delivery_date: '',
     notes: '',
   });
+
+  // The selected vendor's branches/plants — lets the PO record which branch it
+  // is priced against, and switches line prefills to branch-specific prices.
+  const [vendorBranches, setVendorBranches] = useState<
+    Array<{ id: string; label: string | null; city: string | null; state: string | null }>
+  >([]);
 
   const [lines, setLines] = useState<POLine[]>([
     { catalog_item_id: '', qty_ordered: 0, unit_cost: 0 },
@@ -81,6 +88,7 @@ export default function CreatePurchaseOrderPage() {
     Array<{
       catalog_item_id: string;
       unit_cost: number;
+      vendor_address_id?: string | null;
       catalog_items?: { id: string; name: string; sku: string } | null;
     }>
   >([]);
@@ -116,14 +124,40 @@ export default function CreatePurchaseOrderPage() {
     }
   }, [form.vendor_id]);
 
+  // Fetch the vendor's branches so the PO can be priced against one of them.
+  useEffect(() => {
+    if (!form.vendor_id) { setVendorBranches([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/vendors/${form.vendor_id}/addresses`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) setVendorBranches(json.data || []);
+      } catch {
+        if (!cancelled) setVendorBranches([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [form.vendor_id]);
+
   // Vendor's price per catalog item — used to prefill a line's unit cost.
+  // Company-default rows (vendor_address_id null) first, then rows for the
+  // selected branch override them.
   const vendorCostByItem = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of vendorItemRows) {
-      if (r.unit_cost != null) m.set(r.catalog_item_id, Number(r.unit_cost));
+      if (r.unit_cost != null && r.vendor_address_id == null) m.set(r.catalog_item_id, Number(r.unit_cost));
+    }
+    if (form.vendor_address_id) {
+      for (const r of vendorItemRows) {
+        if (r.unit_cost != null && r.vendor_address_id === form.vendor_address_id) {
+          m.set(r.catalog_item_id, Number(r.unit_cost));
+        }
+      }
     }
     return m;
-  }, [vendorItemRows]);
+  }, [vendorItemRows, form.vendor_address_id]);
 
   // Picker list = the vendor's items, enriched with description/uom/variant
   // info from the full catalog when available.
@@ -297,6 +331,7 @@ export default function CreatePurchaseOrderPage() {
       // Create PO using RPC
       const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
+        vendor_address_id: form.vendor_address_id || undefined,
         po_number: form.po_number || undefined,
         delivery_location_id: form.delivery_location_id,
         lines: validLines,
@@ -370,7 +405,7 @@ export default function CreatePurchaseOrderPage() {
                 </label>
                 <select
                   value={form.vendor_id}
-                  onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}
+                  onChange={(e) => setForm({ ...form, vendor_id: e.target.value, vendor_address_id: '' })}
                   required
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -381,6 +416,28 @@ export default function CreatePurchaseOrderPage() {
                     </option>
                   ))}
                 </select>
+                {form.vendor_id && vendorBranches.length > 0 && (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 mt-2">
+                      Vendor Branch / Plant
+                    </label>
+                    <select
+                      value={form.vendor_address_id}
+                      onChange={(e) => setForm({ ...form, vendor_address_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Any location (company default pricing)</option>
+                      {vendorBranches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.label?.split(' (')[0] || [b.city, b.state].filter(Boolean).join(', ') || b.id}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Line prices prefill from this branch when it has its own pricing; otherwise the company default applies.
+                    </p>
+                  </>
+                )}
                 {nearest && (
                   <p className="mt-1 text-xs text-gray-600">
                     {nearest.distance_mi != null ? (

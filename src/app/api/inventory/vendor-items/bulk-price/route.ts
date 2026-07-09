@@ -7,9 +7,10 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 const BulkPriceSchema = z.object({
   catalog_item_id: z.string().uuid(),
   unit_cost: z.number().nonnegative(),
-  // Omit to reprice the material across every vendor that carries it;
-  // pass a subset to reprice only those vendors.
-  vendor_ids: z.array(z.string().uuid()).min(1).optional(),
+  // Omit to reprice every row for the material (all vendors, company defaults
+  // and branch overrides alike); pass row ids to reprice a subset. Row-level
+  // targeting so branch-specific prices can be updated independently.
+  vendor_item_ids: z.array(z.string().uuid()).min(1).optional(),
 });
 
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase }) => {
@@ -27,11 +28,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase }) 
     .eq('tenant_id', ctx.tenantId)
     .eq('catalog_item_id', body.catalog_item_id);
 
-  if (body.vendor_ids) {
-    query = query.in('vendor_id', body.vendor_ids);
+  if (body.vendor_item_ids) {
+    query = query.in('id', body.vendor_item_ids);
   }
 
-  const { data, error } = await query.select('id, vendor_id, unit_cost');
+  const { data, error } = await query.select('id, vendor_id, vendor_address_id, unit_cost');
 
   if (error) {
     log.error('vendor_items.bulk_price_failed', { error: error.message });

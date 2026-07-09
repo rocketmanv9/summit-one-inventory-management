@@ -34,10 +34,18 @@ type CatalogItem = {
   tracking_mode?: string | null;
 };
 
+type VendorAddress = {
+  id: string;
+  label: string | null;
+  city: string | null;
+  state: string | null;
+};
+
 type VendorItem = {
   id: string;
   vendor_id: string;
   catalog_item_id: string;
+  vendor_address_id: string | null;
   vendor_sku: string;
   vendor_uom_term_id: string | null;
   pack_size: number | null;
@@ -68,15 +76,46 @@ export default function VendorItemsPage() {
   const [showPriceModal, setShowPriceModal] = useState(false);
   const [priceItemId, setPriceItemId] = useState('');
   const [priceValue, setPriceValue] = useState('');
-  const [priceVendorIds, setPriceVendorIds] = useState<Set<string>>(new Set());
+  const [priceRowIds, setPriceRowIds] = useState<Set<string>>(new Set());
   const [priceSaving, setPriceSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterPreferred, setFilterPreferred] = useState<boolean | null>(null);
 
+  // Addresses per vendor, fetched lazily — used for the branch dropdown and to
+  // label branch-override rows in the table and price modal.
+  const [vendorAddresses, setVendorAddresses] = useState<Record<string, VendorAddress[]>>({});
+
+  const fetchVendorAddresses = async (vendorId: string) => {
+    if (!vendorId || vendorAddresses[vendorId]) return;
+    try {
+      const res = await fetch(`/api/inventory/vendors/${vendorId}/addresses`);
+      if (!res.ok) return;
+      const json = await res.json();
+      setVendorAddresses((prev) => ({ ...prev, [vendorId]: json.data || [] }));
+    } catch {
+      /* branch labels degrade gracefully */
+    }
+  };
+
+  // Load addresses for any vendor that has branch-priced rows so labels render.
+  useEffect(() => {
+    const vendorIds = [...new Set(vendorItems.filter((vi) => vi.vendor_address_id).map((vi) => vi.vendor_id))];
+    vendorIds.forEach((vid) => { void fetchVendorAddresses(vid); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorItems]);
+
+  const branchLabel = (vendorId: string, addressId: string | null) => {
+    if (!addressId) return null;
+    const addr = (vendorAddresses[vendorId] || []).find((a) => a.id === addressId);
+    if (!addr) return 'Branch';
+    return addr.label?.split(' (')[0] || [addr.city, addr.state].filter(Boolean).join(', ') || 'Branch';
+  };
+
   const [formData, setFormData] = useState({
     vendor_id: '',
     catalog_item_id: '',
+    vendor_address_id: '',
     vendor_sku: '',
     vendor_uom_term_id: '',
     pack_size: 1,
@@ -129,6 +168,7 @@ export default function VendorItemsPage() {
     const payload = {
       vendor_id: formData.vendor_id,
       catalog_item_id: formData.catalog_item_id,
+      vendor_address_id: formData.vendor_address_id || null,
       vendor_sku: formData.vendor_sku,
       vendor_uom_term_id: formData.vendor_uom_term_id || null,
       pack_size: parseFloat(formData.pack_size.toString()) || 1,
@@ -164,9 +204,11 @@ export default function VendorItemsPage() {
 
   const handleEdit = (item: VendorItem) => {
     setEditingItem(item);
+    void fetchVendorAddresses(item.vendor_id);
     setFormData({
       vendor_id: item.vendor_id,
       catalog_item_id: item.catalog_item_id,
+      vendor_address_id: item.vendor_address_id || '',
       vendor_sku: item.vendor_sku,
       vendor_uom_term_id: item.vendor_uom_term_id || '',
       pack_size: item.pack_size || 1,
@@ -203,6 +245,7 @@ export default function VendorItemsPage() {
     setFormData({
       vendor_id: '',
       catalog_item_id: '',
+      vendor_address_id: '',
       vendor_sku: '',
       vendor_uom_term_id: '',
       pack_size: 1,
@@ -221,7 +264,7 @@ export default function VendorItemsPage() {
   const handleSelectPriceItem = (catalogItemId: string) => {
     setPriceItemId(catalogItemId);
     const rows = vendorItems.filter((vi) => vi.catalog_item_id === catalogItemId);
-    setPriceVendorIds(new Set(rows.map((r) => r.vendor_id)));
+    setPriceRowIds(new Set(rows.map((r) => r.id)));
     // Prefill with the most common current price so "same price everywhere" is one keystroke away
     const costs = rows.map((r) => r.unit_cost).filter((c): c is number => c != null);
     setPriceValue(costs.length ? String(costs.sort((a, b) => a - b)[Math.floor(costs.length / 2)]) : '');
@@ -230,18 +273,18 @@ export default function VendorItemsPage() {
   const handleBulkPrice = async (e: React.FormEvent) => {
     e.preventDefault();
     const cost = parseFloat(priceValue);
-    if (!priceItemId || isNaN(cost) || cost < 0 || priceVendorIds.size === 0) return;
+    if (!priceItemId || isNaN(cost) || cost < 0 || priceRowIds.size === 0) return;
     setPriceSaving(true);
     try {
-      const allSelected = priceRows.every((r) => priceVendorIds.has(r.vendor_id));
+      const allSelected = priceRows.every((r) => priceRowIds.has(r.id));
       await SupplyChainRPC.bulkUpdateVendorItemPrice(
-        priceItemId, cost, allSelected ? undefined : [...priceVendorIds]
+        priceItemId, cost, allSelected ? undefined : [...priceRowIds]
       );
       await fetchVendorItems();
       setShowPriceModal(false);
       setPriceItemId('');
       setPriceValue('');
-      setPriceVendorIds(new Set());
+      setPriceRowIds(new Set());
     } catch (error) {
       console.error('Error updating material pricing:', error);
       alert(error instanceof Error ? error.message : 'Failed to update pricing');
@@ -396,7 +439,14 @@ export default function VendorItemsPage() {
                     <div className="text-sm text-gray-500">{item.catalog_item?.sku}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{item.vendor?.name}</div>
+                    <div className="text-sm text-gray-900">
+                      {item.vendor?.name}
+                      {item.vendor_address_id && (
+                        <span className="ml-2 text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                          {branchLabel(item.vendor_id, item.vendor_address_id)}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-sm text-gray-500">{item.vendor?.code}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -497,20 +547,20 @@ export default function VendorItemsPage() {
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-sm font-medium text-gray-700">
-                          Apply to {priceVendorIds.size} of {priceRows.length} vendors
+                          Apply to {priceRowIds.size} of {priceRows.length} prices
                         </label>
                         <button
                           type="button"
                           className="text-xs text-blue-600 hover:underline"
                           onClick={() =>
-                            setPriceVendorIds(
-                              priceVendorIds.size === priceRows.length
+                            setPriceRowIds(
+                              priceRowIds.size === priceRows.length
                                 ? new Set()
-                                : new Set(priceRows.map((r) => r.vendor_id))
+                                : new Set(priceRows.map((r) => r.id))
                             )
                           }
                         >
-                          {priceVendorIds.size === priceRows.length ? 'Clear all' : 'Select all'}
+                          {priceRowIds.size === priceRows.length ? 'Clear all' : 'Select all'}
                         </button>
                       </div>
                       <div className="border border-gray-200 rounded-lg divide-y max-h-64 overflow-y-auto">
@@ -522,16 +572,23 @@ export default function VendorItemsPage() {
                             <span className="flex items-center gap-2">
                               <input
                                 type="checkbox"
-                                checked={priceVendorIds.has(row.vendor_id)}
+                                checked={priceRowIds.has(row.id)}
                                 onChange={(e) => {
-                                  const next = new Set(priceVendorIds);
-                                  if (e.target.checked) next.add(row.vendor_id);
-                                  else next.delete(row.vendor_id);
-                                  setPriceVendorIds(next);
+                                  const next = new Set(priceRowIds);
+                                  if (e.target.checked) next.add(row.id);
+                                  else next.delete(row.id);
+                                  setPriceRowIds(next);
                                 }}
                                 className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                               />
-                              {vendorMap.get(row.vendor_id)?.name || row.vendor_id}
+                              <span>
+                                {vendorMap.get(row.vendor_id)?.name || row.vendor_id}
+                                {row.vendor_address_id && (
+                                  <span className="ml-1 text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                                    {branchLabel(row.vendor_id, row.vendor_address_id)}
+                                  </span>
+                                )}
+                              </span>
                             </span>
                             <span className="text-gray-500">
                               {row.unit_cost != null ? `$${row.unit_cost.toFixed(2)}` : '—'}
@@ -539,6 +596,9 @@ export default function VendorItemsPage() {
                           </label>
                         ))}
                       </div>
+                      <p className="mt-1 text-xs text-gray-400">
+                        Purple tags are branch-specific prices; untagged rows are the vendor&apos;s company-wide default.
+                      </p>
                     </div>
                   </>
                 )}
@@ -553,10 +613,10 @@ export default function VendorItemsPage() {
                   </button>
                   <button
                     type="submit"
-                    disabled={priceSaving || !priceItemId || priceVendorIds.size === 0}
+                    disabled={priceSaving || !priceItemId || priceRowIds.size === 0}
                     className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {priceSaving ? 'Updating…' : `Update ${priceVendorIds.size} price${priceVendorIds.size === 1 ? '' : 's'}`}
+                    {priceSaving ? 'Updating…' : `Update ${priceRowIds.size} price${priceRowIds.size === 1 ? '' : 's'}`}
                   </button>
                 </div>
               </form>
@@ -584,9 +644,10 @@ export default function VendorItemsPage() {
                       required
                       disabled={!!editingItem}
                       value={formData.vendor_id}
-                      onChange={(e) =>
-                        setFormData({ ...formData, vendor_id: e.target.value })
-                      }
+                      onChange={(e) => {
+                        setFormData({ ...formData, vendor_id: e.target.value, vendor_address_id: '' });
+                        void fetchVendorAddresses(e.target.value);
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                     >
                       <option value="">Select vendor...</option>
@@ -596,6 +657,30 @@ export default function VendorItemsPage() {
                         </option>
                       ))}
                     </select>
+                    {formData.vendor_id && (vendorAddresses[formData.vendor_id]?.length ?? 0) > 0 && (
+                      <>
+                        <label className="block text-sm font-medium text-gray-700 mb-1 mt-2">
+                          Branch / Plant
+                        </label>
+                        <select
+                          value={formData.vendor_address_id}
+                          onChange={(e) =>
+                            setFormData({ ...formData, vendor_address_id: e.target.value })
+                          }
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">All locations (company default)</option>
+                          {(vendorAddresses[formData.vendor_id] || []).map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.label?.split(' (')[0] || [a.city, a.state].filter(Boolean).join(', ') || a.id}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Pick a branch to price this item for that location only — it overrides the company default.
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div>

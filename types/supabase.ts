@@ -3066,6 +3066,7 @@ export type Database = {
           tenant_id: string | null
           unit_cost: number | null
           updated_at: string | null
+          vendor_address_id: string | null
           vendor_id: string | null
           vendor_sku: string | null
           vendor_uom_term_id: string | null
@@ -3083,6 +3084,7 @@ export type Database = {
           tenant_id?: string | null
           unit_cost?: number | null
           updated_at?: string | null
+          vendor_address_id?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
           vendor_uom_term_id?: string | null
@@ -3100,6 +3102,7 @@ export type Database = {
           tenant_id?: string | null
           unit_cost?: number | null
           updated_at?: string | null
+          vendor_address_id?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
           vendor_uom_term_id?: string | null
@@ -4545,6 +4548,7 @@ export type Database = {
           tenant_id: string
           unit_cost: number | null
           updated_at: string
+          vendor_address_id: string | null
           vendor_id: string
           vendor_sku: string
           vendor_uom_term_id: string | null
@@ -4563,6 +4567,7 @@ export type Database = {
           tenant_id: string
           unit_cost?: number | null
           updated_at?: string
+          vendor_address_id?: string | null
           vendor_id: string
           vendor_sku: string
           vendor_uom_term_id?: string | null
@@ -4581,6 +4586,7 @@ export type Database = {
           tenant_id?: string
           unit_cost?: number | null
           updated_at?: string
+          vendor_address_id?: string | null
           vendor_id?: string
           vendor_sku?: string
           vendor_uom_term_id?: string | null

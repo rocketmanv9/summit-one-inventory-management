@@ -45,11 +45,18 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
   // tenant_id is NOT NULL and not auto-injected under the service-role client, and
   // the client payload may omit it — set it explicitly. Upsert on the natural key
-  // for retry safety.
+  // for retry safety. vendor_address_id null = company-wide default price; the
+  // unique constraint is NULLS NOT DISTINCT so the 4-column conflict target
+  // covers both default and branch-override rows.
   const { data, error } = await sc.from('vendor_items')
     .upsert(
-      { ...body, tenant_id: ctx.tenantId, last_event_id: idempotencyKey },
-      { onConflict: 'tenant_id,vendor_id,catalog_item_id' }
+      {
+        ...body,
+        vendor_address_id: body.vendor_address_id ?? null,
+        tenant_id: ctx.tenantId,
+        last_event_id: idempotencyKey,
+      },
+      { onConflict: 'tenant_id,vendor_id,catalog_item_id,vendor_address_id' }
     )
     .select()
     .single();
