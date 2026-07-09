@@ -3,7 +3,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Star, Package } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Package, DollarSign } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -65,6 +65,11 @@ export default function VendorItemsPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<VendorItem | null>(null);
+  const [showPriceModal, setShowPriceModal] = useState(false);
+  const [priceItemId, setPriceItemId] = useState('');
+  const [priceValue, setPriceValue] = useState('');
+  const [priceVendorIds, setPriceVendorIds] = useState<Set<string>>(new Set());
+  const [priceSaving, setPriceSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [filterPreferred, setFilterPreferred] = useState<boolean | null>(null);
@@ -210,8 +215,47 @@ export default function VendorItemsPage() {
     });
   };
 
+  // Rows for the bulk price modal: every vendor carrying the selected material
+  const priceRows = vendorItems.filter((vi) => vi.catalog_item_id === priceItemId);
+
+  const handleSelectPriceItem = (catalogItemId: string) => {
+    setPriceItemId(catalogItemId);
+    const rows = vendorItems.filter((vi) => vi.catalog_item_id === catalogItemId);
+    setPriceVendorIds(new Set(rows.map((r) => r.vendor_id)));
+    // Prefill with the most common current price so "same price everywhere" is one keystroke away
+    const costs = rows.map((r) => r.unit_cost).filter((c): c is number => c != null);
+    setPriceValue(costs.length ? String(costs.sort((a, b) => a - b)[Math.floor(costs.length / 2)]) : '');
+  };
+
+  const handleBulkPrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cost = parseFloat(priceValue);
+    if (!priceItemId || isNaN(cost) || cost < 0 || priceVendorIds.size === 0) return;
+    setPriceSaving(true);
+    try {
+      const allSelected = priceRows.every((r) => priceVendorIds.has(r.vendor_id));
+      await SupplyChainRPC.bulkUpdateVendorItemPrice(
+        priceItemId, cost, allSelected ? undefined : [...priceVendorIds]
+      );
+      await fetchVendorItems();
+      setShowPriceModal(false);
+      setPriceItemId('');
+      setPriceValue('');
+      setPriceVendorIds(new Set());
+    } catch (error) {
+      console.error('Error updating material pricing:', error);
+      alert(error instanceof Error ? error.message : 'Failed to update pricing');
+    } finally {
+      setPriceSaving(false);
+    }
+  };
+
   const vendorMap = new Map(vendors.map((vendor) => [vendor.id, vendor]));
   const catalogMap = new Map(catalogItems.map((item) => [item.id, item]));
+
+  // Only materials that actually have vendor mappings belong in the price dropdown
+  const mappedItemIds = new Set(vendorItems.map((vi) => vi.catalog_item_id));
+  const priceableItems = catalogItems.filter((ci) => mappedItemIds.has(ci.id));
 
   const enrichedVendorItems: EnrichedVendorItem[] = vendorItems.map((item) => ({
     ...item,
@@ -287,6 +331,14 @@ export default function VendorItemsPage() {
           <option value="true">Preferred Only</option>
           <option value="false">Non-Preferred</option>
         </select>
+
+        <button
+          onClick={() => setShowPriceModal(true)}
+          className="px-4 py-2 border border-emerald-600 text-emerald-700 rounded-lg hover:bg-emerald-50 flex items-center gap-2"
+        >
+          <DollarSign className="w-4 h-4" />
+          Update Pricing
+        </button>
 
         <button
           onClick={() => setShowModal(true)}
@@ -395,6 +447,123 @@ export default function VendorItemsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Bulk price update modal */}
+      {showPriceModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <h2 className="text-xl font-bold mb-1">Update Material Pricing</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Set one price for a material across every vendor that carries it, or uncheck
+                vendors that quoted differently and update them separately.
+              </p>
+
+              <form onSubmit={handleBulkPrice} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Material *</label>
+                  <select
+                    required
+                    value={priceItemId}
+                    onChange={(e) => handleSelectPriceItem(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Select material...</option>
+                    {priceableItems.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.sku} - {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {priceItemId && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        New Unit Cost *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        value={priceValue}
+                        onChange={(e) => setPriceValue(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Apply to {priceVendorIds.size} of {priceRows.length} vendors
+                        </label>
+                        <button
+                          type="button"
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={() =>
+                            setPriceVendorIds(
+                              priceVendorIds.size === priceRows.length
+                                ? new Set()
+                                : new Set(priceRows.map((r) => r.vendor_id))
+                            )
+                          }
+                        >
+                          {priceVendorIds.size === priceRows.length ? 'Clear all' : 'Select all'}
+                        </button>
+                      </div>
+                      <div className="border border-gray-200 rounded-lg divide-y max-h-64 overflow-y-auto">
+                        {priceRows.map((row) => (
+                          <label
+                            key={row.id}
+                            className="flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-gray-50"
+                          >
+                            <span className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={priceVendorIds.has(row.vendor_id)}
+                                onChange={(e) => {
+                                  const next = new Set(priceVendorIds);
+                                  if (e.target.checked) next.add(row.vendor_id);
+                                  else next.delete(row.vendor_id);
+                                  setPriceVendorIds(next);
+                                }}
+                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                              />
+                              {vendorMap.get(row.vendor_id)?.name || row.vendor_id}
+                            </span>
+                            <span className="text-gray-500">
+                              {row.unit_cost != null ? `$${row.unit_cost.toFixed(2)}` : '—'}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPriceModal(false)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={priceSaving || !priceItemId || priceVendorIds.size === 0}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {priceSaving ? 'Updating…' : `Update ${priceVendorIds.size} price${priceVendorIds.size === 1 ? '' : 's'}`}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal */}
       {showModal && (

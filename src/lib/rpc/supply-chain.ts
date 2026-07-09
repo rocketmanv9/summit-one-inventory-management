@@ -442,6 +442,17 @@ export const SupplyChainRPC = {
   },
 
   /**
+   * Set one price for a material across all (or a subset of) vendors that
+   * carry it. Also refreshes last_known_price / price_checked_at.
+   */
+  async bulkUpdateVendorItemPrice(catalogItemId: string, unitCost: number, vendorIds?: string[]) {
+    return writeJson<{ updated: number; vendor_items: Array<Pick<VendorItemRow, 'id' | 'vendor_id' | 'unit_cost'>> }>(
+      '/api/inventory/vendor-items/bulk-price', 'POST',
+      { catalog_item_id: catalogItemId, unit_cost: unitCost, ...(vendorIds?.length ? { vendor_ids: vendorIds } : {}) },
+      'Failed to update material pricing');
+  },
+
+  /**
    * Get purchase orders
    * Table: supply_chain.purchase_orders (via compatibility view)
    */
