@@ -21,11 +21,15 @@ export interface MyCountItem {
 
 /** Statuses where the count still needs the assignee's attention. */
 const ACTIVE_COUNT_STATUSES = ['draft', 'scheduled', 'in_progress', 'under_review'];
+/** Finished-business statuses shown under the "Previous" toggle. */
+const PREVIOUS_COUNT_STATUSES = ['posted', 'approved', 'cancelled'];
 
 // GET /api/inventory/count-schedule/my — everything cycle-count-related
 // assigned to the signed-in user: upcoming/overdue schedule entries plus
 // already-created counts they haven't finished.
-export const GET = createSessionReadRoute(async ({ session, log }) => {
+// ?scope=previous returns the user's finished counts instead
+// (posted/approved/cancelled, newest first).
+export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const supabase = await createTenantServiceClient({
     url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -33,6 +37,38 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
   });
 
   const inv = (supabase as any).schema('inventory');
+  const scope = new URL(req.url).searchParams.get('scope');
+
+  if (scope === 'previous') {
+    const { data, error } = await inv.from('cycle_counts')
+      .select('id, count_number, status, count_type, is_blind, scheduled_for, updated_at, location:locations(name)')
+      .eq('tenant_id', session.tenantId)
+      .eq('counted_by_user_id', session.userId)
+      .in('status', PREVIOUS_COUNT_STATUSES)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      log.error('count_schedule.my.previous_failed', { error: error.message });
+      throw AppError.internal(error.message);
+    }
+
+    const items: MyCountItem[] = (data || []).map((c: any) => ({
+      kind: 'count',
+      schedule_entry_id: null,
+      cycle_count_id: c.id,
+      template_name: `Count ${c.count_number}`,
+      location_name: c.location?.name ?? null,
+      count_type: c.count_type,
+      is_blind: c.is_blind ?? false,
+      scheduled_date: c.scheduled_for,
+      count_number: c.count_number,
+      count_status: c.status,
+      entry_status: null,
+      overdue: false,
+    }));
+    return Response.json({ data: items });
+  }
   const today = new Date().toISOString().slice(0, 10);
   const horizon = new Date();
   horizon.setDate(horizon.getDate() + 60);
