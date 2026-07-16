@@ -70,3 +70,4 @@ supabase/.env
 .chassis-init.json
 .env*.local
 .mcp.json
+.claude/
