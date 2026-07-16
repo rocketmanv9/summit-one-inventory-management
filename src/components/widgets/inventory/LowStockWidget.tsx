@@ -143,10 +143,10 @@ export function LowStockWidget({ widget }: { widget: DashboardWidget }) {
             {items.length > 10 && (
               <div className="text-center pt-3 border-t">
                 <Link
-                  href="/inventory/alerts"
+                  href="/inventory/stock?filter=low"
                   className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                 >
-                  View all {items.length} alerts →
+                  View all {items.length} low-stock items →
                 </Link>
               </div>
             )}

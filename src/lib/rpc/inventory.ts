@@ -2451,25 +2451,6 @@ export const InventoryRPC = {
   },
 
   /**
-   * Auto-create draft PO from reorder alert
-   * RPC: inventory.auto_create_draft_po
-   */
-  async autoCreateDraftPO(alertId: string): Promise<string | null> {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase.rpc('auto_create_draft_po', {
-      p_alert_id: alertId,
-      p_tenant_id: tenantId,
-    });
-
-    if (error) {
-      throw AppError.internal(`Failed to auto-create draft PO: ${error.message}`);
-    }
-
-    return data as string | null;
-  },
-
-  /**
    * Wizard: Create item with optional inline dependencies + initial stock
    * RPC: inventory.rpc_wizard_create_item
    *

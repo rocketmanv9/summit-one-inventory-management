@@ -198,7 +198,7 @@ async function processTenant(
       type: 'usage_alert',
       title: `Unusual material usage: ${parts.join(', ')}`,
       body: usageAlerts.slice(0, 4).map((a) => a.detail).join(' · '),
-      link: '/inventory/usage-trends',
+      link: '/inventory/stock',
       eventKey: `agent_usage_${tenantId}_${runId}`,
     });
     result.notified = true;

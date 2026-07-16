@@ -121,7 +121,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: AlertTriangle,
       color: 'text-yellow-600',
       bgColor: 'bg-yellow-50',
-      href: '/inventory/alerts',
+      href: '/inventory/stock?filter=low',
     },
     {
       label: 'Out of Stock',

@@ -773,7 +773,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             success: true,
             message: `Found ${items.length} low stock item(s):\n\n${list}`,
             data: items,
-            navigateTo: '/inventory/alerts',
+            navigateTo: '/inventory/stock?filter=low',
           };
         },
       };
@@ -1735,7 +1735,7 @@ export function resolveNavigation(message: string): string | null {
     '/inventory/assets': ['assets', 'equipment'],
     '/inventory/categories': ['categories'],
     '/inventory/movements': ['movements', 'stock movements'],
-    '/inventory/alerts': ['alerts', 'low stock'],
+    '/inventory/stock?filter=low': ['alerts', 'low stock'],
     '/settings': ['settings', 'configuration'],
   };
 
