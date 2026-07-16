@@ -1725,8 +1725,7 @@ export function resolveNavigation(message: string): string | null {
   const lower = message.toLowerCase();
   const routes: Record<string, string[]> = {
     '/dashboard': ['dashboard', 'home'],
-    '/inventory/stock': ['stock', 'stock levels', 'inventory levels'],
-    '/inventory/items': ['items', 'catalog'],
+    '/inventory/stock': ['stock', 'stock levels', 'inventory levels', 'items', 'catalog'],
     '/inventory/vendors': ['vendors', 'suppliers'],
     '/inventory/purchasing': ['purchasing', 'purchase orders', 'pos'],
     '/inventory/locations': ['locations', 'warehouses', 'yards'],

@@ -21,6 +21,7 @@ export function PageTabs() {
   if (!group) return null;
 
   const visible = group.filter((tab) => {
+    if (tab.hidden) return false;
     if (tab.requiresDeveloper && !isDeveloper) return false;
     if (tab.requiresAdminOrDev && !isAdminOrDev) return false;
     if (!can(tab.capability)) return false;

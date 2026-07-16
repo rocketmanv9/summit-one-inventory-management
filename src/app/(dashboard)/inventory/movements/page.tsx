@@ -31,6 +31,12 @@ export default function StockMovementsPage() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [selectedMovement, setSelectedMovement] = useState<StockMovement | null>(null);
 
+  // ?item=<catalog_item_id> deep-links from the Inventory page's "Full history".
+  useEffect(() => {
+    const itemParam = new URLSearchParams(window.location.search).get('item');
+    if (itemParam) setFilters((prev) => ({ ...prev, catalog_item_id: itemParam }));
+  }, []);
+
   useEffect(() => {
     fetchMovements();
   }, [filters]);

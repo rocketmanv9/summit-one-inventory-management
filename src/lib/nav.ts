@@ -3,9 +3,6 @@ import {
   LayoutDashboard,
   Bot,
   Boxes,
-  Package,
-  Tags,
-  MapPin,
   Activity,
   Truck,
   Wrench,
@@ -60,6 +57,12 @@ export interface NavTab {
   capability?: string;
   /** Opens in a new tab (external tool). */
   external?: boolean;
+  /**
+   * Not rendered in the tab strip, but still owns its routes: keeps the
+   * section's capability gate and sidebar highlight for pages reached from
+   * within a page (e.g. /inventory/categories from the Inventory page menu).
+   */
+  hidden?: boolean;
 }
 
 export interface NavSection {
@@ -100,11 +103,15 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: Boxes,
     capability: 'inventory',
     tabs: [
-      { title: 'Stock Balances', href: '/inventory/stock', icon: Boxes },
-      { title: 'Items', href: '/inventory/items', icon: Package },
-      { title: 'Categories', href: '/inventory/categories', icon: Tags },
-      { title: 'Locations', href: '/inventory/locations', icon: MapPin },
+      // One item-centric page: catalog + balances + quick add. Categories,
+      // locations, and the item detail/wizard routes still exist but are
+      // reached from the page itself, not the nav.
+      { title: 'Inventory', href: '/inventory/stock', icon: Boxes },
       { title: 'Movements', href: '/inventory/movements', icon: Activity },
+      // Hidden ownership entries — reached from the Inventory page itself.
+      { title: 'Items', href: '/inventory/items', icon: Boxes, hidden: true },
+      { title: 'Categories', href: '/inventory/categories', icon: Boxes, hidden: true },
+      { title: 'Locations', href: '/inventory/locations', icon: Boxes, hidden: true },
     ],
   },
   {
