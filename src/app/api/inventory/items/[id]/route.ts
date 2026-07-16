@@ -77,8 +77,6 @@ const LEDGER_REFS = [
 const INCIDENTAL_REFS = [
   { schema: 'inventory', table: 'cycle_count_snapshot_skus', column: 'catalog_item_id' },
   { schema: 'inventory', table: 'cycle_count_variance_thresholds', column: 'catalog_item_id' },
-  { schema: 'inventory', table: 'item_location_par_levels', column: 'catalog_item_id' },
-  { schema: 'inventory', table: 'inventory_levels', column: 'catalog_item_id' },
   { schema: 'inventory', table: 'daily_item_activity', column: 'catalog_item_id' },
   { schema: 'inventory', table: 'negative_inventory_config', column: 'catalog_item_id' },
   { schema: 'inventory', table: 'mobile_onboarding_lines', column: 'catalog_item_id' },

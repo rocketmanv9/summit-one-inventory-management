@@ -17,8 +17,6 @@ type CatalogItemUpdate = Database['inventory']['Tables']['catalog_items']['Updat
 type ItemCategoryRow = Database['inventory']['Tables']['item_categories']['Row'];
 type ItemCategoryInsert = Database['inventory']['Tables']['item_categories']['Insert'];
 type ItemCategoryUpdate = Database['inventory']['Tables']['item_categories']['Update'];
-type InventoryLevelRow = Database['inventory']['Tables']['inventory_levels']['Row'];
-type InventoryLevelInsert = Database['inventory']['Tables']['inventory_levels']['Insert'];
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
 type LocationInsert = Database['inventory']['Tables']['locations']['Insert'];
 type LocationUpdate = Database['inventory']['Tables']['locations']['Update'];
@@ -80,7 +78,6 @@ type CatalogItemWithCategory = {
 };
 type CatalogItemInsertPayload = Omit<CatalogItemInsert, 'tenant_id'> & { tenant_id?: string };
 type CatalogItemUpdatePayload = Omit<CatalogItemUpdate, 'tenant_id'> & { tenant_id?: string };
-type InventoryLevelInsertPayload = Omit<InventoryLevelInsert, 'tenant_id'> & { tenant_id?: string };
 type ItemCategoryInsertPayload = Omit<ItemCategoryInsert, 'tenant_id'> & { tenant_id?: string };
 type ItemCategoryUpdatePayload = Omit<ItemCategoryUpdate, 'tenant_id'> & { tenant_id?: string };
 type LocationInsertPayload = Omit<LocationInsert, 'tenant_id'> & { tenant_id?: string };
@@ -687,32 +684,6 @@ export const InventoryRPC = {
     }
 
     return parseReferenceLinks((data as any)?.reference_links);
-  },
-
-  /**
-   * Get inventory levels for a catalog item
-   * Table: inventory.inventory_levels
-   */
-  async getInventoryLevelsForItem(catalogItemId: string): Promise<InventoryLevelRow[]> {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('inventory_levels')
-      .select('id, location_id, current_stock, reorder_point, target_stock')
-      .eq('catalog_item_id', catalogItemId);
-
-    if (error) {
-      throw AppError.internal(`Failed to fetch inventory levels: ${error.message}`);
-    }
-
-    return (data || []) as InventoryLevelRow[];
-  },
-
-  /**
-   * Upsert inventory levels
-   * Table: inventory.inventory_levels
-   */
-  async upsertInventoryLevels(payload: InventoryLevelInsertPayload[]) {
-    await writeJson('/api/inventory/inventory-levels', 'POST', payload, 'Failed to save inventory levels');
   },
 
   /**
