@@ -503,7 +503,7 @@ export default function InventoryPage() {
   const printFilteredLabels = () => {
     const labels: BarcodeLabelItem[] = filteredRows
       .filter((r) => (r.item as any).barcode || r.item.sku)
-      .map((r) => ({ code: (((r.item as any).barcode || r.item.sku) as string), label: r.item.name }));
+      .map((r) => ({ code: (((r.item as any).barcode || r.item.sku) as string), label: r.item.name, kind: 'stock' as const }));
     if (labels.length === 0) {
       alert('No items with a barcode/SKU in the current view.');
       return;

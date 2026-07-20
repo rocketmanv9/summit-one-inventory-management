@@ -270,6 +270,7 @@ export default function AssetsPage() {
               setBarcodeItems([{
                 code: row.asset_tag,
                 label: `${row.asset_tag}${row.catalog_item?.name ? ` - ${row.catalog_item.name}` : ''}`,
+                kind: 'individual',
               }]);
             }}
             className="px-2 py-1 text-xs bg-purple-100 text-purple-800 rounded hover:bg-purple-200"

@@ -647,13 +647,13 @@ export default function NewItemWizardPage() {
     // Catalog-level barcode label
     const barcodeCode = result.item_barcode || result.item_sku;
     if (barcodeCode) {
-      items.push({ code: barcodeCode, label: form.name });
+      items.push({ code: barcodeCode, label: form.name, kind: 'stock' });
     }
 
     // Asset tag labels
     if (result.created_asset_tags && result.created_asset_tags.length > 0) {
       for (const tag of result.created_asset_tags) {
-        items.push({ code: tag, label: `${tag} - ${form.name}` });
+        items.push({ code: tag, label: `${tag} - ${form.name}`, kind: 'individual' });
       }
     }
 

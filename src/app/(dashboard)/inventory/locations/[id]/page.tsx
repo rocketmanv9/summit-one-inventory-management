@@ -70,14 +70,14 @@ export default function LocationDetailPage() {
     () =>
       (snapshot?.items || [])
         .filter((i) => i.sku)
-        .map((i) => ({ code: i.sku!, label: i.item_name })),
+        .map((i) => ({ code: i.sku!, label: i.item_name, kind: 'stock' as const })),
     [snapshot]
   );
   const printableAssets = useMemo<BarcodeLabelItem[]>(
     () =>
       (snapshot?.assets || [])
         .filter((a) => a.asset_tag)
-        .map((a) => ({ code: a.asset_tag, label: a.item_name || a.asset_tag })),
+        .map((a) => ({ code: a.asset_tag, label: a.item_name || a.asset_tag, kind: 'individual' as const })),
     [snapshot]
   );
   const itemsWithoutSku = (snapshot?.items.length || 0) - printableItems.length;

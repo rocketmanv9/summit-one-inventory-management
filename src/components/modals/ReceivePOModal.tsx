@@ -154,13 +154,11 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
       }
       onReceived();
       // Stay open on a success panel offering labels for what just arrived.
-      const labels: BarcodeLabelItem[] = catalogToReceive
-        .map((r) => {
-          const item = catalogItems.get(r.catalog_item_id);
-          const code = item?.barcode || item?.sku;
-          return code ? { code, label: item?.name || code } : null;
-        })
-        .filter((l): l is BarcodeLabelItem => l !== null);
+      const labels: BarcodeLabelItem[] = catalogToReceive.flatMap((r) => {
+        const item = catalogItems.get(r.catalog_item_id);
+        const code = item?.barcode || item?.sku;
+        return code ? [{ code, label: item?.name || code, kind: 'stock' as const }] : [];
+      });
       setReceivedLabels(labels);
     } catch (err: any) {
       // Surface guardrail errors (e.g. OVER_RECEIPT_BLOCKED) and chassis envelopes

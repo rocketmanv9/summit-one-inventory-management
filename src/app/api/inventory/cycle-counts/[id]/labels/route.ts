@@ -64,7 +64,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .eq('counted_present', true)
     .limit(2000);
 
-  const labels: Array<{ code: string; label: string }> = [];
+  const labels: Array<{ code: string; label: string; kind: 'stock' | 'individual' }> = [];
   let retagged = 0;
 
   // Per-item next sequence for placeholder retagging — seed from existing tags.
@@ -111,7 +111,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         retagged++;
       }
     }
-    labels.push({ code: tag, label: `${tag} — ${item?.name || 'Item'}` });
+    labels.push({ code: tag, label: `${tag} — ${item?.name || 'Item'}`, kind: 'individual' });
   }
 
   // Fungible items: one catalog-level label per counted line (by barcode/SKU).
@@ -125,7 +125,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     seenCatalog.add(line.catalog_item_id);
     const item: any = itemById.get(line.catalog_item_id);
     const code = item?.barcode || item?.sku;
-    if (code) labels.push({ code, label: item?.name || code });
+    if (code) labels.push({ code, label: item?.name || code, kind: 'stock' });
   }
 
   log.info('cycle_count_labels.built', { cycleCountId, labelCount: labels.length, retagged });

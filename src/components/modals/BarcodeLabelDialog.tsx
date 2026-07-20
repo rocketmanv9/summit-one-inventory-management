@@ -7,7 +7,35 @@ import QRCode from 'qrcode';
 export interface BarcodeLabelItem {
   code: string;
   label: string;
+  /**
+   * What kind of label this is:
+   *  - 'stock'      — identical catalog labels; every printed label reads the
+   *                   same (item barcode/SKU). Quantity comes from Copies.
+   *  - 'individual' — one-of-a-kind label for a single unit (asset tag /
+   *                   serial); no two labels match.
+   * Untagged items print as before with no kind messaging.
+   */
+  kind?: 'stock' | 'individual';
 }
+
+type KindFilter = 'all' | 'stock' | 'individual';
+
+const KIND_META = {
+  stock: {
+    title: 'Stock labels',
+    blurb: 'Every label reads the same — the item barcode/SKU. Use Copies for how many you need.',
+    badge: 'STOCK',
+    className: 'bg-blue-50 border-blue-200 text-blue-800',
+    chip: 'bg-blue-100 text-blue-700',
+  },
+  individual: {
+    title: 'Individual labels',
+    blurb: 'Each label is unique to one unit (asset tag / serial). One label per unit.',
+    badge: 'UNIT',
+    className: 'bg-purple-50 border-purple-200 text-purple-800',
+    chip: 'bg-purple-100 text-purple-700',
+  },
+} as const;
 
 type LabelFormat = 'both' | 'barcode' | 'qr';
 type OutputMode = 'sheet' | 'ptouch';
@@ -42,6 +70,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
   const [copies, setCopies] = useState(1);
   const [output, setOutput] = useState<OutputMode>('sheet');
   const [tapeWidth, setTapeWidth] = useState<TapeWidth>(24);
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
 
   useEffect(() => {
     const saved = localStorage.getItem(OUTPUT_STORAGE_KEY);
@@ -55,9 +84,24 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
     localStorage.setItem(OUTPUT_STORAGE_KEY, mode);
   };
 
+  // Stock vs individual: when the batch mixes both kinds, a switcher picks
+  // which set prints; a single-kind batch gets an explicit banner instead so
+  // it's never ambiguous whether these labels all read the same.
+  const stockCount = items.filter((i) => i.kind === 'stock').length;
+  const individualCount = items.filter((i) => i.kind === 'individual').length;
+  const mixed = stockCount > 0 && individualCount > 0;
+  const soleKind: 'stock' | 'individual' | null = mixed
+    ? null
+    : stockCount > 0
+      ? 'stock'
+      : individualCount > 0
+        ? 'individual'
+        : null;
+  const activeItems = mixed && kindFilter !== 'all' ? items.filter((i) => i.kind === kindFilter) : items;
+
   // Build the final list of labels (items × copies)
   const labels: BarcodeLabelItem[] = [];
-  for (const item of items) {
+  for (const item of activeItems) {
     for (let i = 0; i < copies; i++) {
       labels.push(item);
     }
@@ -134,6 +178,42 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
               &#10005;
             </button>
           </div>
+
+          {/* Stock vs individual — banner for a single-kind batch, switcher for a mix */}
+          {soleKind ? (
+            <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${KIND_META[soleKind].className}`}>
+              <span className="font-semibold">{KIND_META[soleKind].title}:</span> {KIND_META[soleKind].blurb}
+            </div>
+          ) : mixed ? (
+            <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Printing:</span>
+                <div className="flex rounded-lg border overflow-hidden bg-white">
+                  {([
+                    ['all', `Both (${stockCount + individualCount})`],
+                    ['stock', `Stock (${stockCount})`],
+                    ['individual', `Individual (${individualCount})`],
+                  ] as const).map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => setKindFilter(val)}
+                      className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                        kindFilter === val
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-1 text-xs text-gray-500">
+                <span className="font-medium text-blue-700">Stock</span> labels all read the same (item barcode) ·{' '}
+                <span className="font-medium text-purple-700">Individual</span> labels are unique to one unit (asset tag)
+              </div>
+            </div>
+          ) : null}
 
           {/* Options */}
           <div className="flex flex-wrap items-center gap-4">
@@ -317,7 +397,15 @@ function BarcodeLabel({ item, entityType, format }: {
   const entityLabel = entityType === 'asset' ? 'Asset' : entityType === 'item' ? 'Item' : 'Tool';
 
   return (
-    <div className="border rounded p-2 flex flex-col items-center gap-1 overflow-hidden print:border-gray-300 print:p-1.5 print:break-inside-avoid">
+    <div className="relative border rounded p-2 flex flex-col items-center gap-1 overflow-hidden print:border-gray-300 print:p-1.5 print:break-inside-avoid">
+      {/* Screen-only kind chip — never printed */}
+      {item.kind ? (
+        <span
+          className={`absolute top-1 right-1 rounded px-1 py-0.5 text-[8px] font-bold tracking-wide print:hidden ${KIND_META[item.kind].chip}`}
+        >
+          {KIND_META[item.kind].badge}
+        </span>
+      ) : null}
       <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
         {entityLabel}
       </div>

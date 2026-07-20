@@ -599,7 +599,7 @@ export default function ItemDetailPage() {
         {/* Label print dialog */}
         {showLabelDialog && (
           <BarcodeLabelDialog
-            items={[{ code: barcode || item.sku, label: item.name }]}
+            items={[{ code: barcode || item.sku, label: item.name, kind: 'stock' }]}
             entityType="item"
             onClose={() => setShowLabelDialog(false)}
           />
