@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { AssetTypeClassFields } from '@/components/assets/AssetTypeClassFields';
+import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -53,6 +54,8 @@ export function CreateAssetModal({
   const [customTags, setCustomTags] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Tags minted by a successful create — triggers the print-labels prompt.
+  const [createdTags, setCreatedTags] = useState<string[] | null>(null);
 
   useEffect(() => {
     fetchCatalogItems();
@@ -133,7 +136,9 @@ export function CreateAssetModal({
         } as any);
       }
 
-      onComplete();
+      // Every new unit just got its own tag — prompt for labels immediately so
+      // nothing enters circulation unlabeled (closing the dialog completes).
+      setCreatedTags(tagsToCreate);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -143,6 +148,17 @@ export function CreateAssetModal({
 
   const inputClass = 'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary';
   const quantity = parseInt(form.quantity.toString());
+
+  if (createdTags) {
+    return (
+      <BarcodeLabelDialog
+        items={createdTags.map((tag) => ({ code: tag, label: tag, kind: 'individual' as const }))}
+        entityType="asset"
+        warning={`${createdTags.length} new unit${createdTags.length === 1 ? ' was' : 's were'} just tagged — print their individual labels now so nothing enters circulation unlabeled.`}
+        onClose={onComplete}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
