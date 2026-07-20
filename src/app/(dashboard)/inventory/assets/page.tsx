@@ -77,6 +77,7 @@ export default function AssetsPage() {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [assignmentTypes, setAssignmentTypes] = useState<AssignmentTypeRow[]>([]);
   const [barcodeItems, setBarcodeItems] = useState<BarcodeLabelItem[] | null>(null);
+  const [barcodeWarning, setBarcodeWarning] = useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -267,6 +268,20 @@ export default function AssetsPage() {
           <button
             onClick={(e) => {
               e.stopPropagation();
+              // Re-printing for an already-placed unit is a common source of
+              // duplicate tags — say where it lives before more labels print.
+              const locName = (row as any).location?.name ?? (row as any).locations?.name ?? null;
+              const placed: string[] = [];
+              if (row.asset_tag) placed.push(`already tagged ${row.asset_tag}`);
+              if (locName) placed.push(`located at ${locName}`);
+              if (row.status && !['available', 'active'].includes(String(row.status).toLowerCase())) {
+                placed.push(`status "${row.status}"`);
+              }
+              setBarcodeWarning(
+                placed.length > 1
+                  ? `This unit is ${placed.join(', ')}. Printing another label can create duplicates — reuse the existing tag unless it's lost or damaged.`
+                  : undefined,
+              );
               setBarcodeItems([{
                 code: row.asset_tag,
                 label: `${row.asset_tag}${row.catalog_item?.name ? ` - ${row.catalog_item.name}` : ''}`,
@@ -490,7 +505,11 @@ export default function AssetsPage() {
           <BarcodeLabelDialog
             items={barcodeItems}
             entityType="asset"
-            onClose={() => setBarcodeItems(null)}
+            warning={barcodeWarning}
+            onClose={() => {
+              setBarcodeItems(null);
+              setBarcodeWarning(undefined);
+            }}
           />
         )}
 

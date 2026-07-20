@@ -45,6 +45,8 @@ interface BarcodeLabelDialogProps {
   items: BarcodeLabelItem[];
   entityType: 'asset' | 'tool' | 'item';
   onClose: () => void;
+  /** Pre-print caution (e.g. "already tagged and located") — amber, screen-only. */
+  warning?: string;
 }
 
 // Brother P-touch D610BT prints TZe continuous tape at 180dpi.
@@ -65,7 +67,7 @@ const PTOUCH_LENGTH_MM: Record<LabelFormat, number> = {
 
 const OUTPUT_STORAGE_KEY = 'label-output-mode';
 
-export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelDialogProps) {
+export function BarcodeLabelDialog({ items, entityType, onClose, warning }: BarcodeLabelDialogProps) {
   const [format, setFormat] = useState<LabelFormat>('both');
   const [copies, setCopies] = useState(1);
   const [output, setOutput] = useState<OutputMode>('sheet');
@@ -178,6 +180,12 @@ export function BarcodeLabelDialog({ items, entityType, onClose }: BarcodeLabelD
               &#10005;
             </button>
           </div>
+
+          {warning ? (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <span className="font-semibold">Heads up:</span> {warning}
+            </div>
+          ) : null}
 
           {/* Stock vs individual — banner for a single-kind batch, switcher for a mix */}
           {soleKind ? (
