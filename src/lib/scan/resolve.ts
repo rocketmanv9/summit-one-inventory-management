@@ -21,8 +21,10 @@ import { AppError } from '@rocketmanv9/chassis/errors';
  * here is implicitly tenant-isolated by RLS — there is no cross-tenant path.
  */
 
+// fleet_asset_id/asset_kind ride along so the mobile scan flow can ask
+// Operations "who does this unit belong to" (equipment whereabouts).
 const ASSET_SELECT =
-  'id, asset_tag, serial_number, status, catalog_item_id, location_id, catalog_items(id, name, sku), locations(id, name)';
+  'id, asset_tag, serial_number, status, catalog_item_id, location_id, fleet_asset_id, asset_kind, catalog_items(id, name, sku), locations(id, name)';
 
 const CATALOG_SELECT = 'id, name, sku, barcode, tracking_mode, uom_term_id';
 
