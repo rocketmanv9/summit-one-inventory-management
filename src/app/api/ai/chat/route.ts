@@ -16,6 +16,7 @@ import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { INVENTORY_TOOLS } from '@/lib/ai/tools';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt';
+import { getAiUserContext, formatUserContextForPrompt } from '@/lib/ai/user-context';
 import { isServerTool, executeServerTool, type ServerToolContext } from '@/lib/ai/server-tools';
 import { resolveUserRole, filterToolsForRole, canExecuteTool } from '@/lib/ai/tool-governance';
 import { toolRegistry } from '@/lib/ai/tool-registry';
@@ -72,9 +73,14 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
     });
     const inv = (supabase as any).schema('inventory');
 
-    // ── Resolve user role for tool governance ────────────────────────────
-    // local_users is in the public schema, so use `supabase` directly (not `inv`)
-    const userRole = await resolveUserRole(supabase, session.userId, session.tenantId);
+    // ── Resolve user role + identity ─────────────────────────────────────
+    // local_users is in the public schema, so use `supabase` directly (not `inv`).
+    // Identity (name/position from the HR mirrors) is cached 5 min per user and
+    // feeds the system prompt so Isabelle knows who she's talking to.
+    const [userRole, aiUserContext] = await Promise.all([
+      resolveUserRole(supabase, session.userId, session.tenantId),
+      getAiUserContext(supabase, session.userId, session.tenantId),
+    ]);
 
     // Load tenant-specific tool config for overrides
     const tenantToolConfig = await toolRegistry.loadTenantConfig(supabase, session.tenantId);
@@ -138,7 +144,8 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
     }
 
     // Build OpenAI messages — convert user messages with images to multimodal content
-    const systemPromptContent = buildSystemPrompt() + memorySuffix;
+    const systemPromptContent =
+      buildSystemPrompt(undefined, undefined, formatUserContextForPrompt(aiUserContext)) + memorySuffix;
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPromptContent },
       ...trimmed.map((m) => {

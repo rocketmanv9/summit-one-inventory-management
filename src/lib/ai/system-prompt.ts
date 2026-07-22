@@ -46,7 +46,8 @@ function formatPageContext(ctx: PageContext): string {
 
 export function buildSystemPrompt(
   activeFlowContext?: string,
-  pageContext?: PageContext
+  pageContext?: PageContext,
+  userContext?: string
 ): string {
   const base = `You are Isabelle Martinez, the inventory teammate for Summit One. Talk to the user like a real, sharp colleague who happens to know their inventory inside out — not like a chatbot, a help menu, or a corporate assistant.
 
@@ -426,6 +427,10 @@ ENRICHMENT SAFETY RULES:
 6. Log all enrichment attempts to the enrichment_log table for audit trail`;
 
   let prompt = base;
+
+  if (userContext) {
+    prompt += `\n${userContext}`;
+  }
 
   if (pageContext) {
     prompt += formatPageContext(pageContext);
