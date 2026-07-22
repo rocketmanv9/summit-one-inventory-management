@@ -73,6 +73,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
   const [output, setOutput] = useState<OutputMode>('sheet');
   const [tapeWidth, setTapeWidth] = useState<TapeWidth>(24);
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const ptouchListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem(OUTPUT_STORAGE_KEY);
@@ -109,11 +110,74 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
     }
   }
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const tapeLengthMm = PTOUCH_LENGTH_MM[format];
+
+  const handlePrint = () => {
+    // Sheet output prints the modal in place (grid fragments fine across
+    // Letter-size pages). Tape output does NOT: hundreds of 24mm pages carved
+    // out of a fixed overlay + flex list is exactly where Chromium's
+    // fragmentation gives up — the first label prints and the rest come out
+    // blank. So for tape we print from a throwaway iframe containing ONLY the
+    // labels as plain block elements: block fragmentation with per-element
+    // page breaks is dependable everywhere.
+    if (output !== 'ptouch' || !ptouchListRef.current) {
+      window.print();
+      return;
+    }
+
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentDocument;
+    const win = iframe.contentWindow;
+    if (!doc || !win) {
+      iframe.remove();
+      window.print();
+      return;
+    }
+
+    // Reuse the app's stylesheets so Tailwind classes inside each label keep
+    // working; QR <img> data URLs and JsBarcode SVGs serialize as-is.
+    const headCss = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+      .map((n) => n.outerHTML)
+      .join('\n');
+
+    doc.open();
+    doc.write(`<!doctype html><html><head>${headCss}<style>
+      @page { size: ${tapeLengthMm}mm ${tapeWidth}mm; margin: 0; }
+      html, body { margin: 0 !important; padding: 0 !important; background: #fff; }
+      body > .ptouch-label {
+        display: flex !important;
+        border: 0 !important;
+        margin: 0 !important;
+        break-after: page;
+        page-break-after: always;
+        overflow: hidden;
+      }
+      body > .ptouch-label:last-child { break-after: auto; page-break-after: auto; }
+    </style></head><body>${ptouchListRef.current.innerHTML}</body></html>`);
+    doc.close();
+
+    // Let the iframe finish a layout pass (styles + data-URL images) before
+    // printing; print() blocks until the dialog closes, then we clean up.
+    win.requestAnimationFrame(() => {
+      setTimeout(() => {
+        try {
+          win.focus();
+          win.print();
+        } finally {
+          setTimeout(() => iframe.remove(), 1000);
+        }
+      }, 150);
+    });
+  };
 
   return (
     <div className="barcode-print-overlay fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -330,7 +394,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
               ))}
             </div>
           ) : (
-            <div className="ptouch-print-list flex flex-col items-start gap-2 print:gap-0">
+            <div ref={ptouchListRef} className="ptouch-print-list flex flex-col items-start gap-2 print:gap-0">
               {labels.map((item, idx) => (
                 <PtouchLabel
                   key={`${item.code}-${idx}`}
