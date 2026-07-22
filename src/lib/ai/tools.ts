@@ -397,8 +397,30 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_assets',
-      description: 'List registered assets',
-      parameters: { type: 'object', properties: {}, required: [] },
+      description: 'List registered assets, optionally filtered by location or status',
+      parameters: {
+        type: 'object',
+        properties: {
+          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'Main Warehouse'). Matches location names and location types." },
+          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'assigned', 'maintenance')" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'print_labels',
+      description: "Prepare printable barcode/QR labels for registered assets and open the print dialog preloaded with one label per asset. Optionally filter by location (e.g. 'the yard', 'Main Warehouse') or status. Use for requests like 'I need labels for all the assets in my yard', 'print asset tags', or 'make barcode labels for the shop'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'shop', 'Main Warehouse'). Matches location names and location types. Omit for all assets." },
+          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'assigned'). Omit for all statuses." },
+        },
+        required: [],
+      },
     },
   },
 

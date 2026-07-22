@@ -739,10 +739,12 @@ export function useAiChat(options?: AiChatOptions) {
       return;
     }
 
-    // No steps = immediate execution (list/query commands)
+    // No steps = immediate execution (list/query commands). Params still flow
+    // through — zero-step actions like list_assets/print_labels take optional
+    // filters (location, status) that the AI or regex extractors provide.
     if (actionDef.steps.length === 0) {
       addMessage('assistant', 'Working on it...', { status: 'executing' });
-      const result = await actionDef.execute({});
+      const result = await actionDef.execute(extractedParams);
 
       setMessages((prev) => {
         const filtered = prev.filter(
@@ -760,6 +762,9 @@ export function useAiChat(options?: AiChatOptions) {
           },
         ];
       });
+      if (result.success && result.navigateTo && result.autoNavigate) {
+        router.push(result.navigateTo);
+      }
       return;
     }
 

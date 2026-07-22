@@ -76,6 +76,7 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   list_locations: ['crud'],
   list_transfers: ['crud'],
   list_assets: ['crud'],
+  print_labels: ['crud'],
   list_receipts: ['crud'],
   list_reservations: ['crud'],
   list_categories: ['crud'],

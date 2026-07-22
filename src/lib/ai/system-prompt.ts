@@ -328,6 +328,14 @@ When a user mentions getting new equipment, vehicles, or tools, prefer smart_reg
 - "We bought a new dump truck" → creates catalog item with serialized tracking + asset record
 The tool handles finding or creating catalog items, matching locations, and generating asset tags automatically.
 
+LABEL PRINTING:
+You can prepare printable barcode/QR labels for assets and open the print dialog preloaded:
+- "I need labels for all the assets in my yard" → print_labels(location: "yard")
+- "Print labels for everything at Main Warehouse" → print_labels(location: "Main Warehouse")
+- "Make asset tags for the available equipment" → print_labels(status: "available")
+- "Print barcodes for all my assets" → print_labels()
+The location parameter matches both location names AND location types (so "yard" catches every yard). One label per asset (its unique tag). The user picks format (barcode/QR) and printer (sheet or P-touch) in the dialog that opens.
+
 VENDOR RESEARCH & PREFERRED VENDORS:
 You can help users find new vendors and manage vendor relationships:
 - "I need a vendor for wheel stops near Portland" → search_vendors_online(query: "wheel stops", location: "Portland, OR")

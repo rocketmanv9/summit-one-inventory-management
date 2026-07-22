@@ -19,6 +19,7 @@ const READ_INTENTS: Set<IntentType> = new Set([
   'list_locations',
   'list_transfers',
   'list_assets',
+  'print_labels',
   'list_receipts',
   'list_reservations',
   'list_categories',
@@ -251,6 +252,7 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/inventory/assets': [
     { label: 'New asset', message: 'Create an asset' },
     { label: 'List assets', message: 'List assets' },
+    { label: 'Print labels', message: 'Print labels for all assets' },
   ],
   '/inventory/reservations': [
     { label: 'Reserve stock', message: 'Create a reservation' },

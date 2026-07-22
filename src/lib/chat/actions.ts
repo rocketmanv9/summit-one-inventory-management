@@ -6,6 +6,7 @@
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { stashPendingLabelBatch, type PendingLabelBatch } from '@/lib/labels/pending-batch';
 import type { IntentType } from './intents';
 
 export interface ConversationStep {
@@ -29,6 +30,8 @@ export interface ActionResult {
   message: string;
   data?: any;
   navigateTo?: string;
+  /** When true, the chat pushes navigateTo immediately instead of showing a button (e.g. opening the label print dialog). */
+  autoNavigate?: boolean;
 }
 
 // ─── Helpers to load select options dynamically ───────────────────────
@@ -154,6 +157,20 @@ async function resolveVendorId(hint: string): Promise<{ id: string; name: string
 
   throw AppError.notFound(
     `Vendor "${hint}" not found. I can create it for you — say "add vendor ${hint}".`
+  );
+}
+
+// Match an asset against a location hint. The hint can be a location name
+// ("Main Warehouse") or a location type ("yard", "shop") — "assets in my yard"
+// should catch every location whose type is Yard, not just one named "Yard".
+function assetAtLocation(asset: { location?: { name?: string | null; location_type?: { name?: string | null } | null } | null }, hint: string): boolean {
+  const q = hint.toLowerCase().trim();
+  if (!q) return true;
+  const name = asset.location?.name?.toLowerCase() ?? '';
+  const type = asset.location?.location_type?.name?.toLowerCase() ?? '';
+  return (
+    (name.length > 0 && (name.includes(q) || q.includes(name))) ||
+    (type.length > 0 && (type.includes(q) || q.includes(type)))
   );
 }
 
@@ -1252,10 +1269,19 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         intent: 'list_assets',
         description: 'List assets',
         steps: [],
-        execute: async () => {
-          const assets = await InventoryRPC.getAssets();
-          if (!assets || assets.length === 0) {
-            return { success: true, message: 'No assets found. Say "create an asset" to register one!' };
+        execute: async (params) => {
+          const status = (params.status || '').trim();
+          const locationHint = (params.location || '').trim();
+          const all = await InventoryRPC.getAssets(status ? { status } : undefined);
+          const assets = locationHint ? (all || []).filter((a) => assetAtLocation(a, locationHint)) : (all || []);
+          const scope = locationHint ? ` matching location "${locationHint}"` : '';
+          if (assets.length === 0) {
+            return {
+              success: true,
+              message: locationHint || status
+                ? `No assets found${scope}${status ? ` with status "${status}"` : ''}.`
+                : 'No assets found. Say "create an asset" to register one!',
+            };
           }
           const list = assets
             .slice(0, 20)
@@ -1268,9 +1294,59 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           const suffix = assets.length > 20 ? `\n\n...and ${assets.length - 20} more.` : '';
           return {
             success: true,
-            message: `Found ${assets.length} asset(s):\n\n${list}${suffix}`,
+            message: `Found ${assets.length} asset(s)${scope}:\n\n${list}${suffix}`,
             data: assets,
             navigateTo: '/inventory/assets',
+          };
+        },
+      };
+
+    // ── Print Labels ─────────────────────────────────────────────
+    // Gathers matching assets, stashes a label batch for the assets page, and
+    // sends the user there — the page opens BarcodeLabelDialog preloaded.
+    case 'print_labels':
+      return {
+        intent: 'print_labels',
+        description: 'Print asset labels',
+        steps: [],
+        execute: async (params) => {
+          const status = (params.status || '').trim();
+          const locationHint = (params.location || '').trim();
+          const all = await InventoryRPC.getAssets(status ? { status } : undefined);
+          const matched = locationHint ? (all || []).filter((a) => assetAtLocation(a, locationHint)) : (all || []);
+
+          if (matched.length === 0) {
+            if (locationHint) {
+              const locations = await InventoryRPC.getLocations({ active: true });
+              const knownLoc = fuzzyFind(locations, locationHint, (l: any) => `${l.name} ${l.location_type?.name || ''}`);
+              return {
+                success: false,
+                message: knownLoc
+                  ? `No assets are currently at ${(knownLoc as any).name}${status ? ` with status "${status}"` : ''}, so there's nothing to print.`
+                  : `I couldn't find a location matching "${locationHint}". Say "list locations" to see what's available.`,
+              };
+            }
+            return { success: true, message: 'No assets found to print labels for. Say "create an asset" to register one!' };
+          }
+
+          const batch: PendingLabelBatch = {
+            items: matched.map((a) => ({
+              code: a.asset_tag,
+              label: `${a.asset_tag}${a.catalog_item?.name ? ` - ${a.catalog_item.name}` : ''}`,
+              kind: 'individual' as const,
+            })),
+            entityType: 'asset',
+          };
+          stashPendingLabelBatch(batch);
+
+          const locNames = [...new Set(matched.map((a) => a.location?.name).filter(Boolean))];
+          const scope = locNames.length > 0 && locationHint ? ` at ${locNames.slice(0, 5).join(', ')}` : '';
+          return {
+            success: true,
+            message: `Queued ${batch.items.length} label${batch.items.length === 1 ? '' : 's'} for the assets${scope}. The print dialog is opening — pick barcode/QR format and your printer there.`,
+            data: { count: batch.items.length },
+            navigateTo: '/inventory/assets',
+            autoNavigate: true,
           };
         },
       };

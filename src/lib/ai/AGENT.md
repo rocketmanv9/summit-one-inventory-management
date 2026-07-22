@@ -24,11 +24,11 @@ User → Chat UI → /api/ai/chat (POST) → OpenAI → Tool Calls
 
 > **Wiring guard:** `tests/ai-tool-wiring.test.ts` iterates the whole registry and fails CI if any tool is half-wired (missing tag/governance, no server switch case, rejected by the intent gate, orphan handler, or capability-gated without a definition). This catalog is verified against that test — keep them in sync.
 
-## Tool Catalog (78 tools)
+## Tool Catalog (79 tools)
 
 `Mode` = where the tool executes (`server` in the chat route, or `client` via the intent/action flow). `Role` = `admin` if restricted via `ADMIN_ONLY_TOOLS`, otherwise available to all authenticated users.
 
-#### crud (31)
+#### crud (32)
 | Tool | Mode | Role | Description |
 |------|------|------|-------------|
 | `add_vendor` | client | — | Create a new vendor/supplier (searches the web for contact details). |
@@ -54,7 +54,8 @@ User → Chat UI → /api/ai/chat (POST) → OpenAI → Tool Calls
 | `create_transfer` | server | — | Create a stock transfer between two locations. |
 | `list_transfers` | client | — | List recent stock transfers. |
 | `create_asset` | client | — | Register a serialized asset (equipment, vehicle, tool). |
-| `list_assets` | client | — | List registered assets. |
+| `list_assets` | client | — | List registered assets (optional location/status filters). |
+| `print_labels` | client | — | Prepare barcode/QR labels for assets (optional location/status filters) and open the print dialog preloaded. |
 | `list_receipts` | client | — | List recent receiving receipts. |
 | `create_reservation` | server | — | Reserve stock at a location for a job/truck/etc. |
 | `release_reservation` | client | — | Release/cancel an active reservation. |

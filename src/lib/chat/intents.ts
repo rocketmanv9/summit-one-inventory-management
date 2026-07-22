@@ -27,6 +27,7 @@ export type IntentType =
   | 'list_transfers'
   | 'create_asset'
   | 'list_assets'
+  | 'print_labels'
   | 'list_receipts'
   | 'create_reservation'
   | 'release_reservation'
@@ -257,6 +258,22 @@ const INTENT_PATTERNS: IntentPattern[] = [
       /(?:list|show|get|view|see)\s+(?:all\s+)?(?:recent\s+)?transfers/i,
     ],
     keywords: [['list', 'transfers'], ['show', 'transfers'], ['view', 'transfers']],
+  },
+
+  // Label printing — must precede create_asset so "create asset labels" and
+  // "make labels" resolve here instead of the asset-registration flow.
+  {
+    type: 'print_labels',
+    patterns: [
+      /print\s+(?:\w+\s+)*(?:labels?|barcodes?|tags?)/i,
+      /(?:need|make|generate|create|get)\s+(?:\w+\s+)*labels?/i,
+      /labels?\s+for\s+/i,
+      /(?:asset|barcode|qr)\s+(?:tags?|labels?)/i,
+    ],
+    keywords: [['print', 'labels'], ['need', 'labels'], ['make', 'labels'], ['asset', 'tags'], ['print', 'barcodes']],
+    paramExtractors: {
+      location: /(?:in|at|from)\s+(?:my\s+|the\s+|our\s+)?["']?([^"'\n,?.!]+?)["']?\s*[?.!]?$/i,
+    },
   },
 
   // Asset operations

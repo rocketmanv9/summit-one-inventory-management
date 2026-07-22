@@ -13,6 +13,7 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { BarcodeLabelDialog } from '@/components/modals/BarcodeLabelDialog';
 import type { BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { consumePendingLabelBatch, PENDING_LABEL_BATCH_EVENT } from '@/lib/labels/pending-batch';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { EntityImageUpload } from '@/components/ui/EntityImageUpload';
@@ -98,6 +99,20 @@ export default function AssetsPage() {
     fetchAssets();
     fetchAssignmentTypes();
   }, [filters]);
+
+  // Label batches queued by Isabelle (print_labels tool): consume on mount for
+  // the navigated-here case, and on the event for the already-on-this-page case.
+  useEffect(() => {
+    const openPendingBatch = () => {
+      const batch = consumePendingLabelBatch();
+      if (!batch) return;
+      setBarcodeWarning(batch.warning);
+      setBarcodeItems(batch.items);
+    };
+    openPendingBatch();
+    window.addEventListener(PENDING_LABEL_BATCH_EVENT, openPendingBatch);
+    return () => window.removeEventListener(PENDING_LABEL_BATCH_EVENT, openPendingBatch);
+  }, []);
 
   const resolveStatus = (asset: Asset) => asset.asset_state?.current_status || asset.status || 'available';
 
