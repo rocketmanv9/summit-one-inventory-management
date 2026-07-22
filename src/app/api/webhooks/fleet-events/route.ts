@@ -92,6 +92,8 @@ async function applyFleetAsset(
     p_equipment_class_id: row.equipment_class_id ?? null,
     p_equipment_model_id: row.equipment_model_id ?? null,
     p_equipment_variant_id: row.equipment_variant_id ?? null,
+    // Fleet's location is the yard NAME; the RPC resolves it to a location_id.
+    p_location: row.location ?? null,
   });
 
   if (error) throw AppError.internal(`rpc_apply_fleet_asset_sync failed: ${error.message}`);
