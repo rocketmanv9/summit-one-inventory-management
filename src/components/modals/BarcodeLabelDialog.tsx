@@ -152,6 +152,11 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
     doc.open();
     doc.write(`<!doctype html><html><head>${headCss}<style>
       @page { size: ${tapeLengthMm}mm ${tapeWidth}mm; margin: 0; }
+      /* The copied app CSS includes the modal's print rule "body * {
+         visibility: hidden }" (it scopes printing to the overlay, which does
+         not exist in this document) — without this counter-override every
+         label page prints blank. Declared last, so it wins the cascade. */
+      body, body * { visibility: visible !important; }
       html, body { margin: 0 !important; padding: 0 !important; background: #fff; }
       body > .ptouch-label {
         display: flex !important;
