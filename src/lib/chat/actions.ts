@@ -160,18 +160,94 @@ async function resolveVendorId(hint: string): Promise<{ id: string; name: string
   );
 }
 
-// Match an asset against a location hint. The hint can be a location name
-// ("Main Warehouse") or a location type ("yard", "shop") — "assets in my yard"
-// should catch every location whose type is Yard, not just one named "Yard".
-function assetAtLocation(asset: { location?: { name?: string | null; location_type?: { name?: string | null } | null } | null }, hint: string): boolean {
-  const q = hint.toLowerCase().trim();
-  if (!q) return true;
-  const name = asset.location?.name?.toLowerCase() ?? '';
-  const type = asset.location?.location_type?.name?.toLowerCase() ?? '';
-  return (
-    (name.length > 0 && (name.includes(q) || q.includes(name))) ||
-    (type.length > 0 && (type.includes(q) || q.includes(type)))
-  );
+// ─── Asset location/status matching ───────────────────────────────────
+// Assets have two sources of truth: the static columns (location_id, status)
+// and the live asset_state row (current_location_id, current_status). The
+// assets page trusts asset_state first — so must we, or "assets at the yard"
+// misses anything that moved since registration.
+
+type AssetForMatch = {
+  asset_tag?: string | null;
+  status?: string | null;
+  location_id?: string | null;
+  location?: { name?: string | null; location_type?: { name?: string | null } | null } | null;
+  asset_state?: { current_status?: string | null; current_location_id?: string | null } | null;
+};
+
+export type LocationIndex = Map<string, { name: string; type: string }>;
+
+export function buildLocationIndex(locations: Array<{ id: string; name?: string | null; location_type?: { name?: string | null } | null }>): LocationIndex {
+  return new Map(locations.map((l) => [l.id, { name: l.name ?? '', type: (l as any).location_type?.name ?? '' }]));
+}
+
+export function effectiveAssetStatus(asset: AssetForMatch): string {
+  return (asset.asset_state?.current_status || asset.status || '').toLowerCase();
+}
+
+// Words that carry no signal in a location hint ("the portland yard location").
+const LOCATION_NOISE_WORDS = new Set(['the', 'my', 'our', 'a', 'an', 'at', 'in', 'location', 'locations', 'site', 'area']);
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+
+// Typo-tolerant token presence: exact substring first, then small edit
+// distance against individual words so "portaland" still finds "Portland".
+function fuzzyTokenInText(token: string, text: string): boolean {
+  if (text.includes(token)) return true;
+  if (token.length < 5) return false;
+  const maxDist = token.length >= 8 ? 2 : 1;
+  return text.split(/[^a-z0-9]+/).some((w) => w.length >= 4 && levenshtein(w, token) <= maxDist);
+}
+
+/**
+ * Match assets against a location hint ("Portland yard", "the shop"). Uses the
+ * asset's LIVE location (asset_state.current_location_id) when set, falling
+ * back to the static location join. Hint tokens match location names AND types
+ * so "yard" catches every yard. Strict pass requires every meaningful token;
+ * if that finds nothing, an any-token pass runs so partial hints still land.
+ */
+export function matchAssetsByLocation<T extends AssetForMatch>(assets: T[], locationIndex: LocationIndex, hint: string): T[] {
+  const tokens = hint
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 0 && !LOCATION_NOISE_WORDS.has(t));
+  if (tokens.length === 0) return assets;
+
+  const textFor = (a: AssetForMatch): string => {
+    const liveId = a.asset_state?.current_location_id ?? a.location_id ?? null;
+    const rec = liveId ? locationIndex.get(liveId) : undefined;
+    const name = rec?.name || a.location?.name || '';
+    const type = rec?.type || a.location?.location_type?.name || '';
+    return `${name} ${type}`.toLowerCase();
+  };
+
+  const strict = assets.filter((a) => {
+    const t = textFor(a);
+    return t.trim().length > 0 && tokens.every((tok) => fuzzyTokenInText(tok, t));
+  });
+  if (strict.length > 0) return strict;
+
+  return assets.filter((a) => {
+    const t = textFor(a);
+    return t.trim().length > 0 && tokens.some((tok) => fuzzyTokenInText(tok, t));
+  });
 }
 
 function resolveEnum(hint: string, validValues: string[], fallback: string): string {
@@ -1270,16 +1346,37 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'List assets',
         steps: [],
         execute: async (params) => {
-          const status = (params.status || '').trim();
+          const status = (params.status || '').trim().toLowerCase();
           const locationHint = (params.location || '').trim();
-          const all = await InventoryRPC.getAssets(status ? { status } : undefined);
-          const assets = locationHint ? (all || []).filter((a) => assetAtLocation(a, locationHint)) : (all || []);
+          // Fetch unfiltered and filter locally on LIVE state — the status
+          // column and location_id go stale once asset_state takes over.
+          const all = await InventoryRPC.getAssets();
+          const locationIndex = buildLocationIndex(await InventoryRPC.getLocations({ active: true }));
+          let assets = locationHint ? matchAssetsByLocation(all || [], locationIndex, locationHint) : (all || []);
+          let statusNote = '';
+          if (status) {
+            const byStatus = assets.filter((a) => effectiveAssetStatus(a) === status);
+            if (byStatus.length > 0) {
+              assets = byStatus;
+            } else if (assets.length > 0) {
+              // "assigned to the yard" reads as a status but means a location —
+              // don't zero out the answer over it, just say what we did.
+              statusNote = ` (none have status "${status}", so I'm showing all of them)`;
+            }
+          }
           const scope = locationHint ? ` matching location "${locationHint}"` : '';
           if (assets.length === 0) {
+            const withLocation = (all || []).filter((a) => a.asset_state?.current_location_id ?? a.location_id);
+            if (locationHint && withLocation.length === 0 && (all || []).length > 0) {
+              return {
+                success: true,
+                message: `You have ${(all || []).length} assets, but none of them have a location recorded yet — so I can't filter by "${locationHint}". Say "list assets" to see everything, or set locations on the assets first.`,
+              };
+            }
             return {
               success: true,
               message: locationHint || status
-                ? `No assets found${scope}${status ? ` with status "${status}"` : ''}.`
+                ? `No assets found${scope}${status && !statusNote ? ` with status "${status}"` : ''}.`
                 : 'No assets found. Say "create an asset" to register one!',
             };
           }
@@ -1294,7 +1391,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           const suffix = assets.length > 20 ? `\n\n...and ${assets.length - 20} more.` : '';
           return {
             success: true,
-            message: `Found ${assets.length} asset(s)${scope}:\n\n${list}${suffix}`,
+            message: `Found ${assets.length} asset(s)${scope}${statusNote}:\n\n${list}${suffix}`,
             data: assets,
             navigateTo: '/inventory/assets',
           };
@@ -1310,19 +1407,42 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Print asset labels',
         steps: [],
         execute: async (params) => {
-          const status = (params.status || '').trim();
+          const status = (params.status || '').trim().toLowerCase();
           const locationHint = (params.location || '').trim();
-          const all = await InventoryRPC.getAssets(status ? { status } : undefined);
-          const matched = locationHint ? (all || []).filter((a) => assetAtLocation(a, locationHint)) : (all || []);
+          // Unfiltered fetch + local matching on LIVE state (asset_state) —
+          // same reasoning as list_assets above.
+          const all = (await InventoryRPC.getAssets()).filter((a) => !!a.asset_tag);
+          const locations = await InventoryRPC.getLocations({ active: true });
+          const locationIndex = buildLocationIndex(locations);
+          let matched = locationHint ? matchAssetsByLocation(all, locationIndex, locationHint) : all;
+          let statusNote = '';
+          if (status) {
+            const byStatus = matched.filter((a) => effectiveAssetStatus(a) === status);
+            if (byStatus.length > 0) {
+              matched = byStatus;
+              statusNote = ` with status "${status}"`;
+            } else if (matched.length > 0) {
+              statusNote = ` (none have status "${status}", so I queued all of them)`;
+            }
+          }
 
           if (matched.length === 0) {
             if (locationHint) {
-              const locations = await InventoryRPC.getLocations({ active: true });
               const knownLoc = fuzzyFind(locations, locationHint, (l: any) => `${l.name} ${l.location_type?.name || ''}`);
+              // Distinguish "nothing is there" from "nothing has a location at
+              // all" — filtering an unlocated fleet by location silently
+              // returns zero and reads like the yard is empty when it isn't.
+              const withLocation = all.filter((a) => a.asset_state?.current_location_id ?? a.location_id);
+              if (knownLoc && withLocation.length === 0 && all.length > 0) {
+                return {
+                  success: false,
+                  message: `You have ${all.length} assets, but none of them have a location recorded yet — so I can't tell which ones are at ${(knownLoc as any).name}. Say "print labels for all assets" and I'll queue everything, or set locations on the assets first.`,
+                };
+              }
               return {
                 success: false,
                 message: knownLoc
-                  ? `No assets are currently at ${(knownLoc as any).name}${status ? ` with status "${status}"` : ''}, so there's nothing to print.`
+                  ? `No assets are currently at ${(knownLoc as any).name}, so there's nothing to print.`
                   : `I couldn't find a location matching "${locationHint}". Say "list locations" to see what's available.`,
               };
             }
@@ -1339,11 +1459,14 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           };
           stashPendingLabelBatch(batch);
 
-          const locNames = [...new Set(matched.map((a) => a.location?.name).filter(Boolean))];
+          const locNames = [...new Set(matched.map((a) => {
+            const liveId = a.asset_state?.current_location_id ?? a.location_id ?? null;
+            return (liveId ? locationIndex.get(liveId)?.name : null) || a.location?.name || null;
+          }).filter(Boolean))] as string[];
           const scope = locNames.length > 0 && locationHint ? ` at ${locNames.slice(0, 5).join(', ')}` : '';
           return {
             success: true,
-            message: `Queued ${batch.items.length} label${batch.items.length === 1 ? '' : 's'} for the assets${scope}. The print dialog is opening — pick barcode/QR format and your printer there.`,
+            message: `Queued ${batch.items.length} label${batch.items.length === 1 ? '' : 's'} for the assets${scope}${statusNote}. The print dialog is opening — pick barcode/QR format and your printer there.`,
             data: { count: batch.items.length },
             navigateTo: '/inventory/assets',
             autoNavigate: true,

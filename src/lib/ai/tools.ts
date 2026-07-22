@@ -397,12 +397,12 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'list_assets',
-      description: 'List registered assets, optionally filtered by location or status',
+      description: 'List registered assets, optionally filtered by location or status. For printing labels/tags/barcodes use print_labels instead.',
       parameters: {
         type: 'object',
         properties: {
-          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'Main Warehouse'). Matches location names and location types." },
-          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'assigned', 'maintenance')" },
+          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'Main Warehouse'). Matches location names and location types. 'Assets assigned to the Portland yard' means location: 'Portland yard' — NOT a status filter." },
+          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'assigned', 'maintenance'). Only set this when the user explicitly refers to asset status; 'assigned to <place>' is a location, not a status." },
         },
         required: [],
       },
@@ -412,12 +412,12 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'print_labels',
-      description: "Prepare printable barcode/QR labels for registered assets and open the print dialog preloaded with one label per asset. Optionally filter by location (e.g. 'the yard', 'Main Warehouse') or status. Use for requests like 'I need labels for all the assets in my yard', 'print asset tags', or 'make barcode labels for the shop'.",
+      description: "ALWAYS use this (never list_assets) when the user wants labels, tags, or barcodes printed. Prepares printable barcode/QR labels for registered assets and opens the print dialog preloaded with one label per asset. Optionally filter by location (e.g. 'the yard', 'Main Warehouse') or status. Use for requests like 'I need labels for all the assets in my yard', 'print asset tags', or 'make barcode labels for the shop'.",
       parameters: {
         type: 'object',
         properties: {
-          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'shop', 'Main Warehouse'). Matches location names and location types. Omit for all assets." },
-          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'assigned'). Omit for all statuses." },
+          location: { type: 'string', description: "Location name or type to filter by (e.g. 'yard', 'shop', 'Main Warehouse'). Matches location names and location types. 'Assets assigned to the Portland yard' means location: 'Portland yard' — NOT a status filter. Omit for all assets." },
+          status: { type: 'string', description: "Asset status filter (e.g. 'available', 'in_maintenance'). Only set this when the user explicitly refers to asset status; 'assigned to <place>' is a location, not a status. Omit for all statuses." },
         },
         required: [],
       },

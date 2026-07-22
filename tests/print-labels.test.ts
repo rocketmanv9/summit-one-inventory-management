@@ -9,6 +9,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { parseIntent } from '../src/lib/chat/intents';
 import {
+  buildLocationIndex,
+  matchAssetsByLocation,
+  effectiveAssetStatus,
+} from '../src/lib/chat/actions';
+import {
   stashPendingLabelBatch,
   consumePendingLabelBatch,
   PENDING_LABEL_BATCH_KEY,
@@ -39,6 +44,56 @@ describe('print_labels intent parsing', () => {
   it('does not steal plain asset registration', () => {
     expect(parseIntent('create an asset').type).toBe('create_asset');
     expect(parseIntent('register a new asset').type).toBe('create_asset');
+  });
+});
+
+describe('asset location matching', () => {
+  const locations = [
+    { id: 'loc-portland', name: 'Portland', location_type: { name: 'Yard' } },
+    { id: 'loc-reno', name: 'Reno', location_type: { name: 'Yard' } },
+    { id: 'loc-shop', name: 'Portland Shop Bays 1 and 2', location_type: { name: 'Shop Bay' } },
+  ];
+  const index = buildLocationIndex(locations);
+
+  const atPortland = { asset_tag: 'P-1', location_id: 'loc-portland' };
+  // Live state moved this one to Portland even though the static column says Reno.
+  const movedToPortland = {
+    asset_tag: 'M-1',
+    location_id: 'loc-reno',
+    asset_state: { current_location_id: 'loc-portland', current_status: null },
+  };
+  const atReno = { asset_tag: 'R-1', location_id: 'loc-reno' };
+  const unlocated = { asset_tag: 'U-1', location_id: null };
+  const all = [atPortland, movedToPortland, atReno, unlocated];
+
+  it('matches by location name, preferring live asset_state location', () => {
+    const matched = matchAssetsByLocation(all, index, 'Portland yard');
+    expect(matched.map((a) => a.asset_tag).sort()).toEqual(['M-1', 'P-1']);
+  });
+
+  it('tolerates typos like "portaland"', () => {
+    const matched = matchAssetsByLocation(all, index, 'portaland yard');
+    expect(matched.map((a) => a.asset_tag).sort()).toEqual(['M-1', 'P-1']);
+  });
+
+  it('strips noise words ("the portland yard location")', () => {
+    const matched = matchAssetsByLocation(all, index, 'the portland yard location');
+    expect(matched.map((a) => a.asset_tag).sort()).toEqual(['M-1', 'P-1']);
+  });
+
+  it('matches by location type so "yard" catches every yard', () => {
+    const matched = matchAssetsByLocation(all, index, 'yard');
+    expect(matched.map((a) => a.asset_tag).sort()).toEqual(['M-1', 'P-1', 'R-1']);
+  });
+
+  it('never matches assets with no location anywhere', () => {
+    expect(matchAssetsByLocation([unlocated], index, 'portland').length).toBe(0);
+  });
+
+  it('effective status prefers asset_state.current_status over the stale column', () => {
+    expect(effectiveAssetStatus({ status: 'available', asset_state: { current_status: 'in_maintenance' } })).toBe('in_maintenance');
+    expect(effectiveAssetStatus({ status: 'available', asset_state: null })).toBe('available');
+    expect(effectiveAssetStatus({})).toBe('');
   });
 });
 
