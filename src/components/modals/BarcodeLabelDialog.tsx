@@ -165,7 +165,12 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
           @media print {
             @page { size: ${tapeLengthMm}mm ${tapeWidth}mm; margin: 0; }
             .barcode-print-area { padding: 0 !important; }
+            /* Chrome does not fragment flex containers across pages — with the
+               list left as flex, every label paints into the first page's area
+               and pages 2+ print blank. Block layout restores per-label pages. */
+            .ptouch-print-list { display: block !important; }
             .ptouch-label { break-after: page; page-break-after: always; }
+            .ptouch-label:last-child { break-after: auto; page-break-after: auto; }
           }
         `}</style>
       )}
@@ -325,7 +330,7 @@ export function BarcodeLabelDialog({ items, entityType, onClose, warning }: Barc
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-start gap-2 print:gap-0">
+            <div className="ptouch-print-list flex flex-col items-start gap-2 print:gap-0">
               {labels.map((item, idx) => (
                 <PtouchLabel
                   key={`${item.code}-${idx}`}
