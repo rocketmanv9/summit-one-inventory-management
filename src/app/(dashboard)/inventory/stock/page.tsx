@@ -8,7 +8,14 @@
 // at /inventory/items/new remains for variants/vendors/barcodes/assets.
 //
 // URL params: ?q=<search> pre-fills the search box, ?filter=low|out
-// pre-selects the status chip (dashboard widgets and Isabelle link here).
+// pre-selects the status chip (dashboard widgets and Isabelle link here), and
+// ?location=<id> pre-selects the location filter so links keep their context.
+//
+// Stock is tracked PER LOCATION (inventory.stock_balances is one row per
+// item × location). With "All locations" selected, collapsed rows show a
+// clearly-labelled total and the expanded panel breaks it down by location.
+// With a location selected, every quantity on the page reflects that
+// location only.
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
@@ -16,7 +23,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { Boxes, ClipboardList, PackageCheck, AlertTriangle } from 'lucide-react';
+import { Boxes, ClipboardList, PackageCheck, AlertTriangle, MapPin } from 'lucide-react';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
@@ -204,15 +211,36 @@ export default function InventoryPage() {
     fetchAll();
   }, [fetchAll]);
 
-  // Read ?q= and ?filter= from the URL once on mount (widgets/chat deep-link).
+  // Read ?q=, ?filter= and ?location= from the URL once on mount
+  // (widgets/chat/bookmarks deep-link here).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('q');
     const filter = params.get('filter');
+    const location = params.get('location');
     if (q) setSearch(q);
     if (filter === 'low' || filter === 'out') setStatusFilter(filter);
+    if (location) setLocationFilter(location);
     searchRef.current?.focus();
   }, []);
+
+  // Change the location filter and mirror it into the URL (?location=) so
+  // links and bookmarks keep their location context. Movements shown in
+  // expanded rows are location-scoped, so drop that cache too.
+  const changeLocationFilter = useCallback((locId: string) => {
+    setLocationFilter(locId);
+    setMovementsByItem({});
+    const params = new URLSearchParams(window.location.search);
+    if (locId) params.set('location', locId);
+    else params.delete('location');
+    const qs = params.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+  }, []);
+
+  const selectedLocation = useMemo(
+    () => locations.find((l) => l.id === locationFilter) ?? null,
+    [locations, locationFilter]
+  );
 
   // Lazy one-shot usage fetch the first time any row expands.
   useEffect(() => {
@@ -268,11 +296,17 @@ export default function InventoryPage() {
       .filter((i) => !i.parent_item_id)
       .map((item) => {
         const memberIds = [item.id, ...(childrenByParent.get(item.id) || []).map((c) => c.id)];
-        const itemBalances = memberIds.flatMap((id) => balancesByItem.get(id) || []);
+        const allBalances = memberIds.flatMap((id) => balancesByItem.get(id) || []);
+        // When a location is selected, every quantity on the row (and the
+        // status chip) reflects that location only. "All locations" sums
+        // across every location; the expanded panel shows the breakdown.
+        const itemBalances = locationFilter
+          ? allBalances.filter((b) => b.location_id === locationFilter)
+          : allBalances;
         const onHand = itemBalances.reduce((s, b) => s + (Number(b.qty_on_hand) || 0), 0);
         const reserved = itemBalances.reduce((s, b) => s + (Number(b.qty_reserved) || 0), 0);
         const available = itemBalances.reduce((s, b) => s + (Number(b.qty_available) || 0), 0);
-        const locationCount = new Set(itemBalances.map((b) => b.location_id)).size;
+        const locationCount = new Set(allBalances.map((b) => b.location_id)).size;
         const status: ItemRow['status'] =
           onHand <= 0
             ? 'out'
@@ -281,7 +315,7 @@ export default function InventoryPage() {
               : 'ok';
         return { item, memberIds, balances: itemBalances, onHand, reserved, available, locationCount, status };
       });
-  }, [items, balances]);
+  }, [items, balances, locationFilter]);
 
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 
@@ -302,9 +336,9 @@ export default function InventoryPage() {
       if (categoryFilter && row.item.category_id !== categoryFilter) return false;
       if (statusFilter === 'low' && row.status === 'ok') return false;
       if (statusFilter === 'out' && row.status !== 'out') return false;
-      if (locationFilter && !row.balances.some((b) => b.location_id === locationFilter && Number(b.qty_on_hand) > 0)) {
-        return false;
-      }
+      // row.balances is already scoped to the selected location (see rows
+      // useMemo) — hide items with no stock record there at all.
+      if (locationFilter && row.balances.length === 0) return false;
       return true;
     });
   }, [rows, itemById, search, categoryFilter, statusFilter, locationFilter, showInactive]);
@@ -317,10 +351,13 @@ export default function InventoryPage() {
     if (next && !movementsByItem[next]) {
       setMovementsByItem((prev) => ({ ...prev, [next]: 'loading' }));
       const supabase = createBrowserAuthedClient().schema('inventory');
-      supabase
+      let query = supabase
         .from('stock_movements')
         .select('movement_type, quantity_delta, occurred_at')
-        .in('catalog_item_id', row.memberIds)
+        .in('catalog_item_id', row.memberIds);
+      // Keep recent activity consistent with the location filter.
+      if (locationFilter) query = query.eq('location_id', locationFilter);
+      query
         .order('occurred_at', { ascending: false })
         .limit(8)
         .then(({ data, error }) => {
@@ -346,7 +383,7 @@ export default function InventoryPage() {
       name: prefillName ?? '',
       category_id: categories[0]?.id ?? '',
       uom_term_id: uomTerms.find((t) => t.label?.toUpperCase() === 'EA')?.term_id ?? uomTerms[0]?.term_id ?? '',
-      location_id: locations[0]?.id ?? '',
+      location_id: locationFilter || (locations[0]?.id ?? ''),
       qty: '',
       reorder_point: '',
     });
@@ -531,7 +568,7 @@ export default function InventoryPage() {
       <div className="space-y-4">
         <PageHeader
           title="Inventory"
-          description="Everything in one place: search an item to see what you have and where. Expand a row for per-location balances, recent activity, and usage."
+          description="Stock is tracked per location. Pick a location to see what's on hand there, or keep All locations and expand a row for the per-location breakdown."
           actions={
             <div className="flex gap-3 items-center">
               {!help.show && <HowThisWorksButton onClick={help.open} />}
@@ -599,18 +636,20 @@ export default function InventoryPage() {
             title="How inventory works"
             onDismiss={help.dismiss}
             steps={[
-              { title: 'Search first', body: 'Type a name, SKU, or description in the big box. Narrow further with the status chips, category chips, or the location dropdown.' },
-              { title: 'Expand a row', body: 'Click any item to see its per-location (and per-variant) balances, recent movements, and a 6-month usage sparkline.' },
-              { title: 'Add & adjust', body: '+ Add Item quick-creates an item with a starting count. The Adjust button on any balance sets a new counted quantity — guardrailed and fully audited.' },
+              { title: 'Stock lives per location', body: 'Every balance belongs to one location (yard, truck, shop…). A row’s numbers are the total across locations until you pick a location — expand the row to see the per-location breakdown.' },
+              { title: 'Filter by location', body: 'Use the location dropdown to focus on one location. Every quantity, status chip, and recent-activity list then reflects that location only, and the choice sticks in the URL for links and bookmarks.' },
+              { title: 'Search & expand', body: 'Type a name, SKU, or description in the big box; narrow with status or category chips. Click any item to see its balances, recent movements, and a 6-month usage sparkline.' },
+              { title: 'Add & adjust', body: '+ Add Item quick-creates an item with a starting count at a location. The Adjust button on any balance sets a new counted quantity — guardrailed and fully audited.' },
               { title: 'Stay ahead', body: 'Give items a reorder point so they flag as Low stock. Scan finds an item instantly by barcode or SKU, and the ⋯ menu prints labels for the current view.' },
             ]}
             legend={[
               { badge: <StatusChip status="In Stock" />, text: 'on hand is above the reorder point' },
               { badge: <StatusChip status="Low Stock" />, text: 'on hand is at or below the reorder point' },
-              { badge: <StatusChip status="Stockout" />, text: 'nothing on hand anywhere' },
+              { badge: <StatusChip status="Stockout" />, text: 'nothing on hand (in the selected location, or anywhere when All locations)' },
             ]}
             glossary={[
-              { Icon: Boxes, term: 'On hand', blurb: 'physical quantity in stock, summed across every location' },
+              { Icon: MapPin, term: 'Location', blurb: 'where stock physically sits — every balance is per item, per location' },
+              { Icon: Boxes, term: 'On hand', blurb: 'physical quantity at the selected location — or the total across every location when All locations is selected' },
               { Icon: ClipboardList, term: 'Reserved', blurb: 'quantity already allocated to jobs or reservations — not free to use' },
               { Icon: PackageCheck, term: 'Available', blurb: 'on hand minus reserved — what you can actually promise' },
               { Icon: AlertTriangle, term: 'Reorder point', blurb: 'the threshold that flips an item to Low stock so you reorder in time' },
@@ -656,19 +695,44 @@ export default function InventoryPage() {
               {cat.name}
             </button>
           ))}
-          <select
-            value={locationFilter}
-            onChange={(e) => setLocationFilter(e.target.value)}
-            className="ml-auto px-3 py-1.5 rounded-md border bg-card text-sm"
+          <div
+            className={`ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors ${
+              locationFilter ? 'border-primary bg-primary/5' : 'bg-card'
+            }`}
           >
-            <option value="">All locations</option>
-            {locations.map((loc) => (
-              <option key={loc.id} value={loc.id}>
-                In stock at: {loc.name}
-              </option>
-            ))}
-          </select>
+            <MapPin className={`h-4 w-4 ${locationFilter ? 'text-primary' : 'text-muted-foreground'}`} />
+            <select
+              value={locationFilter}
+              onChange={(e) => changeLocationFilter(e.target.value)}
+              className="bg-transparent text-sm font-medium focus:outline-none"
+              title="Show stock balances for one location"
+            >
+              <option value="">All locations</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {/* Location context banner — makes it unmissable that every number
+            below is scoped to the chosen location. */}
+        {selectedLocation && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <span className="flex items-center gap-2 min-w-0">
+              <MapPin className="h-4 w-4 shrink-0 text-primary" />
+              <span className="truncate">
+                Showing stock at <span className="font-semibold">{selectedLocation.name}</span> — all quantities and
+                status chips reflect this location only.
+              </span>
+            </span>
+            <button onClick={() => changeLocationFilter('')} className="shrink-0 text-primary hover:underline">
+              Show all locations
+            </button>
+          </div>
+        )}
 
         {/* Grid */}
         <div className="rounded-lg border bg-card divide-y">
@@ -676,9 +740,24 @@ export default function InventoryPage() {
             <span />
             <span>Item</span>
             <span>Category</span>
-            <span className="text-right" title="Physical quantity across all locations">On Hand</span>
-            <span className="text-right" title="Allocated to jobs/reservations">Reserved</span>
-            <span className="text-right" title="On hand minus reserved">Available</span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `Physical quantity at ${selectedLocation.name}` : 'Physical quantity — total across all locations'}
+            >
+              On Hand
+            </span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `Allocated to jobs/reservations at ${selectedLocation.name}` : 'Allocated to jobs/reservations (all locations)'}
+            >
+              Reserved
+            </span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `On hand minus reserved at ${selectedLocation.name}` : 'On hand minus reserved (all locations)'}
+            >
+              Available
+            </span>
             <span>Status</span>
             <span />
           </div>
@@ -688,7 +767,13 @@ export default function InventoryPage() {
           ) : filteredRows.length === 0 ? (
             <div className="p-8 text-center space-y-3">
               <p className="text-muted-foreground">
-                {search.trim() ? <>No items match “{search.trim()}”.</> : 'No items yet.'}
+                {search.trim() ? (
+                  <>No items match “{search.trim()}”{selectedLocation ? <> at {selectedLocation.name}</> : null}.</>
+                ) : selectedLocation ? (
+                  <>No items have stock records at {selectedLocation.name} yet.</>
+                ) : (
+                  'No items yet.'
+                )}
               </p>
               <button
                 onClick={() => openQuickAdd(search.trim() || undefined)}
@@ -732,8 +817,14 @@ export default function InventoryPage() {
                       </div>
                       <div className="text-xs text-muted-foreground font-mono truncate">
                         {row.item.sku}
-                        {row.locationCount > 0 && (
-                          <span className="font-sans"> · {row.locationCount} location{row.locationCount === 1 ? '' : 's'}</span>
+                        {selectedLocation ? (
+                          <span className="font-sans"> · at {selectedLocation.name}</span>
+                        ) : (
+                          row.locationCount > 0 && (
+                            <span className="font-sans">
+                              {' '}· total across {row.locationCount} location{row.locationCount === 1 ? '' : 's'}
+                            </span>
+                          )
                         )}
                         {row.item.uom_term_id && (
                           <span className="font-sans"> · {uomLabels[row.item.uom_term_id] || ''}</span>
@@ -743,7 +834,14 @@ export default function InventoryPage() {
                     <span className="hidden md:block text-sm text-muted-foreground truncate">
                       {row.item.item_categories?.name || '—'}
                     </span>
-                    <span className={`hidden md:block text-right font-mono ${row.onHand <= 0 ? 'text-red-600 font-semibold' : ''}`}>
+                    <span
+                      className={`hidden md:block text-right font-mono ${row.onHand <= 0 ? 'text-red-600 font-semibold' : ''}`}
+                      title={
+                        selectedLocation
+                          ? `On hand at ${selectedLocation.name}`
+                          : `Total across ${row.locationCount} location${row.locationCount === 1 ? '' : 's'}`
+                      }
+                    >
                       {row.onHand.toLocaleString()}
                     </span>
                     <span className="hidden md:block text-right font-mono text-muted-foreground">
@@ -768,11 +866,22 @@ export default function InventoryPage() {
                     <div className="px-4 pb-4 pt-1 bg-muted/10 space-y-4">
                       {/* Per-location / per-variant balances */}
                       <div className="rounded-md border bg-card divide-y">
+                        <div className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <span>{selectedLocation ? `Balance at ${selectedLocation.name}` : 'Balance by location'}</span>
+                          <span className="text-right">On hand</span>
+                          <span className="text-right">Reserved</span>
+                          <span className="text-right">Available</span>
+                          <span />
+                        </div>
                         {row.balances.length === 0 ? (
                           <div className="flex items-center justify-between px-3 py-2 text-sm">
-                            <span className="text-muted-foreground">No stock recorded yet.</span>
+                            <span className="text-muted-foreground">
+                              {selectedLocation
+                                ? `No stock recorded at ${selectedLocation.name} yet.`
+                                : 'No stock recorded yet.'}
+                            </span>
                             <button
-                              onClick={() => openAdjustModal(row.item.id)}
+                              onClick={() => openAdjustModal(row.item.id, locationFilter || undefined)}
                               className="px-3 py-1.5 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
                             >
                               Set a count
@@ -816,12 +925,29 @@ export default function InventoryPage() {
                             );
                           })
                         )}
+                        {/* Explicit total line so "All locations" numbers are
+                            never ambiguous. */}
+                        {!selectedLocation && row.balances.length > 1 && (
+                          <div className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-2 text-sm font-medium bg-muted/20">
+                            <span>
+                              Total across {row.locationCount} location{row.locationCount === 1 ? '' : 's'}
+                            </span>
+                            <span className={`text-right font-mono ${row.onHand <= 0 ? 'text-red-600' : ''}`}>
+                              {row.onHand.toLocaleString()}
+                            </span>
+                            <span className="text-right font-mono text-muted-foreground">
+                              {row.reserved.toLocaleString()}
+                            </span>
+                            <span className="text-right font-mono text-green-600">
+                              {row.available.toLocaleString()}
+                            </span>
+                            <span />
+                          </div>
+                        )}
                         {row.balances.length > 0 && (
-                          <div className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-2 text-xs text-muted-foreground">
-                            <span className="uppercase tracking-wide">Location · On hand · Reserved · Available</span>
-                            <span className="col-span-3" />
+                          <div className="flex justify-end px-3 py-2 text-xs">
                             <button
-                              onClick={() => openAdjustModal(row.item.id)}
+                              onClick={() => openAdjustModal(row.item.id, locationFilter || undefined)}
                               className="text-orange-700 hover:underline"
                             >
                               + another location
@@ -833,7 +959,9 @@ export default function InventoryPage() {
                       <div className="grid md:grid-cols-2 gap-4">
                         {/* Recent activity */}
                         <div>
-                          <h4 className="text-sm font-medium mb-2">Recent activity</h4>
+                          <h4 className="text-sm font-medium mb-2">
+                            Recent activity{selectedLocation ? ` at ${selectedLocation.name}` : ''}
+                          </h4>
                           {movements === 'loading' || movements === undefined ? (
                             <div className="animate-pulse space-y-1">
                               {[1, 2, 3].map((i) => (
@@ -911,6 +1039,7 @@ export default function InventoryPage() {
         {!loading && filteredRows.length > 0 && (
           <p className="text-xs text-muted-foreground">
             {filteredRows.length} of {rows.length} items shown
+            {selectedLocation ? ` — balances scoped to ${selectedLocation.name}` : ''}
           </p>
         )}
       </div>
