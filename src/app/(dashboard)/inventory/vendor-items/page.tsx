@@ -3,7 +3,8 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Star, Package, DollarSign } from 'lucide-react';
+import { Plus, Edit, Trash2, Star, Package, DollarSign, Building2 } from 'lucide-react';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
 import { AppShell } from '@/components/layout/AppShell';
 import { CapabilityGate } from '@/components/access/CapabilityGate';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -65,6 +66,7 @@ type EnrichedVendorItem = VendorItem & {
 };
 
 export default function VendorItemsPage() {
+  const help = useHowItWorks('inventory-vendor-items-help');
   const uomLabels = useUOMLabelMap();
   const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [vendorItems, setVendorItems] = useState<VendorItem[]>([]);
@@ -337,8 +339,34 @@ export default function VendorItemsPage() {
         <PageHeader
           title="Vendor Items"
           description="Manage vendor catalog mappings and pricing. Links your existing catalog items to vendors with vendor-specific SKUs, costs, lead times, and preferred vendor status. Items must exist in your catalog before creating vendor mappings."
+          actions={!help.show ? <HowThisWorksButton onClick={help.open} /> : undefined}
         />
       </div>
+
+      {help.show && (
+        <div className="mb-6">
+          <HowItWorksCard
+            title="How vendor items work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Map an item to a vendor', body: 'Link one of your catalog items to a vendor that sells it, recording their SKU, unit of measure, and pack size. The item must already exist in your catalog.' },
+              { title: 'Price the mapping', body: 'Set the unit cost, currency, lead time, and minimum order quantity. Optionally pick a branch/plant so the price applies to that vendor location only, overriding the company-wide default.' },
+              { title: 'Mark a preferred vendor', body: 'Star one vendor per item as preferred — it becomes the go-to source when building purchase orders and reorder suggestions.' },
+              { title: 'Keep prices current', body: '"Update Pricing" changes one material across every vendor that carries it in a single pass — uncheck vendors that quoted differently and update them separately.' },
+            ]}
+            legendTitle="Badges"
+            legend={[
+              { badge: <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full"><Star className="w-3 h-3 fill-current" />Preferred</span>, text: 'the default vendor for this item when ordering' },
+              { badge: <span className="text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">Branch</span>, text: 'a branch-specific price — untagged rows are the company-wide default' },
+            ]}
+            glossary={[
+              { Icon: Package, term: 'Vendor SKU', blurb: 'the vendor’s own part number for your catalog item — printed on POs so they recognize the order' },
+              { Icon: Building2, term: 'Branch price', blurb: 'a price scoped to one vendor address (plant/store); it wins over the company default when ordering from that branch' },
+              { Icon: DollarSign, term: 'Lead time', blurb: 'days from order to delivery for this vendor+item — feeds reorder timing and PO expected dates' },
+            ]}
+          />
+        </div>
+      )}
 
       {/* Filters */}
       <div className="mb-6 flex flex-wrap gap-4">

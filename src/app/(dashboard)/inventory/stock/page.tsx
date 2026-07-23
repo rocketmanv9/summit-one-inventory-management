@@ -15,6 +15,8 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Boxes, ClipboardList, PackageCheck, AlertTriangle } from 'lucide-react';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
@@ -108,6 +110,7 @@ function Sparkline({ values }: { values: number[] }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function InventoryPage() {
+  const help = useHowItWorks('inventory-stock-help');
   const router = useRouter();
   const uomLabels = useUOMLabelMap();
   const { terms: uomTerms } = useUOMTerms();
@@ -531,6 +534,7 @@ export default function InventoryPage() {
           description="Everything in one place: search an item to see what you have and where. Expand a row for per-location balances, recent activity, and usage."
           actions={
             <div className="flex gap-3 items-center">
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
               <button
                 onClick={() => setScannerOpen(true)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
@@ -589,6 +593,30 @@ export default function InventoryPage() {
             </div>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How inventory works"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Search first', body: 'Type a name, SKU, or description in the big box. Narrow further with the status chips, category chips, or the location dropdown.' },
+              { title: 'Expand a row', body: 'Click any item to see its per-location (and per-variant) balances, recent movements, and a 6-month usage sparkline.' },
+              { title: 'Add & adjust', body: '+ Add Item quick-creates an item with a starting count. The Adjust button on any balance sets a new counted quantity — guardrailed and fully audited.' },
+              { title: 'Stay ahead', body: 'Give items a reorder point so they flag as Low stock. Scan finds an item instantly by barcode or SKU, and the ⋯ menu prints labels for the current view.' },
+            ]}
+            legend={[
+              { badge: <StatusChip status="In Stock" />, text: 'on hand is above the reorder point' },
+              { badge: <StatusChip status="Low Stock" />, text: 'on hand is at or below the reorder point' },
+              { badge: <StatusChip status="Stockout" />, text: 'nothing on hand anywhere' },
+            ]}
+            glossary={[
+              { Icon: Boxes, term: 'On hand', blurb: 'physical quantity in stock, summed across every location' },
+              { Icon: ClipboardList, term: 'Reserved', blurb: 'quantity already allocated to jobs or reservations — not free to use' },
+              { Icon: PackageCheck, term: 'Available', blurb: 'on hand minus reserved — what you can actually promise' },
+              { Icon: AlertTriangle, term: 'Reorder point', blurb: 'the threshold that flips an item to Low stock so you reorder in time' },
+            ]}
+          />
+        )}
 
         {/* Answer box */}
         <input

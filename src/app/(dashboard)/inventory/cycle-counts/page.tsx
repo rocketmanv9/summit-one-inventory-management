@@ -10,6 +10,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { EyeOff, Camera, Scale, UserCheck } from 'lucide-react';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
@@ -73,6 +75,7 @@ interface CreateModalInitialValues {
 }
 
 function CycleCountsPageContent() {
+  const help = useHowItWorks('inventory-cycle-counts-help');
   const router = useRouter();
   const searchParams = useSearchParams();
   const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
@@ -133,6 +136,50 @@ function CycleCountsPageContent() {
       console.error('Error fetching cycle counts:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Reassign a not-yet-finished count to another qualified counter, right from
+  // the list (previously only possible from the "My Assigned Counts" card).
+  const [reassignTarget, setReassignTarget] = useState<CycleCount | null>(null);
+  const [reassignTo, setReassignTo] = useState('');
+  const [reassignBusy, setReassignBusy] = useState(false);
+  const [qualifiedUsers, setQualifiedUsers] = useState<
+    { user_id: string; name: string | null; email: string | null; qualified: boolean }[]
+  >([]);
+
+  const openReassign = async (row: CycleCount) => {
+    setReassignTarget(row);
+    setReassignTo('');
+    if (qualifiedUsers.length === 0) {
+      try {
+        const res = await authenticatedFetch('/api/inventory/count-qualified');
+        const { data } = await res.json();
+        setQualifiedUsers((data || []).filter((u: any) => u.qualified));
+      } catch (error) {
+        console.error('Error loading qualified counters:', error);
+      }
+    }
+  };
+
+  const handleReassign = async () => {
+    if (!reassignTarget || !reassignTo) return;
+    setReassignBusy(true);
+    try {
+      const res = await apiWrite(`/api/inventory/cycle-counts/${reassignTarget.id}/assign`, {
+        method: 'POST',
+        body: { assigned_to_user_id: reassignTo },
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw AppError.internal(typeof data.error === 'string' ? data.error : data.error?.message || 'Failed to reassign count');
+      }
+      setReassignTarget(null);
+      fetchCycleCounts();
+    } catch (error: any) {
+      alert(`Error: ${error.message}`);
+    } finally {
+      setReassignBusy(false);
     }
   };
 
@@ -312,6 +359,17 @@ function CycleCountsPageContent() {
               View
             </button>
           )}
+          {['draft', 'scheduled', 'in_progress'].includes(row.status) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openReassign(row);
+              }}
+              className="px-3 py-1.5 text-xs text-gray-700 border rounded-md hover:bg-gray-50 font-medium"
+            >
+              Reassign
+            </button>
+          )}
           {['draft', 'scheduled', 'in_progress', 'under_review'].includes(row.status) && (
             <button
               onClick={(e) => {
@@ -378,14 +436,44 @@ function CycleCountsPageContent() {
           title="Cycle Counts"
           description="Manage inventory cycle counts and variance reviews. Example: Physically count all asphalt mix at the plant yard, compare to system records, and approve adjustments for 5 tons that was used for equipment maintenance (variance)."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Start Cycle Count
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Start Cycle Count
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How cycle counts work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create the count', body: 'Pick a location and a count type — full inventory, partial, or a quick spot check. Make it blind if counters should not see the expected quantities.' },
+              { title: 'Count the stock', body: 'Start the count to snapshot expected quantities, then record what is physically there. Counts can be reassigned to any qualified counter while still open.' },
+              { title: 'Review variances', body: 'Where the counted quantity differs from the snapshot, the count goes to Under Review — each variance gets an approve/adjust decision before anything posts.' },
+              { title: 'Post adjustments', body: 'Approving posts stock adjustments so the system matches reality. Every change lands in the audit ledger; cancelled counts make no stock changes.' },
+            ]}
+            legend={[
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">Draft</span>, text: 'being set up' },
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-700">Scheduled</span>, text: 'starts at a future date' },
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">In Progress</span>, text: 'counting underway' },
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">Under Review</span>, text: 'variance decisions needed' },
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Posted</span>, text: 'adjustments applied to stock' },
+              { badge: <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Cancelled</span>, text: 'voided — no stock changes' },
+            ]}
+            glossary={[
+              { Icon: Camera, term: 'Snapshot', blurb: 'expected quantities frozen at the moment the count starts, so counting compares against a fixed baseline' },
+              { Icon: EyeOff, term: 'Blind count', blurb: 'counters cannot see expected quantities — they record what they find, which keeps counts honest' },
+              { Icon: Scale, term: 'Variance', blurb: 'the difference between counted and expected quantity; each one is approved or rejected during review' },
+              { Icon: UserCheck, term: 'Qualified counter', blurb: 'only people marked as qualified (Settings → Count Qualifications) can be assigned or reassigned a count' },
+            ]}
+          />
+        )}
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -453,6 +541,44 @@ function CycleCountsPageContent() {
               >
                 Next →
               </button>
+            </div>
+          </div>
+        )}
+
+        {reassignTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setReassignTarget(null)}>
+            <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold">Reassign {reassignTarget.count_number}</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                The new assignee gets a task and a notification. Only qualified counters are listed.
+              </p>
+              <select
+                autoFocus
+                value={reassignTo}
+                onChange={(e) => setReassignTo(e.target.value)}
+                className="mt-4 w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="">Choose a counter…</option>
+                {qualifiedUsers.map((u) => (
+                  <option key={u.user_id} value={u.user_id}>{u.name || u.email}</option>
+                ))}
+              </select>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  onClick={() => setReassignTarget(null)}
+                  disabled={reassignBusy}
+                  className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReassign}
+                  disabled={reassignBusy || !reassignTo}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {reassignBusy ? 'Reassigning…' : 'Reassign'}
+                </button>
+              </div>
             </div>
           </div>
         )}

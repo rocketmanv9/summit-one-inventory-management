@@ -7,6 +7,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Warehouse, GitBranch, Ruler, Printer } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
@@ -42,6 +44,7 @@ function normalizeLocationTypes(data: LocationTypeRow[] | null | undefined): Loc
 }
 
 export default function LocationsPage() {
+  const help = useHowItWorks('inventory-locations-help');
   const router = useRouter();
   const uomLabels = useUOMLabelMap();
   const [locations, setLocations] = useState<Location[]>([]);
@@ -278,6 +281,7 @@ export default function LocationsPage() {
           description="Manage warehouses, yards, trucks, and other inventory locations. Example: Set up locations like 'Main Plant Yard', 'Truck #12', 'Highway 50 Job Site', or 'Vendor: ABC Concrete Supply' to track where materials are stored or in transit."
           actions={
             <div className="flex gap-2">
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
@@ -287,6 +291,29 @@ export default function LocationsPage() {
             </div>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How locations work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Add a place stock lives', body: 'Warehouses, yards, trucks, job sites — anywhere material sits or travels. Pick a type when creating one, or add a new type on the spot.' },
+              { title: 'Nest them', body: 'Set a parent location to build a hierarchy like Warehouse → Zone → Aisle. Child locations show “Under: …” in the list.' },
+              { title: 'Address & map it', body: 'Type an address and it auto-geocodes to latitude/longitude. Add an optional max capacity with a unit if the space is finite.' },
+              { title: 'Work the list', body: 'Click a row for the location’s detail page. Labels prints barcodes for everything stored there in one shot; Edit and Delete manage the record.' },
+            ]}
+            legend={[
+              { badge: <StatusChip status="active" />, text: 'in use — appears in pickers and filters' },
+              { badge: <StatusChip status="inactive" />, text: 'retired — kept for history, hidden from day-to-day use' },
+            ]}
+            glossary={[
+              { Icon: Warehouse, term: 'Location type', blurb: 'what kind of place it is (warehouse, truck, job site…) — drives the Type filter' },
+              { Icon: GitBranch, term: 'Parent location', blurb: 'optional hierarchy so a bin can live in an aisle, in a zone, in a warehouse' },
+              { Icon: Ruler, term: 'Capacity', blurb: 'optional maximum the location can hold, in the unit you choose' },
+              { Icon: Printer, term: 'Labels', blurb: 'one click prints barcode labels for every item and asset stocked at the location' },
+            ]}
+          />
+        )}
 
         <FilterBar
           filters={filterConfig}

@@ -131,6 +131,28 @@ export function MyAssignedCounts() {
     }
   };
 
+  // Skip a planned (not-yet-started) occurrence — the schedule keeps rolling,
+  // this one is just marked skipped instead of hanging around overdue.
+  const handleSkip = async (item: MyCountItem) => {
+    if (!item.schedule_entry_id) return;
+    if (!confirm(`Skip "${item.template_name}"${item.scheduled_date ? ` scheduled for ${formatDate(item.scheduled_date)}` : ''}? The next occurrence is unaffected.`)) return;
+    setBusyKey(itemKey(item));
+    try {
+      const res = await apiWrite(`/api/inventory/count-schedule/${item.schedule_entry_id}`, {
+        method: 'PATCH',
+        body: { status: 'skipped' },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(extractApiError(data, 'Failed to skip count'));
+        return;
+      }
+      fetchItems();
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   // Counts under review can't be reassigned; everything else here can be
   const canDelegate = (item: MyCountItem) => item.count_status !== 'under_review';
   const delegateOptions = qualifiedUsers.filter(u => u.user_id !== myUserId);
@@ -201,6 +223,16 @@ export function MyAssignedCounts() {
                     className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
                   >
                     {busy ? 'Working…' : 'Start Count'}
+                  </button>
+                )}
+
+                {!started && item.schedule_entry_id && (
+                  <button
+                    onClick={() => handleSkip(item)}
+                    disabled={busy}
+                    className="px-3 py-1.5 text-xs font-medium border text-gray-500 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Skip
                   </button>
                 )}
 

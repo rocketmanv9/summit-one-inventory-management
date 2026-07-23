@@ -9,6 +9,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Truck, PackageCheck, Undo2, ScanLine } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
@@ -71,6 +73,7 @@ export default function TransfersPage() {
 }
 
 function TransfersPageContent() {
+  const help = useHowItWorks('inventory-transfers-help');
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -449,14 +452,43 @@ function TransfersPageContent() {
           title="Transfers"
           description="Manage inventory transfers between locations. Example: Transfer 50 tons of aggregate from Main Yard to Truck #7 for delivery to the I-95 paving project, or move excess rebar from Job Site A back to the warehouse."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Create Transfer
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Create Transfer
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How transfers work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create a draft', body: 'Pick a from-location and a to-location, then add line items. Stock items take a quantity; serialized items have you pick the specific assets by tag.' },
+              { title: 'Ship it', body: 'Shipping moves the transfer to In Transit — the stock leaves the from-location. Drafts can still be edited or cancelled before this point.' },
+              { title: 'Receive it', body: 'Full Receive lands everything at the destination in one step. Partial receive takes deliveries in batches until every line is complete (not available for serialized assets).' },
+              { title: 'Fix mistakes', body: 'Undo a shipment that never happened, reverse a wrong receipt, or create a return transfer for stock that physically needs to go back. Overrides are logged for audit.' },
+            ]}
+            legend={[
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">Draft</span>, text: 'being set up — editable' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">In Transit</span>, text: 'shipped, awaiting receipt' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Partially Received</span>, text: 'some lines still outstanding' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Completed</span>, text: 'fully received' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Cancelled</span>, text: 'voided — can be undone back to draft' },
+            ]}
+            glossary={[
+              { Icon: Truck, term: 'Ship / Receive', blurb: 'the two physical halves of a transfer — stock leaves the source when shipped and lands at the destination when received' },
+              { Icon: PackageCheck, term: 'Partial receive', blurb: 'receive line quantities in multiple batches when a shipment arrives in pieces' },
+              { Icon: ScanLine, term: 'Serialized items', blurb: 'tracked as individual assets by tag/serial — you select exact units and they move as a whole' },
+              { Icon: Undo2, term: 'Fix Mistake', blurb: 'accounting corrections (undo ship, reverse receipt) vs. a return transfer, which physically moves stock back' },
+            ]}
+          />
+        )}
 
         <div className="grid grid-cols-5 gap-4">
           <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">

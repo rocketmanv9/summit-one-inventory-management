@@ -8,6 +8,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Boxes, Tag, Briefcase, CalendarClock } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
 // reservation_type = HOW the reservation tracks inventory (fungible stock vs a specific serialized asset).
@@ -51,6 +53,7 @@ interface Reservation {
 }
 
 export default function ReservationsPage() {
+  const help = useHowItWorks('inventory-reservations-help');
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -459,22 +462,50 @@ export default function ReservationsPage() {
           title="Reservations"
           description="Manage stock reservations and allocations. Example: Reserve 300 tons of asphalt for the State Route 12 project starting next week, ensuring it's not allocated to other jobs, then release it when the material is issued to the job site."
           actions={
-            <div className="flex gap-2">
-              <a
-                href="/settings/reservation-types"
-                className="px-4 py-2 border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                Manage Types
-              </a>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Create Reservation
-              </button>
-            </div>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <div className="flex gap-2">
+                <a
+                  href="/settings/reservation-types"
+                  className="px-4 py-2 border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Manage Types
+                </a>
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                  + Create Reservation
+                </button>
+              </div>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How reservations work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Reserve it', body: 'Pick an item — a quantity of bulk stock at a location, or specific serialized assets — and tie the hold to a job, project, or order. Optional needed-by date and reserved time window.' },
+              { title: 'It stays held', body: 'Reserved stock is excluded from what is available to other jobs, so nobody else can promise or issue it. Overdue holds (past their needed-by date) show in red.' },
+              { title: 'Fulfill or release', body: 'Fulfill issues the stock to the job and reduces on-hand. Release frees the hold without issuing — the stock becomes available again.' },
+              { title: 'Undo if needed', body: 'Fulfilled and released reservations both have an Undo that restores them to Active, returning stock or re-reserving the asset as appropriate.' },
+            ]}
+            legend={[
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">Active</span>, text: 'stock is held' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Fulfilled</span>, text: 'issued to the job' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">Released</span>, text: 'hold freed without issuing' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Expired</span>, text: 'window passed without action' },
+            ]}
+            glossary={[
+              { Icon: Boxes, term: 'Stock reservation', blurb: 'holds a quantity of a bulk/fungible item at a specific location' },
+              { Icon: Tag, term: 'Serialized reservation', blurb: 'holds one specific asset by tag/serial number — not just a quantity' },
+              { Icon: Briefcase, term: 'Allocated To', blurb: 'what the hold is for — job, project, customer order, internal order (types are configurable under Manage Types)' },
+              { Icon: CalendarClock, term: 'Reserved window', blurb: 'optional from/until timespan for the hold, plus a needed-by date that flags the reservation overdue when missed' },
+            ]}
+          />
+        )}
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">

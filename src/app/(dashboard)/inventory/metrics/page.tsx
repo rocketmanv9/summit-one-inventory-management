@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { ChevronDown, LineChart as LineChartIcon, BarChart3, DollarSign, X } from 'lucide-react';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { ChevronDown, LineChart as LineChartIcon, BarChart3, DollarSign, X, Boxes, Activity, TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
   XAxis, YAxis, Tooltip, Legend, CartesianGrid, ReferenceLine,
@@ -60,6 +61,7 @@ const CHARTS: { key: ChartKind; title: string; icon: typeof LineChartIcon; blurb
 ];
 
 export default function ItemMetricsPage() {
+  const help = useHowItWorks('inventory-metrics-help');
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [days, setDays] = useState<(typeof RANGES)[number]>(90);
@@ -181,7 +183,26 @@ export default function ItemMetricsPage() {
         <PageHeader
           title="Item Metrics"
           description="Pick the items you care about and graph their history."
+          actions={!help.show ? <HowThisWorksButton onClick={help.open} /> : undefined}
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How item metrics work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Pick your items', body: 'Nothing is graphed by default — choose up to 8 items you actually care about watching. Your picks stay in the page URL, so bookmark it or share it.' },
+              { title: 'Pick a window', body: '30, 90, 180, or 365 days of history. History comes from a nightly rollup of every stock movement.' },
+              { title: 'Pick one graph', body: 'Stock on hand, daily activity (received vs. used), or purchasing spend — one chart at a time, so it stays readable.' },
+              { title: 'Act on it', body: 'Watch a single item to see its reorder point drawn on the chart. Low days-of-stock shows red on the summary cards.' },
+            ]}
+            glossary={[
+              { Icon: Boxes, term: 'Stock on hand', blurb: 'quantity in stock at the end of each day, reconstructed from movement history' },
+              { Icon: Activity, term: 'Daily activity', blurb: 'received vs. used quantities per day, summed across your selected items' },
+              { Icon: TrendingUp, term: 'Spend', blurb: 'purchasing dollars per day (received quantity × unit cost)' },
+            ]}
+          />
+        )}
 
         {/* Controls: item picker + range + chart type */}
         <div className="flex flex-wrap items-center gap-3">

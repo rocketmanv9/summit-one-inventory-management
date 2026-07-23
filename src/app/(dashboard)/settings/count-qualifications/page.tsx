@@ -109,7 +109,7 @@ export default function CountQualificationsPage() {
                     <td className="px-4 py-3 font-medium">{u.name || '—'}</td>
                     <td className="px-4 py-3 text-gray-500">{u.email || '—'}</td>
                     <td className="px-4 py-3">
-                      <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{u.role}</span>
+                      <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{u.role || 'employee'}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button

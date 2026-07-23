@@ -6,12 +6,14 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { apiErrorMessage } from '@/lib/client-errors';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
 import {
   ShieldCheck,
   AlertTriangle,
   XCircle,
   RefreshCw,
   ExternalLink,
+  Scale,
 } from 'lucide-react';
 
 interface IntegrityFinding {
@@ -113,6 +115,7 @@ function FindingSubject({ finding }: { finding: IntegrityFinding }) {
 }
 
 export default function IntegrityPage() {
+  const help = useHowItWorks('inventory-integrity-help');
   const [report, setReport] = useState<IntegrityReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -163,16 +166,44 @@ export default function IntegrityPage() {
           title="Data Integrity"
           description="Invariant checks across stock balances, the movements ledger, reservations, and purchase orders"
           actions={
-            <button
-              onClick={() => runCheck()}
-              disabled={loading || running}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />
-              {running ? 'Checking…' : 'Run check'}
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => runCheck()}
+                disabled={loading || running}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />
+                {running ? 'Checking…' : 'Run check'}
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <div className="mt-6">
+            <HowItWorksCard
+              title="How data integrity works"
+              onDismiss={help.dismiss}
+              steps={[
+                { title: 'Checks run on load', body: 'Opening the page runs five invariant checks: balance vs ledger, reservations, negative stock, over-receipt, and PO status vs lines. Run check re-runs them on demand.' },
+                { title: 'Read the summary', body: 'A green All clear means every invariant holds. Otherwise you get a count of errors (numbers are wrong right now) and warnings (suspect states worth a look).' },
+                { title: 'Drill into findings', body: 'Findings are grouped by check, each row naming the item, location, or purchase order involved — with a link straight to it and a detail explaining the mismatch.' },
+                { title: 'Fix at the source, re-run', body: 'Correct the data where it lives — a cycle count for bad balances, the PO for receipt problems — then Run check again until everything is clear.' },
+              ]}
+              legend={[
+                { badge: <span className="inline-flex items-center px-2 py-0.5 text-xs font-semibold text-white bg-red-600 rounded">ERROR</span>, text: 'an invariant is violated — data is inconsistent now' },
+                { badge: <span className="inline-flex items-center px-2 py-0.5 text-xs font-semibold text-white bg-amber-500 rounded">WARNING</span>, text: 'suspect but not provably wrong — review it' },
+              ]}
+              legendTitle="Severity"
+              glossary={[
+                { Icon: ShieldCheck, term: 'Invariant', blurb: 'a rule the data must always satisfy — these checks verify each one still holds across the whole tenant' },
+                { Icon: Scale, term: 'Balance vs ledger', blurb: 'the core check: every on-hand balance must equal the sum of its posted stock movements' },
+                { Icon: AlertTriangle, term: 'Finding', blurb: 'one concrete violation — a specific item/location or PO where the numbers disagree, with the delta spelled out' },
+              ]}
+            />
+          </div>
+        )}
 
         {/* Summary chips */}
         {report && !loading && (

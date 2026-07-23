@@ -8,6 +8,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { authenticatedFetch } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Star, Timer, TrendingUp, AlertTriangle } from 'lucide-react';
 
 interface VendorPerformance {
   vendor_id: string;
@@ -60,6 +62,7 @@ interface VendorIntelligence {
 }
 
 export default function VendorPerformancePage() {
+  const help = useHowItWorks('inventory-vendor-performance-help');
   const [vendors, setVendors] = useState<VendorPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedVendor, setSelectedVendor] = useState<VendorPerformance | null>(null);
@@ -312,7 +315,35 @@ export default function VendorPerformancePage() {
         <PageHeader
           title="Vendor Performance Analytics"
           description="Track vendor reliability, quality, and delivery performance"
+          actions={!help.show ? <HowThisWorksButton onClick={help.open} /> : undefined}
         />
+
+        {help.show && (
+          <div className="mt-6">
+            <HowItWorksCard
+              title="How vendor performance works"
+              onDismiss={help.dismiss}
+              steps={[
+                { title: 'Data accrues automatically', body: 'Every purchase order, receipt, and dispute is logged as a vendor event as you work — there is nothing to enter here.' },
+                { title: 'Scorecards roll up', body: 'The last 90 days of events become each vendor’s on-time delivery rate, quality score, average days late, PO count, and spend, summarized in an overall star rating.' },
+                { title: 'Prices are watched', body: 'Latest unit costs are compared against each item’s trailing 30–120 day average. The biggest swings across all vendors surface in the Price Movers table.' },
+                { title: 'Drill into any vendor', body: 'Click a row (or View Details) for the full picture: metrics, actual vs configured lead time, per-item price trends, and recent activity.' },
+              ]}
+              legendTitle="Badges"
+              legend={[
+                { badge: <span className="px-2 py-1 rounded font-semibold bg-red-100 text-red-800 text-xs">+5.0%</span>, text: 'price up vs the trailing average' },
+                { badge: <span className="px-2 py-1 rounded font-semibold bg-green-100 text-green-800 text-xs">-5.0%</span>, text: 'price down vs the trailing average' },
+                { badge: <span className="px-2 py-1 bg-red-100 text-red-800 rounded font-semibold text-xs">2</span>, text: 'open disputes in the last 90 days' },
+              ]}
+              glossary={[
+                { Icon: Star, term: 'Overall rating', blurb: 'a 0–5 composite of on-time delivery, quality, and dispute history over the last 90 days' },
+                { Icon: Timer, term: 'Actual lead time', blurb: 'measured order-to-delivery days from real receipts — highlighted amber when it runs well over the configured lead time' },
+                { Icon: TrendingUp, term: 'Price movers', blurb: 'items whose latest cost moved most vs their trailing 30–120 day average, across all vendors' },
+                { Icon: AlertTriangle, term: 'Dispute', blurb: 'a logged problem with a delivery — shortages, damage, billing errors — that drags on the quality score' },
+              ]}
+            />
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">

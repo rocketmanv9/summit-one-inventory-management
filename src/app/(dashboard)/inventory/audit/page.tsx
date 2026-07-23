@@ -7,6 +7,8 @@ import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { ArrowLeftRight, Activity, BookOpen, Link2 } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface StockMovement {
@@ -54,6 +56,7 @@ interface LedgerEntry {
 }
 
 export default function AuditPage() {
+  const help = useHowItWorks('inventory-audit-help');
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [events, setEvents] = useState<InventoryEvent[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -315,14 +318,36 @@ export default function AuditPage() {
           title="Audit Ledger"
           description="View stock movements and inventory events. Example: See the complete history of how 1000 tons of asphalt moved through your system: received from vendor → stored in yard → transferred to Truck #5 → issued to Highway 101 project."
           actions={
-            <button
-              onClick={activeTab === 'ledger' ? fetchLedgerData : fetchData}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-            >
-              Refresh
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={activeTab === 'ledger' ? fetchLedgerData : fetchData}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Refresh
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How the audit ledger works"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Pick a view', body: 'Stock Movements is every quantity change, newest first. Inventory Events is the raw event stream behind them. Ledger Explorer replays one item at one location with running balances.' },
+              { title: 'Narrow it down', body: 'Filter movements by type (received, issued, adjusted, transferred, counted…) and date range. The ledger asks for an item + location pair before loading.' },
+              { title: 'Inspect a row', body: 'Click any movement or event to open the detail panel — full quantities, reason, timestamps, and the raw event payload for events.' },
+              { title: 'Follow the trail', body: 'Each movement carries a source reference back to the transfer, purchase order, count, or reservation that caused it, so any quantity can be explained end to end.' },
+            ]}
+            glossary={[
+              { Icon: ArrowLeftRight, term: 'Stock movement', blurb: 'a signed quantity change (+ received, − issued) for one item at one location; the ledger is append-only' },
+              { Icon: Activity, term: 'Inventory event', blurb: 'the underlying system event (who, when, what payload) that produced one or more movements' },
+              { Icon: BookOpen, term: 'Ledger Explorer', blurb: 'before/after running balances for a single item + location — the sum of movements is the on-hand quantity' },
+              { Icon: Link2, term: 'Source reference', blurb: 'the document behind a movement (transfer, PO, cycle count, reservation), shown with its short ID' },
+            ]}
+          />
+        )}
 
         <SubTabs
           value={activeTab}

@@ -35,6 +35,8 @@ import {
 } from '@/lib/po/po-status';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Smartphone, FileSearch, MailCheck } from 'lucide-react';
 
 interface PurchaseOrder {
   id: string;
@@ -61,6 +63,7 @@ interface PurchaseOrder {
 }
 
 export default function PurchasingPage() {
+  const help = useHowItWorks('inventory-purchasing-help');
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -390,24 +393,52 @@ export default function PurchasingPage() {
           title="Purchase Orders"
           description="Manage purchase orders and track vendor deliveries. Example: Create a PO for 500 tons of asphalt from Acme Materials, track delivery status, and receive partial shipments as they arrive at your yard."
           actions={
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowReceiveQR(true)}
-                className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
-              >
-                Receive on Phone
-              </button>
-              <CapabilityGate capability="purchase_orders.manage">
-                <Link
-                  href="/inventory/purchasing/create"
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowReceiveQR(true)}
+                  className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
                 >
-                  + Create PO
-                </Link>
-              </CapabilityGate>
-            </div>
+                  Receive on Phone
+                </button>
+                <CapabilityGate capability="purchase_orders.manage">
+                  <Link
+                    href="/inventory/purchasing/create"
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                  >
+                    + Create PO
+                  </Link>
+                </CapabilityGate>
+              </div>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How purchase orders work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create the PO', body: 'Pick a vendor and ship-to location, then add lines — catalog items mapped to that vendor, or free-text items with a UOM. Save it as a draft or Create & Send in one step.' },
+              { title: 'Send it to the vendor', body: 'Most vendors get a confirm-and-send email with the PO attached. Integration vendors (like Amazon Business) place the order through their own punchout flow instead. Either way the PO flips to Sent.' },
+              { title: 'Receive deliveries', body: 'Log receipts as shipments arrive — partial deliveries are fine, the progress bar tracks received vs ordered. Use "Receive on Phone" to scan deliveries at the yard from a QR-linked mobile session.' },
+              { title: 'Everything stays on record', body: 'Click any PO for its full story: line items, receipt history, collected documents (invoices, packing slips), AI-tracked vendor replies, and a lifecycle timeline.' },
+            ]}
+            legend={[
+              { badge: <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-xs font-medium">Draft</span>, text: 'not sent yet — still editable or deletable' },
+              { badge: <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-xs font-medium">Sent</span>, text: 'with the vendor, awaiting delivery' },
+              { badge: <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-medium">Partially Received</span>, text: 'some lines delivered, more expected' },
+              { badge: <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-xs font-medium">Received</span>, text: 'everything delivered' },
+              { badge: <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium">Cancelled</span>, text: 'stopped — no further receiving' },
+            ]}
+            glossary={[
+              { Icon: Smartphone, term: 'Receive on Phone', blurb: 'a QR code opens a tokenized mobile receiving session covering all open POs — no login needed at the dock' },
+              { Icon: FileSearch, term: 'Document search', blurb: 'search the receipt repository across all POs by invoice number, tracking number, amount, or vendor' },
+              { Icon: MailCheck, term: 'Vendor activity', blurb: 'AI reads vendor email replies — acknowledgements, ETAs, backorders — and pins them to the right PO' },
+            ]}
+          />
+        )}
 
         <div className="max-w-md">
           <MySpendCard />

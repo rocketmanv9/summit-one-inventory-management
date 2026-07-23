@@ -23,6 +23,8 @@ import { AssetTypeClassFields } from '@/components/assets/AssetTypeClassFields';
 import { useGVLabelMap } from '@/hooks/useGVTerms';
 import { useEquipmentClassMap } from '@/hooks/useEquipmentClasses';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Tag, QrCode, UserCheck, ArrowLeftRight } from 'lucide-react';
 import type { Database } from 'types/supabase';
 
 type AssetRow = Database['inventory']['Tables']['assets']['Row'];
@@ -67,6 +69,7 @@ type Asset = {
 };
 
 export default function AssetsPage() {
+  const help = useHowItWorks('inventory-assets-help');
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -407,29 +410,57 @@ export default function AssetsPage() {
           title="Assets"
           description="Track serialized assets and their assignments. Example: Manage equipment like Paver #1 (VIN: ABC123), Roller #3 (Serial: XYZ789), or GPS units assigned to specific trucks and operators, tracking who has what and when it's returned."
           actions={
-            <div className="flex gap-2">
-              {filteredAssets.length > 0 && (
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <div className="flex gap-2">
+                {filteredAssets.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setBarcodeItems(filteredAssets.map(a => ({
+                        code: a.asset_tag,
+                        label: `${a.asset_tag}${a.catalog_item?.name ? ` - ${a.catalog_item.name}` : ''}`,
+                      })));
+                    }}
+                    className="px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    Print Barcodes ({filteredAssets.length})
+                  </button>
+                )}
                 <button
-                  onClick={() => {
-                    setBarcodeItems(filteredAssets.map(a => ({
-                      code: a.asset_tag,
-                      label: `${a.asset_tag}${a.catalog_item?.name ? ` - ${a.catalog_item.name}` : ''}`,
-                    })));
-                  }}
-                  className="px-4 py-2 border text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  onClick={() => setShowCreateModal(true)}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                 >
-                  Print Barcodes ({filteredAssets.length})
+                  + Add Asset
                 </button>
-              )}
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Add Asset
-              </button>
-            </div>
+              </div>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How assets work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Add each unit once', body: 'Every serialized unit gets its own record with an asset tag and serial number — optionally linked to a catalog item and classified as a vehicle, equipment, or tool so it syncs with Fleet.' },
+              { title: 'Tag it with a barcode', body: 'Print a barcode label per unit (or a whole filtered batch) so it can be scanned in the field. Re-printing warns you if the unit is already tagged and placed, to avoid duplicates.' },
+              { title: 'Assign, return, transfer', body: 'Check a unit out to an employee, crew, job, or yard. On return, the condition you pick sets the next status — good goes back to available, damaged goes to maintenance. Transfer moves it between locations.' },
+              { title: 'Track the whole lifecycle', body: 'Status, location, purchase cost, and warranty live on each record — expired warranties show in red. Click an asset tag for its full history.' },
+            ]}
+            legend={[
+              { badge: <span className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-xs font-medium">Available</span>, text: 'in the yard, ready to assign' },
+              { badge: <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-xs font-medium">Assigned</span>, text: 'checked out to a person, crew, or job' },
+              { badge: <span className="rounded-full bg-orange-100 text-orange-700 px-2 py-0.5 text-xs font-medium">Maintenance</span>, text: 'being repaired — returned damaged or flagged' },
+              { badge: <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-xs font-medium">Retired</span>, text: 'out of service for good' },
+            ]}
+            glossary={[
+              { Icon: Tag, term: 'Asset tag', blurb: 'your unique ID for one physical unit — what gets printed on the barcode and scanned everywhere' },
+              { Icon: QrCode, term: 'Barcode', blurb: 'a printable scan label per unit; print in bulk from the header for everything currently filtered' },
+              { Icon: UserCheck, term: 'Assign / Return', blurb: 'checkout and check-in — the return condition decides whether the unit goes to available, maintenance, or out of service' },
+              { Icon: ArrowLeftRight, term: 'Transfer', blurb: 'moves a unit between locations (yards, trucks, job sites) without changing who it is assigned to' },
+            ]}
+          />
+        )}
 
 
         <div className="grid grid-cols-4 gap-4">

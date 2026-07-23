@@ -19,6 +19,8 @@ import { VendorModal } from '@/components/vendors/VendorModal';
 import { VendorDiscoveryModal } from '@/components/vendors/VendorDiscoveryModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
 import type { VendorDraft } from '@/lib/vendor-draft';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Globe, Library, MapPin } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -103,6 +105,7 @@ type ActiveTab = 'my-vendors' | 'catalog';
 /* -------------------------------------------------------------------------- */
 
 export default function VendorsPage() {
+  const help = useHowItWorks('inventory-vendors-help');
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<ActiveTab>('my-vendors');
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -339,7 +342,9 @@ export default function VendorsPage() {
           title="Vendors"
           description="Browse and adopt vendors from the shared platform catalog, or add custom vendor entries."
           actions={
-            activeTab === 'my-vendors' ? (
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              {activeTab === 'my-vendors' ? (
               <CapabilityGate capability="vendors.manage">
                 <div className="flex gap-2">
                   <button
@@ -366,9 +371,33 @@ export default function VendorsPage() {
                   {adopting ? 'Adding...' : `Add Selected (${selectedCatalogIds.size})`}
                 </button>
               </CapabilityGate>
-            ) : null
+              ) : null}
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How vendors work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Build your vendor list', body: 'Adopt ready-made vendors from the shared Catalog tab (contacts and addresses come along), use "Find Online" to discover suppliers by web search, or add a fully custom entry.' },
+              { title: 'Fill in the details', body: 'Each vendor holds contacts, notes, and one or more addresses. Addresses are geocoded automatically so they show on the map and can be ranked by distance.' },
+              { title: 'Put them to work', body: 'Your vendors power the rest of purchasing — they appear in PO creation, vendor item pricing, and performance analytics. Click a row for the full vendor profile.' },
+              { title: 'Find the closest branch', body: 'The Proximity tab ranks a vendor’s locations against one of your own sites, so you always order from the nearest plant or store.' },
+            ]}
+            legendTitle="Badges"
+            legend={[
+              { badge: <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">Vendor</span>, text: 'a regular vendor you added or adopted' },
+              { badge: <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Amazon</span>, text: 'the Amazon Business integration vendor — orders go through punchout' },
+            ]}
+            glossary={[
+              { Icon: Library, term: 'Catalog', blurb: 'the shared platform catalog of known suppliers — adopt them into your list with one click' },
+              { Icon: Globe, term: 'Find Online', blurb: 'describe what you need in plain language and AI searches the web for matching suppliers to review and add' },
+              { Icon: MapPin, term: 'Proximity', blurb: 'distance ranking between a vendor’s addresses and your own locations — requires geocoded addresses' },
+            ]}
+          />
+        )}
 
         {/* Tabs */}
         <SubTabs

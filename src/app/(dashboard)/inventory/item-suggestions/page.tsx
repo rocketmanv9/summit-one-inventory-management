@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { apiWrite } from '@/lib/api-client';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
 import { Sparkles, Mail, RefreshCw, Plus, X, ExternalLink } from 'lucide-react';
 
 interface Suggestion {
@@ -35,6 +36,7 @@ interface Suggestion {
 }
 
 export default function ItemSuggestionsPage() {
+  const help = useHowItWorks('inventory-item-suggestions-help');
   const router = useRouter();
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,16 +133,37 @@ export default function ItemSuggestionsPage() {
           title="AI Item Suggestions"
           description="Products spotted in your email that aren't tracked in inventory yet."
           actions={
-            <button
-              onClick={handleScan}
-              disabled={scanning}
-              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
-              {scanning ? 'Scanning…' : 'Scan now'}
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={handleScan}
+                disabled={scanning}
+                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${scanning ? 'animate-spin' : ''}`} />
+                {scanning ? 'Scanning…' : 'Scan now'}
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How AI item suggestions work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'We read your purchase email', body: 'Connected Gmail accounts (Settings → Integrations) are scanned daily for order confirmations, receipts, and invoices — plus on demand with Scan Now.' },
+              { title: 'AI finds untracked products', body: 'Each email is checked for physical products you buy but don’t track in inventory yet. Services, subscriptions, and junk mail are ignored.' },
+              { title: 'You decide', body: 'Accept opens the item wizard pre-filled with the name, vendor, and cost — AI fills in category, SKU, and unit of measure. Dismiss and the item is never suggested again.' },
+              { title: 'Repeats rise to the top', body: 'If the same product keeps showing up in your email, its "seen ×" count climbs — a strong hint it belongs in inventory.' },
+            ]}
+            glossary={[
+              { Icon: Sparkles, term: 'Confidence', blurb: 'how sure the AI is this is a real, trackable product purchase' },
+              { Icon: Mail, term: 'Source email', blurb: 'the message the suggestion came from — subject and date shown on each card' },
+              { Icon: Plus, term: 'Accept', blurb: 'marks accepted and drops you into the Add Item wizard, pre-filled' },
+            ]}
+          />
+        )}
 
         {scanMessage && (
           <div className="rounded-lg border bg-card px-4 py-3 text-sm">{scanMessage}</div>

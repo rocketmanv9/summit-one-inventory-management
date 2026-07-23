@@ -205,7 +205,26 @@ export async function notifyCountAssignment(opts: {
       .in('user_id', lookupIds)
       .limit(10);
 
-    const assignee = (users || []).find((u: any) => u.user_id === assigneeUserId);
+    let assignee = (users || []).find((u: any) => u.user_id === assigneeUserId);
+    if (!assignee?.email) {
+      // HR-synced people can be qualified/assigned without an app account —
+      // their id is hr_people.hr_person_id (or a profile_id with no local
+      // user), so fall back to the HR roster for a mailable address.
+      const { data: hrRows } = await supabase
+        .from('hr_people')
+        .select('hr_person_id, profile_id, first_name, last_name, preferred_name, work_email, personal_email')
+        .eq('tenant_id', tenantId)
+        .or(`hr_person_id.eq.${assigneeUserId},profile_id.eq.${assigneeUserId}`)
+        .limit(1);
+      const hr = hrRows?.[0];
+      if (hr) {
+        assignee = {
+          user_id: assigneeUserId,
+          name: hr.preferred_name || [hr.first_name, hr.last_name].filter(Boolean).join(' '),
+          email: hr.work_email || hr.personal_email || null,
+        };
+      }
+    }
     if (!assignee?.email) {
       log.warn('count_assignment_email.no_email', { assigneeUserId });
       return;

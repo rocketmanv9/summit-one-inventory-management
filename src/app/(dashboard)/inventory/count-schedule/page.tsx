@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SubTabs } from '@/components/ui/SubTabs';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { ClipboardList, Sparkles, UserCheck, CalendarDays } from 'lucide-react';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 
 interface Template {
@@ -77,6 +79,7 @@ function extractApiError(data: any, fallback: string): string {
 }
 
 export default function CountSchedulePage() {
+  const help = useHowItWorks('inventory-count-schedule-help');
   const [tab, setTab] = useState<'calendar' | 'templates'>('calendar');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [qualifiedUsers, setQualifiedUsers] = useState<QualifiedUser[]>([]);
@@ -112,7 +115,33 @@ export default function CountSchedulePage() {
         <PageHeader
           title="Count Schedule"
           description="Plan recurring cycle counts from audit templates, lay them out on the calendar, and assign qualified counters"
+          actions={!help.show ? <HowThisWorksButton onClick={help.open} /> : undefined}
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How the count schedule works"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Define templates', body: 'A template says what to count (everything at a location, or specific items), the count type, whether it is blind, and how many times per year it should run.' },
+              { title: 'Fill the calendar', body: 'Add entries by hand with + Add to Schedule, or let AI Auto-Schedule propose the next 12 months from your active templates — review the plan before confirming.' },
+              { title: 'Assign counters', body: 'Each entry can be assigned to a qualified counter, who gets the task when the count is created. Unassigned entries still run; admins manage qualifications in Settings.' },
+              { title: 'Create the counts', body: 'On the day (or early, via Create Cycle Count Now) an entry becomes a real cycle count on the Cycle Counts page, and the calendar tracks it through completion.' },
+            ]}
+            legend={[
+              { badge: <span className={`px-2 py-0.5 rounded border text-xs ${ENTRY_STATUS_STYLES.planned}`}>Planned</span>, text: 'on the calendar, count not created yet' },
+              { badge: <span className={`px-2 py-0.5 rounded border text-xs ${ENTRY_STATUS_STYLES.generated}`}>Count Created</span>, text: 'cycle count exists and is underway' },
+              { badge: <span className={`px-2 py-0.5 rounded border text-xs ${ENTRY_STATUS_STYLES.completed}`}>Completed</span>, text: 'count finished and posted' },
+              { badge: <span className={`px-2 py-0.5 rounded border text-xs ${ENTRY_STATUS_STYLES.skipped}`}>Skipped</span>, text: 'deliberately passed over' },
+            ]}
+            glossary={[
+              { Icon: ClipboardList, term: 'Audit template', blurb: 'the reusable definition of a recurring count — location, scope, type, blind flag, and frequency per year' },
+              { Icon: Sparkles, term: 'AI Auto-Schedule', blurb: 'spreads each active template evenly across the year and balances assignments, with a rationale for every entry' },
+              { Icon: UserCheck, term: 'Qualified counter', blurb: 'only people marked qualified can be assigned; without any, counts are scheduled unassigned' },
+              { Icon: CalendarDays, term: 'Ad-hoc entry', blurb: 'a read-only calendar mirror of a count created directly on the Cycle Counts page — shown for visibility, not editable here' },
+            ]}
+          />
+        )}
 
         {/* Tabs */}
         <SubTabs

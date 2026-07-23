@@ -5,6 +5,8 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Tags, Filter, ArrowRightLeft } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { CategoryModal } from '@/components/modals/CategoryModal';
@@ -15,6 +17,7 @@ import type { Database } from 'types/supabase';
 type Category = Database['inventory']['Tables']['item_categories']['Row'];
 
 export default function CategoriesPage() {
+  const help = useHowItWorks('inventory-categories-help');
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -157,14 +160,35 @@ export default function CategoriesPage() {
           title="Item Categories"
           description="Manage item categories for inventory organization"
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Add Category
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Add Category
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How categories work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create your buckets', body: 'Use + Add Category to define groups like Raw Material, Consumable, or Safety. Every item belongs to exactly one category.' },
+              { title: 'Use them everywhere', body: 'Categories show up as one-click filter chips on the Inventory page and group items in reporting, so keep the list short and meaningful.' },
+              { title: 'Rename freely', body: 'Edit changes a category’s name in place — items keep their assignment, no re-tagging needed.' },
+              { title: 'Delete safely', body: 'Deleting a category with items in it first asks you to reassign those items to another category, so nothing is left uncategorized.' },
+            ]}
+            glossary={[
+              { Icon: Tags, term: 'Category', blurb: 'the single bucket an item belongs to — its main grouping across the app' },
+              { Icon: Filter, term: 'Filter chip', blurb: 'each category becomes a clickable chip on the Inventory page for instant narrowing' },
+              { Icon: ArrowRightLeft, term: 'Reassign', blurb: 'moving a category’s items into another category before the old one is deleted' },
+            ]}
+          />
+        )}
 
         <FilterBar
           filters={filterConfig}
