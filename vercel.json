@@ -34,6 +34,10 @@
     {
       "path": "/api/system/cron/agent-suggestions",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/system/cron/item-suggestions",
+      "schedule": "45 13 * * *"
     }
   ]
 }

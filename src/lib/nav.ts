@@ -29,6 +29,7 @@ import {
   Tag,
   Ruler,
   Bug,
+  Sparkles,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // reached from the page itself, not the nav.
       { title: 'Inventory', href: '/inventory/stock', icon: Boxes },
       { title: 'Movements', href: '/inventory/movements', icon: Activity },
+      { title: 'Metrics', href: '/inventory/metrics', icon: TrendingUp },
+      { title: 'Suggestions', href: '/inventory/item-suggestions', icon: Sparkles },
       // Hidden ownership entries — reached from the Inventory page itself.
       { title: 'Items', href: '/inventory/items', icon: Boxes, hidden: true },
       { title: 'Categories', href: '/inventory/categories', icon: Boxes, hidden: true },

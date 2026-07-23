@@ -219,6 +219,10 @@ export default function NewItemWizardPage() {
   // AI suggestion state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiFilled, setAiFilled] = useState(false);
+  // Deep-link prefill (?name=…) — e.g. accepted email suggestions land here and
+  // auto-run the AI suggest once categories are in.
+  const [pendingAutoSuggest, setPendingAutoSuggest] = useState(false);
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
   const [aiImageLoading, setAiImageLoading] = useState(false);
   const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
   const [aiSuggestedSkuPrefix, setAiSuggestedSkuPrefix] = useState<string | null>(null);
@@ -260,8 +264,26 @@ export default function NewItemWizardPage() {
       setCategories(data || []);
     } catch (err) {
       console.error('Error loading categories:', err);
+    } finally {
+      setCategoriesLoaded(true);
     }
   };
+
+  // Prefill from query params (?name=&description=&vendor_id=&unit_cost=) —
+  // used by the AI item-suggestions queue's "Add to inventory" hand-off.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const name = p.get('name');
+    if (!name) return;
+    setForm((prev) => ({
+      ...prev,
+      name,
+      description: p.get('description') || prev.description,
+      vendor_id: p.get('vendor_id') || prev.vendor_id,
+      vendor_unit_cost: p.get('unit_cost') || prev.vendor_unit_cost,
+    }));
+    setPendingAutoSuggest(true);
+  }, []);
 
   const loadVendors = async () => {
     try {
@@ -343,6 +365,15 @@ export default function NewItemWizardPage() {
       setAiLoading(false);
     }
   }, [form.name, aiLoading, categories]);
+
+  // Auto-run the AI suggest for deep-link prefills once categories are loaded
+  // (so the suggested category can match against existing ones).
+  useEffect(() => {
+    if (pendingAutoSuggest && categoriesLoaded && form.name.trim() && !aiLoading && !aiFilled) {
+      setPendingAutoSuggest(false);
+      handleAiSuggest();
+    }
+  }, [pendingAutoSuggest, categoriesLoaded, form.name, aiLoading, aiFilled, handleAiSuggest]);
 
   // Identify an item from a photo and auto-fill the form (name + fields).
   const handleAiImageAnalyze = useCallback(async (file: File) => {
