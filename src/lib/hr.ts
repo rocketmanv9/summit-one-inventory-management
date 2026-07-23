@@ -44,15 +44,25 @@ export interface HRPerson {
   employee_code: string | null;
   employment_status: string | null;
   profile_id: string | null;
+  location_id: string | null;
   is_active: boolean;
 }
 
 /**
  * Map an HR org_people row (from fetchHRPeople OR a webhook payload.new) to a
  * public.hr_people upsert row. Tolerant of the full HR row shape and the HRPerson subset.
+ *
+ * `locationNameById` resolves location_id → display name (from HR's
+ * clone_tenant_locations). When absent (webhook path), location_name is
+ * omitted from the row so the upsert leaves any previously-synced name alone.
  */
-export function hrPersonToMirrorRow(p: any, tenantId: string, nowIso: string) {
-  return {
+export function hrPersonToMirrorRow(
+  p: any,
+  tenantId: string,
+  nowIso: string,
+  locationNameById?: Map<string, string>,
+) {
+  const row: Record<string, unknown> = {
     hr_person_id: p.id,
     tenant_id: tenantId,
     hr_position_id: p.position_id ?? null,
@@ -65,9 +75,14 @@ export function hrPersonToMirrorRow(p: any, tenantId: string, nowIso: string) {
     employment_status: p.employment_status ?? null,
     is_active: p.is_active ?? true,
     profile_id: p.profile_id ?? null,
+    hr_location_id: p.location_id ?? null,
     synced_at: nowIso,
     updated_at: nowIso,
   };
+  if (locationNameById) {
+    row.location_name = p.location_id ? locationNameById.get(p.location_id) ?? null : null;
+  }
+  return row;
 }
 
 let _hr: any = null;
@@ -126,14 +141,29 @@ export async function fetchHRRoleLevels(hrTenantId: string): Promise<Map<string,
 export async function fetchHRPeople(hrTenantId: string): Promise<HRPerson[]> {
   const hr = getHRClient();
   if (!hr) return [];
+  // Deliberately NO is_active filter: the mirror must hold EVERYONE so
+  // deactivations propagate and rosters (e.g. count qualifications) are
+  // complete. Consumers filter on is_active themselves.
   const { data, error } = await hr
     .from('org_people')
-    .select('id, tenant_id, position_id, work_email, personal_email, first_name, last_name, preferred_name, employee_code, employment_status, profile_id, is_active')
+    .select('id, tenant_id, position_id, work_email, personal_email, first_name, last_name, preferred_name, employee_code, employment_status, profile_id, location_id, is_active')
     .eq('tenant_id', hrTenantId)
-    .eq('is_active', true)
     .limit(5000);
   if (error) throw AppError.internal(`HR org_people read failed: ${error.message}`);
   return (data ?? []) as HRPerson[];
+}
+
+/** HR location id → display name (HR's clone_tenant_locations). */
+export async function fetchHRLocationNames(hrTenantId: string): Promise<Map<string, string>> {
+  const hr = getHRClient();
+  if (!hr) return new Map();
+  const { data, error } = await hr
+    .from('clone_tenant_locations')
+    .select('id, name')
+    .eq('tenant_id', hrTenantId)
+    .limit(500);
+  if (error) throw AppError.internal(`HR locations read failed: ${error.message}`);
+  return new Map((data ?? []).map((l: { id: string; name: string }) => [l.id, l.name]));
 }
 
 /** Build a lowercased-email → HR person index (work_email + personal_email). */

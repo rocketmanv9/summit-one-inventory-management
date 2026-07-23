@@ -32,9 +32,9 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
       .limit(500),
     (supabase as any)
       .from('hr_people')
-      .select('hr_person_id, profile_id, first_name, last_name, preferred_name, work_email, personal_email, is_active')
+      // Everyone, including inactive — the page filters; Grant wants the full roster visible.
+      .select('hr_person_id, profile_id, first_name, last_name, preferred_name, work_email, personal_email, is_active, hr_location_id, location_name')
       .eq('tenant_id', session.tenantId)
-      .eq('is_active', true)
       .limit(1000),
     (supabase as any)
       .schema('inventory')
@@ -91,6 +91,9 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
       email: local?.email || email,
       role: local?.role ?? null,
       has_app_account: !!local,
+      is_active: p.is_active !== false,
+      location_id: p.hr_location_id ?? null,
+      location_name: p.location_name ?? null,
       qualified: qualByUser.get(userId)?.active === true,
       notes: qualByUser.get(userId)?.notes ?? null,
     };
@@ -105,6 +108,9 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
       email: u.email,
       role: u.role,
       has_app_account: true,
+      is_active: true,
+      location_id: null,
+      location_name: null,
       qualified: qualByUser.get(u.user_id)?.active === true,
       notes: qualByUser.get(u.user_id)?.notes ?? null,
     });

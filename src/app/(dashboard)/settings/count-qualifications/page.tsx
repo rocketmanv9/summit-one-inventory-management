@@ -11,6 +11,9 @@ interface RosterUser {
   name: string | null;
   email: string | null;
   role: string;
+  is_active: boolean;
+  location_id: string | null;
+  location_name: string | null;
   qualified: boolean;
   notes: string | null;
 }
@@ -21,6 +24,9 @@ export default function CountQualificationsPage() {
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'qualified' | 'active'>('all');
 
   useEffect(() => {
     const token = getStoredAccessToken();
@@ -68,6 +74,21 @@ export default function CountQualificationsPage() {
 
   const qualifiedCount = users.filter(u => u.qualified).length;
 
+  // Location options come from the data itself, so new HR locations appear automatically.
+  const locations = [...new Map(
+    users.filter(u => u.location_id).map(u => [u.location_id!, u.location_name || 'Unknown'])
+  ).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+
+  const q = search.trim().toLowerCase();
+  const filtered = users.filter(u => {
+    if (q && !(`${u.name ?? ''} ${u.email ?? ''}`.toLowerCase().includes(q))) return false;
+    if (locationFilter === 'none' && u.location_id) return false;
+    if (locationFilter && locationFilter !== 'none' && u.location_id !== locationFilter) return false;
+    if (statusFilter === 'qualified' && !u.qualified) return false;
+    if (statusFilter === 'active' && !u.is_active) return false;
+    return true;
+  });
+
   return (
     <AppShell>
       <div className="space-y-6">
@@ -86,8 +107,34 @@ export default function CountQualificationsPage() {
           </div>
         )}
 
-        <div className="text-sm text-muted-foreground">
-          {qualifiedCount} of {users.length} people qualified
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email…"
+            className="w-64 rounded-md border px-3 py-2 text-sm"
+          />
+          <select
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
+            className="rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="">All locations</option>
+            {locations.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            <option value="none">No location</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+            className="rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="all">Everyone</option>
+            <option value="active">Active only</option>
+            <option value="qualified">Qualified only</option>
+          </select>
+          <span className="text-sm text-muted-foreground">
+            {filtered.length} of {users.length} people · {qualifiedCount} qualified
+          </span>
         </div>
 
         {loading ? (
@@ -99,15 +146,20 @@ export default function CountQualificationsPage() {
                 <tr className="text-left text-xs text-gray-500 uppercase tracking-wide">
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Location</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3 text-right">Qualified Counter</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
-                  <tr key={u.user_id} className="border-b last:border-0 hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium">{u.name || '—'}</td>
+                {filtered.map(u => (
+                  <tr key={u.user_id} className={`border-b last:border-0 hover:bg-gray-50 ${u.is_active ? '' : 'opacity-60'}`}>
+                    <td className="px-4 py-3 font-medium">
+                      {u.name || '—'}
+                      {!u.is_active && <span className="ml-2 text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">inactive</span>}
+                    </td>
                     <td className="px-4 py-3 text-gray-500">{u.email || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{u.location_name || '—'}</td>
                     <td className="px-4 py-3">
                       <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{u.role || 'employee'}</span>
                     </td>
@@ -129,10 +181,10 @@ export default function CountQualificationsPage() {
                     </td>
                   </tr>
                 ))}
-                {users.length === 0 && (
+                {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
-                      No people found for this tenant yet.
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      {users.length === 0 ? 'No people found for this tenant yet.' : 'Nobody matches these filters.'}
                     </td>
                   </tr>
                 )}
