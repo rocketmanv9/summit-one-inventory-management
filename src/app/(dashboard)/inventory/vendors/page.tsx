@@ -17,10 +17,11 @@ import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { VendorModal } from '@/components/vendors/VendorModal';
 import { VendorDiscoveryModal } from '@/components/vendors/VendorDiscoveryModal';
+import { VendorQuickAddModal } from '@/components/vendors/VendorQuickAddModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
 import type { VendorDraft } from '@/lib/vendor-draft';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { Globe, Library, MapPin } from 'lucide-react';
+import { Globe, Library, MapPin, Sparkles } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -115,6 +116,7 @@ export default function VendorsPage() {
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [industryFilter, setIndustryFilter] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showDiscoverModal, setShowDiscoverModal] = useState(false);
   // Draft handed off from discovery's "Review & edit" → opens the full form.
   const [draftVendor, setDraftVendor] = useState<VendorDraft | null>(null);
@@ -355,9 +357,15 @@ export default function VendorsPage() {
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                    className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
                   >
                     + Add Custom
+                  </button>
+                  <button
+                    onClick={() => setShowQuickAdd(true)}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Sparkles className="h-4 w-4" /> Quick Add
                   </button>
                 </div>
               </CapabilityGate>
@@ -381,7 +389,7 @@ export default function VendorsPage() {
             title="How vendors work"
             onDismiss={help.dismiss}
             steps={[
-              { title: 'Build your vendor list', body: 'Adopt ready-made vendors from the shared Catalog tab (contacts and addresses come along), use "Find Online" to discover suppliers by web search, or add a fully custom entry.' },
+              { title: 'Build your vendor list', body: 'Quick Add is the fastest path: type a vendor name (or paste their website) and AI fills in the whole record — code, website, email domains, type, and description — ready to save in one click. You can also adopt ready-made vendors from the shared Catalog tab (contacts and addresses come along), use "Find Online" to discover suppliers by web search, or add a fully custom entry.' },
               { title: 'Fill in the details', body: 'Each vendor holds contacts, notes, and one or more addresses. Addresses are geocoded automatically so they show on the map and can be ranked by distance.' },
               { title: 'Put them to work', body: 'Your vendors power the rest of purchasing — they appear in PO creation, vendor item pricing, and performance analytics. Click a row for the full vendor profile.' },
               { title: 'Find the closest branch', body: 'The Proximity tab ranks a vendor’s locations against one of your own sites, so you always order from the nearest plant or store.' },
@@ -392,6 +400,7 @@ export default function VendorsPage() {
               { badge: <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Amazon</span>, text: 'the Amazon Business integration vendor — orders go through punchout' },
             ]}
             glossary={[
+              { Icon: Sparkles, term: 'Quick Add', blurb: 'type a vendor name or paste their website — AI fills in the record, including the email domains that match incoming vendor emails to item suggestions' },
               { Icon: Library, term: 'Catalog', blurb: 'the shared platform catalog of known suppliers — adopt them into your list with one click' },
               { Icon: Globe, term: 'Find Online', blurb: 'describe what you need in plain language and AI searches the web for matching suppliers to review and add' },
               { Icon: MapPin, term: 'Proximity', blurb: 'distance ranking between a vendor’s addresses and your own locations — requires geocoded addresses' },
@@ -535,6 +544,16 @@ export default function VendorsPage() {
             initialDraft={draftVendor}
             onClose={() => { setShowAddModal(false); setEditingVendor(null); setDraftVendor(null); }}
             onSuccess={() => { setShowAddModal(false); setEditingVendor(null); setDraftVendor(null); fetchVendors(); }}
+          />
+        )}
+
+        {/* Quick Add — AI-prefilled vendor from just a name or website */}
+        {showQuickAdd && (
+          <VendorQuickAddModal
+            open
+            onClose={() => setShowQuickAdd(false)}
+            onSuccess={() => { setShowQuickAdd(false); fetchVendors(); }}
+            onReview={(draft) => { setShowQuickAdd(false); setDraftVendor(draft); }}
           />
         )}
 

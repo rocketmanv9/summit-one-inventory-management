@@ -1,11 +1,62 @@
 import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { z } from 'zod';
 
 import { pickVendorColumns } from '@/lib/vendor-columns';
 import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
+
+// Optional AI-suggested sender domains attached to a vendor create (quick add).
+// The email → item-suggestions scanner matches inbound mail to vendors via
+// supply_chain.vendor_email_domains, so capturing these at onboarding matters.
+const EmailDomainsSchema = z.array(z.string()).max(10).optional();
+
+const FREEMAIL_DOMAINS = new Set([
+  'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
+  'aol.com', 'icloud.com', 'me.com', 'live.com',
+]);
+
+/** Normalize to bare lowercase domains; drop freemail/invalid; dedupe; cap 5. */
+function sanitizeEmailDomains(domains: string[] | undefined): string[] {
+  const out = new Set<string>();
+  for (const raw of domains ?? []) {
+    let d = raw.trim().toLowerCase()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+      .replace(/^www\./, '');
+    d = d.split(/[/?#\s]/)[0] || '';
+    if (d.includes('@')) d = d.split('@')[1] || '';
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(d)) continue;
+    if (FREEMAIL_DOMAINS.has(d)) continue;
+    out.add(d);
+    if (out.size >= 5) break;
+  }
+  return [...out];
+}
+
+/** Upsert sender domains for a vendor. Non-fatal — the vendor row is already
+ *  written, so a failure here logs instead of failing (and re-running) the save. */
+async function upsertVendorEmailDomains(
+  sc: any,
+  log: { error: (msg: string, meta?: Record<string, unknown>) => void },
+  tenantId: string,
+  vendorId: string,
+  domains: string[],
+) {
+  if (domains.length === 0) return;
+  const rows = domains.map((domain) => ({
+    tenant_id: tenantId,
+    vendor_id: vendorId,
+    domain,
+    source: 'ai_suggest',
+    is_active: true,
+  }));
+  const { error } = await sc
+    .from('vendor_email_domains')
+    .upsert(rows, { onConflict: 'tenant_id,vendor_id,domain' });
+  if (error) log.error('vendor.email_domains_upsert_failed', { error: error.message, vendor_id: vendorId });
+}
 
 // List the tenant's operational (supply_chain) vendors with their contacts and
 // addresses. This is the single tenant vendor store used by items/POs.
@@ -56,7 +107,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'vendors.manage');
   const body = await req.json();
   const { id: _id, created_at, tenant_id, last_event_id: _lei,
-          contacts: _c, addresses: _a, vendor_type_id, is_active, description, ...rest } = body ?? {};
+          contacts: _c, addresses: _a, vendor_type_id, is_active, description,
+          email_domains, ...rest } = body ?? {};
+  const emailDomains = sanitizeEmailDomains(EmailDomainsSchema.parse(email_domains ?? undefined));
   const raw: Record<string, any> = { ...rest };
   // Accept GV-style field names from the Vendors UI.
   if (vendor_type_id !== undefined) raw.vendor_type_term_id = vendor_type_id;
@@ -95,6 +148,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       log.error('vendor.restore_failed', { error: restoreError.message });
       throw AppError.internal(restoreError.message);
     }
+    await upsertVendorEmailDomains(sc, log, ctx.tenantId!, restored.id, emailDomains);
     return { data: restored, status: 200, events: [] };
   }
 
@@ -107,5 +161,6 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     log.error('vendor.create_failed', { error: error.message });
     throw AppError.internal(error.message);
   }
+  await upsertVendorEmailDomains(sc, log, ctx.tenantId!, data.id, emailDomains);
   return { data, status: 201, events: [] };
 }, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'POST /api/inventory/vendors' });

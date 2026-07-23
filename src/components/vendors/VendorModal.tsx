@@ -148,6 +148,9 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
   const [contacts, setContacts] = useState<ContactDraft[]>([]);
   const [removedAddressIds, setRemovedAddressIds] = useState<string[]>([]);
   const [removedContactIds, setRemovedContactIds] = useState<string[]>([]);
+  // Sender email domains carried in from a quick-add/discovery draft — passed to
+  // the create route so they're upserted into supply_chain.vendor_email_domains.
+  const [draftEmailDomains, setDraftEmailDomains] = useState<string[]>([]);
   // OCC token for edit saves — kept fresh from the GET detail load.
   const [lastEventId, setLastEventId] = useState<string | null>(null);
 
@@ -408,11 +411,13 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
       );
       setLastEventId(null);
       setSearchDone(false);
+      setDraftEmailDomains(initialDraft.email_domains || []);
     } else {
       setBasics({ ...emptyBasics(), name: initialName || '' });
       setAddresses([emptyAddress()]);
       setContacts([]);
       setLastEventId(null);
+      setDraftEmailDomains([]);
       if (initialName) runSearch(initialName);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -566,7 +571,10 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
         await SupplyChainRPC.updateVendor(vendor.id, payload as any, lastEventId);
         vendorId = vendor.id;
       } else {
-        const created = await SupplyChainRPC.createVendor(payload as any);
+        const created = await SupplyChainRPC.createVendor({
+          ...payload,
+          ...(draftEmailDomains.length > 0 ? { email_domains: draftEmailDomains } : {}),
+        } as any);
         vendorId = created.id;
       }
 

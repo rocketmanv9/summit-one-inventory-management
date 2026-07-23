@@ -38,6 +38,10 @@ export interface VendorDraft {
   website?: string;
   address?: VendorDraftAddress;
   contact?: VendorDraftContact;
+  /** Known sender domains (e.g. from the AI quick-add suggest) — upserted into
+   *  supply_chain.vendor_email_domains so the email → item-suggestions scanner
+   *  can match this vendor. */
+  email_domains?: string[];
 }
 
 export function draftHasAddress(a?: VendorDraftAddress): boolean {
@@ -92,6 +96,8 @@ export async function createVendorFromDraft(draft: VendorDraft): Promise<{ id: s
       .filter(Boolean)
       .join('\n') || null;
 
+  const emailDomains = (draft.email_domains || []).map((d) => d.trim().toLowerCase()).filter(Boolean);
+
   const payload: Record<string, unknown> = {
     name,
     code: draft.code?.trim() || undefined,
@@ -99,6 +105,8 @@ export async function createVendorFromDraft(draft: VendorDraft): Promise<{ id: s
     payment_terms: draft.payment_terms || undefined,
     lead_time_days: draft.lead_time_days ? parseInt(draft.lead_time_days, 10) : null,
     notes,
+    portal_url: draft.website?.trim() || null,
+    email_domains: emailDomains.length > 0 ? emailDomains : undefined,
     contact_name: contact?.name?.trim() || null,
     contact_email: contact?.email?.trim() || null,
     contact_phone: contact?.phone?.trim() || null,
