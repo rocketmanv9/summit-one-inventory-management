@@ -180,9 +180,12 @@ export const SETTINGS_SECTION: NavSection = {
     { title: 'People & Limits', href: '/settings/people', icon: Users },
     { title: 'Position Access', href: '/settings/access', icon: ShieldCheck },
     { title: 'Count Qualifications', href: '/settings/count-qualifications', icon: ClipboardCheck },
-    { title: 'Guardrails', href: '/settings/guardrails', icon: ShieldCheck },
-    { title: 'Negative Inventory', href: '/settings/negative-inventory', icon: ShieldAlert },
-    { title: 'UOM Conversions', href: '/settings/uom-conversions', icon: Ruler },
+    // Hidden per Grant (2026-07-24): nobody knows what these mean, so they're
+    // out of the tab strip. Pages still exist and deep-links still work —
+    // flip hidden off to bring one back.
+    { title: 'Guardrails', href: '/settings/guardrails', icon: ShieldCheck, hidden: true },
+    { title: 'Negative Inventory', href: '/settings/negative-inventory', icon: ShieldAlert, hidden: true },
+    { title: 'UOM Conversions', href: '/settings/uom-conversions', icon: Ruler, hidden: true },
     { title: 'Reservation Types', href: '/settings/reservation-types', icon: CalendarCheck },
     { title: 'Assignment Types', href: '/settings/assignment-types', icon: Tag },
     { title: 'Branding', href: '/settings/branding', icon: Palette },
