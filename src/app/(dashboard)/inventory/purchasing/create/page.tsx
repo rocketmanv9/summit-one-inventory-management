@@ -56,12 +56,13 @@ export default function CreatePurchaseOrderPage() {
     label: string | null; city: string | null; state: string | null; distance_mi: number | null;
   } | null>(null);
 
+  // No po_number or expected-delivery inputs: the system generates PO numbers,
+  // and a delivery date isn't knowable at order time — it gets set on the PO
+  // later (vendor confirmation / shipment).
   const [form, setForm] = useState({
     vendor_id: '',
     vendor_address_id: '', // '' = company-wide default pricing
-    po_number: '',
     delivery_location_id: '',
-    expected_delivery_date: '',
     notes: '',
   });
 
@@ -353,10 +354,8 @@ export default function CreatePurchaseOrderPage() {
       const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         vendor_address_id: form.vendor_address_id || undefined,
-        po_number: form.po_number || undefined,
         delivery_location_id: form.delivery_location_id,
         lines: validLines,
-        needed_by_date: form.expected_delivery_date || undefined,
         notes: form.notes || undefined,
       });
 
@@ -524,19 +523,6 @@ export default function CreatePurchaseOrderPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  PO Number (optional)
-                </label>
-                <input
-                  type="text"
-                  value={form.po_number}
-                  onChange={(e) => setForm({ ...form, po_number: e.target.value })}
-                  placeholder="Auto-generated if left blank"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Delivery Location *
                 </label>
                 <select
@@ -554,20 +540,6 @@ export default function CreatePurchaseOrderPage() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Expected Delivery Date <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
-                <input
-                  type="date"
-                  value={form.expected_delivery_date}
-                  onChange={(e) =>
-                    setForm({ ...form, expected_delivery_date: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
               </div>
 
               <div className="md:col-span-2">

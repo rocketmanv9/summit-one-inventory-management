@@ -907,10 +907,11 @@ function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newV
   const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   type POLine = { catalog_item_id: string; item_description: string; uom_term_id: string; qty: string; unit_cost: string };
   const emptyLine: POLine = { catalog_item_id: '', item_description: '', uom_term_id: '', qty: '', unit_cost: '' };
+  // No expected-delivery input at create time — you can't know a delivery
+  // date for an order you're placing right now; it's set on the PO later.
   const [form, setForm] = useState({
     vendor_id: '',
     ship_to_location_id: '',
-    expected_delivery_date: '',
     notes: '',
     lines: [{ ...emptyLine }],
   });
@@ -1043,7 +1044,6 @@ function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newV
       const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         delivery_location_id: form.ship_to_location_id,
-        needed_by_date: form.expected_delivery_date || undefined,
         notes: form.notes || undefined,
         lines: validLines,
       });
@@ -1128,16 +1128,6 @@ function CreatePOModal({ onClose, onCreated, onCreatedAndSend, onAddVendor, newV
                 ))}
               </select>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Expected Delivery <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input
-              type="date"
-              value={form.expected_delivery_date}
-              onChange={(e) => setForm({ ...form, expected_delivery_date: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-            />
           </div>
 
           <div className="border-t pt-4">
