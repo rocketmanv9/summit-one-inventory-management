@@ -278,11 +278,13 @@ export const SupplyChainRPC = {
    * Get vendors list
    * View: inventory.vendors (compatibility view → supply_chain.vendors)
    */
-  async getVendors(): Promise<VendorRow[]> {
+  async getVendors(): Promise<Array<VendorRow & { ordering_mode?: string | null }>> {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id')
+      // ordering_mode lets create-PO surfaces route integration vendors
+      // (amazon_punchout) straight into their punchout flow.
+      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id, ordering_mode')
       .eq('active', true)
       .order('name');
 
@@ -290,7 +292,7 @@ export const SupplyChainRPC = {
       throw AppError.internal(`Failed to fetch vendors: ${error.message}`);
     }
 
-    return (data ?? []) as VendorRow[];
+    return (data ?? []) as Array<VendorRow & { ordering_mode?: string | null }>;
   },
 
   /**

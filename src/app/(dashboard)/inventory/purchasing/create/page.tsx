@@ -17,6 +17,7 @@ interface Vendor {
   id: string;
   name: string;
   code: string | null;
+  ordering_mode?: string | null;
 }
 
 interface Location {
@@ -63,6 +64,22 @@ export default function CreatePurchaseOrderPage() {
     expected_delivery_date: '',
     notes: '',
   });
+
+  // Punchout vendors (Amazon Business): "Create Purchase Order" becomes one
+  // click that creates the PO, starts the punchout session, and opens Amazon —
+  // no separate place-order step. Detected from the vendor's ordering_mode.
+  const selectedVendor = vendors.find((v) => v.id === form.vendor_id);
+  const isPunchoutVendor = selectedVendor?.ordering_mode === 'amazon_punchout';
+  // Session email pre-fetched for the Amazon punchout session.
+  const [sessionEmail, setSessionEmail] = useState('');
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.authenticated && data.email) setSessionEmail(data.email);
+      })
+      .catch(() => {});
+  }, []);
 
   // The selected vendor's branches/plants — lets the PO record which branch it
   // is priced against, and switches line prefills to branch-specific prices.
@@ -309,6 +326,10 @@ export default function CreatePurchaseOrderPage() {
     setError('');
     setSuccess(false);
 
+    // Punchout vendors open Amazon in a new tab. The tab must be opened
+    // synchronously inside the click gesture or popup blockers kill it.
+    const amazonTab = isPunchoutVendor ? window.open('about:blank', '_blank') : null;
+
     try {
       // Validate
       if (!form.vendor_id) {
@@ -339,11 +360,57 @@ export default function CreatePurchaseOrderPage() {
         notes: form.notes || undefined,
       });
 
+      if (isPunchoutVendor && result?.po_id) {
+        // Pick it and go: start the Amazon punchout with this PO's items and
+        // send the user straight to Amazon. The purchasing page resumes the
+        // session (waiting → review → submit) via the query params.
+        try {
+          const resp = await fetch('/api/settings/integrations/amazon-business/punchout/start', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Idempotency-Key': crypto.randomUUID(),
+            },
+            body: JSON.stringify({
+              user_email: sessionEmail,
+              location_id: form.delivery_location_id,
+              catalog_items: validLines.map((l) => ({
+                catalog_item_id: l.catalog_item_id,
+                quantity: Math.max(1, Math.round(l.qty_ordered)),
+              })),
+            }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({} as any));
+            throw AppError.internal(err.error?.message || err.error || `Punchout start failed (${resp.status})`);
+          }
+          const punchout = await resp.json();
+          if (amazonTab) {
+            amazonTab.location.href = punchout.data.redirect_url;
+          } else {
+            window.open(punchout.data.redirect_url, '_blank');
+          }
+          router.push(
+            `/inventory/purchasing?punchout=${punchout.data.punchout_order_id}&po=${result.po_id}`
+          );
+          return;
+        } catch (punchoutErr: any) {
+          // The PO exists — don't lose that fact in the error message.
+          amazonTab?.close();
+          setError(
+            `PO ${result.po_number || ''} was created, but the Amazon punchout could not start: ${punchoutErr.message}. Open it on the Purchasing page to order.`
+          );
+          return;
+        }
+      }
+
+      amazonTab?.close();
       setSuccess(true);
       setTimeout(() => {
         router.push('/inventory/purchasing');
       }, 2000);
     } catch (err: any) {
+      amazonTab?.close();
       setError(err.message);
     } finally {
       setSubmitting(false);
@@ -505,7 +572,7 @@ export default function CreatePurchaseOrderPage() {
 
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Notes
+                  Notes <span className="text-gray-400 font-normal">(optional)</span>
                 </label>
                 <textarea
                   value={form.notes}
@@ -680,6 +747,15 @@ export default function CreatePurchaseOrderPage() {
             </div>
           </div>
 
+          {/* Punchout vendors: explain the one-click handoff */}
+          {isPunchoutVendor && (
+            <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-800">
+              <span className="font-semibold">{selectedVendor?.name}</span> is an integration vendor —
+              creating this PO opens Amazon with your items in the cart. Check out there, then return
+              to Summit One to confirm the order.
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3">
             <button
@@ -694,7 +770,9 @@ export default function CreatePurchaseOrderPage() {
               disabled={submitting}
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {submitting ? 'Creating...' : 'Create Purchase Order'}
+              {submitting
+                ? isPunchoutVendor ? 'Opening Amazon...' : 'Creating...'
+                : isPunchoutVendor ? 'Create & Shop on Amazon' : 'Create Purchase Order'}
             </button>
           </div>
         </form>

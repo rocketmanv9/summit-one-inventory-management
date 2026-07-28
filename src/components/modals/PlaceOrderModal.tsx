@@ -53,9 +53,15 @@ interface PlaceOrderModalProps {
   onClose: () => void;
   po: PurchaseOrder;
   onSuccess?: () => void;
+  /**
+   * Resume an Amazon punchout session that was already started elsewhere
+   * (the create-PO page's "Create & Shop on Amazon" one-click flow). The
+   * modal skips the init step and goes straight to waiting/review.
+   */
+  initialPunchoutOrderId?: string | null;
 }
 
-export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModalProps) {
+export function PlaceOrderModal({ open, onClose, po, onSuccess, initialPunchoutOrderId }: PlaceOrderModalProps) {
   const [guidance, setGuidance] = useState<VendorOrderingGuidance | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<'guidance' | 'confirm'>('guidance');
@@ -143,10 +149,11 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
         setPlacementMethod('portal');
       } else if (effectiveMode === 'amazon_punchout') {
         setPlacementMethod('portal');
-        setPunchoutStep('init');
+        // Don't clobber a resumed session (waiting/review) back to init.
+        if (!initialPunchoutOrderId) setPunchoutStep('init');
       }
     }
-  }, [po.id, po.vendor_id]);
+  }, [po.id, po.vendor_id, initialPunchoutOrderId]);
 
   // Load vendor guidance when modal opens
   useEffect(() => {
@@ -177,6 +184,43 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
       }
     };
   }, []);
+
+  // One status check: flips to the review step if the Amazon cart is back.
+  const checkForCart = useCallback(async (orderId: string): Promise<boolean> => {
+    try {
+      const resp = await fetch(
+        `/api/settings/integrations/amazon-business/punchout/orders?id=${orderId}`
+      );
+      if (!resp.ok) return false;
+      const result = await resp.json();
+      if (result.data?.status !== 'cart_returned') return false;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setPunchoutItems(result.data.poom_items || []);
+      setPunchoutTotal(result.data.poom_total || 0);
+      setPunchoutStep('review');
+      return true;
+    } catch {
+      return false; // polling error — keep retrying
+    }
+  }, []);
+
+  const beginPolling = useCallback((orderId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(() => void checkForCart(orderId), 5000);
+  }, [checkForCart]);
+
+  // Resume a session started on the create-PO page: skip init, go straight to
+  // waiting (or review, if the cart already came back while we were routing).
+  useEffect(() => {
+    if (!open || !initialPunchoutOrderId) return;
+    setPunchoutOrderId(initialPunchoutOrderId);
+    setPunchoutStep('waiting');
+    void checkForCart(initialPunchoutOrderId);
+    beginPolling(initialPunchoutOrderId);
+  }, [open, initialPunchoutOrderId, checkForCart, beginPolling]);
 
   const startPunchout = useCallback(async () => {
     // Validate the session email BEFORE opening the Amazon tab — and keep this
@@ -264,27 +308,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
       }
 
       // Start polling for cart return
-      pollRef.current = setInterval(async () => {
-        try {
-          const pollResp = await fetch(
-            `/api/settings/integrations/amazon-business/punchout/orders?id=${result.data.punchout_order_id}`
-          );
-          if (pollResp.ok) {
-            const pollResult = await pollResp.json();
-            if (pollResult.data?.status === 'cart_returned') {
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
-              setPunchoutItems(pollResult.data.poom_items || []);
-              setPunchoutTotal(pollResult.data.poom_total || 0);
-              setPunchoutStep('review');
-            }
-          }
-        } catch {
-          // Polling error — keep retrying
-        }
-      }, 5000);
+      beginPolling(result.data.punchout_order_id);
     } catch (err: any) {
       const msg = err?.message || 'Failed to start punchout';
       // Show the error in the already-open tab instead of silently closing it,
@@ -304,7 +328,7 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess }: PlaceOrderModa
     } finally {
       setIsLoading(false);
     }
-  }, [po.id, userEmail]);
+  }, [po.id, userEmail, beginPolling]);
 
   const submitPunchoutOrder = useCallback(async () => {
     if (!punchoutOrderId) return;

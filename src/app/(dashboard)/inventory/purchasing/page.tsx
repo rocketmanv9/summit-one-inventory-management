@@ -84,6 +84,33 @@ export default function PurchasingPage() {
   // "Create & Send" hands off here; once the new row loads we route it through
   // the vendor-aware send path (email vs. integration punchout).
   const [pendingSendPoId, setPendingSendPoId] = useState<string | null>(null);
+  // One-click Amazon handoff: the create page starts the punchout, opens the
+  // Amazon tab, then routes here with ?punchout=<id>&po=<poId>. We open the
+  // PlaceOrderModal on that PO with the session already in flight.
+  const [resumePunchoutId, setResumePunchoutId] = useState<string | null>(null);
+  const [resumePoId, setResumePoId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const punchout = sp.get('punchout');
+    const poId = sp.get('po');
+    if (punchout && poId) {
+      setResumePunchoutId(punchout);
+      setResumePoId(poId);
+      window.history.replaceState(null, '', '/inventory/purchasing');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!resumePoId) return;
+    const row = orders.find((o) => o.id === resumePoId);
+    if (row) {
+      setResumePoId(null);
+      setPlaceOrderPO(row);
+      setShowPlaceOrderModal(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, resumePoId]);
 
   useEffect(() => {
     loadReferenceData();
@@ -553,13 +580,16 @@ export default function PurchasingPage() {
             onClose={() => {
               setShowPlaceOrderModal(false);
               setPlaceOrderPO(null);
+              setResumePunchoutId(null);
             }}
             po={placeOrderPO as unknown as POType}
             onSuccess={() => {
               setShowPlaceOrderModal(false);
               setPlaceOrderPO(null);
+              setResumePunchoutId(null);
               fetchOrders();
             }}
+            initialPunchoutOrderId={resumePunchoutId}
           />
         )}
 
