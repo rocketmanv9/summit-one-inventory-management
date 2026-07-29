@@ -286,10 +286,30 @@ export default function ReservationsPage() {
       key: 'job_ref',
       header: 'Job/Order',
       render: (row: Reservation) => {
-        const jobText = row.job_ref ? String(row.job_ref) : '';
+        // job_ref is free text for manual reservations, but a structured
+        // object for mirrored ones (e.g. the Operations equipment hold mirror
+        // writes {job_id, job_name, source}) — show the human name, never
+        // "[object Object]".
+        const ref = row.job_ref;
+        const jobText =
+          typeof ref === 'string'
+            ? ref
+            : ref
+              ? String(ref.job_name || ref.job_id || ref.name || ref.ref || '')
+              : '';
+        const source = ref && typeof ref === 'object' && ref.source ? String(ref.source) : null;
         return (
           <div>
-            {jobText && <div className="font-mono text-sm">{jobText}</div>}
+            {jobText && (
+              <div className={typeof ref === 'string' ? 'font-mono text-sm' : 'text-sm'}>
+                {jobText}
+                {source && (
+                  <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-medium text-slate-600">
+                    {source}
+                  </span>
+                )}
+              </div>
+            )}
             {row.external_order_ref && (
               <div className="text-xs text-muted-foreground">{row.external_order_ref}</div>
             )}
