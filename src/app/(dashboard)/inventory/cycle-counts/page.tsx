@@ -97,11 +97,12 @@ function CycleCountsPageContent() {
   }, [filters.search]);
 
   // Any filter/search change resets to the first page.
-  useEffect(() => { setPage(0); }, [filters.status, debouncedSearch]);
+  useEffect(() => { setPage(0); }, [filters.status, filters.when, debouncedSearch]);
 
   useEffect(() => {
     fetchCycleCounts();
-  }, [filters.status, debouncedSearch, page]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.status, filters.when, debouncedSearch, page]);
 
   // Deep-link support: ?create=1&location=<location_id>&item=<catalog_item_id>
   // auto-opens the create modal prefilled, then clears the params so refresh doesn't re-trigger.
@@ -118,12 +119,46 @@ function CycleCountsPageContent() {
     router.replace('/inventory/cycle-counts', { scroll: false });
   }, [searchParams, router]);
 
+  /** Local-time window for the "When" filter — [start, end] inclusive. Weeks run Mon–Sun. */
+  const dateWindow = (when: string): [Date, Date] | null => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOf = (d: Date) => new Date(d.getTime() - 1); // exclusive bound → 23:59:59.999
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    switch (when) {
+      case 'today':
+        return [today, endOf(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1))];
+      case 'this_week':
+        return [monday, endOf(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7))];
+      case 'next_week': {
+        const nextMon = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+        return [nextMon, endOf(new Date(nextMon.getFullYear(), nextMon.getMonth(), nextMon.getDate() + 7))];
+      }
+      case 'this_month':
+        return [new Date(now.getFullYear(), now.getMonth(), 1), endOf(new Date(now.getFullYear(), now.getMonth() + 1, 1))];
+      case 'next_month':
+        return [new Date(now.getFullYear(), now.getMonth() + 1, 1), endOf(new Date(now.getFullYear(), now.getMonth() + 2, 1))];
+      default:
+        return null;
+    }
+  };
+
   const fetchCycleCounts = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filters.status) params.set('status', filters.status);
       if (debouncedSearch) params.set('search', debouncedSearch);
+      if (filters.when === 'overdue') {
+        params.set('overdue', '1');
+      } else if (filters.when) {
+        const window = dateWindow(filters.when);
+        if (window) {
+          params.set('due_from', window[0].toISOString());
+          params.set('due_to', window[1].toISOString());
+        }
+      }
       params.set('limit', String(PAGE_SIZE));
       params.set('offset', String(page * PAGE_SIZE));
 
@@ -411,6 +446,21 @@ function CycleCountsPageContent() {
       label: 'Search',
       type: 'search' as const,
       placeholder: 'Count # (e.g. CC-0042)',
+    },
+    {
+      // Scheduling window (scheduled_for; unscheduled counts fall back to
+      // their created date). Overdue = scheduled in the past, still not counted.
+      key: 'when',
+      label: 'When',
+      type: 'select' as const,
+      options: [
+        { value: 'overdue', label: '⚠ Overdue' },
+        { value: 'today', label: 'Today' },
+        { value: 'this_week', label: 'This Week' },
+        { value: 'next_week', label: 'Next Week' },
+        { value: 'this_month', label: 'This Month' },
+        { value: 'next_month', label: 'Next Month' },
+      ],
     },
     {
       key: 'status',

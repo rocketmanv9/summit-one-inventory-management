@@ -87,6 +87,12 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const url = new URL(req.url);
   const status = url.searchParams.get('status');
   const search = url.searchParams.get('search')?.trim();
+  // Scheduling-window filter: due_from/due_to bound the count's effective date
+  // (scheduled_for, falling back to created_at for unscheduled counts), and
+  // overdue=1 means "scheduled in the past but still not counted".
+  const dueFrom = url.searchParams.get('due_from');
+  const dueTo = url.searchParams.get('due_to');
+  const overdue = url.searchParams.get('overdue') === '1';
   // Paginated by default so the list stays bounded as counts pile up.
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '25', 10) || 25, 1), 100);
   const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10) || 0, 0);
@@ -111,6 +117,16 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   // Search is global (server-side), not just the current page — matches the
   // human-facing count number (e.g. "CC-0042").
   if (search) query = query.ilike('count_number', `%${search}%`);
+  if (overdue) {
+    // Past its scheduled time and still not counted.
+    query = query.lt('scheduled_for', new Date().toISOString()).in('status', ['draft', 'scheduled']);
+  } else if (dueFrom && dueTo) {
+    // Effective date in window: scheduled_for when set, else created_at.
+    query = query.or(
+      `and(scheduled_for.gte.${dueFrom},scheduled_for.lte.${dueTo}),` +
+      `and(scheduled_for.is.null,created_at.gte.${dueFrom},created_at.lte.${dueTo})`
+    );
+  }
 
   const { data, error, count } = await query;
 
