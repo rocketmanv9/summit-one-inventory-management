@@ -110,13 +110,19 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
   const { data: vendorItems } = await sc
     .from('vendor_items')
-    .select('vendor_sku, pack_size')
+    .select('vendor_sku, pack_size, catalog_item_id')
     .eq('tenant_id', ctx.tenantId!)
     .in('vendor_sku', asins)
     .limit(100);
 
   const packMap = new Map<string, number>(
     (vendorItems || []).map((vi: any) => [vi.vendor_sku, Number(vi.pack_size) || 1])
+  );
+  // ASIN → catalog item, for reconciling the PO's lines with the ordered cart.
+  const asinToCatalogItem = new Map<string, string>(
+    (vendorItems || [])
+      .filter((vi: any) => vi.catalog_item_id)
+      .map((vi: any) => [vi.vendor_sku, vi.catalog_item_id])
   );
 
   // 5. Build OrderRequest line items with pack-qty rounding
@@ -282,6 +288,106 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     }
   }
 
+  // 9. Reconcile the PO's lines with what was ACTUALLY ordered. The PO was
+  // created with estimated prices (or a preload cart the user then edited on
+  // Amazon) — the submitted cart's real prices, pack-rounded quantities, and
+  // any items added/removed on Amazon are the truth, so the PO matches it.
+  const reconcile = { updated: 0, added: 0, cancelled: 0 };
+  if (poId && isSuccess && body.existing_po_id) {
+    try {
+      const { data: poLines } = await sc
+        .from('purchase_order_lines')
+        .select('id, line_number, catalog_item_id, qty_ordered, unit_cost, qty_received, status')
+        .eq('tenant_id', ctx.tenantId!)
+        .eq('po_id', poId)
+        .limit(500);
+
+      const unmatchedPoLines = new Map<string, any[]>(); // catalog_item_id -> lines
+      for (const pl of poLines || []) {
+        if (!pl.catalog_item_id) continue;
+        const arr = unmatchedPoLines.get(pl.catalog_item_id) || [];
+        arr.push(pl);
+        unmatchedPoLines.set(pl.catalog_item_id, arr);
+      }
+      let maxLineNumber = Math.max(0, ...(poLines || []).map((l: any) => Number(l.line_number) || 0));
+      const matchedIds = new Set<string>();
+
+      for (const line of orderLines) {
+        const catalogItemId = asinToCatalogItem.get(line.supplierSku);
+        const candidates = catalogItemId ? unmatchedPoLines.get(catalogItemId) : undefined;
+        const poLine = candidates?.shift();
+        if (poLine) {
+          matchedIds.add(poLine.id);
+          if (Number(poLine.qty_ordered) !== line.quantity || Number(poLine.unit_cost) !== line.unitPrice) {
+            const { error: lineError } = await sc
+              .from('purchase_order_lines')
+              .update({
+                qty_ordered: line.quantity,
+                unit_cost: line.unitPrice,
+                price_basis: 'fixed',
+                last_event_id: crypto.randomUUID(),
+              })
+              .eq('id', poLine.id)
+              .eq('tenant_id', ctx.tenantId!);
+            if (!lineError) reconcile.updated += 1;
+          } else {
+            // Matched and already accurate — nothing to write.
+          }
+        } else {
+          // Added on Amazon — appears on the PO as a new line. Non-catalog
+          // lines need a UOM; resolve EA (each) from GV, and skip (log) if
+          // that fails rather than failing an already-placed order.
+          let uomTermId: string | null = null;
+          if (!catalogItemId) {
+            try {
+              const { getGVClient } = await import('@/lib/gv');
+              uomTermId = await getGVClient().resolveTermId(ctx.tenantId!, 'uom', 'EA', false);
+            } catch { /* logged below when null */ }
+            if (!uomTermId) {
+              log.warn('amazon.reconcile.skip_unmapped_line', { poId, asin: line.supplierSku });
+              continue;
+            }
+          }
+          maxLineNumber += 1;
+          const { error: insertError } = await sc.from('purchase_order_lines').upsert({
+            tenant_id: ctx.tenantId!,
+            po_id: poId,
+            line_number: maxLineNumber,
+            catalog_item_id: catalogItemId ?? null,
+            item_description: line.description || line.supplierSku,
+            uom_term_id: catalogItemId ? null : uomTermId,
+            qty_ordered: line.quantity,
+            unit_cost: line.unitPrice,
+            price_basis: 'fixed',
+            status: 'pending',
+            line_notes: `Added on Amazon | ASIN: ${line.supplierSku} | SPAID: ${line.spaid}`,
+            last_event_id: crypto.randomUUID(),
+          });
+          if (!insertError) reconcile.added += 1;
+          else log.warn('amazon.reconcile.add_line_failed', { poId, asin: line.supplierSku, error: insertError.message });
+        }
+      }
+
+      // Lines the user dropped on Amazon: cancel (never touch received lines).
+      for (const pl of poLines || []) {
+        if (matchedIds.has(pl.id) || Number(pl.qty_received) > 0) continue;
+        if (['cancelled', 'fully_received', 'partially_received'].includes(pl.status)) continue;
+        const { error: cancelError } = await sc
+          .from('purchase_order_lines')
+          .update({ status: 'cancelled', last_event_id: crypto.randomUUID() })
+          .eq('id', pl.id)
+          .eq('tenant_id', ctx.tenantId!)
+          .eq('qty_received', 0);
+        if (!cancelError) reconcile.cancelled += 1;
+      }
+
+      log.info('amazon.reconcile.done', { poId, ...reconcile });
+    } catch (err: any) {
+      // Reconciliation is best-effort — the Amazon order is already placed.
+      log.warn('amazon.reconcile.failed', { poId, error: err?.message });
+    }
+  }
+
   if (!isSuccess) {
     throw AppError.internal(
       `Amazon rejected the order: ${parsedResponse.statusText} (code ${parsedResponse.statusCode})`
@@ -297,6 +403,8 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
       po_number: poNumber,
       total,
       items_count: orderLines.length,
+      // How many PO lines were re-priced/added/cancelled to match the cart.
+      lines_reconciled: reconcile,
       amazon_response: {
         status_code: parsedResponse.statusCode,
         status_text: parsedResponse.statusText,
