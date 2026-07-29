@@ -520,7 +520,7 @@ function CycleCountsPageContent() {
               { Icon: Camera, term: 'Snapshot', blurb: 'expected quantities frozen at the moment the count starts, so counting compares against a fixed baseline' },
               { Icon: EyeOff, term: 'Blind count', blurb: 'counters cannot see expected quantities — they record what they find, which keeps counts honest' },
               { Icon: Scale, term: 'Variance', blurb: 'the difference between counted and expected quantity; each one is approved or rejected during review' },
-              { Icon: UserCheck, term: 'Qualified counter', blurb: 'only people marked as qualified (Settings → Count Qualifications) can be assigned or reassigned a count' },
+              { Icon: UserCheck, term: 'Qualified counter', blurb: 'only people marked as qualified (Settings → Position Access) can be assigned or reassigned a count' },
             ]}
           />
         )}

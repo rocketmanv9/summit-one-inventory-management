@@ -178,8 +178,9 @@ export const SETTINGS_SECTION: NavSection = {
     { title: 'General', href: '/settings', icon: Settings },
     { title: 'My Spending', href: '/settings/my-spending', icon: Wallet },
     { title: 'People & Limits', href: '/settings/people', icon: Users },
+    // Count Qualifications merged into Position Access (2026-07-29) — the old
+    // /settings/count-qualifications URL redirects there.
     { title: 'Position Access', href: '/settings/access', icon: ShieldCheck },
-    { title: 'Count Qualifications', href: '/settings/count-qualifications', icon: ClipboardCheck },
     // Hidden per Grant (2026-07-24): nobody knows what these mean, so they're
     // out of the tab strip. Pages still exist and deep-links still work —
     // flip hidden off to bring one back.

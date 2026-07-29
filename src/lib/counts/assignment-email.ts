@@ -279,6 +279,6 @@ export async function assertQualifiedCounter(
     .eq('active', true)
     .maybeSingle();
   if (!data) {
-    throw AppError.badRequest('That person is not an active qualified counter. An admin can qualify them under Settings → Count Qualifications.');
+    throw AppError.badRequest('That person is not an active qualified counter. An admin can qualify them under Settings → Position Access.');
   }
 }

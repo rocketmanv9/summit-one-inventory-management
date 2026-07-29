@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useViewAs, type ViewAsPosition } from '@/lib/view-as';
 import { ALL_CAPABILITY_KEYS, CAPABILITY_GROUPS } from '@/lib/access';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { CountQualificationsSection } from '@/components/settings/CountQualificationsSection';
 
 const idemKey = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -196,6 +197,8 @@ function AccessEditor() {
           <div className="overflow-x-auto rounded-lg border bg-white">
             <table className="w-full text-sm">
               <thead>
+                {/* (Count Qualifications lives below this matrix — same page,
+                    per-person rather than per-position.) */}
                 {/* Group header row */}
                 <tr className="border-b text-left text-[11px] uppercase tracking-wide text-gray-400">
                   <th className="px-4 pt-3" />
@@ -239,6 +242,10 @@ function AccessEditor() {
           </div>
         </>
       )}
+
+      {/* Per-person count qualifications — merged onto this page so people
+          permissions live in one place (was /settings/count-qualifications). */}
+      <CountQualificationsSection isAdmin={isAdmin} />
     </>
   );
 }

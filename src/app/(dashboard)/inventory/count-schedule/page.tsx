@@ -287,7 +287,7 @@ function CalendarTab({ templates, qualifiedUsers }: {
       {qualifiedUsers.length === 0 && (
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
           No qualified counters yet — counts will be scheduled unassigned. An admin can mark people as
-          qualified under <span className="font-medium">Settings → Count Qualifications</span>.
+          qualified under <span className="font-medium">Settings → Position Access</span>.
         </div>
       )}
 
