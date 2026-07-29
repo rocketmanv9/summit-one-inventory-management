@@ -860,12 +860,12 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_vendors_online',
-      description: 'Search the web for vendors/suppliers of a specific product or service in a given area. Returns 3-5 vendor suggestions with contact details. Use when users need to find new suppliers — "I need a vendor for wheel stops near Portland" or "find me a rebar supplier in Oregon".',
+      description: 'Search the web for vendors/suppliers of a specific product or service in a given area. Returns 3-5 vendor suggestions with contact details. Use when users need to find new suppliers — "I need a vendor for wheel stops near Portland", "find me a rebar supplier in Oregon", or "I need a vendor for crack sealant for my Portland yard".',
       parameters: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Product, service, or material to search for (e.g. "wheel stops", "ready-mix concrete", "rebar supplier")' },
-          location: { type: 'string', description: 'Geographic area to search in (e.g. "Portland, OR", "Pacific Northwest")' },
+          location: { type: 'string', description: 'Geographic area OR one of the company\'s own location names (e.g. "Portland, OR", "Pacific Northwest", "Portland yard"). Company location names are automatically resolved to their city/state — pass them through as the user said them.' },
         },
         required: ['query'],
       },

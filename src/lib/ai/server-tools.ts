@@ -2196,7 +2196,36 @@ async function searchVendorsOnline(
     };
   }
 
-  const location = typeof params.location === 'string' ? params.location.trim() : '';
+  let location = typeof params.location === 'string' ? params.location.trim() : '';
+
+  // Ground tenant location names to real geography: "my Portland yard" is the
+  // tenant's location row (often named just "Portland"), not a phrase a web
+  // search understands. Match in both directions — the phrase containing the
+  // location name ("portland yard" ⊃ "portland") or vice versa — preferring
+  // the longest-named match that actually has a city on file.
+  if (location) {
+    try {
+      const cleaned = location.replace(/^(my|our|the)\s+/i, '').trim().toLowerCase();
+      const { data: locs } = await inventorySchema(ctx.supabase)
+        .from('locations')
+        .select('name, city, state')
+        .eq('tenant_id', ctx.tenantId)
+        .eq('active', true)
+        .limit(200);
+      const match = (locs ?? [])
+        .filter((l: any) => l.city && l.name)
+        .filter((l: any) => {
+          const n = l.name.trim().toLowerCase();
+          return cleaned.includes(n) || n.includes(cleaned);
+        })
+        .sort((a: any, b: any) => b.name.length - a.name.length)[0];
+      if (match) {
+        location = [match.city, match.state].filter(Boolean).join(', ');
+      }
+    } catch {
+      // Grounding is best-effort — fall back to the raw location string.
+    }
+  }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
