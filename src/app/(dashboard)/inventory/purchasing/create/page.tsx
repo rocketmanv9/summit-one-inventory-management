@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
-import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
 import { Plus, AlertCircle, Check, Package } from 'lucide-react';
@@ -39,11 +39,20 @@ interface POLine {
   catalog_item_id: string;
   qty_ordered: number;
   unit_cost: number;
+  /** Free-text line: no catalog item — describe what you want (needs a UOM). */
+  free_text?: boolean;
+  item_description?: string;
+  uom_term_id?: string;
 }
 
 export default function CreatePurchaseOrderPage() {
   const router = useRouter();
   const uomLabels = useUOMLabelMap();
+  const { terms: uomTerms } = useUOMTerms();
+  // "Request quote": order quantities with no prices — the vendor fills them
+  // in. Lines post with price_basis 'unknown', which blocks auto-approve, so
+  // the PO lands as a draft awaiting the vendor's pricing.
+  const [requestQuote, setRequestQuote] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [items, setItems] = useState<CatalogItem[]>([]);
@@ -312,9 +321,9 @@ export default function CreatePurchaseOrderPage() {
   };
 
   const updateLine = (index: number, field: keyof POLine, value: any) => {
-    const newLines = [...lines];
-    newLines[index] = { ...newLines[index], [field]: value };
-    setLines(newLines);
+    // Functional update so back-to-back calls in one handler don't clobber
+    // each other (e.g. toggling free_text + clearing catalog_item_id).
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)));
   };
 
   const calculateTotal = () => {
@@ -341,25 +350,45 @@ export default function CreatePurchaseOrderPage() {
         throw AppError.badRequest('Please select a delivery location');
       }
 
-      const validLines = lines.filter(
-        (line) =>
-          line.catalog_item_id && line.qty_ordered > 0 && line.unit_cost >= 0
+      const validLines = lines.filter((line) =>
+        line.qty_ordered > 0 &&
+        (line.free_text
+          ? !!line.item_description?.trim() && !!line.uom_term_id
+          : !!line.catalog_item_id) &&
+        (requestQuote || line.unit_cost >= 0)
       );
 
       if (validLines.length === 0) {
-        throw AppError.badRequest('Please add at least one line item');
+        const hasFreeTextMissingUom = lines.some(
+          (l) => l.free_text && l.item_description?.trim() && !l.uom_term_id && l.qty_ordered > 0
+        );
+        throw AppError.badRequest(
+          hasFreeTextMissingUom
+            ? 'Pick a unit of measure for your typed-in item(s)'
+            : 'Please add at least one line item — pick from the vendor’s items or type your own'
+        );
       }
 
-      // Create PO using RPC
+      // Create PO using RPC. Quote mode: no prices, basis 'unknown' — the
+      // vendor prices it, and the PO stays a draft until then.
       const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         vendor_address_id: form.vendor_address_id || undefined,
         delivery_location_id: form.delivery_location_id,
-        lines: validLines,
+        lines: validLines.map((l) => ({
+          catalog_item_id: l.free_text ? undefined : l.catalog_item_id,
+          item_description: l.free_text ? l.item_description?.trim() : undefined,
+          uom_term_id: l.free_text ? l.uom_term_id : undefined,
+          qty_ordered: l.qty_ordered,
+          unit_cost: requestQuote ? undefined : l.unit_cost,
+          price_basis: requestQuote ? ('unknown' as const) : ('fixed' as const),
+        })),
         notes: form.notes || undefined,
       });
 
-      if (isPunchoutVendor && result?.po_id) {
+      // Punchout needs ASIN-mapped catalog lines and Amazon supplies the
+      // prices — quote mode and free-text lines take the normal draft path.
+      if (isPunchoutVendor && result?.po_id && !requestQuote && validLines.every((l) => !l.free_text)) {
         // Pick it and go: start the Amazon punchout with this PO's items and
         // send the user straight to Amazon. The purchasing page resumes the
         // session (waiting → review → submit) via the query params.
@@ -561,15 +590,35 @@ export default function CreatePurchaseOrderPage() {
           <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Line Items</h2>
-              <button
-                type="button"
-                onClick={addLine}
-                className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Add Line
-              </button>
+              <div className="flex items-center gap-4">
+                {!isPunchoutVendor && (
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={requestQuote}
+                      onChange={(e) => setRequestQuote(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    Request pricing from vendor
+                  </label>
+                )}
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Line
+                </button>
+              </div>
             </div>
+
+            {requestQuote && (
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                Quantities only — no prices. The PO is created as a draft asking the vendor to
+                quote each line; enter their prices on the PO once they respond.
+              </div>
+            )}
 
             <div className="space-y-3">
               {lines.map((line, index) => {
@@ -587,6 +636,27 @@ export default function CreatePurchaseOrderPage() {
                   <div key={index} className="space-y-2">
                     <div className="flex gap-3 items-start">
                       <div className="flex-1 space-y-2">
+                        {line.free_text ? (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={line.item_description || ''}
+                              onChange={(e) => updateLine(index, 'item_description', e.target.value)}
+                              placeholder="Describe what you want (e.g. 3/4 minus crushed rock)"
+                              className="flex-1 px-3 py-2 border border-amber-300 bg-amber-50/40 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                            <select
+                              value={line.uom_term_id || ''}
+                              onChange={(e) => updateLine(index, 'uom_term_id', e.target.value)}
+                              className="w-32 px-2 py-2 border border-amber-300 bg-amber-50/40 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            >
+                              <option value="">Unit…</option>
+                              {uomTerms.map((t) => (
+                                <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
                         <button
                           type="button"
                           onClick={() => setPickerLineIndex(index)}
@@ -625,9 +695,22 @@ export default function CreatePurchaseOrderPage() {
                             </>
                           )}
                         </button>
+                        )}
+
+                        {/* Escape hatch: order something that isn't in the vendor's items */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateLine(index, 'free_text', !line.free_text);
+                            if (!line.free_text) updateLine(index, 'catalog_item_id', '');
+                          }}
+                          className="text-xs font-medium text-gray-500 hover:text-gray-700 underline"
+                        >
+                          {line.free_text ? 'Pick from vendor items instead' : 'Can’t find it? Type your own item'}
+                        </button>
 
                         {/* Variant sub-dropdown for parent items */}
-                        {parentId && (
+                        {!line.free_text && parentId && (
                           <select
                             value={line.catalog_item_id}
                             onChange={(e) => updateLine(index, 'catalog_item_id', e.target.value)}
@@ -667,23 +750,29 @@ export default function CreatePurchaseOrderPage() {
                       </div>
 
                       <div className="w-32">
-                        <input
-                          type="number"
-                          value={line.unit_cost || ''}
-                          onChange={(e) =>
-                            updateLine(index, 'unit_cost', parseFloat(e.target.value) || 0)
-                          }
-                          placeholder="Unit Cost"
-                          min="0"
-                          step="0.01"
-                          required
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
+                        {requestQuote ? (
+                          <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 text-center">
+                            Vendor quotes
+                          </div>
+                        ) : (
+                          <input
+                            type="number"
+                            value={line.unit_cost || ''}
+                            onChange={(e) =>
+                              updateLine(index, 'unit_cost', parseFloat(e.target.value) || 0)
+                            }
+                            placeholder="Unit Cost"
+                            min="0"
+                            step="0.01"
+                            required
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        )}
                       </div>
 
                       <div className="w-32">
                         <div className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-sm font-medium text-right">
-                          ${lineTotal.toFixed(2)}
+                          {requestQuote ? '—' : `$${lineTotal.toFixed(2)}`}
                         </div>
                       </div>
 
@@ -713,7 +802,7 @@ export default function CreatePurchaseOrderPage() {
               <div className="flex justify-between items-center">
                 <span className="text-lg font-semibold text-gray-900">Total:</span>
                 <span className="text-2xl font-bold text-blue-600">
-                  ${calculateTotal().toFixed(2)}
+                  {requestQuote ? 'Pending quote' : `$${calculateTotal().toFixed(2)}`}
                 </span>
               </div>
             </div>
@@ -743,8 +832,9 @@ export default function CreatePurchaseOrderPage() {
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting
-                ? isPunchoutVendor ? 'Opening Amazon...' : 'Creating...'
-                : isPunchoutVendor ? 'Create & Shop on Amazon' : 'Create Purchase Order'}
+                ? isPunchoutVendor && !requestQuote ? 'Opening Amazon...' : 'Creating...'
+                : isPunchoutVendor && !requestQuote ? 'Create & Shop on Amazon'
+                : requestQuote ? 'Create & Request Pricing' : 'Create Purchase Order'}
             </button>
           </div>
         </form>
