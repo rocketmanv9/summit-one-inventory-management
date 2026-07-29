@@ -1,17 +1,21 @@
 'use client';
 
 /**
- * VendorQuickAddModal — the "stupid easy" front door for vendor onboarding.
+ * VendorQuickAddModal — the single AI front door for vendor onboarding.
  *
- * Type a vendor name (or paste their website), hit the sparkle button, and AI
- * fills in the whole record: canonical name, code, website, sender email
- * domains, vendor type, description, and HQ city/state. Review, one save.
+ * One input, two paths:
+ *  - Know the vendor? Type the name (or paste their website), hit the sparkle
+ *    button, and AI fills in the whole record: canonical name, code, website,
+ *    sender email domains, vendor type, description, and HQ city/state.
+ *  - Don't know who sells it? Describe what you need ("crack sealant supplier
+ *    near Portland") and "Search the web" returns real candidate businesses —
+ *    pick one and it loads into the same review form.
  *
- * Saving goes through the same path as the discovery flow
- * (createVendorFromDraft → POST /api/inventory/vendors), which also upserts
- * the suggested email domains into supply_chain.vendor_email_domains so the
- * email → item-suggestions scanner can match this vendor. "Open full form"
- * hands the prefilled draft to the existing VendorModal for the detailed path.
+ * Saving goes through createVendorFromDraft → POST /api/inventory/vendors,
+ * which also upserts the suggested email domains into
+ * supply_chain.vendor_email_domains so the email → item-suggestions scanner
+ * can match this vendor. "Open full form" hands the prefilled draft to the
+ * existing VendorModal for the detailed path.
  */
 
 import { useState, useEffect } from 'react';
@@ -27,9 +31,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Loader2, Sparkles, X } from 'lucide-react';
+import { AlertCircle, Globe, Loader2, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import { createVendorFromDraft, type VendorDraft } from '@/lib/vendor-draft';
+import { discoverVendors, type VendorCandidate } from '@/lib/ai/client';
 
 interface VendorSuggestion {
   name: string;
@@ -50,6 +55,8 @@ interface VendorQuickAddModalProps {
   onSuccess: (result: { id: string; name: string }) => void;
   /** "Open full form" — hand the prefilled draft to the detailed VendorModal. */
   onReview: (draft: VendorDraft) => void;
+  /** Existing vendor names — flags web-search candidates you already have. */
+  existingNames?: string[];
 }
 
 interface QuickForm {
@@ -69,8 +76,29 @@ const EMPTY_FORM: QuickForm = {
 const SELECT_CLS =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
-export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: VendorQuickAddModalProps) {
-  const [phase, setPhase] = useState<'input' | 'review'>('input');
+/** Loose name normalization for "already in your vendors" matching. */
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** "https://www.fastenal.com/x" → "fastenal.com" (for email-domain prefill). */
+function domainFromWebsite(website: string | undefined): string | null {
+  if (!website) return null;
+  const d = website.trim().toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .replace(/^www\./, '')
+    .split(/[/?#\s]/)[0];
+  return /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(d) ? d : null;
+}
+
+const SEARCH_EXAMPLES = [
+  'auto parts vendor near Portland',
+  'asphalt sealcoat supplier near Salem OR',
+  'equipment rental in Beaverton',
+];
+
+export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existingNames = [] }: VendorQuickAddModalProps) {
+  const [phase, setPhase] = useState<'input' | 'results' | 'review'>('input');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiFilled, setAiFilled] = useState(false);
@@ -79,8 +107,14 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
   const [newDomain, setNewDomain] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Web-search path: candidate list + extra fields (street/zip/phone/email)
+  // from the picked candidate that the quick form doesn't show but the draft keeps.
+  const [searching, setSearching] = useState(false);
+  const [candidates, setCandidates] = useState<VendorCandidate[]>([]);
+  const [extras, setExtras] = useState<Pick<VendorCandidate, 'street1' | 'zip' | 'phone' | 'email'> | null>(null);
 
   const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
+  const existingSet = new Set(existingNames.map(normalizeName));
 
   // Reset everything each time the modal opens.
   useEffect(() => {
@@ -94,6 +128,9 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
     setNewDomain('');
     setSaving(false);
     setError(null);
+    setSearching(false);
+    setCandidates([]);
+    setExtras(null);
   }, [open]);
 
   function setField(field: keyof QuickForm, value: string) {
@@ -147,6 +184,47 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
     setForm({ ...EMPTY_FORM, name: input });
     setDomains([]);
     setAiFilled(false);
+    setExtras(null);
+    setError(null);
+    setPhase('review');
+  }
+
+  /* ---- Web search ("I don't know who sells this") ---- */
+
+  async function handleWebSearch() {
+    const input = query.trim();
+    if (input.length < 2 || searching) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const found = await discoverVendors(input);
+      setCandidates(found);
+      setPhase('results');
+      if (found.length === 0) {
+        setError('No matches found — try a broader description or a different area.');
+      }
+    } catch {
+      setError('Web search failed. Try again.');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  /** Load a web-search candidate into the review form (quick-add flow from here). */
+  function pickCandidate(c: VendorCandidate) {
+    const domain = domainFromWebsite(c.website) || (c.email ? c.email.split('@')[1] : null);
+    setForm({
+      name: c.name,
+      code: c.code || '',
+      vendor_type_term_id: '',
+      website: c.website || '',
+      description: c.category || '',
+      city: c.city || '',
+      state: c.state || '',
+    });
+    setDomains(domain ? [domain] : []);
+    setExtras({ street1: c.street1, zip: c.zip, phone: c.phone, email: c.email });
+    setAiFilled(true);
     setError(null);
     setPhase('review');
   }
@@ -167,14 +245,18 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
   /* ---- Save (shared path with the discovery flow) ---- */
 
   function buildDraft(): VendorDraft {
-    const hasAddr = !!(form.city.trim() || form.state.trim());
+    const hasAddr = !!(form.city.trim() || form.state.trim() || extras?.street1);
     return {
       name: form.name.trim(),
       code: form.code.trim() || undefined,
       vendor_type_term_id: form.vendor_type_term_id || undefined,
       notes: form.description.trim() || undefined,
       website: form.website.trim() || undefined,
-      address: hasAddr ? { city: form.city.trim(), state: form.state.trim() } : undefined,
+      address: hasAddr
+        ? { street1: extras?.street1, city: form.city.trim(), state: form.state.trim(), zip: extras?.zip }
+        : undefined,
+      // Street/zip/phone/email ride along from a picked web-search candidate.
+      contact: extras?.phone || extras?.email ? { phone: extras.phone, email: extras.email } : undefined,
       email_domains: domains.length > 0 ? domains : undefined,
     };
   }
@@ -200,15 +282,17 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen && !saving) onClose(); }}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className={`${phase === 'results' ? 'max-w-xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-purple-500" /> Quick Add Vendor
           </DialogTitle>
           <DialogDescription>
             {phase === 'input'
-              ? 'Type a vendor name or paste their website — AI fills in the rest.'
-              : 'Review the AI-filled details, then save. One click and you’re done.'}
+              ? 'Type a vendor name or website and AI fills in the rest — or describe what you need and search the web for suppliers.'
+              : phase === 'results'
+                ? 'Pick a supplier to load into the form — details fill in automatically.'
+                : 'Review the AI-filled details, then save. One click and you’re done.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -257,6 +341,34 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
               </Alert>
             )}
 
+            {/* Don't know who sells it? Same input, web-search path. */}
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleWebSearch}
+                disabled={query.trim().length < 2 || loading || searching}
+              >
+                {searching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+                {searching ? 'Searching the web…' : 'Search the web for suppliers'}
+              </Button>
+              {query.trim().length < 2 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {SEARCH_EXAMPLES.map((ex) => (
+                    <button
+                      key={ex}
+                      type="button"
+                      onClick={() => setQuery(ex)}
+                      className="rounded-full border px-2.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+                    >
+                      {ex}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {query.trim().length >= 2 && !loading && (
               <button
                 type="button"
@@ -265,6 +377,48 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
               >
                 Skip AI — fill in details myself
               </button>
+            )}
+          </div>
+        ) : phase === 'results' ? (
+          <div className="space-y-2 py-2">
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {candidates.map((c, i) => {
+              const already = existingSet.has(normalizeName(c.name));
+              const addr = [c.street1, [c.city, c.state].filter(Boolean).join(', '), c.zip].filter(Boolean).join(' · ');
+              return (
+                <button
+                  key={`${c.name}-${i}`}
+                  type="button"
+                  onClick={() => pickCandidate(c)}
+                  className="w-full rounded-lg border p-3 text-left transition-colors hover:border-purple-400 hover:bg-purple-50/40"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold">{c.name}</span>
+                    {c.category && <span className="text-xs text-muted-foreground">{c.category}</span>}
+                    {already && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                        Already in your vendors
+                      </span>
+                    )}
+                    <span className="ml-auto text-xs font-medium text-purple-600">Use</span>
+                  </div>
+                  <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                    {addr && <p className="flex items-center gap-1.5"><MapPin className="h-3 w-3 shrink-0" /> {addr}</p>}
+                    {c.phone && <p className="flex items-center gap-1.5"><Phone className="h-3 w-3 shrink-0" /> {c.phone}</p>}
+                    {c.website && <p className="flex items-center gap-1.5"><Globe className="h-3 w-3 shrink-0" /> {c.website}</p>}
+                  </div>
+                </button>
+              );
+            })}
+            {candidates.length > 0 && (
+              <p className="pt-1 text-center text-[11px] text-muted-foreground">
+                Results come from a web search and may be incomplete — review after picking.
+              </p>
             )}
           </div>
         ) : (
@@ -409,7 +563,12 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
               >
                 Open full form (contacts, terms, items…)
               </button>
-              <Button type="button" variant="ghost" onClick={() => setPhase('input')} disabled={saving}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setPhase(candidates.length > 0 ? 'results' : 'input')}
+                disabled={saving}
+              >
                 Back
               </Button>
               <Button type="button" onClick={handleSave} disabled={saving || form.name.trim().length < 2}>
@@ -417,6 +576,10 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview }: Vend
                 {saving ? 'Saving…' : 'Add Vendor'}
               </Button>
             </>
+          ) : phase === 'results' ? (
+            <Button type="button" variant="ghost" onClick={() => setPhase('input')}>
+              Back
+            </Button>
           ) : (
             <Button type="button" variant="ghost" onClick={onClose} disabled={loading}>
               Cancel

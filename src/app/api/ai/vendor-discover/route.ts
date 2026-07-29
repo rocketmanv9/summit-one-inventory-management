@@ -34,7 +34,11 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
     const openai = new OpenAI({ apiKey });
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      // web_search_options only works on the -search-preview models; plain
+      // gpt-4o rejects the parameter with a 400, which the catch below turned
+      // into an empty result set — discovery never worked. (No temperature:
+      // search-preview models reject that too.)
+      model: 'gpt-4o-search-preview',
       web_search_options: {
         search_context_size: 'medium',
       },
@@ -69,7 +73,6 @@ export const POST = createSessionReadRoute(async ({ req, log }) => {
           content: query,
         },
       ],
-      temperature: 0.2,
       max_tokens: 1500,
     } as any);
 

@@ -16,7 +16,6 @@ import { geocodeAddress } from '@/lib/geocode';
 import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { VendorModal } from '@/components/vendors/VendorModal';
-import { VendorDiscoveryModal } from '@/components/vendors/VendorDiscoveryModal';
 import { VendorQuickAddModal } from '@/components/vendors/VendorQuickAddModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
 import type { VendorDraft } from '@/lib/vendor-draft';
@@ -113,11 +112,12 @@ export default function VendorsPage() {
   const [catalogVendors, setCatalogVendors] = useState<CatalogVendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  // Default to active — inactive vendors are one filter flip away, with a
+  // Reactivate action ("Remove" only deactivates, nothing is ever deleted).
+  const [filters, setFilters] = useState<Record<string, string>>({ status: 'active' });
   const [industryFilter, setIndustryFilter] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
-  const [showDiscoverModal, setShowDiscoverModal] = useState(false);
   // Draft handed off from discovery's "Review & edit" → opens the full form.
   const [draftVendor, setDraftVendor] = useState<VendorDraft | null>(null);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
@@ -136,7 +136,9 @@ export default function VendorsPage() {
     try {
       // Unified: the tenant's own vendors live in supply_chain.vendors (used by
       // items/POs). GV is just the browse catalog (the Catalog tab + adopt).
-      const res = await fetch('/api/inventory/vendors');
+      // active_only=false so the Status filter can surface inactive vendors
+      // for reactivation ("Remove" is a soft-deactivate, not a delete).
+      const res = await fetch('/api/inventory/vendors?active_only=false');
       if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to fetch vendors'));
       const json = await res.json();
       setVendors(json.data || []);
@@ -202,6 +204,26 @@ export default function VendorsPage() {
       setRemoveError(errMessage(err, 'Failed to remove vendor'));
     } finally {
       setRemoving(false);
+    }
+  };
+
+  // Bring a deactivated vendor back — "Remove" is a soft-deactivate, so
+  // reactivation is just flipping active on the same row.
+  const handleReactivate = async (vendor: Vendor) => {
+    try {
+      const res = await fetch(`/api/inventory/vendors/${vendor.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': crypto.randomUUID(),
+        },
+        body: JSON.stringify({ is_active: true }),
+      });
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to reactivate vendor'));
+      await fetchVendors();
+    } catch (err) {
+      console.error('Error reactivating vendor:', err);
+      alert(errMessage(err, 'Failed to reactivate vendor'));
     }
   };
 
@@ -314,12 +336,21 @@ export default function VendorsPage() {
             >
               Notes
             </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
-              className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
-            >
-              Remove
-            </button>
+            {row.is_active ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
+                className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
+              >
+                Remove
+              </button>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
+                className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100"
+              >
+                Reactivate
+              </button>
+            )}
           </CapabilityGate>
         </div>
       ),
@@ -328,9 +359,22 @@ export default function VendorsPage() {
 
   const filterConfig = [
     { key: 'search', label: 'Search', type: 'search' as const, placeholder: 'Vendor name...' },
+    {
+      key: 'status',
+      label: 'Status',
+      type: 'select' as const,
+      options: [
+        { value: 'active', label: 'Active' },
+        { value: 'inactive', label: 'Inactive' },
+        { value: 'all', label: 'All' },
+      ],
+    },
   ];
 
   const filteredVendors = vendors.filter((vendor) => {
+    const status = filters.status || 'active';
+    if (status === 'active' && !vendor.is_active) return false;
+    if (status === 'inactive' && vendor.is_active) return false;
     if (filters.search) return vendor.name.toLowerCase().includes(filters.search.toLowerCase());
     return true;
   });
@@ -349,12 +393,6 @@ export default function VendorsPage() {
               {activeTab === 'my-vendors' ? (
               <CapabilityGate capability="vendors.manage">
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowDiscoverModal(true)}
-                    className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
-                  >
-                    🔍 Find Online
-                  </button>
                   <button
                     onClick={() => setShowAddModal(true)}
                     className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"
@@ -389,7 +427,7 @@ export default function VendorsPage() {
             title="How vendors work"
             onDismiss={help.dismiss}
             steps={[
-              { title: 'Build your vendor list', body: 'Quick Add is the fastest path: type a vendor name (or paste their website) and AI fills in the whole record — code, website, email domains, type, and description — ready to save in one click. You can also adopt ready-made vendors from the shared Catalog tab (contacts and addresses come along), use "Find Online" to discover suppliers by web search, or add a fully custom entry.' },
+              { title: 'Build your vendor list', body: 'Quick Add is the fastest path: type a vendor name (or paste their website) and AI fills in the whole record — code, website, email domains, type, and description — ready to save in one click. Don’t know who sells it? Same box: describe what you need ("sealcoat supplier near Salem") and Search the web returns real suppliers to pick from. You can also adopt ready-made vendors from the shared Catalog tab (contacts and addresses come along), or add a fully custom entry.' },
               { title: 'Fill in the details', body: 'Each vendor holds contacts, notes, and one or more addresses. Addresses are geocoded automatically so they show on the map and can be ranked by distance.' },
               { title: 'Put them to work', body: 'Your vendors power the rest of purchasing — they appear in PO creation, vendor item pricing, and performance analytics. Click a row for the full vendor profile.' },
               { title: 'Find the closest branch', body: 'The Proximity tab ranks a vendor’s locations against one of your own sites, so you always order from the nearest plant or store.' },
@@ -401,8 +439,8 @@ export default function VendorsPage() {
             ]}
             glossary={[
               { Icon: Sparkles, term: 'Quick Add', blurb: 'type a vendor name or paste their website — AI fills in the record, including the email domains that match incoming vendor emails to item suggestions' },
+              { Icon: Globe, term: 'Search the web', blurb: 'inside Quick Add: describe what you need in plain language and AI searches the web for matching suppliers to pick from' },
               { Icon: Library, term: 'Catalog', blurb: 'the shared platform catalog of known suppliers — adopt them into your list with one click' },
-              { Icon: Globe, term: 'Find Online', blurb: 'describe what you need in plain language and AI searches the web for matching suppliers to review and add' },
               { Icon: MapPin, term: 'Proximity', blurb: 'distance ranking between a vendor’s addresses and your own locations — requires geocoded addresses' },
             ]}
           />
@@ -547,24 +585,15 @@ export default function VendorsPage() {
           />
         )}
 
-        {/* Quick Add — AI-prefilled vendor from just a name or website */}
+        {/* Quick Add — AI-prefilled vendor from a name/website, or web search
+            for suppliers by describing what you need (absorbed Find Online). */}
         {showQuickAdd && (
           <VendorQuickAddModal
             open
+            existingNames={vendors.map((v) => v.name)}
             onClose={() => setShowQuickAdd(false)}
             onSuccess={() => { setShowQuickAdd(false); fetchVendors(); }}
             onReview={(draft) => { setShowQuickAdd(false); setDraftVendor(draft); }}
-          />
-        )}
-
-        {/* Find Vendors Online (natural-language web search) */}
-        {showDiscoverModal && (
-          <VendorDiscoveryModal
-            open
-            existingNames={vendors.map((v) => v.name)}
-            onClose={() => setShowDiscoverModal(false)}
-            onAdded={fetchVendors}
-            onReview={(draft) => { setShowDiscoverModal(false); setDraftVendor(draft); }}
           />
         )}
 

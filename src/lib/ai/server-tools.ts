@@ -1787,7 +1787,9 @@ async function smartAddLocation(
         const openai = new OpenAI({ apiKey });
 
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4o',
+          // web_search_options requires the -search-preview models (plain
+          // gpt-4o 400s on it, and search-preview rejects temperature).
+          model: 'gpt-4o-search-preview',
           web_search_options: { search_context_size: 'medium' },
           messages: [
             {
@@ -1803,7 +1805,6 @@ async function smartAddLocation(
             },
             { role: 'user', content: `Validate this address: "${address}"` },
           ],
-          temperature: 0.2,
           max_tokens: 300,
         } as any);
 
@@ -2244,7 +2245,10 @@ async function searchVendorsOnline(
       : `${query} suppliers/vendors`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      // web_search_options requires the -search-preview models (plain gpt-4o
+      // 400s on it, and search-preview rejects temperature) — this is why the
+      // tool always fell back to the catalog.
+      model: 'gpt-4o-search-preview',
       web_search_options: { search_context_size: 'medium' },
       messages: [
         {
@@ -2266,7 +2270,6 @@ async function searchVendorsOnline(
         },
         { role: 'user', content: `Find vendors for: ${searchQuery}` },
       ],
-      temperature: 0.3,
       max_tokens: 1000,
     } as any);
 
