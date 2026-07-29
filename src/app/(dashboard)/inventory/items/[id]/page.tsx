@@ -150,6 +150,30 @@ export default function ItemDetailPage() {
     }
   };
 
+  // Active reservations on this item — where they're held and who they're for.
+  type ItemReservation = Awaited<ReturnType<typeof InventoryRPC.getReservations>>[number];
+  const [reservations, setReservations] = useState<ItemReservation[]>([]);
+  const loadReservations = async () => {
+    try {
+      const rows = await InventoryRPC.getReservations({ status: 'active', catalog_item_id: params.id });
+      setReservations(rows);
+    } catch (err) {
+      console.error('Error loading reservations:', err);
+    }
+  };
+
+  /** Who/what a reservation is for — job_ref is free text for manual holds,
+   *  a structured object for mirrored ones (e.g. Operations equipment holds). */
+  const reservationFor = (r: ItemReservation): { text: string; source: string | null } => {
+    const ref = r.job_ref as Record<string, unknown> | string | null;
+    if (!ref) return { text: r.external_order_ref || '—', source: null };
+    if (typeof ref === 'string') return { text: ref, source: null };
+    return {
+      text: String(ref.job_name || ref.job_id || ref.name || ref.ref || r.external_order_ref || '—'),
+      source: ref.source ? String(ref.source) : null,
+    };
+  };
+
   const reloadSnapshot = async () => {
     const fresh = await InventoryRPC.getItemStockSnapshot(params.id);
     setSnapshot(fresh);
@@ -249,8 +273,9 @@ export default function ItemDetailPage() {
         setSnapshot(data);
         setLinks(itemLinks);
         setLinksDirty(false);
-        // Units + assignment types load after the main snapshot (non-blocking).
+        // Units, reservations + assignment types load after the main snapshot (non-blocking).
         void loadUnits();
+        void loadReservations();
         InventoryRPC.getAssignmentTypes().then(setAssignmentTypes).catch(() => {});
       } catch (err: any) {
         console.error('[ItemDetail] Error:', err);
@@ -677,6 +702,68 @@ export default function ItemDetailPage() {
                             Label
                           </button>
                         </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Active reservations — where this item is held, and for who */}
+        {reservations.length > 0 && (
+          <div className="rounded-xl border bg-background p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-base font-semibold">
+                <CalendarCheck className="h-4 w-4" />
+                Active Reservations ({reservations.length})
+              </h3>
+              <button
+                onClick={() => router.push(`/inventory/reservations?item_id=${params.id}`)}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Open Reservations →
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                    <th className="px-4 py-2.5 font-medium">Qty / Unit</th>
+                    <th className="px-4 py-2.5 font-medium">Where</th>
+                    <th className="px-4 py-2.5 font-medium">For</th>
+                    <th className="px-4 py-2.5 font-medium">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reservations.map((r) => {
+                    const who = reservationFor(r);
+                    const window = r.reserved_from
+                      ? `${new Date(r.reserved_from).toLocaleDateString()}${r.reserved_until ? ` → ${new Date(r.reserved_until).toLocaleDateString()}` : ''}`
+                      : r.needed_by
+                        ? `needed by ${new Date(r.needed_by).toLocaleDateString()}`
+                        : '—';
+                    return (
+                      <tr key={r.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-2.5">
+                          <span className="font-mono font-medium">{formatQty(Number(r.qty))}</span>
+                          {(r as any).assets?.asset_tag && (
+                            <span className="ml-2 font-mono text-xs text-muted-foreground">
+                              {(r as any).assets.asset_tag}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">{(r as any).locations?.name || '—'}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="font-medium">{who.text}</span>
+                          {who.source && (
+                            <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-medium text-slate-600">
+                              {who.source}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{window}</td>
                       </tr>
                     );
                   })}

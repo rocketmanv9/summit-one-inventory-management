@@ -1045,7 +1045,7 @@ export const InventoryRPC = {
   /**
    * Get reservations
    */
-  async getReservations(filters?: { status?: string; allocation_type?: string }): Promise<ReservationWithRelations[]> {
+  async getReservations(filters?: { status?: string; allocation_type?: string; catalog_item_id?: string }): Promise<ReservationWithRelations[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('reservations')
@@ -1059,6 +1059,9 @@ export const InventoryRPC = {
     }
     if (filters?.allocation_type) {
       query = query.eq('allocation_type', filters.allocation_type);
+    }
+    if (filters?.catalog_item_id) {
+      query = query.eq('catalog_item_id', filters.catalog_item_id);
     }
 
     const { data, error } = await query;
