@@ -771,7 +771,7 @@ export const InventoryRPC = {
   /**
    * Get assets with related catalog and location data
    */
-  async getAssets(filters?: { status?: string; assigned?: boolean }): Promise<AssetWithRelations[]> {
+  async getAssets(filters?: { status?: string; assigned?: boolean; catalog_item_id?: string }): Promise<AssetWithRelations[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('assets')
@@ -787,6 +787,9 @@ export const InventoryRPC = {
     }
     if (filters?.assigned) {
       query = query.eq('status', 'assigned');
+    }
+    if (filters?.catalog_item_id) {
+      query = query.eq('catalog_item_id', filters.catalog_item_id);
     }
 
     const { data, error } = await query;
@@ -808,6 +811,33 @@ export const InventoryRPC = {
     }));
 
     return normalized as AssetWithRelations[];
+  },
+
+  /**
+   * Open (un-returned) assignments for a set of assets — who currently has
+   * each unit. Table: inventory.asset_assignments.
+   */
+  async getOpenAssetAssignments(assetIds: string[]): Promise<Array<{
+    asset_id: string;
+    assigned_to_type: string;
+    assigned_to_id: string;
+    assigned_at: string;
+    notes: string | null;
+  }>> {
+    if (assetIds.length === 0) return [];
+    const supabase = createBrowserAuthedClient().schema('inventory') as any;
+    const { data, error } = await supabase
+      .from('asset_assignments')
+      .select('asset_id, assigned_to_type, assigned_to_id, assigned_at, notes')
+      .is('returned_at', null)
+      .in('asset_id', assetIds)
+      .order('assigned_at', { ascending: false })
+      .limit(500);
+
+    if (error) {
+      throw AppError.internal(`Failed to fetch assignments: ${error.message}`);
+    }
+    return data || [];
   },
 
   /**

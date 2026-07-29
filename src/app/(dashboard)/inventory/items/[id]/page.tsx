@@ -16,6 +16,7 @@ import {
   Printer,
   Tag,
   Link2,
+  UserCheck,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -34,6 +35,7 @@ import {
   type AdjustStockForm,
   type GuardrailBlock,
 } from '@/components/inventory/AdjustStockModal';
+import { AssetAssignModal } from '@/components/inventory/AssetAssignModal';
 
 type StockSnapshot = Awaited<ReturnType<typeof InventoryRPC.getItemStockSnapshot>>;
 
@@ -124,6 +126,29 @@ export default function ItemDetailPage() {
   const [adjustSaving, setAdjustSaving] = useState(false);
   const [adjustError, setAdjustError] = useState('');
   const [guardrailBlock, setGuardrailBlock] = useState<GuardrailBlock>(null);
+
+  // Serialized units of this item + who currently has each one, managed here
+  // (assign/return/label) so identification lives on the item page.
+  type ItemUnit = Awaited<ReturnType<typeof InventoryRPC.getAssets>>[number];
+  type UnitAssignment = Awaited<ReturnType<typeof InventoryRPC.getOpenAssetAssignments>>[number];
+  const [units, setUnits] = useState<ItemUnit[]>([]);
+  const [unitAssignments, setUnitAssignments] = useState<Record<string, UnitAssignment>>({});
+  const [assignmentTypes, setAssignmentTypes] = useState<Awaited<ReturnType<typeof InventoryRPC.getAssignmentTypes>>>([]);
+  const [assignTarget, setAssignTarget] = useState<ItemUnit | null>(null);
+  const [unitLabelBatch, setUnitLabelBatch] = useState<Array<{ code: string; label: string; kind: 'individual' }> | null>(null);
+
+  const loadUnits = async () => {
+    try {
+      const assets = await InventoryRPC.getAssets({ catalog_item_id: params.id });
+      setUnits(assets);
+      const open = await InventoryRPC.getOpenAssetAssignments(assets.map((a) => a.id));
+      const byAsset: Record<string, UnitAssignment> = {};
+      for (const a of open) if (!byAsset[a.asset_id]) byAsset[a.asset_id] = a;
+      setUnitAssignments(byAsset);
+    } catch (err) {
+      console.error('Error loading units:', err);
+    }
+  };
 
   const reloadSnapshot = async () => {
     const fresh = await InventoryRPC.getItemStockSnapshot(params.id);
@@ -224,6 +249,9 @@ export default function ItemDetailPage() {
         setSnapshot(data);
         setLinks(itemLinks);
         setLinksDirty(false);
+        // Units + assignment types load after the main snapshot (non-blocking).
+        void loadUnits();
+        InventoryRPC.getAssignmentTypes().then(setAssignmentTypes).catch(() => {});
       } catch (err: any) {
         console.error('[ItemDetail] Error:', err);
         setError(err.message || 'Failed to load item snapshot');
@@ -553,6 +581,111 @@ export default function ItemDetailPage() {
           </div>
         </div>
 
+        {/* Units & who has them — serialized assets of this item, managed here */}
+        {units.length > 0 && (
+          <div className="rounded-xl border bg-background p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-base font-semibold">
+                <UserCheck className="h-4 w-4" />
+                Units &amp; Who Has Them ({units.length})
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() =>
+                    setUnitLabelBatch(units.map((u) => ({
+                      code: u.asset_tag,
+                      label: `${item.name}${u.serial_number ? ` · SN ${u.serial_number}` : ''}`,
+                      kind: 'individual' as const,
+                    })))
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  <Printer className="h-3.5 w-3.5" /> Print All Labels
+                </button>
+                <button
+                  onClick={() => router.push('/inventory/assets')}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Open Assets →
+                </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                    <th className="px-4 py-2.5 font-medium">Asset Tag</th>
+                    <th className="px-4 py-2.5 font-medium">Serial #</th>
+                    <th className="px-4 py-2.5 font-medium">Status</th>
+                    <th className="px-4 py-2.5 font-medium">Location</th>
+                    <th className="px-4 py-2.5 font-medium">Assigned To</th>
+                    <th className="px-4 py-2.5" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {units.map((u) => {
+                    const liveStatus = u.asset_state?.current_status || u.status || 'available';
+                    const assignment = unitAssignments[u.id];
+                    const typeLabel = assignment
+                      ? assignmentTypes.find((t) => t.type_key === assignment.assigned_to_type)?.display_name
+                        || assignment.assigned_to_type
+                      : null;
+                    return (
+                      <tr key={u.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-2.5 font-mono text-xs font-medium">{u.asset_tag}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs">{u.serial_number || '—'}</td>
+                        <td className="px-4 py-2.5"><StatusChip status={liveStatus} /></td>
+                        <td className="px-4 py-2.5">{u.location?.name || '—'}</td>
+                        <td className="px-4 py-2.5">
+                          {assignment ? (
+                            <div>
+                              <span className="font-medium">{assignment.assigned_to_id}</span>
+                              <span className="ml-1.5 rounded-full bg-blue-50 px-1.5 py-px text-[10px] font-medium text-blue-700">
+                                {typeLabel}
+                              </span>
+                              <div className="text-[11px] text-muted-foreground">
+                                since {new Date(assignment.assigned_at).toLocaleDateString()}
+                              </div>
+                            </div>
+                          ) : liveStatus === 'assigned' ? (
+                            <span className="text-muted-foreground">assigned (no record)</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => setAssignTarget(u)}
+                            className={`rounded px-2 py-1 text-xs font-medium ${
+                              liveStatus === 'assigned'
+                                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                            }`}
+                          >
+                            {liveStatus === 'assigned' ? 'Return' : 'Assign'}
+                          </button>
+                          <button
+                            onClick={() =>
+                              setUnitLabelBatch([{
+                                code: u.asset_tag,
+                                label: `${item.name}${u.serial_number ? ` · SN ${u.serial_number}` : ''}`,
+                                kind: 'individual' as const,
+                              }])
+                            }
+                            className="ml-2 rounded bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                          >
+                            Label
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Reference Links */}
         <div className="rounded-xl border bg-background p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -602,6 +735,25 @@ export default function ItemDetailPage() {
             items={[{ code: barcode || item.sku, label: item.name, kind: 'stock' }]}
             entityType="item"
             onClose={() => setShowLabelDialog(false)}
+          />
+        )}
+
+        {/* Unit label print dialog (asset tags — one per physical unit) */}
+        {unitLabelBatch && (
+          <BarcodeLabelDialog
+            items={unitLabelBatch}
+            entityType="asset"
+            onClose={() => setUnitLabelBatch(null)}
+          />
+        )}
+
+        {/* Assign / return a unit without leaving the item page */}
+        {assignTarget && (
+          <AssetAssignModal
+            asset={assignTarget}
+            assignmentTypes={assignmentTypes}
+            onClose={() => setAssignTarget(null)}
+            onComplete={() => { setAssignTarget(null); void loadUnits(); }}
           />
         )}
 
