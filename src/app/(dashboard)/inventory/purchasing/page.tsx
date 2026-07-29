@@ -2,7 +2,7 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/AppShell';
 import { CapabilityGate } from '@/components/access/CapabilityGate';
@@ -132,8 +132,25 @@ export default function PurchasingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders, pendingSendPoId]);
 
+  // user_id → display name for the Buyer filter (HR roster; best-effort).
+  const [peopleNames, setPeopleNames] = useState<Record<string, string>>({});
+
   const loadReferenceData = async () => {
     try {
+      // Names for the Buyer filter — the count-qualified endpoint returns the
+      // full HR roster (user_id, name, email) and is readable by anyone who
+      // can see this page.
+      fetch('/api/inventory/count-qualified', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : { data: [] }))
+        .then(({ data }) => {
+          const names: Record<string, string> = {};
+          for (const u of data || []) {
+            if (u.user_id) names[u.user_id] = u.name || u.email || u.user_id;
+          }
+          setPeopleNames(names);
+        })
+        .catch(() => {});
+
       // Load locations
       const locationData = await InventoryRPC.getLocations();
       const locationMap = new Map(locationData.map(loc => [loc.id, loc.name]));
@@ -172,6 +189,8 @@ export default function PurchasingPage() {
     const bucket = poBucket(o.status);
     const createdBy = (o as PurchaseOrder & { created_by_user_id?: string | null }).created_by_user_id;
     if (buyerFilter === 'mine' && createdBy !== currentUserId) return false;
+    // Any other buyer value is a specific user id from the Buyer dropdown.
+    if (buyerFilter && buyerFilter !== 'mine' && createdBy !== buyerFilter) return false;
     if (bucketFilter) return bucket === bucketFilter;
     return bucket !== 'cancelled';
   });
@@ -390,6 +409,22 @@ export default function PurchasingPage() {
     },
   ];
 
+  // Buyer options: "me" plus every person who has actually created a PO,
+  // labeled from the HR roster (falls back to a short id for unknowns).
+  const buyerOptions = useMemo(() => {
+    const creators = [...new Set(
+      orders
+        .map((o) => (o as PurchaseOrder & { created_by_user_id?: string | null }).created_by_user_id)
+        .filter((id): id is string => !!id)
+    )];
+    return [
+      { value: 'mine', label: 'Created by me' },
+      ...creators
+        .map((id) => ({ value: id, label: peopleNames[id] || `Unknown (${id.slice(0, 8)})` }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  }, [orders, peopleNames]);
+
   const filterConfig = [
     {
       key: 'status',
@@ -407,9 +442,7 @@ export default function PurchasingPage() {
       key: 'buyer',
       label: 'Buyer',
       type: 'select' as const,
-      options: [
-        { value: 'mine', label: 'Created by me' },
-      ],
+      options: buyerOptions,
     },
   ];
 
