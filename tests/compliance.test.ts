@@ -69,5 +69,7 @@ describe('chassis compliance', () => {
     }
 
     expect(report.passed).toBe(true);
-  });
+    // Full-repo scan: comfortably under a second alone, but can exceed the 5s
+    // default when vitest runs every suite in parallel — give it headroom.
+  }, 30_000);
 });
