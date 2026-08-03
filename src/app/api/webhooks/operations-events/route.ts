@@ -2,6 +2,7 @@ import { createWebhookRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { mapOpsEquipmentEvent } from '@/lib/integrations/ops-equipment-mirror';
+import { mapOpsMaterialEvent } from '@/lib/integrations/ops-material-mirror';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -31,6 +32,28 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 export const POST = createWebhookRoute(async ({ eventType, payload, supabase, log, tenantId }) => {
   // Tolerate the raw outbox envelope ({op,new,old}) or a flat payload.
   const p = (payload?.new ?? payload ?? {}) as Record<string, unknown>;
+
+  // Material needs (material.requested/released) → fungible job reservations;
+  // everything else runs through the original equipment-hold mapping.
+  if (eventType.startsWith('material.')) {
+    const decision = mapOpsMaterialEvent(eventType, p);
+    if (decision.action === 'skip') {
+      log.warn('operations_webhook.skipped', { eventType, reason: decision.reason });
+      return;
+    }
+    const { data, error } = await supabase.schema('inventory').rpc('rpc_inv_apply_ops_material_hold', {
+      p_tenant_id: tenantId,
+      ...decision.args,
+    });
+    if (error) throw AppError.internal(`rpc_inv_apply_ops_material_hold failed: ${error.message}`);
+    log.info('operations_webhook.applied', {
+      eventType,
+      need_id: decision.args.p_need_id,
+      op: decision.args.p_op,
+      outcome: (data as { outcome?: string } | null)?.outcome ?? 'unknown',
+    });
+    return;
+  }
 
   const decision = mapOpsEquipmentEvent(eventType, p);
   if (decision.action === 'skip') {
