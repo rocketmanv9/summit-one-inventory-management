@@ -8,9 +8,11 @@ import Link from 'next/link';
 import { ScanBarcode, Keyboard, Package, Wrench, AlertCircle, Loader2 } from 'lucide-react';
 
 type LookupResult = {
-  type: 'asset' | 'tool';
+  type: 'asset' | 'tool' | 'catalog_item';
   entity: any;
   href: string;
+  /** Present for catalog_item results — per-location quantities. */
+  balances?: Array<{ location_id: string | null; location_name: string; on_hand: number; available: number }>;
 } | null;
 
 export default function ScanPage() {
@@ -193,9 +195,11 @@ export default function ScanPage() {
           <div className="border rounded-lg p-6 bg-card">
             <div className="flex items-start gap-4">
               <div className={`p-3 rounded-lg ${
-                result.type === 'asset' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                result.type === 'asset' ? 'bg-blue-100 text-blue-700'
+                : result.type === 'catalog_item' ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-purple-100 text-purple-700'
               }`}>
-                {result.type === 'asset' ? (
+                {result.type === 'asset' || result.type === 'catalog_item' ? (
                   <Package className="h-6 w-6" />
                 ) : (
                   <Wrench className="h-6 w-6" />
@@ -203,8 +207,55 @@ export default function ScanPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-xs uppercase font-medium text-muted-foreground tracking-wide">
-                  {result.type === 'asset' ? 'Asset' : 'Tool'}
+                  {result.type === 'asset' ? 'Asset' : result.type === 'catalog_item' ? 'Item' : 'Tool'}
                 </div>
+
+                {/* Stock item: the crew answer — how many, where — plus the verbs. */}
+                {result.type === 'catalog_item' && (
+                  <>
+                    <div className="text-lg font-semibold mt-1">{result.entity.name}</div>
+                    {result.entity.sku && (
+                      <div className="text-sm font-mono text-muted-foreground">{result.entity.sku}</div>
+                    )}
+                    {Array.isArray(result.balances) && result.balances.length > 0 ? (
+                      <div className="mt-3 rounded-lg border overflow-hidden">
+                        {result.balances.map((b: any) => (
+                          <div key={b.location_id || b.location_name} className="flex items-center justify-between border-b last:border-0 px-3 py-2 text-sm">
+                            <span>{b.location_name}</span>
+                            <span className="font-mono tabular-nums">
+                              <span className={b.available <= 0 ? 'text-red-600 font-semibold' : 'text-emerald-700 font-semibold'}>
+                                {b.available.toLocaleString()}
+                              </span>
+                              <span className="text-muted-foreground text-xs"> avail / {b.on_hand.toLocaleString()} on hand</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-muted-foreground">No stock recorded yet.</p>
+                    )}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Link
+                        href={`/inventory/stock?q=${encodeURIComponent(String(result.entity.sku || result.entity.name || ''))}`}
+                        className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+                      >
+                        Adjust / order
+                      </Link>
+                      <Link
+                        href={`/inventory/cycle-counts?create=1&item=${result.entity.id}`}
+                        className="px-4 py-2 text-sm border rounded-md hover:bg-muted"
+                      >
+                        Count now
+                      </Link>
+                      <Link
+                        href={`/inventory/items/${result.entity.id}`}
+                        className="px-4 py-2 text-sm border rounded-md hover:bg-muted"
+                      >
+                        Item details
+                      </Link>
+                    </div>
+                  </>
+                )}
 
                 {result.type === 'asset' && (
                   <>

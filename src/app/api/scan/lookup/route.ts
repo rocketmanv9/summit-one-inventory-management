@@ -33,6 +33,27 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   const match = await resolveScanCode(inv, code);
   if (match) {
+    // The crew's core question is "how many, where?" — items carry their
+    // per-location balances right on the scan result (rework P4).
+    if (match.type === 'catalog_item' && (match.entity as any)?.id) {
+      const { data: balances } = await inv
+        .from('stock_balances')
+        .select('qty_on_hand, qty_reserved, qty_available, location:locations(id, name)')
+        .eq('catalog_item_id', (match.entity as any).id)
+        .order('qty_on_hand', { ascending: false })
+        .limit(50);
+      return Response.json({
+        data: {
+          ...match,
+          balances: (balances ?? []).map((b: any) => ({
+            location_id: (Array.isArray(b.location) ? b.location[0] : b.location)?.id ?? null,
+            location_name: (Array.isArray(b.location) ? b.location[0] : b.location)?.name ?? '—',
+            on_hand: Number(b.qty_on_hand) || 0,
+            available: Number(b.qty_available) || 0,
+          })),
+        },
+      });
+    }
     return Response.json({ data: match });
   }
 
