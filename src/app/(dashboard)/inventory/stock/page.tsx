@@ -23,7 +23,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { Boxes, ClipboardList, PackageCheck, AlertTriangle, MapPin } from 'lucide-react';
+import { Boxes, ClipboardList, PackageCheck, AlertTriangle, MapPin, Sparkles, Loader2 } from 'lucide-react';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
@@ -221,7 +221,13 @@ export default function InventoryPage() {
     if (q) setSearch(q);
     if (filter === 'low' || filter === 'out') setStatusFilter(filter);
     if (location) setLocationFilter(location);
+    // ?quickadd=1 (&q= prefills the name) — the PO item picker's "not in the
+    // catalog?" escape hatch lands here with the modal already open.
+    if (params.get('quickadd') === '1') {
+      setTimeout(() => openQuickAdd(q || undefined), 0);
+    }
     searchRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Change the location filter and mirror it into the URL (?location=) so
@@ -388,6 +394,56 @@ export default function InventoryPage() {
       reorder_point: '',
     });
     setQuickAddOpen(true);
+  };
+
+  // AI fill (rework P3): type a name, sparkle fills category/unit/reorder
+  // point from /api/ai/item-suggest — same one-input onboarding as vendors.
+  const [aiFilling, setAiFilling] = useState(false);
+  const [aiNote, setAiNote] = useState('');
+  const aiFillQuickAdd = async () => {
+    const name = quickAdd.name.trim();
+    if (name.length < 2 || aiFilling) return;
+    setAiFilling(true);
+    setQuickAddError('');
+    setAiNote('');
+    try {
+      const res = await fetch('/api/ai/item-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name,
+          existing_categories: categories.map((c) => ({ id: c.id, name: c.name })),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setQuickAddError(json.error || 'AI fill failed — fill it in manually.');
+        return;
+      }
+      const s = json.suggestion;
+      setQuickAdd((p) => ({
+        ...p,
+        category_id: s.category_id || p.category_id,
+        uom_term_id: s.uom_term_id || p.uom_term_id,
+        reorder_point: s.reorder_point != null ? String(s.reorder_point) : p.reorder_point,
+      }));
+      setAiNote(
+        [
+          s.category_id
+            ? `Category: ${s.category_display}`
+            : s.new_category_name
+              ? `Suggested new category “${s.new_category_name}” — create it from the dropdown`
+              : null,
+          s.uom ? `Unit: ${s.uom}` : null,
+          s.description || null,
+        ].filter(Boolean).join(' · ')
+      );
+    } catch {
+      setQuickAddError('AI fill failed — fill it in manually.');
+    } finally {
+      setAiFilling(false);
+    }
   };
 
   const submitQuickAdd = async () => {
@@ -1081,14 +1137,28 @@ export default function InventoryPage() {
             <div className="space-y-3">
               <div>
                 <label className="text-sm font-medium">Name</label>
-                <input
-                  autoFocus
-                  value={quickAdd.name}
-                  onChange={(e) => setQuickAdd((p) => ({ ...p, name: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') submitQuickAdd(); }}
-                  className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
-                  placeholder="e.g. Hard Hats"
-                />
+                <div className="mt-1 flex gap-2">
+                  <input
+                    autoFocus
+                    value={quickAdd.name}
+                    onChange={(e) => setQuickAdd((p) => ({ ...p, name: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitQuickAdd(); }}
+                    className="w-full px-3 py-2 rounded-md border bg-background"
+                    placeholder="e.g. Hard Hats"
+                  />
+                  <button
+                    type="button"
+                    onClick={aiFillQuickAdd}
+                    disabled={quickAdd.name.trim().length < 2 || aiFilling}
+                    title="AI fills category, unit, and reorder point from the name"
+                    className="shrink-0 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-40"
+                  >
+                    {aiFilling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  </button>
+                </div>
+                {aiNote && (
+                  <p className="mt-1.5 rounded-md bg-purple-50 px-2 py-1 text-xs text-purple-900">{aiNote}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
