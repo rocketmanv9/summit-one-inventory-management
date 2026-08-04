@@ -98,23 +98,59 @@ export const NAV_SECTIONS: NavSection[] = [
     capability: 'isabelle',
     tabs: [{ title: 'Isabelle', href: '/ai', icon: Bot }],
   },
+  // ── The rework (Grant, 2026-08-04): five destinations for the five jobs. ──
+  // Look it up (Stock) · get more (Purchasing) · keep numbers honest (Counts) ·
+  // who sells it (Vendors, under Purchasing) · who has it (Assets). Everything
+  // else is folded into where it belongs (hidden tab = URL still works) or
+  // parked (analytics — ask Isabelle instead). Flip hidden off to bring one back.
   {
     title: 'Inventory',
     href: '/inventory/stock',
     icon: Boxes,
     capability: 'inventory',
     tabs: [
-      // One item-centric page: catalog + balances + quick add. Categories,
-      // locations, and the item detail/wizard routes still exist but are
-      // reached from the page itself, not the nav.
+      // The front door: search-first stock lookup with the four verbs inline
+      // (adjust / transfer / order / count). Item detail is the hub for the rest.
       { title: 'Inventory', href: '/inventory/stock', icon: Boxes },
-      { title: 'Movements', href: '/inventory/movements', icon: Activity },
-      { title: 'Metrics', href: '/inventory/metrics', icon: TrendingUp },
-      { title: 'Suggestions', href: '/inventory/item-suggestions', icon: Sparkles },
+      // Folded: history reads item-first (item page + ?item= deep links).
+      { title: 'Movements', href: '/inventory/movements', icon: Activity, hidden: true },
+      // Parked analytics — Isabelle answers these on demand.
+      { title: 'Metrics', href: '/inventory/metrics', icon: TrendingUp, hidden: true },
+      // Folds into Quick Add Item review (P3); reachable by URL meanwhile.
+      { title: 'Suggestions', href: '/inventory/item-suggestions', icon: Sparkles, hidden: true },
       // Hidden ownership entries — reached from the Inventory page itself.
       { title: 'Items', href: '/inventory/items', icon: Boxes, hidden: true },
       { title: 'Categories', href: '/inventory/categories', icon: Boxes, hidden: true },
       { title: 'Locations', href: '/inventory/locations', icon: Boxes, hidden: true },
+    ],
+  },
+  {
+    title: 'Purchasing',
+    href: '/inventory/purchasing',
+    icon: ShoppingCart,
+    capability: 'purchasing',
+    tabs: [
+      { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
+      { title: 'Vendors', href: '/inventory/vendors', icon: Users },
+      { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
+      // Parked analytics — ask Isabelle "which vendor keeps shorting us?".
+      { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view', hidden: true },
+    ],
+  },
+  {
+    title: 'Counts',
+    href: '/inventory/cycle-counts',
+    icon: ClipboardCheck,
+    capability: 'operations',
+    tabs: [
+      { title: 'Cycle Counts', href: '/inventory/cycle-counts', icon: ClipboardCheck },
+      { title: 'Count Schedule', href: '/inventory/count-schedule', icon: CalendarDays },
+      { title: 'Scan', href: '/scan', icon: ScanLine },
+      // Folded: transfer is a stock-row action; reservations are ops-automated
+      // and shown on the item page. Pages stay for deep links.
+      { title: 'Transfers', href: '/inventory/transfers', icon: ArrowLeftRight, hidden: true },
+      { title: 'Reservations', href: '/inventory/reservations', icon: CalendarCheck, hidden: true },
+      { title: 'Network', href: '/operations/globe', icon: Globe, hidden: true },
     ],
   },
   {
@@ -129,42 +165,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { title: 'Equipment', href: '/fleet/equipment', icon: Construction },
     ],
   },
-  {
-    title: 'Purchasing',
-    href: '/inventory/purchasing',
-    icon: ShoppingCart,
-    capability: 'purchasing',
-    tabs: [
-      { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
-      { title: 'Vendors', href: '/inventory/vendors', icon: Users },
-      { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
-      { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view' },
-    ],
-  },
-  {
-    title: 'Operations',
-    href: '/inventory/transfers',
-    icon: ArrowLeftRight,
-    capability: 'operations',
-    tabs: [
-      { title: 'Transfers', href: '/inventory/transfers', icon: ArrowLeftRight },
-      { title: 'Reservations', href: '/inventory/reservations', icon: CalendarCheck },
-      { title: 'Cycle Counts', href: '/inventory/cycle-counts', icon: ClipboardCheck },
-      { title: 'Count Schedule', href: '/inventory/count-schedule', icon: CalendarDays },
-      { title: 'Scan', href: '/scan', icon: ScanLine },
-      { title: 'Network', href: '/operations/globe', icon: Globe },
-    ],
-  },
-  {
-    title: 'Audit',
-    href: '/inventory/audit',
-    icon: History,
-    capability: 'audit',
-    tabs: [
-      { title: 'Ledger', href: '/inventory/audit', icon: History },
-      { title: 'Data Integrity', href: '/inventory/integrity', icon: ShieldCheck },
-    ],
-  },
+  // Audit section parked: the ledger folded into item history (item page +
+  // /inventory/audit stays live by URL); integrity becomes a background alert.
 ];
 
 // Settings lives in the sidebar footer but uses the same tab pattern.

@@ -1007,6 +1007,31 @@ export default function InventoryPage() {
                               </div>
                             )}
                           </div>
+                          {/* The four verbs, right where you're looking. */}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => router.push(`/inventory/purchasing/create?item_id=${row.item.id}`)}
+                              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                            >
+                              Order more
+                            </button>
+                            <button
+                              onClick={() => router.push(`/inventory/transfers?item_id=${row.item.id}`)}
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Transfer
+                            </button>
+                            <button
+                              onClick={() =>
+                                router.push(
+                                  `/inventory/cycle-counts?create=1&item=${row.item.id}${locationFilter ? `&location=${locationFilter}` : ''}`
+                                )
+                              }
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Count now
+                            </button>
+                          </div>
                           <div className="flex gap-3 text-sm">
                             <button
                               onClick={() => router.push(`/inventory/items/${row.item.id}`)}

@@ -150,6 +150,18 @@ export default function ItemDetailPage() {
     }
   };
 
+  // History — recent stock movements for this item (the audit trail, item-first).
+  type ItemMovement = Awaited<ReturnType<typeof InventoryRPC.getStockMovements>>[number];
+  const [history, setHistory] = useState<ItemMovement[]>([]);
+  const loadHistory = async () => {
+    try {
+      const rows = await InventoryRPC.getStockMovements({ catalog_item_id: params.id });
+      setHistory(rows.slice(0, 12));
+    } catch (err) {
+      console.error('Error loading history:', err);
+    }
+  };
+
   // Active reservations on this item — where they're held and who they're for.
   type ItemReservation = Awaited<ReturnType<typeof InventoryRPC.getReservations>>[number];
   const [reservations, setReservations] = useState<ItemReservation[]>([]);
@@ -273,9 +285,10 @@ export default function ItemDetailPage() {
         setSnapshot(data);
         setLinks(itemLinks);
         setLinksDirty(false);
-        // Units, reservations + assignment types load after the main snapshot (non-blocking).
+        // Units, reservations, history + assignment types load after the main snapshot (non-blocking).
         void loadUnits();
         void loadReservations();
+        void loadHistory();
         InventoryRPC.getAssignmentTypes().then(setAssignmentTypes).catch(() => {});
       } catch (err: any) {
         console.error('[ItemDetail] Error:', err);
@@ -842,6 +855,50 @@ export default function ItemDetailPage() {
             onClose={() => setAssignTarget(null)}
             onComplete={() => { setAssignTarget(null); void loadUnits(); }}
           />
+        )}
+
+        {/* History — recent movements for this item (folded from the Movements page) */}
+        {history.length > 0 && (
+          <div className="rounded-xl border bg-background p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-base font-semibold">
+                <Clock className="h-4 w-4" />
+                History
+              </h3>
+              <button
+                onClick={() => router.push(`/inventory/movements?item=${params.id}`)}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Full history →
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                    <th className="px-4 py-2.5 font-medium">When</th>
+                    <th className="px-4 py-2.5 font-medium">What</th>
+                    <th className="px-4 py-2.5 font-medium">Where</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((m) => (
+                    <tr key={m.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
+                        {new Date(m.occurred_at || m.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-2 capitalize">{String(m.movement_type || '').replace(/_/g, ' ')}</td>
+                      <td className="px-4 py-2">{(m as any).locations?.name || '—'}</td>
+                      <td className={`px-4 py-2 text-right font-mono ${Number(m.quantity_delta) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {Number(m.quantity_delta) >= 0 ? '+' : ''}{Number(m.quantity_delta).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         {/* Timestamps */}
