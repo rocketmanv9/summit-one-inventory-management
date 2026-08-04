@@ -259,6 +259,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         p_notes: body.notes || 'Created via Isabelle',
         p_attachments: [],
         p_lines: lines,
+        // The route's supabase is a tenant service client — its JWT carries no
+        // tenant/user claims, so pass the acting identity explicitly
+        // (service_role-only params; see 20260804000004_ai_restock_orders).
+        p_tenant_id: ctx.tenantId,
+        p_acting_user_id: ctx.userId,
       });
       if (poErr) throw AppError.internal(`PO creation failed: ${poErr.message}`);
 
