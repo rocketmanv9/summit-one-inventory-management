@@ -85,6 +85,8 @@ export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
   update_vendor: { name: 'update_vendor', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'vendor.updated' },
   update_item: { name: 'update_item', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'item.updated' },
   create_po: { name: 'create_po', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'po.created' },
+  draft_restock_order: { name: 'draft_restock_order', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
+  confirm_restock_order: { name: 'confirm_restock_order', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'po.created' },
   create_transfer: { name: 'create_transfer', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'transfer.created' },
   create_asset: { name: 'create_asset', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'asset.created' },
   issue_inventory: { name: 'issue_inventory', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'inventory.issued' },

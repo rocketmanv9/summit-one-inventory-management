@@ -81,6 +81,8 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   list_reservations: ['crud'],
   list_categories: ['crud'],
   create_po: ['crud'],
+  draft_restock_order: ['workflow'],
+  confirm_restock_order: ['workflow', 'crud'],
   create_transfer: ['crud'],
   create_asset: ['crud'],
   create_reservation: ['crud'],

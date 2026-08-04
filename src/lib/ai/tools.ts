@@ -308,6 +308,63 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'draft_restock_order',
+      description:
+        'Build a restock order DRAFT for the user to review — this never orders anything. scope="low_stock" sweeps every item below its reorder point (optionally one yard); scope="items" takes an explicit item+quantity list. Lines are grouped into one PO per vendor (item\'s preferred vendor → best vendor price list → the yard\'s preferred vendor). Present the draft (vendors, items, quantities, totals) and only call confirm_restock_order after the user explicitly confirms. Calling this again replaces the previous draft.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scope: {
+            type: 'string',
+            enum: ['low_stock', 'items'],
+            description: 'low_stock = sweep everything below reorder point; items = order the explicit list',
+          },
+          items: {
+            type: 'array',
+            description: 'Required when scope=items: the items and quantities to order.',
+            items: {
+              type: 'object',
+              properties: {
+                item: { type: 'string', description: 'Item name or SKU (fuzzy-matched)' },
+                quantity: { type: 'number', description: 'Quantity to order' },
+              },
+              required: ['item', 'quantity'],
+            },
+          },
+          location: {
+            type: 'string',
+            description: 'Yard/location name — the delivery destination, and for low_stock also the yard whose stock is swept. Omit to use the default ship-to yard and company-wide stock.',
+          },
+          vendor: {
+            type: 'string',
+            description: 'Force ALL lines onto this vendor (fuzzy-matched) instead of per-item vendor resolution.',
+          },
+          note: { type: 'string', description: 'Note to include on the purchase orders' },
+        },
+        required: ['scope'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'confirm_restock_order',
+      description:
+        'Execute a reviewed restock draft — ONLY after the user explicitly confirmed it in this conversation. Creates one purchase order per vendor (spend limits and manager approval still apply; over-limit POs land in the approval inbox and are NOT emailed) and emails each vendor as the user. Never call this without an explicit user confirmation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          draft_id: { type: 'string', description: 'The draft id returned by draft_restock_order' },
+          send_emails: { type: 'boolean', description: 'Email the vendors after creating POs. Defaults to true.' },
+          message: { type: 'string', description: 'Personal note included in the vendor emails' },
+        },
+        required: ['draft_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_pos',
       description: 'List purchase orders',
       parameters: { type: 'object', properties: {}, required: [] },

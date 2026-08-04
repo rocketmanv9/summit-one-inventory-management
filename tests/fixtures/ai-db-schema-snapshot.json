@@ -204,6 +204,7 @@
     "ai_conversations",
     "ai_memory",
     "ai_messages",
+    "ai_order_drafts",
     "ai_tool_config",
     "ai_usage_log",
     "ai_workflow_traces",

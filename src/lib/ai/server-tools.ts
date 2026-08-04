@@ -94,6 +94,8 @@ const SERVER_TOOLS = new Set([
   'create_transfer',
   'create_reservation',
   'create_po',
+  'draft_restock_order',
+  'confirm_restock_order',
 ]);
 
 export function isServerTool(name: string): boolean {
@@ -253,6 +255,10 @@ async function executeServerToolInner(
     case 'create_reservation':
     case 'create_po':
       return executeInventoryAction(toolName, params, ctx);
+    case 'draft_restock_order':
+      return (await import('./restock')).draftRestockOrder(params, ctx);
+    case 'confirm_restock_order':
+      return (await import('./restock')).confirmRestockOrder(params, ctx);
     default:
       return {
         text: `Unknown server tool: ${toolName}`,
@@ -585,6 +591,8 @@ export const TOOL_CAPABILITY: Record<string, string> = {
   smart_register_asset: 'create_records',
   create_item_with_variants: 'create_records',
   create_po: 'purchase_orders',
+  // The draft tool orders nothing (review-only), so only confirm is gated.
+  confirm_restock_order: 'purchase_orders',
 };
 
 const CAPABILITY_LABEL: Record<string, string> = {
