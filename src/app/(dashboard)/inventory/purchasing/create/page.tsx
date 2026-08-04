@@ -24,6 +24,8 @@ interface Location {
   id: string;
   name: string;
   location_type?: { name: string } | null;
+  preferred_vendor_id?: string | null;
+  last_event_id?: string | null;
 }
 
 interface CatalogItem {
@@ -74,6 +76,45 @@ export default function CreatePurchaseOrderPage() {
     delivery_location_id: '',
     notes: '',
   });
+
+  // Preferred vendor is per-yard: picking a delivery location defaults the
+  // vendor to that yard's preferred one (only when no vendor is chosen yet —
+  // never clobbers an explicit pick). Setting it is one click below.
+  const deliveryLocation = locations.find((l) => l.id === form.delivery_location_id);
+  const [savingPreferred, setSavingPreferred] = useState(false);
+  useEffect(() => {
+    if (!deliveryLocation?.preferred_vendor_id || form.vendor_id) return;
+    if (vendors.some((v) => v.id === deliveryLocation.preferred_vendor_id)) {
+      setForm((prev) => ({ ...prev, vendor_id: deliveryLocation.preferred_vendor_id!, vendor_address_id: '' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.delivery_location_id, locations, vendors]);
+
+  const setPreferredForLocation = async () => {
+    if (!deliveryLocation || !form.vendor_id || savingPreferred) return;
+    setSavingPreferred(true);
+    try {
+      const res = await fetch(`/api/inventory/locations/${deliveryLocation.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        credentials: 'include',
+        body: JSON.stringify({
+          preferred_vendor_id: form.vendor_id,
+          expected_last_event_id: deliveryLocation.last_event_id,
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        setLocations((prev) => prev.map((l) =>
+          l.id === deliveryLocation.id
+            ? { ...l, preferred_vendor_id: form.vendor_id, last_event_id: json?.data?.last_event_id ?? l.last_event_id }
+            : l
+        ));
+      }
+    } finally {
+      setSavingPreferred(false);
+    }
+  };
 
   // Punchout vendors (Amazon Business): "Create Purchase Order" becomes one
   // click that creates the PO, starts the punchout session, and opens Amazon —
@@ -508,9 +549,26 @@ export default function CreatePurchaseOrderPage() {
                   {vendors.map((vendor) => (
                     <option key={vendor.id} value={vendor.id}>
                       {vendor.name} ({vendor.code ?? 'No code'})
+                      {deliveryLocation?.preferred_vendor_id === vendor.id ? ' ★' : ''}
                     </option>
                   ))}
                 </select>
+                {deliveryLocation && form.vendor_id && (
+                  deliveryLocation.preferred_vendor_id === form.vendor_id ? (
+                    <p className="mt-1 text-xs text-amber-700">
+                      ★ Preferred vendor for {deliveryLocation.name}
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={setPreferredForLocation}
+                      disabled={savingPreferred}
+                      className="mt-1 text-xs font-medium text-primary hover:underline disabled:opacity-50"
+                    >
+                      {savingPreferred ? 'Saving…' : `☆ Set as preferred vendor for ${deliveryLocation.name}`}
+                    </button>
+                  )
+                )}
                 {form.vendor_id && vendorBranches.length > 0 && (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-1 mt-2">
