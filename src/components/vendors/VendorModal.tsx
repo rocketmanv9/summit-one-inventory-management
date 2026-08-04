@@ -105,10 +105,11 @@ interface BasicsState {
   payment_terms: string;
   lead_time_days: string;
   notes: string;
+  website: string;
 }
 
 function emptyBasics(): BasicsState {
-  return { name: '', code: '', vendor_type_term_id: '', payment_terms: 'NET30', lead_time_days: '', notes: '' };
+  return { name: '', code: '', vendor_type_term_id: '', payment_terms: 'NET30', lead_time_days: '', notes: '', website: '' };
 }
 
 function emptyAddress(): AddressDraft {
@@ -353,7 +354,9 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
             payment_terms: data.payment_terms || 'NET30',
             lead_time_days: data.lead_time_days != null ? String(data.lead_time_days) : '',
             notes: data.notes || '',
+            website: data.portal_url || '',
           });
+          setDraftEmailDomains(data.email_domains || []);
           setLastEventId(data.last_event_id ?? null);
           const addrs: AddressDraft[] = (data.addresses || []).map((a: any) => ({
             id: a.id,
@@ -552,6 +555,8 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
         payment_terms: basics.payment_terms || undefined,
         lead_time_days: basics.lead_time_days ? parseInt(basics.lead_time_days, 10) : null,
         notes: basics.notes.trim() || null,
+        portal_url: basics.website.trim() || null,
+        email_domains: draftEmailDomains,
         contact_name: primaryContact?.name.trim() || null,
         contact_email: primaryContact?.email.trim() || null,
         contact_phone: primaryContact?.phone.trim() || null,
@@ -573,7 +578,6 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
       } else {
         const created = await SupplyChainRPC.createVendor({
           ...payload,
-          ...(draftEmailDomains.length > 0 ? { email_domains: draftEmailDomains } : {}),
         } as any);
         vendorId = created.id;
       }
@@ -839,8 +843,19 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
             </div>
           </div>
 
-          {/* Notes */}
+          {/* Website, sender domains & notes */}
           <div className="space-y-2 border-t pt-4">
+            <Label htmlFor="vendor-website">Website</Label>
+            <Input id="vendor-website" value={basics.website}
+              onChange={(e) => setBasic('website', e.target.value)}
+              placeholder="https://vendor.com" disabled={submitting} />
+            <Label htmlFor="vendor-domains">Email domains</Label>
+            <Input id="vendor-domains" value={draftEmailDomains.join(', ')}
+              onChange={(e) => setDraftEmailDomains(e.target.value.split(',').map((d) => d.trim()).filter(Boolean))}
+              placeholder="vendor.com, orders.vendor.com" disabled={submitting} />
+            <p className="text-xs text-muted-foreground">
+              Emails from these domains match this vendor (powers AI item suggestions from their emails).
+            </p>
             <Label htmlFor="vendor-notes">Notes</Label>
             <textarea id="vendor-notes" value={basics.notes}
               onChange={(e) => setBasic('notes', e.target.value)} rows={2}

@@ -67,7 +67,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
           `The user searched their business email for the company "${query}".`,
           'From the email excerpts below, extract the company as a vendor record.',
           'Return ONLY a JSON object: {"results": [ ... ]} with at most 2 entries, each with',
-          'fields (omit unknowns; name is required): name, code (short uppercase),',
+          'fields (omit unknowns; name is required): name, code (short uppercase), contact_name (the PERSON who emails),',
           'category (what they sell), email (their contact email), phone, street1, city,',
           'state (2-letter), zip, website. Use the sender addresses/signatures as truth —',
           'never invent contact details that are not in the excerpts.',

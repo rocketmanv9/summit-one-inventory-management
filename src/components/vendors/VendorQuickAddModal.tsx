@@ -67,10 +67,14 @@ interface QuickForm {
   description: string;
   city: string;
   state: string;
+  contact_name: string;
+  contact_email: string;
+  contact_phone: string;
 }
 
 const EMPTY_FORM: QuickForm = {
   name: '', code: '', vendor_type_term_id: '', website: '', description: '', city: '', state: '',
+  contact_name: '', contact_email: '', contact_phone: '',
 };
 
 const SELECT_CLS =
@@ -159,6 +163,7 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       }
       const { suggestion } = (await res.json()) as { suggestion: VendorSuggestion };
       setForm({
+        ...EMPTY_FORM,
         name: suggestion.name || input,
         code: suggestion.code || '',
         vendor_type_term_id: suggestion.vendor_type_term_id || '',
@@ -257,6 +262,9 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       description: c.category || '',
       city: c.city || '',
       state: c.state || '',
+      contact_name: (c as any).contact_name || '',
+      contact_email: c.email || '',
+      contact_phone: c.phone || '',
     });
     setDomains(domain ? [domain] : []);
     setExtras({ street1: c.street1, zip: c.zip, phone: c.phone, email: c.email });
@@ -291,9 +299,24 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       address: hasAddr
         ? { street1: extras?.street1, city: form.city.trim(), state: form.state.trim(), zip: extras?.zip }
         : undefined,
-      // Street/zip/phone/email ride along from a picked web-search candidate.
-      contact: extras?.phone || extras?.email ? { phone: extras.phone, email: extras.email } : undefined,
-      email_domains: domains.length > 0 ? domains : undefined,
+      // The PERSON: whole email + name + phone (Grant 2026-08-04) — creates a
+      // real primary contact on save. Sender domains derive from it silently.
+      contact:
+        form.contact_name.trim() || form.contact_email.trim() || form.contact_phone.trim()
+          ? {
+              name: form.contact_name.trim() || undefined,
+              email: form.contact_email.trim() || undefined,
+              phone: form.contact_phone.trim() || undefined,
+            }
+          : undefined,
+      email_domains: (() => {
+        const derived = [
+          ...domains,
+          form.contact_email.includes('@') ? form.contact_email.split('@')[1] : null,
+          domainFromWebsite(form.website),
+        ].filter(Boolean) as string[];
+        return derived.length > 0 ? [...new Set(derived)] : undefined;
+      })(),
     };
   }
 
@@ -529,38 +552,21 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
             </div>
 
             <div className="space-y-2">
-              <Label>Email Domains</Label>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {domains.map((d) => (
-                  <span
-                    key={d}
-                    className="inline-flex items-center gap-1 rounded-full bg-purple-50 border border-purple-200 px-2 py-0.5 text-xs font-mono text-purple-800"
-                  >
-                    {d}
-                    <button
-                      type="button"
-                      onClick={() => removeDomain(d)}
-                      disabled={saving}
-                      className="text-purple-400 hover:text-purple-700"
-                      aria-label={`Remove ${d}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-                <Input
-                  value={newDomain}
-                  onChange={(e) => setNewDomain(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDomain(); } }}
-                  onBlur={addDomain}
-                  placeholder="add domain…"
-                  className="h-7 w-36 text-xs"
-                  disabled={saving}
-                />
+              <Label>Contact person</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Input value={form.contact_name}
+                  onChange={(e) => setField('contact_name', e.target.value)}
+                  placeholder="Name" disabled={saving} />
+                <Input value={form.contact_phone}
+                  onChange={(e) => setField('contact_phone', e.target.value)}
+                  placeholder="Phone" disabled={saving} />
               </div>
+              <Input value={form.contact_email}
+                onChange={(e) => setField('contact_email', e.target.value)}
+                placeholder="person@vendor.com" type="email" disabled={saving} />
               <p className="text-xs text-muted-foreground">
-                Emails from these domains are matched to this vendor — they power AI item
-                suggestions from order confirmations and receipts.
+                Saved as the vendor&apos;s primary contact. Their email domain is matched
+                automatically so this vendor&apos;s emails power AI item suggestions.
               </p>
             </div>
 

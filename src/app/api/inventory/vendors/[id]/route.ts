@@ -2,6 +2,7 @@ import { createSessionWriteRoute, createSessionReadRoute } from '@rocketmanv9/ch
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { pickVendorColumns } from '@/lib/vendor-columns';
+import { sanitizeEmailDomains, upsertVendorEmailDomains } from '@/lib/vendor-email-domains';
 import { assertCapability } from '@/lib/access-server';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -30,6 +31,15 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     sc.from('vendor_addresses').select('*').eq('vendor_id', id).order('address_type'),
   ]);
   // GV-style aliases so the Vendors UI renders unchanged.
+  const { data: domainRows } = await sc
+    .from('vendor_email_domains')
+    .select('domain')
+    .eq('tenant_id', session.tenantId!)
+    .eq('vendor_id', id)
+    .eq('is_active', true)
+    .limit(10);
+  const emailDomains = (domainRows || []).map((d: any) => d.domain);
+
   return Response.json({ data: {
     ...vendor,
     is_active: !!vendor.active,
@@ -38,6 +48,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     description: vendor.notes ?? null,
     contacts: contacts || [],
     addresses: addresses || [],
+    email_domains: emailDomains,
   } });
 }, { serviceName: SERVICE_NAME });
 
@@ -50,7 +61,7 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, i
   const id = extractId(req);
   const body = await req.json();
   const { expected_last_event_id, id: _id, created_at, tenant_id, last_event_id,
-          contacts, addresses, vendor_type_id, is_active, ...rest } = body ?? {};
+          contacts, addresses, vendor_type_id, is_active, email_domains, ...rest } = body ?? {};
   const raw: Record<string, any> = { ...rest };
   if (vendor_type_id !== undefined) raw.vendor_type_term_id = vendor_type_id;
   if (is_active !== undefined) raw.active = is_active;
@@ -67,6 +78,11 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, i
     if (expected_last_event_id) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
     throw AppError.notFound('Vendor not found');
   }
+  // Edited sender domains from the full form — upsert (non-fatal).
+  if (Array.isArray(email_domains)) {
+    await upsertVendorEmailDomains(sc, log, ctx.tenantId!, id, sanitizeEmailDomains(email_domains));
+  }
+
   return { data, status: 200, events: [] };
 }, { bodySchema: 'raw', emissionOwner: 'trigger', serviceName: SERVICE_NAME, scope: 'PATCH /api/inventory/vendors/[id]' });
 
