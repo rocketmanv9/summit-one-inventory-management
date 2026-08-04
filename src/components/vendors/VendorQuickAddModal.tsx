@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Globe, Loader2, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
+import { AlertCircle, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import { createVendorFromDraft, type VendorDraft } from '@/lib/vendor-draft';
 import { discoverVendors, type VendorCandidate } from '@/lib/ai/client';
@@ -210,6 +210,42 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     }
   }
 
+  /* ---- Gmail search ("we already email this company") ---- */
+
+  const [mailSearching, setMailSearching] = useState(false);
+  async function handleEmailSearch() {
+    const input = query.trim();
+    if (input.length < 2 || mailSearching) return;
+    setMailSearching(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/vendor-from-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ query: input }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error || 'Email search failed.');
+        return;
+      }
+      setCandidates(json.results || []);
+      setPhase('results');
+      if ((json.results || []).length === 0) {
+        setError(
+          json.searched > 0
+            ? `Found ${json.searched} email(s) but couldn't extract a vendor — try the exact company name.`
+            : 'Nothing in your email matches — try the web search instead.'
+        );
+      }
+    } catch {
+      setError('Email search failed. Try again.');
+    } finally {
+      setMailSearching(false);
+    }
+  }
+
   /** Load a web-search candidate into the review form (quick-add flow from here). */
   function pickCandidate(c: VendorCandidate) {
     const domain = domainFromWebsite(c.website) || (c.email ? c.email.split('@')[1] : null);
@@ -348,10 +384,21 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
                 variant="outline"
                 className="w-full"
                 onClick={handleWebSearch}
-                disabled={query.trim().length < 2 || loading || searching}
+                disabled={query.trim().length < 2 || loading || searching || mailSearching}
               >
                 {searching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
                 {searching ? 'Searching the web…' : 'Search the web for suppliers'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleEmailSearch}
+                disabled={query.trim().length < 2 || loading || searching || mailSearching}
+                title="Searches your connected Gmail for this company and pulls their contact details from real correspondence"
+              >
+                {mailSearching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />}
+                {mailSearching ? 'Searching your email…' : 'Find them in my email'}
               </Button>
               {query.trim().length < 2 && (
                 <div className="flex flex-wrap gap-1.5">
