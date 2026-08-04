@@ -1087,6 +1087,19 @@ export default function InventoryPage() {
                             >
                               Count now
                             </button>
+                            <button
+                              onClick={() =>
+                                setLabelDialog([{
+                                  code: (row.item as any).barcode || row.item.sku,
+                                  label: row.item.name,
+                                  kind: 'stock',
+                                }])
+                              }
+                              title="One label works for every unit of this item (per-unit asset-tag labels live on the item page)"
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Print label
+                            </button>
                           </div>
                           <div className="flex gap-3 text-sm">
                             <button
