@@ -253,6 +253,21 @@ export const SupplyChainRPC = {
   },
 
   /**
+   * Run the approval limit check on a priced draft PO (the request-a-quote
+   * flow once the vendor's numbers are in). Within limits → approved; over →
+   * awaiting_approval (lands in the manager inbox). Browser-authed on purpose:
+   * the RPC derives tenant/user from the caller's JWT.
+   */
+  async submitPoForApproval(poId: string): Promise<{ status: string; total?: number; reason?: string }> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await (supabase as any).rpc('rpc_submit_po_for_approval', { p_po_id: poId });
+    if (error) {
+      throw AppError.internal(error.message);
+    }
+    return data as { status: string; total?: number; reason?: string };
+  },
+
+  /**
    * Post receipt to inventory (atomic bridge, v2 with guardrails)
    * RPC: supply_chain.rpc_post_receipt_to_inventory_v2
    * Validates over-receipt against PO open qty. Returns structured error when blocked.

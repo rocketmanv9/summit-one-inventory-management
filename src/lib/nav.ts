@@ -131,6 +131,7 @@ export const NAV_SECTIONS: NavSection[] = [
     capability: 'purchasing',
     tabs: [
       { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
+      { title: 'Approvals', href: '/inventory/purchasing/approvals', icon: ClipboardCheck },
       { title: 'Vendors', href: '/inventory/vendors', icon: Users },
       { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
       // Parked analytics — ask Isabelle "which vendor keeps shorting us?".

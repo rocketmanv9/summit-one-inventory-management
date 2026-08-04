@@ -151,7 +151,7 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
     // Use existing PO (called from PlaceOrderModal on an approved PO)
     const { data: existingPO, error: existingPOError } = await sc
       .from('purchase_orders')
-      .select('id, po_number')
+      .select('id, po_number, status, vendor_id, delivery_location_id, created_by_user_id, approved_by_user_id')
       .eq('id', body.existing_po_id)
       .eq('tenant_id', ctx.tenantId!)
       .limit(1)
@@ -159,6 +159,58 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
 
     if (existingPOError || !existingPO) {
       throw AppError.notFound('Existing purchase order not found.');
+    }
+
+    if (existingPO.status === 'awaiting_approval') {
+      throw AppError.forbidden(
+        'This PO is waiting on manager approval — the order goes to Amazon once it’s approved.'
+      );
+    }
+
+    // The Amazon approval gate (Grant, 2026-08-04): the cart's REAL total is
+    // only known here, between cart-return and submit — so this is where the
+    // spend-limit check runs for punchout. A manager's prior approval
+    // (approved_by someone other than the buyer) clears the gate.
+    const buyerId = existingPO.created_by_user_id || ctx.userId;
+    const managerApproved = !!existingPO.approved_by_user_id && existingPO.approved_by_user_id !== buyerId;
+    if (!managerApproved && buyerId) {
+      const { data: limit } = await sc.rpc('resolve_spend_limit', {
+        p_tenant_id: ctx.tenantId,
+        p_user_id: buyerId,
+        p_vendor_id: existingPO.vendor_id,
+        p_initiated_by: 'user',
+      });
+      if (limit != null && total > Number(limit)) {
+        const { data: approver } = await sc.rpc('resolve_po_approver', {
+          p_tenant_id: ctx.tenantId,
+          p_buyer_user_id: buyerId,
+          p_delivery_location_id: existingPO.delivery_location_id,
+        });
+        await sc
+          .from('purchase_orders')
+          .update({
+            status: 'awaiting_approval',
+            approval_reason: `Amazon cart total $${total.toFixed(2)} exceeds spend limit $${Number(limit).toFixed(2)}`,
+            approver_user_id: approver ?? null,
+            last_event_id: crypto.randomUUID(),
+          })
+          .eq('id', existingPO.id)
+          .eq('tenant_id', ctx.tenantId!);
+        log.info('amazon.submit.gated_for_approval', { poId: existingPO.id, total, limit });
+        return {
+          // Cast: this early-return shape intentionally differs from the
+          // submitted-order payload below (union confuses the factory generic).
+          data: {
+            needs_approval: true,
+            po_id: existingPO.id,
+            po_number: existingPO.po_number,
+            total,
+            message: 'Cart total is over your spend limit — sent to your manager for approval. Submit again once approved.',
+          } as any,
+          status: 200,
+          events: [],
+        };
+      }
     }
 
     poId = existingPO.id;

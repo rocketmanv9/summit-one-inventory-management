@@ -61,6 +61,7 @@ export function hrPersonToMirrorRow(
   tenantId: string,
   nowIso: string,
   locationNameById?: Map<string, string>,
+  supervisorByPersonId?: Map<string, string>,
 ) {
   const row: Record<string, unknown> = {
     hr_person_id: p.id,
@@ -82,7 +83,30 @@ export function hrPersonToMirrorRow(
   if (locationNameById) {
     row.location_name = p.location_id ? locationNameById.get(p.location_id) ?? null : null;
   }
+  // Supervisor edge (PO approval routing) — only the full sync carries it;
+  // the webhook path omits it so partial updates don't clobber a synced value.
+  if (supervisorByPersonId) {
+    row.supervisor_hr_person_id = supervisorByPersonId.get(p.id) ?? null;
+  }
   return row;
+}
+
+/** HR person → primary supervisor (org_person_supervisors). */
+export async function fetchHRSupervisors(hrTenantId: string): Promise<Map<string, string>> {
+  const hr = getHRClient();
+  if (!hr) return new Map();
+  const { data, error } = await hr
+    .from('org_person_supervisors')
+    .select('person_id, supervisor_person_id, is_primary')
+    .eq('tenant_id', hrTenantId)
+    .limit(5000);
+  if (error) throw AppError.internal(`HR supervisors read failed: ${error.message}`);
+  const map = new Map<string, string>();
+  for (const row of data ?? []) {
+    if (row.is_primary === false && map.has(row.person_id)) continue;
+    if (row.supervisor_person_id) map.set(row.person_id, row.supervisor_person_id);
+  }
+  return map;
 }
 
 let _hr: any = null;

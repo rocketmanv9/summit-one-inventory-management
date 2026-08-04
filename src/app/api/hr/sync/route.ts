@@ -6,6 +6,7 @@ import {
   fetchHRRoleLevels,
   fetchHRPeople,
   fetchHRLocationNames,
+  fetchHRSupervisors,
   indexPeopleByEmail,
   hrPersonToMirrorRow,
 } from '@/lib/hr';
@@ -56,13 +57,14 @@ export const POST = createSessionWriteRoute(async ({ ctx, supabase, log, idempot
   const hrTenantId: string = settings?.hr_tenant_id || tenantId;
 
   // ── Positions ──────────────────────────────────────────────────────────
-  let hrPositions, roleLevels, hrPeople, hrLocationNames;
+  let hrPositions, roleLevels, hrPeople, hrLocationNames, hrSupervisors;
   try {
-    [hrPositions, roleLevels, hrPeople, hrLocationNames] = await Promise.all([
+    [hrPositions, roleLevels, hrPeople, hrLocationNames, hrSupervisors] = await Promise.all([
       fetchHRPositions(hrTenantId),
       fetchHRRoleLevels(hrTenantId),
       fetchHRPeople(hrTenantId),
       fetchHRLocationNames(hrTenantId),
+      fetchHRSupervisors(hrTenantId),
     ]);
   } catch (err: any) {
     throw AppError.internal(`HR read failed: ${err.message}`);
@@ -109,7 +111,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, supabase, log, idempot
 
   // ── Mirror ALL HR people into the local roster ──────────────────────────
   if (hrPeople.length > 0) {
-    const peopleRows = hrPeople.map((p) => hrPersonToMirrorRow(p, tenantId, nowIso, hrLocationNames));
+    const peopleRows = hrPeople.map((p) => hrPersonToMirrorRow(p, tenantId, nowIso, hrLocationNames, hrSupervisors));
     const { error: hrpErr } = await supabase
       .from('hr_people')
       .upsert(peopleRows, { onConflict: 'tenant_id,hr_person_id' });

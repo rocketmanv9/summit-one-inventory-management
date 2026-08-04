@@ -360,6 +360,14 @@ export function PlaceOrderModal({ open, onClose, po, onSuccess, initialPunchoutO
       // route reports that as a warning rather than an error. Surface it so
       // the user knows to verify instead of trusting a stale 'draft' row.
       const result = await resp.json().catch(() => null);
+      // Over-limit carts don't submit — they land in the manager's approval
+      // inbox and the buyer resubmits after the verdict.
+      if (result?.data?.needs_approval) {
+        toast.info('Sent for approval', { description: result.data.message });
+        onSuccess?.();
+        onClose();
+        return;
+      }
       const warning = result?.data?.warning;
       if (warning) {
         toast.warning('Order submitted to Amazon', { description: warning });

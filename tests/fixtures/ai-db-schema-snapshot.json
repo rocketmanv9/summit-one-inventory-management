@@ -107,6 +107,7 @@
     "rpc_create_item_variants",
     "rpc_create_po_from_punchout",
     "rpc_create_purchase_order",
+    "rpc_submit_po_for_approval",
     "rpc_create_receipt",
     "rpc_create_receipt_v2",
     "rpc_get_open_pos_for_receiving",

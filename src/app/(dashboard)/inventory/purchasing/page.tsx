@@ -134,9 +134,15 @@ export default function PurchasingPage() {
 
   // user_id → display name for the Buyer filter (HR roster; best-effort).
   const [peopleNames, setPeopleNames] = useState<Record<string, string>>({});
+  // POs waiting on ME (or all pending, for admins) — drives the inbox banner.
+  const [approvalsCount, setApprovalsCount] = useState(0);
 
   const loadReferenceData = async () => {
     try {
+      fetch('/api/inventory/purchasing/approvals', { credentials: 'include' })
+        .then((res) => (res.ok ? res.json() : { data: { count: 0 } }))
+        .then(({ data }) => setApprovalsCount(data?.count || 0))
+        .catch(() => {});
       // Names for the Buyer filter — the count-qualified endpoint returns the
       // full HR roster (user_id, name, email) and is readable by anyone who
       // can see this page.
@@ -290,8 +296,33 @@ export default function PurchasingPage() {
   };
 
   // Build the ⋮ menu items for a row from its display bucket.
-  const buildRowActions = (row: PurchaseOrder): RowActionItem[] =>
-    poActions(poBucket(row.status)).map((a) => ({
+  // Quote-flow drafts: once the vendor's prices are on the lines, this runs
+  // the limit check — within limits → approved, over → the approvals inbox.
+  const handleSubmitForApproval = async (row: PurchaseOrder) => {
+    try {
+      const result = await SupplyChainRPC.submitPoForApproval(row.id);
+      alert(
+        result.status === 'approved'
+          ? `${row.po_number} approved — ready to send.`
+          : `${row.po_number} sent for approval: ${result.reason || 'over limit'}.`
+      );
+    } catch (err: any) {
+      alert(err.message || 'Price check failed');
+    } finally {
+      fetchOrders();
+    }
+  };
+
+  const buildRowActions = (row: PurchaseOrder): RowActionItem[] => {
+    const extra: RowActionItem[] =
+      row.status === 'draft'
+        ? [{
+            key: 'submit_approval',
+            label: 'Price check → approve',
+            onClick: () => handleSubmitForApproval(row),
+          }]
+        : [];
+    return extra.concat(poActions(poBucket(row.status)).map((a) => ({
       key: a.key,
       label: a.label,
       variant: a.variant,
@@ -319,7 +350,8 @@ export default function PurchasingPage() {
             break;
         }
       },
-    }));
+    })));
+  };
 
   const columns = [
     {
@@ -535,6 +567,22 @@ export default function PurchasingPage() {
             <div className="text-sm text-red-600">Late</div>
           </div>
         </div>
+
+        {/* Approvals inbox banner — only when something is waiting on this user. */}
+        {approvalsCount > 0 && (
+          <button
+            onClick={() => window.location.assign('/inventory/purchasing/approvals')}
+            className="flex w-full items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white">
+              {approvalsCount}
+            </span>
+            <span className="text-sm font-medium text-amber-900">
+              {approvalsCount === 1 ? 'A purchase order is' : `${approvalsCount} purchase orders are`} waiting for your approval
+            </span>
+            <span className="ml-auto text-sm font-semibold text-amber-700">Open inbox →</span>
+          </button>
+        )}
 
         {/* Search the receipt repository (invoices, receipts, tracking, amount…). */}
         <DocumentSearchBar
