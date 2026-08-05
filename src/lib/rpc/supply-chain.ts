@@ -37,6 +37,11 @@ type VendorUpdatePayload = Omit<VendorUpdate, 'tenant_id'> & { tenant_id?: strin
 type VendorItemInsertPayload = Omit<VendorItemInsert, 'tenant_id'> & { tenant_id?: string };
 type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id?: string };
 
+/** A vendor_items row joined to its catalog item (name + sku) for hub display. */
+export type VendorItemDetailed = VendorItemRow & {
+  catalog_item: { id: string; name: string; sku: string } | null;
+};
+
 function requireAdminRole(): void {
   const token = getStoredAccessToken();
   if (!token) {
@@ -428,6 +433,53 @@ export const SupplyChainRPC = {
       vendor_address_id: string | null;
       catalog_items?: { id: string; name: string; sku: string } | null;
     }>;
+  },
+
+  /**
+   * Vendor items for a vendor, enriched with catalog item name + sku via a
+   * client-side cross-schema join. Returns every pricing field the vendor hub's
+   * Items tab needs (pack size, lead time, min qty, preferred, uom) so the tab
+   * renders without a second fetch. Ordered preferred-first, then by item name.
+   */
+  async getVendorItemsDetailed(vendorId: string): Promise<VendorItemDetailed[]> {
+    const scSupabase = createBrowserAuthedClient().schema('supply_chain');
+    const invSupabase = createBrowserAuthedClient().schema('inventory');
+
+    const { data: vendorItems, error: viError } = await scSupabase
+      .from('vendor_items')
+      .select('id, vendor_id, catalog_item_id, vendor_address_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .eq('vendor_id', vendorId)
+      .limit(500);
+
+    if (viError) {
+      throw AppError.internal(`Failed to fetch vendor items: ${viError.message}`);
+    }
+
+    if (!vendorItems || vendorItems.length === 0) {
+      return [];
+    }
+
+    const catalogItemIds = [...new Set(vendorItems.map((vi) => vi.catalog_item_id))];
+    const { data: catalogItems, error: ciError } = await invSupabase
+      .from('catalog_items')
+      .select('id, name, sku')
+      .in('id', catalogItemIds);
+
+    if (ciError) {
+      throw AppError.internal(`Failed to fetch catalog items: ${ciError.message}`);
+    }
+
+    const catalogMap = new Map((catalogItems || []).map((ci) => [ci.id, ci]));
+
+    return (vendorItems as VendorItemRow[])
+      .map((vi) => ({
+        ...vi,
+        catalog_item: catalogMap.get(vi.catalog_item_id) || null,
+      }))
+      .sort((a, b) => {
+        if (a.is_preferred !== b.is_preferred) return a.is_preferred ? -1 : 1;
+        return (a.catalog_item?.name || '').localeCompare(b.catalog_item?.name || '');
+      }) as VendorItemDetailed[];
   },
 
   /**

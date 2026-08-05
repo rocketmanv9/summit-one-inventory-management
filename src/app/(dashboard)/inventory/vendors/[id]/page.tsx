@@ -18,6 +18,7 @@ import { StatusChip } from '@/components/ui/StatusChip';
 import { apiErrorMessage } from '@/lib/client-errors';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { poBucket } from '@/lib/po/po-status';
+import { VendorItemsSection } from '@/components/vendors/VendorItemsSection';
 
 /* -------------------------------------------------------------------------- */
 /*  Types (mirrors the vendors list page detail panel)                        */
@@ -316,6 +317,10 @@ export default function VendorHubPage() {
                 )}
               </div>
             </div>
+
+            {/* Items — what you can buy from this vendor, with a one-click path
+                to a prefilled PO. First-class on the hub, maintained inline. */}
+            <VendorItemsSection vendorId={vendorId} />
           </>
         )}
       </div>
