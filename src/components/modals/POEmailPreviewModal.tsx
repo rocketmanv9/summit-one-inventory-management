@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { Loader2, Mail, AlertCircle, FileText, Send } from 'lucide-react';
 import { buildPurchaseOrderEmail } from '@/lib/email/order-email';
 
@@ -164,9 +165,9 @@ export function POEmailPreviewModal({ open, poId, onClose }: POEmailPreviewModal
                 <span>
                   <strong>{preview.vendor_name}</strong> has no contact email on file — you&apos;ll enter one when you
                   send, or{' '}
-                  <a href="/inventory/vendors" className="font-medium underline hover:text-amber-900">
+                  <Link href="/inventory/vendors" className="font-medium underline hover:text-amber-900">
                     add one to the vendor
-                  </a>{' '}
+                  </Link>{' '}
                   now.
                 </span>
               </div>
