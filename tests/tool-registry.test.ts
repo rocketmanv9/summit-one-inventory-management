@@ -19,7 +19,7 @@ describe('ToolRegistry', () => {
   it('should correctly identify server tools', () => {
     expect(toolRegistry.isServerTool('query_inventory_summary')).toBe(true);
     expect(toolRegistry.isServerTool('query_stock_valuation')).toBe(true);
-    expect(toolRegistry.isServerTool('create_dashboard')).toBe(true);
+    expect(toolRegistry.isServerTool('workflow_auto_reorder')).toBe(true);
     expect(toolRegistry.isServerTool('add_vendor')).toBe(false);
     expect(toolRegistry.isServerTool('list_vendors')).toBe(false);
   });
@@ -54,14 +54,6 @@ describe('ToolRegistry', () => {
     for (const tool of analytics) {
       expect(tool.tags).toContain('analytics');
     }
-  });
-
-  it('should list dashboard tools by tag', () => {
-    const dashboard = toolRegistry.listByTag('dashboard');
-    expect(dashboard.length).toBeGreaterThanOrEqual(5);
-    const names = dashboard.map((t) => t.name);
-    expect(names).toContain('create_dashboard');
-    expect(names).toContain('list_dashboards');
   });
 
   it('should return governance metadata', () => {

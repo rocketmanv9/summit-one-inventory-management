@@ -47,13 +47,6 @@ const ANALYTICS_INTENTS = new Set([
 const WORKFLOW_INTENTS = new Set([
   'workflow_auto_reorder',
   'workflow_stock_rebalance',
-  'create_dashboard',
-  'list_dashboards',
-  'list_available_widgets',
-  'add_dashboard_widget',
-  'remove_dashboard_widget',
-  'update_dashboard',
-  'delete_dashboard',
   'smart_stock_receive',
   'smart_add_location',
   'smart_register_asset',
@@ -266,7 +259,7 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/dashboard': [
     { label: 'KPIs', message: 'Show me inventory KPIs' },
     { label: 'Low stock', message: 'Show low stock items' },
-    { label: 'Exec dashboard', message: 'Create an executive dashboard' },
+    { label: 'Reorder', message: 'What should I reorder?' },
     { label: 'Valuation', message: "What's my total inventory value?" },
   ],
 };

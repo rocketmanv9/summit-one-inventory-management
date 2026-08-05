@@ -31,15 +31,6 @@ const TAG_MAP: Record<string, ToolTag[]> = {
   query_reservations: ['analytics'],
   query_asset_value: ['analytics'],
 
-  // Dashboard
-  create_dashboard: ['dashboard'],
-  list_dashboards: ['dashboard'],
-  list_available_widgets: ['dashboard'],
-  add_dashboard_widget: ['dashboard'],
-  remove_dashboard_widget: ['dashboard'],
-  update_dashboard: ['dashboard'],
-  delete_dashboard: ['dashboard'],
-
   // Workflow
   workflow_auto_reorder: ['workflow'],
   workflow_stock_rebalance: ['workflow'],

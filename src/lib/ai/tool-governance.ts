@@ -77,7 +77,6 @@ export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
   reject_apparel_order: { name: 'reject_apparel_order', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'apparel.rejected' },
   workflow_auto_reorder: { name: 'workflow_auto_reorder', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'workflow.auto_reorder' },
   workflow_stock_rebalance: { name: 'workflow_stock_rebalance', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'workflow.rebalance' },
-  delete_dashboard: { name: 'delete_dashboard', riskLevel: 'high', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'dashboard.deleted' },
 
   // Medium-risk mutations
   add_vendor: { name: 'add_vendor', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'vendor.created' },
@@ -92,10 +91,6 @@ export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
   issue_inventory: { name: 'issue_inventory', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'inventory.issued' },
   create_reservation: { name: 'create_reservation', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'reservation.created' },
   release_reservation: { name: 'release_reservation', riskLevel: 'medium', requiresConfirmation: true, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'reservation.released' },
-  create_dashboard: { name: 'create_dashboard', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: true, auditEventType: 'dashboard.created' },
-  add_dashboard_widget: { name: 'add_dashboard_widget', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: true },
-  remove_dashboard_widget: { name: 'remove_dashboard_widget', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: true },
-  update_dashboard: { name: 'update_dashboard', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false, auditEventType: 'dashboard.updated' },
   add_location: { name: 'add_location', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'location.created' },
   add_category: { name: 'add_category', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false, auditEventType: 'category.created' },
   set_preferred_vendor: { name: 'set_preferred_vendor', riskLevel: 'medium', requiresConfirmation: false, requiresIdempotency: true, readAfterWrite: false },
@@ -112,8 +107,6 @@ export const TOOL_GOVERNANCE: Record<string, ToolGovernance> = {
   list_receipts: { name: 'list_receipts', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   list_reservations: { name: 'list_reservations', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   list_categories: { name: 'list_categories', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
-  list_dashboards: { name: 'list_dashboards', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
-  list_available_widgets: { name: 'list_available_widgets', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   global_search: { name: 'global_search', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   inventory_summary: { name: 'inventory_summary', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },
   navigate: { name: 'navigate', riskLevel: 'low', requiresConfirmation: false, requiresIdempotency: false, readAfterWrite: false },

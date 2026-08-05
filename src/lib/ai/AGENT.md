@@ -87,17 +87,6 @@ User → Chat UI → /api/ai/chat (POST) → OpenAI → Tool Calls
 | `query_stock_by_location` | server | — | All stock balances at a specific location. |
 | `query_integrations` | server | — | Configured integrations and tool settings. |
 
-#### dashboard (7)
-| Tool | Mode | Role | Description |
-|------|------|------|-------------|
-| `create_dashboard` | server | — | Create a dashboard from a template (executive, operations, etc.). |
-| `list_dashboards` | server | — | List dashboards with widget counts. |
-| `list_available_widgets` | server | — | List widgets in the registry that can be added. |
-| `add_dashboard_widget` | server | — | Add a widget to a dashboard (read-after-write). |
-| `remove_dashboard_widget` | server | — | Remove a widget from a dashboard. |
-| `update_dashboard` | server | — | Rename / re-describe / set default. |
-| `delete_dashboard` | server | admin | Soft-delete a dashboard. |
-
 #### workflow (4)
 | Tool | Mode | Role | Description |
 |------|------|------|-------------|

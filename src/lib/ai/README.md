@@ -20,7 +20,7 @@ User message -> useAiChat.ts -> OpenAI API -> parseAIResponse -> tool dispatch
 | MUTATION | Client (browser) | adjust_stock, add_item, create_transfer | `actions.ts` -> `getActionDefinition()` |
 | READ | Client (browser) | list_vendors, check_stock, low_stock | `actions.ts` -> `getActionDefinition()` |
 | ANALYTICS | Server (API route) | query_inventory_summary, query_forecast | `server-tools.ts` -> `executeServerTool()` |
-| WORKFLOW | Server (API route) | create_dashboard, smart_register_asset | `server-tools.ts` -> `executeServerTool()` |
+| WORKFLOW | Server (API route) | workflow_auto_reorder, smart_register_asset | `server-tools.ts` -> `executeServerTool()` |
 
 ## Adding a New Tool -- Checklist
 
@@ -68,7 +68,7 @@ Server-side tools surface specific error messages (e.g., "A location named X alr
 
 ## Read-After-Write
 
-Dashboard mutations (add/remove widget, update dashboard) re-query after write to verify persistence and include counts in response: "Added widget X (now 5 widgets)".
+Read-after-write tools (see `readAfterWrite` in `tool-governance.ts`) re-query after a mutation to verify persistence and fold the fresh state into the response.
 
 ## Tool Governance
 

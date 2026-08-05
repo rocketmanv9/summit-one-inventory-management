@@ -34,7 +34,9 @@ const INTENT_TOOL_MAP: Record<string, string[]> = {
 
   // Workflow
   workflow: ['workflow_auto_reorder', 'workflow_stock_rebalance', 'query_reorder_suggestions'],
-  dashboard: ['create_dashboard', 'list_dashboards', 'list_available_widgets'],
+  // The dashboard is fixed — there are no dashboard-building tools anymore.
+  // "Show me a dashboard" now surfaces the inventory summary/KPIs instead.
+  dashboard: ['query_inventory_summary', 'query_low_stock_report', 'query_stock_valuation'],
 
   // Navigation & help
   navigate: ['navigate'],
@@ -47,7 +49,7 @@ const INTENT_TAG_FALLBACK: Record<string, ToolTag> = {
   analytics: 'analytics',
   search: 'search',
   workflow: 'workflow',
-  dashboard: 'dashboard',
+  dashboard: 'analytics',
   mutation: 'crud',
   list: 'crud',
 };
