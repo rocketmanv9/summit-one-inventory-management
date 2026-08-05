@@ -11,7 +11,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { EyeOff, Camera, Scale, UserCheck, MapPin } from 'lucide-react';
+import { EyeOff, Camera, Scale, UserCheck, MapPin, Package, ClipboardList, CheckCircle2, ListChecks, Zap, Sparkles, ChevronLeft } from 'lucide-react';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import { useActiveLocation } from '@/lib/active-location';
@@ -23,6 +23,21 @@ const COUNT_TYPE_LABELS: Record<string, string> = {
   spot_check: 'Spot Check',
   initial: 'Initial Count',
 };
+
+// Count-type cards for the create wizard: label + a one-line plain-English
+// explanation + whether the type needs an explicit item pick (partial/spot).
+const COUNT_TYPE_OPTIONS: Array<{
+  value: 'full' | 'partial' | 'spot_check' | 'initial';
+  label: string;
+  explainer: string;
+  Icon: typeof Package;
+  needsItems: boolean;
+}> = [
+  { value: 'full', label: 'Full Inventory', explainer: 'Count everything at the yard — the complete picture.', Icon: Package, needsItems: false },
+  { value: 'partial', label: 'Partial Count', explainer: 'Count only the items you choose.', Icon: ListChecks, needsItems: true },
+  { value: 'spot_check', label: 'Spot Check', explainer: 'A quick verify of a few specific items.', Icon: Zap, needsItems: true },
+  { value: 'initial', label: 'Initial Count', explainer: 'First-time baseline for a new location.', Icon: Sparkles, needsItems: false },
+];
 
 const STATUS_META: Record<string, { label: string; description: string }> = {
   draft: { label: 'Draft', description: 'Being set up — counting has not started yet' },
@@ -1670,6 +1685,43 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
   );
 }
 
+interface WizardLocation {
+  id: string;
+  name: string;
+  location_type?: { name: string };
+}
+
+interface LocationStat {
+  item_lines: number;
+  total_on_hand: number;
+  last_counted_at: string | null;
+}
+
+interface WizardItem {
+  id: string;
+  name: string;
+  sku?: string | null;
+}
+
+const relativeLastCounted = (iso: string | null): string => {
+  if (!iso) return 'Never counted';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'Never counted';
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return 'Counted today';
+  if (days === 1) return 'Counted yesterday';
+  if (days < 30) return `Counted ${days} days ago`;
+  if (days < 60) return 'Counted last month';
+  if (days < 365) return `Counted ${Math.round(days / 30)} months ago`;
+  return `Counted ${Math.round(days / 365)}y ago`;
+};
+
+// Stepped create wizard — three labeled steps so it's never a mystery what you're
+// about to count:
+//   1 Where     → visual yard cards (item lines, on-hand units, last counted)
+//   2 What kind → count-type cards with a one-line plain-English explanation
+//   3 Which     → item picker, only for partial / spot check
+// Deep-links (?create=1&location=&item=) prefill and jump straight to step 2.
 function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialCountType, initialItemIds }: {
   onClose: () => void;
   onCreated: () => void;
@@ -1679,26 +1731,42 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
 }) {
   const [form, setForm] = useState({
     location_id: initialLocationId || '',
-    count_type: initialCountType || 'full',
+    count_type: (initialCountType as 'full' | 'partial' | 'spot_check' | 'initial') || 'full',
     is_blind: false,
     scheduled_for: '',
-    include_assets: true,
-    include_bulk_items: true,
     specific_items: initialItemIds || ([] as string[]),
     notes: '',
     assigned_to_user_id: '',
   });
+  // Start on "What kind" when a deep-link already chose the yard for us.
+  const [step, setStep] = useState<1 | 2 | 3>(initialLocationId ? 2 : 1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [locations, setLocations] = useState<Array<{ id: string; name: string; location_type?: { name: string } }>>([]);
+  const [locations, setLocations] = useState<WizardLocation[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(true);
+  const [locationStats, setLocationStats] = useState<Record<string, LocationStat>>({});
+  const [items, setItems] = useState<WizardItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [itemSearch, setItemSearch] = useState('');
   // Qualified counters the count can be assigned to (empty default = assign to me).
   const [counters, setCounters] = useState<Array<{ user_id: string; name: string | null; email: string | null }>>([]);
 
+  const selectedLocation = locations.find((l) => l.id === form.location_id) || null;
+  const countTypeMeta = COUNT_TYPE_OPTIONS.find((o) => o.value === form.count_type) || COUNT_TYPE_OPTIONS[0];
+  const needsItems = countTypeMeta.needsItems;
+
   useEffect(() => {
     fetchLocations();
+    fetchLocationStats();
     fetchCounters();
   }, []);
+
+  // Lazily load the catalog the first time we reach the "Which items" step.
+  useEffect(() => {
+    if (step === 3 && needsItems && !itemsLoaded && !loadingItems) fetchItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, needsItems]);
 
   const fetchLocations = async () => {
     try {
@@ -1712,6 +1780,31 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
     }
   };
 
+  const fetchLocationStats = async () => {
+    try {
+      const res = await authenticatedFetch('/api/inventory/cycle-counts/location-stats');
+      const { data } = await res.json();
+      setLocationStats(data || {});
+    } catch (error) {
+      // Non-fatal — cards just render without the stat line.
+      console.error('Error fetching location stats:', error);
+    }
+  };
+
+  const fetchItems = async () => {
+    setLoadingItems(true);
+    try {
+      const res = await authenticatedFetch('/api/inventory/items');
+      const { data } = await res.json();
+      setItems((data || []).map((i: any) => ({ id: i.id, name: i.name, sku: i.sku })));
+      setItemsLoaded(true);
+    } catch (error) {
+      console.error('Error fetching items:', error);
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
   const fetchCounters = async () => {
     try {
       const res = await authenticatedFetch('/api/inventory/count-qualified');
@@ -1722,8 +1815,7 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setSaving(true);
     setError('');
 
@@ -1763,20 +1855,79 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
     setForm(prev => ({ ...prev, scheduled_for: formatted }));
   }, []);
 
+  // The last step is either "What kind" (full/initial) or "Which items"
+  // (partial/spot). The primary button submits from whichever is last.
+  const lastStep: 2 | 3 = needsItems ? 3 : 2;
+  const isLastStep = step === lastStep;
+
+  const goNext = () => {
+    if (step === 1 && form.location_id) setStep(2);
+    else if (step === 2 && needsItems) setStep(3);
+  };
+  const goBack = () => {
+    if (step === 3) setStep(2);
+    else if (step === 2) setStep(1);
+  };
+
+  // Step title reflects the choice made so far ("Spot check at Portland Yard").
+  const stepTitle = (() => {
+    if (step === 1) return 'Where are you counting?';
+    const where = selectedLocation ? ` at ${selectedLocation.name}` : '';
+    if (step === 2) return `What kind of count${where}?`;
+    return `${countTypeMeta.label}${where} — which items?`;
+  })();
+
+  const STEP_LABELS = needsItems
+    ? [{ n: 1, label: 'Where' }, { n: 2, label: 'What kind' }, { n: 3, label: 'Which items' }]
+    : [{ n: 1, label: 'Where' }, { n: 2, label: 'What kind' }];
+
+  const filteredItems = items.filter((i) => {
+    if (!itemSearch.trim()) return true;
+    const q = itemSearch.trim().toLowerCase();
+    return i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q);
+  });
+
+  const primaryDisabled =
+    saving ||
+    !form.location_id ||
+    (isLastStep && needsItems && form.specific_items.length === 0);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white px-6 py-4 border-b flex items-center justify-between z-10">
-          <div>
-            <h3 className="text-lg font-semibold">Schedule Cycle Count</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              Create a new inventory count for physical verification
-            </p>
+        {/* Header + labeled progress: 1 Where → 2 What kind → 3 Which items */}
+        <div className="sticky top-0 bg-white px-6 py-4 border-b z-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold">Start a Cycle Count</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">{stepTitle}</p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          <div className="flex items-center gap-2 mt-3">
+            {STEP_LABELS.map((s, idx) => {
+              const active = step === s.n;
+              const done = step > s.n;
+              return (
+                <div key={s.n} className="flex items-center gap-2">
+                  <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                    active ? 'bg-primary text-primary-foreground' : done ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-500'
+                  }`}>
+                    <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${
+                      active ? 'bg-white/25' : done ? 'bg-primary/20' : 'bg-gray-300 text-white'
+                    }`}>
+                      {done ? '✓' : s.n}
+                    </span>
+                    {s.label}
+                  </div>
+                  {idx < STEP_LABELS.length - 1 && <span className="text-gray-300">→</span>}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <div className="p-6 space-y-6">
           {error && (
             <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-start gap-2">
               <span className="text-lg">⚠️</span>
@@ -1787,228 +1938,256 @@ function CreateCycleCountModal({ onClose, onCreated, initialLocationId, initialC
             </div>
           )}
 
-          {/* Location Selection */}
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Location <span className="text-red-500">*</span>
-            </label>
-            {loadingLocations ? (
-              <div className="text-sm text-muted-foreground">Loading locations...</div>
-            ) : (
-              <select
-                value={form.location_id}
-                onChange={(e) => setForm({ ...form, location_id: e.target.value })}
-                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                required
-              >
-                <option value="">Select a location to count...</option>
-                {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} {loc.location_type?.name ? `(${loc.location_type.name})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Choose the warehouse, yard, or bin location to count
-            </p>
-          </div>
-
-          {/* Assignee */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Assign to</label>
-            <select
-              value={form.assigned_to_user_id}
-              onChange={(e) => setForm({ ...form, assigned_to_user_id: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="">Me</option>
-              {counters.map((u) => (
-                <option key={u.user_id} value={u.user_id}>
-                  {u.name || u.email || u.user_id}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground mt-1">
-              The assignee gets a task and a notification. Only qualified counters are listed.
-            </p>
-          </div>
-
-          {/* Count Type */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Count Type</label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, count_type: 'full' })}
-                className={`p-4 border-2 rounded-lg text-center transition-all ${
-                  form.count_type === 'full'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="font-medium">Full Count</div>
-                <div className="text-xs text-muted-foreground mt-1">All items</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, count_type: 'partial' })}
-                className={`p-4 border-2 rounded-lg text-center transition-all ${
-                  form.count_type === 'partial'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="font-medium">Partial Count</div>
-                <div className="text-xs text-muted-foreground mt-1">Selected items</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, count_type: 'spot_check' })}
-                className={`p-4 border-2 rounded-lg text-center transition-all ${
-                  form.count_type === 'spot_check'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="font-medium">Spot Check</div>
-                <div className="text-xs text-muted-foreground mt-1">Quick check of specific items</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, count_type: 'initial' })}
-                className={`p-4 border-2 rounded-lg text-center transition-all ${
-                  form.count_type === 'initial'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="font-medium">Initial Count</div>
-                <div className="text-xs text-muted-foreground mt-1">First count at a new location</div>
-              </button>
+          {/* ---- STEP 1: WHERE — visual yard cards ---- */}
+          {step === 1 && (
+            <div className="space-y-3">
+              {loadingLocations ? (
+                <div className="text-sm text-muted-foreground py-8 text-center">Loading yards…</div>
+              ) : locations.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-8 text-center">No active locations found.</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {locations.map((loc) => {
+                    const selected = form.location_id === loc.id;
+                    const stat = locationStats[loc.id];
+                    return (
+                      <button
+                        key={loc.id}
+                        type="button"
+                        onClick={() => setForm({ ...form, location_id: loc.id })}
+                        className={`text-left p-4 border-2 rounded-lg transition-all ${
+                          selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <MapPin className={`h-4 w-4 shrink-0 ${selected ? 'text-primary' : 'text-gray-400'}`} />
+                            <span className="font-medium truncate">{loc.name}</span>
+                          </div>
+                          {selected && <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />}
+                        </div>
+                        {loc.location_type?.name && (
+                          <div className="text-xs text-muted-foreground capitalize mt-0.5 ml-6">{loc.location_type.name}</div>
+                        )}
+                        <div className="mt-3 ml-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                          <span className="inline-flex items-center gap-1 text-gray-600">
+                            <ClipboardList className="h-3.5 w-3.5" />
+                            {stat ? `${stat.item_lines} item${stat.item_lines === 1 ? '' : 's'}` : '—'}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-gray-600">
+                            <Package className="h-3.5 w-3.5" />
+                            {stat ? `${stat.total_on_hand} on hand` : '—'}
+                          </span>
+                        </div>
+                        <div className="mt-1 ml-6 text-xs text-muted-foreground">
+                          {relativeLastCounted(stat?.last_counted_at ?? null)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          {/* Pre-scoped Items (from deep link / suggestion) */}
-          {form.specific_items.length > 0 && (
-            <div className="flex items-start justify-between gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="text-sm text-blue-700">
-                <div className="font-medium">Scoped to {form.specific_items.length} specific item{form.specific_items.length === 1 ? '' : 's'}</div>
-                <p className="text-xs mt-1">
-                  Only the pre-selected item{form.specific_items.length === 1 ? '' : 's'} will be included in this count.
+          {/* ---- STEP 2: WHAT KIND — count-type cards with explanations ---- */}
+          {step === 2 && (
+            <div className="space-y-6">
+              {selectedLocation && (
+                <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                  <MapPin className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="text-gray-700">
+                    Counting at <span className="font-semibold">{selectedLocation.name}</span>
+                    {selectedLocation.location_type?.name ? ` (${selectedLocation.location_type.name})` : ''}.
+                  </span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Count type</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {COUNT_TYPE_OPTIONS.map((opt) => {
+                    const selected = form.count_type === opt.value;
+                    const Icon = opt.Icon;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm({ ...form, count_type: opt.value })}
+                        className={`text-left p-4 border-2 rounded-lg transition-all ${
+                          selected ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon className={`h-4 w-4 shrink-0 ${selected ? 'text-primary' : 'text-gray-400'}`} />
+                          <span className="font-medium">{opt.label}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1.5">{opt.explainer}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Assignee */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Assign to</label>
+                <select
+                  value={form.assigned_to_user_id}
+                  onChange={(e) => setForm({ ...form, assigned_to_user_id: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">Me</option>
+                  {counters.map((u) => (
+                    <option key={u.user_id} value={u.user_id}>{u.name || u.email || u.user_id}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  The assignee gets a task and a notification. Only qualified counters are listed.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, specific_items: [] })}
-                className="text-xs text-blue-600 hover:text-blue-800 underline shrink-0"
-              >
-                Count all items instead
-              </button>
-            </div>
-          )}
 
-          {/* Scheduled Date/Time */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Scheduled For</label>
-            <input
-              type="datetime-local"
-              value={form.scheduled_for}
-              onChange={(e) => setForm({ ...form, scheduled_for: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              When should this count be performed? Leave blank to start immediately.
-            </p>
-          </div>
-
-          {/* Blind Count Option */}
-          {form.count_type !== 'initial' && (
-          <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <input
-              type="checkbox"
-              id="blind-count"
-              checked={form.is_blind}
-              onChange={(e) => setForm({ ...form, is_blind: e.target.checked })}
-              className="mt-1 h-4 w-4 rounded border-gray-300"
-            />
-            <div className="flex-1">
-              <label htmlFor="blind-count" className="text-sm font-medium cursor-pointer">
-                Blind Count (Hide Expected Quantities)
-              </label>
-              <p className="text-xs text-muted-foreground mt-1">
-                Recommended for accuracy. Counter won't see system quantities, reducing bias.
-              </p>
-            </div>
-          </div>
-          )}
-
-          {/* What to Count */}
-          {form.count_type !== 'initial' && (
-          <div>
-            <label className="block text-sm font-medium mb-2">What to Count</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
+              {/* Scheduled Date/Time */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Scheduled for</label>
                 <input
-                  type="checkbox"
-                  checked={form.include_bulk_items}
-                  onChange={(e) => setForm({ ...form, include_bulk_items: e.target.checked })}
-                  className="h-4 w-4"
+                  type="datetime-local"
+                  value={form.scheduled_for}
+                  onChange={(e) => setForm({ ...form, scheduled_for: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <div>
-                  <div className="text-sm font-medium">Bulk Items (SKUs)</div>
-                  <div className="text-xs text-muted-foreground">
-                    Fungible items tracked by quantity (e.g., concrete mix, rebar)
+                <p className="text-xs text-muted-foreground mt-1">
+                  When should this count be performed? Leave blank to start immediately.
+                </p>
+              </div>
+
+              {/* Blind Count Option */}
+              {form.count_type !== 'initial' && (
+                <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <input
+                    type="checkbox"
+                    id="blind-count"
+                    checked={form.is_blind}
+                    onChange={(e) => setForm({ ...form, is_blind: e.target.checked })}
+                    className="mt-1 h-4 w-4 rounded border-gray-300"
+                  />
+                  <div className="flex-1">
+                    <label htmlFor="blind-count" className="text-sm font-medium cursor-pointer">
+                      Blind count (hide expected quantities)
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Recommended for accuracy. Counter won&apos;t see system quantities, reducing bias.
+                    </p>
                   </div>
                 </div>
-              </label>
-              <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.include_assets}
-                  onChange={(e) => setForm({ ...form, include_assets: e.target.checked })}
-                  className="h-4 w-4"
+              )}
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Notes (optional)</label>
+                <textarea
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  placeholder="Add any special instructions or context for this count..."
+                  className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[72px]"
                 />
-                <div>
-                  <div className="text-sm font-medium">Serialized Assets</div>
-                  <div className="text-xs text-muted-foreground">
-                    Individual equipment tracked by serial number (e.g., forklifts, tools)
-                  </div>
-                </div>
-              </label>
+              </div>
             </div>
-          </div>
           )}
 
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Notes (Optional)</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              placeholder="Add any special instructions or context for this count..."
-              className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
-            />
-          </div>
+          {/* ---- STEP 3: WHICH ITEMS — only for partial / spot check ---- */}
+          {step === 3 && needsItems && (
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground">
+                Pick the items to include in this {countTypeMeta.label.toLowerCase()}.
+                {' '}<span className="font-medium text-gray-700">{form.specific_items.length} selected</span>.
+              </div>
+              <input
+                type="text"
+                value={itemSearch}
+                onChange={(e) => setItemSearch(e.target.value)}
+                placeholder="Search items by name or SKU…"
+                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {loadingItems ? (
+                <div className="text-sm text-muted-foreground py-8 text-center">Loading items…</div>
+              ) : filteredItems.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-8 text-center">No matching items.</div>
+              ) : (
+                <div className="max-h-80 overflow-y-auto border rounded-lg divide-y">
+                  {filteredItems.map((item) => {
+                    const checked = form.specific_items.includes(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              specific_items: e.target.checked
+                                ? [...prev.specific_items, item.id]
+                                : prev.specific_items.filter((id) => id !== item.id),
+                            }));
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium truncate">{item.name}</div>
+                          {item.sku && <div className="text-xs text-muted-foreground">{item.sku}</div>}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
-          {/* Action Buttons */}
-          <div className="flex gap-3 pt-4 border-t">
+        {/* Footer nav — Back / Cancel on the left, Next / create on the right. */}
+        <div className="sticky bottom-0 bg-white flex items-center justify-between gap-3 px-6 py-4 border-t">
+          <div className="flex gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
+              className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={saving || !form.location_id}
-              className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {saving ? 'Creating...' : form.scheduled_for ? 'Schedule Count' : 'Start Count Now'}
-            </button>
+            {step > 1 && (
+              <button
+                type="button"
+                onClick={goBack}
+                className="inline-flex items-center gap-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
+              >
+                <ChevronLeft className="h-4 w-4" /> Back
+              </button>
+            )}
           </div>
-        </form>
+          {isLastStep ? (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={primaryDisabled}
+              className="px-5 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            >
+              {saving ? 'Creating…' : form.scheduled_for ? 'Schedule Count' : 'Start Count Now'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={step === 1 && !form.location_id}
+              className="px-5 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            >
+              Next →
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
