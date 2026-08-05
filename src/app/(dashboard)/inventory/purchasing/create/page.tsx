@@ -10,8 +10,8 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
-import { useOrderContext, formatHint } from '@/components/purchasing/useOrderContext';
-import { Plus, AlertCircle, Check, Package, MapPin, Tag } from 'lucide-react';
+import { useOrderContext, formatHint, computeFlags } from '@/components/purchasing/useOrderContext';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -157,6 +157,9 @@ export default function CreatePurchaseOrderPage() {
   // whether the (optional) price field is being shown.
   const { hints, suggestedVendor, fetchContext } = useOrderContext();
   const [showPriceFor, setShowPriceFor] = useState<Record<number, boolean>>({});
+  // Smart flags (already on hand / surplus elsewhere / on order) are advisory
+  // and per-line dismissible — keyed by line index + flag kind.
+  const [dismissedFlags, setDismissedFlags] = useState<Record<string, boolean>>({});
 
   // Track parent selection per line + cached variants per parent
   const [lineParentIds, setLineParentIds] = useState<Record<number, string>>({});
@@ -793,6 +796,15 @@ export default function CreatePurchaseOrderPage() {
                 const hint = formatHint(hints[line.catalog_item_id], {
                   selectedVendorName: selectedVendor?.name ?? null,
                 });
+                // Smart flags: don't buy what the company already has. Advisory
+                // only — never blocks submit. Free-text lines have no item to
+                // flag. Filter out any the user dismissed on this line.
+                const smartFlags = line.free_text || !line.catalog_item_id
+                  ? []
+                  : computeFlags(hints[line.catalog_item_id], {
+                      destinationLocationId: form.delivery_location_id || null,
+                      qtyOrdered: line.qty_ordered,
+                    }).filter((f) => !dismissedFlags[`${index}:${f.kind}`]);
 
                 return (
                   <div key={index} className="space-y-2">
@@ -1005,6 +1017,70 @@ export default function CreatePurchaseOrderPage() {
                         ) : null
                       )}
                     </div>
+
+                    {/* Smart flags: already-on-hand / surplus-elsewhere / on-order.
+                        Advisory, compact, dismissible — never block submit. */}
+                    {smartFlags.length > 0 && (
+                      <div className="space-y-1">
+                        {smartFlags.map((flag) => {
+                          const tone =
+                            flag.kind === 'on_hand'
+                              ? 'border-amber-200 bg-amber-50 text-amber-800'
+                              : flag.kind === 'surplus'
+                                ? 'border-blue-200 bg-blue-50 text-blue-800'
+                                : 'border-violet-200 bg-violet-50 text-violet-800';
+                          const Icon =
+                            flag.kind === 'on_hand' ? PackageCheck
+                              : flag.kind === 'surplus' ? ArrowLeftRight
+                                : ClipboardList;
+                          return (
+                            <div
+                              key={flag.kind}
+                              className={`flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs ${tone}`}
+                            >
+                              <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span className="flex-1">{flag.text}</span>
+                              {flag.kind === 'surplus' && flag.transfer && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const params = new URLSearchParams({
+                                      create: '1',
+                                      from: flag.transfer!.fromLocationId,
+                                      to: flag.transfer!.toLocationId,
+                                      item: line.catalog_item_id,
+                                      qty: String(flag.transfer!.qty),
+                                    });
+                                    router.push(`/inventory/transfers?${params.toString()}`);
+                                  }}
+                                  className="shrink-0 font-medium text-blue-700 hover:underline"
+                                >
+                                  Start transfer
+                                </button>
+                              )}
+                              {flag.kind === 'on_order' && flag.poId && (
+                                <a
+                                  href={`/inventory/purchasing?po=${flag.poId}`}
+                                  className="shrink-0 font-medium text-violet-700 hover:underline"
+                                >
+                                  View PO
+                                </a>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDismissedFlags((prev) => ({ ...prev, [`${index}:${flag.kind}`]: true }))
+                                }
+                                className="shrink-0 opacity-60 hover:opacity-100"
+                                aria-label="Dismiss"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}

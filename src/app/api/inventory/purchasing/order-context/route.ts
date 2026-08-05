@@ -16,6 +16,14 @@
  * Top-level (needs a single item + location) it returns suggested_vendor:
  *  - the location's preferred vendor if they carry the item, else the vendor of
  *    the item's most recent real PO, else null — each with a `reason` for the UI.
+ *
+ * When a location is given it also returns, per item, the "smart flags" the
+ * Create PO page shows to discourage buying what the company already has:
+ *  - stock:     on-hand/available at the destination yard and at every other
+ *               yard (available = qty_on_hand − qty_reserved), so the UI can
+ *               flag "already N here" and "surplus at another yard — transfer?".
+ *  - open_pos:  live purchase orders (placed, not yet fully received) already
+ *               covering this item — "already on order".
  */
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { getAdminClient } from '@/utils/supabase/admin';
@@ -29,6 +37,14 @@ const PLACED_STATUSES = [
   'partially_received', 'fully_received', 'closed',
 ];
 
+// PO statuses that mean the order is live and still coming — buying more of the
+// same item risks double-ordering. Draft/awaiting-approval count (someone is
+// already trying to buy it); fully_received/closed/cancelled/voided do not.
+const OPEN_PO_STATUSES = [
+  'draft', 'awaiting_approval', 'pending_approval', 'approved',
+  'sent', 'placed', 'acknowledged', 'ordered', 'in_transit', 'partially_received',
+];
+
 interface PriceHint {
   unit_cost: number;
   date: string | null;
@@ -36,10 +52,35 @@ interface PriceHint {
   vendor_name: string | null;
 }
 
+/** Stock at one yard for one item, available = on_hand − reserved. */
+interface StockAtLocation {
+  location_id: string;
+  location_name: string | null;
+  on_hand: number;
+  reserved: number;
+  available: number;
+}
+
+/** A live PO already covering an item — feeds the "already on order" flag. */
+interface OpenPO {
+  po_id: string;
+  po_number: string | null;
+  status: string;
+  qty_outstanding: number;
+  placed_at: string | null;
+  vendor_name: string | null;
+}
+
 interface ItemContext {
   catalog_item_id: string;
   last_paid: PriceHint | null;
   catalog_price: { unit_cost: number; vendor_id: string | null; vendor_name: string | null } | null;
+  /** On-hand/available at the destination yard (present when a location is given). */
+  stock_here: StockAtLocation | null;
+  /** Other yards with available stock, best (most available) first. */
+  stock_elsewhere: StockAtLocation[];
+  /** Live POs already covering this item, newest first. */
+  open_pos: OpenPO[];
 }
 
 export const GET = createSessionReadRoute(
@@ -150,6 +191,114 @@ export const GET = createSessionReadRoute(
       for (const v of vendors ?? []) vendorNameById[v.id] = v.name;
     }
 
+    // --- Smart flags: stock on hand by location + open POs (per item) ---------
+    // Both are batched across all items in one query each, so adding lines never
+    // fans out into N+1. Stock joins location names; available = on_hand −
+    // reserved (the balance table already tracks reserved). Only computed when a
+    // destination location is given (the flags are relative to where it ships).
+    const stockByItem: Record<string, StockAtLocation[]> = {};
+    const openPosByItem: Record<string, OpenPO[]> = {};
+
+    if (locationId) {
+      const { data: balances } = await inv
+        .from('stock_balances')
+        .select('catalog_item_id, location_id, qty_on_hand, qty_reserved, qty_available')
+        .eq('tenant_id', tenantId)
+        .in('catalog_item_id', itemIds)
+        .limit(2000);
+
+      const balanceLocIds = [...new Set((balances ?? []).map((b: any) => b.location_id).filter(Boolean))];
+      const locNameById: Record<string, string> = {};
+      if (balanceLocIds.length > 0) {
+        const { data: locs } = await inv
+          .from('locations')
+          .select('id, name')
+          .in('id', balanceLocIds)
+          .limit(2000);
+        for (const l of locs ?? []) locNameById[l.id] = l.name;
+      }
+
+      for (const b of balances ?? []) {
+        const onHand = Number(b.qty_on_hand ?? 0);
+        const reserved = Number(b.qty_reserved ?? 0);
+        // Trust the stored available when present, else derive it.
+        const available = b.qty_available != null ? Number(b.qty_available) : onHand - reserved;
+        (stockByItem[b.catalog_item_id] ||= []).push({
+          location_id: b.location_id,
+          location_name: locNameById[b.location_id] ?? null,
+          on_hand: onHand,
+          reserved,
+          available,
+        });
+      }
+
+      // Open POs already covering these items: pull live-status headers, then
+      // their lines for our items, and sum outstanding qty (ordered − received)
+      // per (item, PO). One header query + one line query — no per-item calls.
+      const { data: openPoHeaders } = await sc
+        .from('purchase_orders')
+        .select('id, po_number, status, vendor_id, vendor_name_snapshot, ordered_at, sent_at, order_date, created_at')
+        .eq('tenant_id', tenantId)
+        .in('status', OPEN_PO_STATUSES)
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      const openPoById: Record<string, any> = {};
+      for (const po of openPoHeaders ?? []) openPoById[po.id] = po;
+      const openPoIds = Object.keys(openPoById);
+
+      if (openPoIds.length > 0) {
+        const { data: openLines } = await sc
+          .from('purchase_order_lines')
+          .select('catalog_item_id, po_id, qty_ordered, qty_received')
+          .eq('tenant_id', tenantId)
+          .in('catalog_item_id', itemIds)
+          .in('po_id', openPoIds)
+          .limit(2000);
+
+        // Sum outstanding per (item, po) so a PO with the item on two lines
+        // shows once with the combined remaining quantity.
+        const outstandingByItemPo: Record<string, Record<string, number>> = {};
+        for (const ln of openLines ?? []) {
+          const outstanding = Math.max(0, Number(ln.qty_ordered ?? 0) - Number(ln.qty_received ?? 0));
+          if (outstanding <= 0) continue;
+          const perPo = (outstandingByItemPo[ln.catalog_item_id] ||= {});
+          perPo[ln.po_id] = (perPo[ln.po_id] ?? 0) + outstanding;
+        }
+
+        // Names for any open-PO vendor not carried in the snapshot column.
+        const openVendorIds = [
+          ...new Set(
+            Object.values(openPoById)
+              .filter((p: any) => !p.vendor_name_snapshot && p.vendor_id)
+              .map((p: any) => p.vendor_id),
+          ),
+        ] as string[];
+        const missing = openVendorIds.filter((id) => !vendorNameById[id]);
+        if (missing.length > 0) {
+          const { data: vs } = await sc.from('vendors').select('id, name').in('id', missing).limit(500);
+          for (const v of vs ?? []) vendorNameById[v.id] = v.name;
+        }
+
+        for (const [itemId, perPo] of Object.entries(outstandingByItemPo)) {
+          const rows: OpenPO[] = Object.entries(perPo).map(([poId, qty]) => {
+            const po = openPoById[poId];
+            return {
+              po_id: poId,
+              po_number: po?.po_number ?? null,
+              status: po?.status ?? '',
+              qty_outstanding: qty,
+              placed_at: placedAt(po),
+              vendor_name: po?.vendor_name_snapshot ?? (po?.vendor_id ? vendorNameById[po.vendor_id] ?? null : null),
+            };
+          });
+          // Newest first (undated last).
+          rows.sort((a, b) => (b.placed_at || '').localeCompare(a.placed_at || ''));
+          openPosByItem[itemId] = rows;
+        }
+      }
+    }
+
     // Backfill last-paid vendor names from the vendors table when the PO had no
     // snapshot, and assemble per-item context.
     const items: Record<string, ItemContext> = {};
@@ -159,6 +308,11 @@ export const GET = createSessionReadRoute(
         lp.vendor_name = vendorNameById[lp.vendor_id] ?? null;
       }
       const cheap = cheapestByItem[itemId] ?? null;
+      const stockRows = stockByItem[itemId] ?? [];
+      const stockHere = locationId ? stockRows.find((s) => s.location_id === locationId) ?? null : null;
+      const stockElsewhere = stockRows
+        .filter((s) => s.location_id !== locationId && s.available > 0)
+        .sort((a, b) => b.available - a.available);
       items[itemId] = {
         catalog_item_id: itemId,
         last_paid: lp,
@@ -169,6 +323,9 @@ export const GET = createSessionReadRoute(
               vendor_name: cheap.vendor_id ? vendorNameById[cheap.vendor_id] ?? null : null,
             }
           : null,
+        stock_here: stockHere,
+        stock_elsewhere: stockElsewhere,
+        open_pos: openPosByItem[itemId] ?? [],
       };
     }
 

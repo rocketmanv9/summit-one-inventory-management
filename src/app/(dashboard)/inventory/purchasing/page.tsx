@@ -88,6 +88,10 @@ export default function PurchasingPage() {
   // PlaceOrderModal on that PO with the session already in flight.
   const [resumePunchoutId, setResumePunchoutId] = useState<string | null>(null);
   const [resumePoId, setResumePoId] = useState<string | null>(null);
+  // Deep-link to open a specific PO's detail: ?po=<id> on its own (e.g. the
+  // "already on order" flag on the Create PO page). The punchout resume path
+  // above handles ?punchout=&po= together; this covers the plain-open case.
+  const [openPoId, setOpenPoId] = useState<string | null>(null);
 
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
@@ -97,8 +101,21 @@ export default function PurchasingPage() {
       setResumePunchoutId(punchout);
       setResumePoId(poId);
       window.history.replaceState(null, '', '/inventory/purchasing');
+    } else if (poId) {
+      setOpenPoId(poId);
+      window.history.replaceState(null, '', '/inventory/purchasing');
     }
   }, []);
+
+  useEffect(() => {
+    if (!openPoId) return;
+    const row = orders.find((o) => o.id === openPoId);
+    if (row) {
+      setOpenPoId(null);
+      setSelectedOrder(row);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, openPoId]);
 
   useEffect(() => {
     if (!resumePoId) return;
