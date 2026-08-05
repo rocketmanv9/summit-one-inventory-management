@@ -25,6 +25,21 @@ const RequestSchema = z.object({
     name: z.string(),
     sku_prefix: z.string().nullable().optional(),
   })).optional().default([]),
+  // Refinement (item 11): the fields we suggested last time + a plain-language
+  // instruction ("make the description contractor-facing", "this is serialized
+  // not stock"). When present, the model revises that suggestion instead of
+  // starting fresh, so unrelated fields stay put and the ask actually lands.
+  previous_suggestion: z.object({
+    description: z.string().optional(),
+    sku_prefix: z.string().optional(),
+    category: z.string().optional(),
+    unit_of_measure: z.string().optional(),
+    tracking_mode: z.string().optional(),
+    reorder_point: z.number().nullable().optional(),
+    has_variants: z.boolean().optional(),
+    variant_dimensions: z.array(z.string()).optional(),
+  }).optional(),
+  adjustment: z.string().max(500).optional(),
 });
 
 export const POST = createSessionReadRoute(async ({ req, session, log }) => {
@@ -45,7 +60,8 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
     );
   }
 
-  const { name, existing_categories } = parsed.data;
+  const { name, existing_categories, previous_suggestion, adjustment } = parsed.data;
+  const isRefine = !!(previous_suggestion && adjustment?.trim());
 
   const categoryList = existing_categories.length > 0
     ? existing_categories.map(c => `- "${c.name}" (prefix: ${c.sku_prefix || 'none'})`).join('\n')
@@ -114,10 +130,22 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
         },
         {
           role: 'user',
-          content: `Item name: "${name}"`,
+          content: isRefine
+            ? [
+                `Item name: "${name}"`,
+                '',
+                'You previously suggested these fields (JSON):',
+                JSON.stringify(previous_suggestion),
+                '',
+                `Revise that suggestion to satisfy this instruction: "${adjustment!.trim()}"`,
+                'Change only what the instruction implies; keep the other fields as they were unless they no longer make sense. Return the full JSON object with every field, same schema as before.',
+              ].join('\n')
+            : `Item name: "${name}"`,
         },
       ],
-      temperature: 0.2,
+      // Refinements follow an explicit instruction, so keep them tight; fresh
+      // suggestions get a hair more room to pick sensible defaults.
+      temperature: isRefine ? 0.1 : 0.2,
       max_tokens: 600,
     });
 
@@ -197,7 +225,7 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
       ? suggestion.tracking_mode
       : 'stock';
 
-    log.info(`[AI Item Suggest] name="${name}" → category="${suggestion.category}" uom=${uom} tracking=${tracking} has_variants=${!!suggestion.has_variants}`);
+    log.info(`[AI Item Suggest] ${isRefine ? 'refine' : 'suggest'} name="${name}"${isRefine ? ` adj="${adjustment!.trim().slice(0, 60)}"` : ''} → category="${suggestion.category}" uom=${uom} tracking=${tracking} has_variants=${!!suggestion.has_variants}`);
 
     // Validate suggested_identifier_types
     const VALID_ID_TYPES = ['barcode', 'qr'];

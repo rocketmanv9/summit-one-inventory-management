@@ -226,6 +226,12 @@ export default function NewItemWizardPage() {
   const [aiImageLoading, setAiImageLoading] = useState(false);
   const [aiSuggestedCategory, setAiSuggestedCategory] = useState<string | null>(null);
   const [aiSuggestedSkuPrefix, setAiSuggestedSkuPrefix] = useState<string | null>(null);
+  // Detail refinement (item 11): the raw suggestion the model last returned (so
+  // a follow-up instruction revises it instead of re-rolling), an in-flight
+  // flag, and a short list of which fields the last adjustment actually moved.
+  const [lastSuggestion, setLastSuggestion] = useState<any | null>(null);
+  const [aiRefining, setAiRefining] = useState(false);
+  const [refineDiff, setRefineDiff] = useState<{ field: string; from: string; to: string }[] | null>(null);
 
   // Per-variant starting stock: qty keyed by a stable combo signature.
   // Empty entry → falls back to the master form.initial_qty. Lives here (lifted)
@@ -352,6 +358,11 @@ export default function NewItemWizardPage() {
           : prev.variant_options,
       }));
 
+      // Remember the raw suggestion so a follow-up instruction can revise it,
+      // and clear any stale diff from a previous refine round.
+      setLastSuggestion(suggestion);
+      setRefineDiff(null);
+
       // If AI suggests a new category, store the name + prefix for pre-seeding
       if (suggestion.new_category_name && !suggestion.category_id) {
         setAiSuggestedCategory(suggestion.new_category_name);
@@ -365,6 +376,91 @@ export default function NewItemWizardPage() {
       setAiLoading(false);
     }
   }, [form.name, aiLoading, categories]);
+
+  // ── AI Refine (detail adjustment) ────────────────────────────────────
+  // Take a plain-language instruction ("make the description contractor-facing",
+  // "this is serialized not stock") and revise the last suggestion rather than
+  // re-rolling. Applies the revised fields, preserves anything the instruction
+  // didn't touch, and reports what actually changed.
+  const handleAiRefine = useCallback(async (instruction: string) => {
+    const trimmed = instruction.trim();
+    if (!trimmed || aiRefining || !lastSuggestion) return;
+
+    setAiRefining(true);
+    setError('');
+    setRefineDiff(null);
+    try {
+      const res = await fetch('/api/ai/item-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          existing_categories: categories.map(c => ({ id: c.id, name: c.name, sku_prefix: c.sku_prefix })),
+          previous_suggestion: {
+            description: lastSuggestion.description,
+            sku_prefix: lastSuggestion.sku_prefix,
+            category: lastSuggestion.category_display || lastSuggestion.category,
+            unit_of_measure: lastSuggestion.uom,
+            tracking_mode: lastSuggestion.tracking_mode,
+            reorder_point: lastSuggestion.reorder_point ?? null,
+            has_variants: lastSuggestion.has_variants,
+            variant_dimensions: lastSuggestion.variant_dimensions,
+          },
+          adjustment: trimmed,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Adjustment failed' }));
+        setError(err.error || 'Adjustment failed');
+        return;
+      }
+      const { suggestion } = await res.json();
+
+      // Diff the fields a person would notice, against the values we had.
+      const diff: { field: string; from: string; to: string }[] = [];
+      const track = (field: string, from: any, to: any) => {
+        const f = from == null || from === '' ? '—' : String(from);
+        const t = to == null || to === '' ? '—' : String(to);
+        if (f !== t) diff.push({ field, from: f, to: t });
+      };
+      track('Description', lastSuggestion.description, suggestion.description);
+      track('Category', lastSuggestion.category_display || lastSuggestion.category, suggestion.category_display || suggestion.category);
+      track('Unit of measure', lastSuggestion.uom, suggestion.uom);
+      track('Tracking mode', lastSuggestion.tracking_mode, suggestion.tracking_mode);
+      track('Reorder point', lastSuggestion.reorder_point, suggestion.reorder_point);
+      track('SKU prefix', lastSuggestion.sku_prefix, suggestion.sku_prefix);
+      track('Has variants', lastSuggestion.has_variants ? 'yes' : 'no', suggestion.has_variants ? 'yes' : 'no');
+
+      setForm(prev => ({
+        ...prev,
+        description: suggestion.description || prev.description,
+        uom_term_id: suggestion.uom_term_id || prev.uom_term_id,
+        tracking_mode: suggestion.tracking_mode || prev.tracking_mode,
+        reorder_point: suggestion.reorder_point != null ? String(suggestion.reorder_point) : prev.reorder_point,
+        base_sku: suggestion.sku_prefix || prev.base_sku,
+        category_id: suggestion.category_id || prev.category_id,
+        identifier_types: suggestion.suggested_identifier_types || prev.identifier_types,
+        has_variants: suggestion.has_variants ?? prev.has_variants,
+        variant_dimensions: suggestion.has_variants && Array.isArray(suggestion.variant_dimensions) && suggestion.variant_dimensions.length > 0
+          ? suggestion.variant_dimensions
+          : prev.variant_dimensions,
+        variant_options: suggestion.has_variants && suggestion.variant_options && Object.keys(suggestion.variant_options).length > 0
+          ? suggestion.variant_options
+          : prev.variant_options,
+      }));
+
+      if (suggestion.new_category_name && !suggestion.category_id) {
+        setAiSuggestedCategory(suggestion.new_category_name);
+        setAiSuggestedSkuPrefix(suggestion.sku_prefix || null);
+      }
+      setLastSuggestion(suggestion);
+      setRefineDiff(diff);
+    } catch {
+      setError('Failed to adjust suggestions. Try again.');
+    } finally {
+      setAiRefining(false);
+    }
+  }, [form.name, aiRefining, lastSuggestion, categories]);
 
   // Auto-run the AI suggest for deep-link prefills once categories are loaded
   // (so the suggested category can match against existing ones).
@@ -764,6 +860,10 @@ export default function NewItemWizardPage() {
             aiImageLoading={aiImageLoading}
             aiLoading={aiLoading}
             aiFilled={aiFilled}
+            onAiRefine={handleAiRefine}
+            aiRefining={aiRefining}
+            refineDiff={refineDiff}
+            onDismissRefineDiff={() => setRefineDiff(null)}
             aiSuggestedCategory={aiSuggestedCategory}
             onDismissSuggestedCategory={() => setAiSuggestedCategory(null)}
             uomTerms={uomTerms}
@@ -895,6 +995,10 @@ function StepBasics({
   aiImageLoading,
   aiLoading,
   aiFilled,
+  onAiRefine,
+  aiRefining,
+  refineDiff,
+  onDismissRefineDiff,
   aiSuggestedCategory,
   onDismissSuggestedCategory,
   uomTerms,
@@ -918,6 +1022,10 @@ function StepBasics({
   aiImageLoading: boolean;
   aiLoading: boolean;
   aiFilled: boolean;
+  onAiRefine: (instruction: string) => void;
+  aiRefining: boolean;
+  refineDiff: { field: string; from: string; to: string }[] | null;
+  onDismissRefineDiff: () => void;
   aiSuggestedCategory: string | null;
   onDismissSuggestedCategory: () => void;
   uomTerms: { term_id: string; label: string }[];
@@ -935,6 +1043,8 @@ function StepBasics({
     !!(form.material_term_id || form.product_term_id || form.quality_tier_term_id)
   );
   const photoInputRef = useRef<HTMLInputElement>(null);
+  // Detail-refinement instruction ("make the description contractor-facing").
+  const [refineText, setRefineText] = useState('');
 
   return (
     <Card>
@@ -986,6 +1096,60 @@ function StepBasics({
             <p className="text-xs text-purple-600">
               Fields auto-filled by AI. Review and adjust as needed.
             </p>
+          )}
+
+          {/* Detail refinement — talk back to the suggestions instead of re-rolling. */}
+          {aiFilled && (
+            <div className="mt-1 space-y-2 rounded-md border border-purple-200 bg-purple-50/40 p-2.5">
+              <div className="flex gap-2">
+                <Input
+                  value={refineText}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRefineText(e.target.value)}
+                  placeholder="Adjust the fields, e.g. “make the description contractor-facing”"
+                  className="h-8 text-xs"
+                  disabled={aiRefining}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                    if (e.key === 'Enter' && refineText.trim() && !aiRefining) {
+                      e.preventDefault();
+                      onAiRefine(refineText.trim());
+                      setRefineText('');
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 shrink-0 border-purple-300 text-purple-700 hover:bg-purple-100"
+                  onClick={() => { onAiRefine(refineText.trim()); setRefineText(''); }}
+                  disabled={!refineText.trim() || aiRefining}
+                >
+                  {aiRefining ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  <span className="ml-1">Adjust</span>
+                </Button>
+              </div>
+              {refineDiff && refineDiff.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[11px] font-medium text-purple-700">AI updated:</p>
+                  <ul className="space-y-0.5">
+                    {refineDiff.map((d) => (
+                      <li key={d.field} className="text-[11px] text-purple-900">
+                        <span className="font-medium">{d.field}:</span>{' '}
+                        <span className="text-muted-foreground line-through">{d.from}</span>
+                        {' → '}
+                        <span className="font-medium">{d.to}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {refineDiff && refineDiff.length === 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  No field changes from that instruction.{' '}
+                  <button type="button" onClick={onDismissRefineDiff} className="underline hover:text-foreground">dismiss</button>
+                </p>
+              )}
+            </div>
           )}
 
           {/* Identify from a photo — vision model fills name + the rest. */}
