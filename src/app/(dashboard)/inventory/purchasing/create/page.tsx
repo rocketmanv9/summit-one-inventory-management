@@ -10,8 +10,9 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
+import { POEmailPreviewModal } from '@/components/modals/POEmailPreviewModal';
 import { useOrderContext, formatHint, computeFlags } from '@/components/purchasing/useOrderContext';
-import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X } from 'lucide-react';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -151,6 +152,14 @@ export default function CreatePurchaseOrderPage() {
   const [lines, setLines] = useState<POLine[]>([
     { catalog_item_id: '', qty_ordered: 0, unit_cost: 0 },
   ]);
+
+  // "Preview email" saves the order as a draft (POs persist as drafts before
+  // send) and opens the read-only vendor-email preview. We remember the draft's
+  // id and a signature of the exact form/lines it was saved from, so a follow-up
+  // "Create Purchase Order" reuses that draft instead of creating a duplicate.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSaving, setPreviewSaving] = useState(false);
+  const [draftPo, setDraftPo] = useState<{ id: string; number: string | null; sig: string } | null>(null);
 
   // Price hints (last paid / catalog list) + the best-vendor suggestion for the
   // prefill. Qty-first entry keeps unit cost tucked away, so each line tracks
@@ -456,6 +465,91 @@ export default function CreatePurchaseOrderPage() {
     return lines.reduce((sum, line) => sum + line.qty_ordered * line.unit_cost, 0);
   };
 
+  // Shared validation + line normalization, used by both create and preview so
+  // the drafted PO the preview renders is byte-for-byte what create would post.
+  // Throws AppError on invalid input (caller sets the error banner).
+  const buildValidLines = () => {
+    if (!form.vendor_id) {
+      throw AppError.badRequest('Please select a vendor');
+    }
+    if (!form.delivery_location_id) {
+      throw AppError.badRequest('Please select a delivery location');
+    }
+
+    const validLines = lines.filter((line) =>
+      line.qty_ordered > 0 &&
+      (line.free_text
+        ? !!line.item_description?.trim() && !!line.uom_term_id
+        : !!line.catalog_item_id) &&
+      (requestQuote || line.unit_cost >= 0)
+    );
+
+    if (validLines.length === 0) {
+      const hasFreeTextMissingUom = lines.some(
+        (l) => l.free_text && l.item_description?.trim() && !l.uom_term_id && l.qty_ordered > 0
+      );
+      throw AppError.badRequest(
+        hasFreeTextMissingUom
+          ? 'Pick a unit of measure for your typed-in item(s)'
+          : 'Please add at least one line item — pick from the vendor’s items or type your own'
+      );
+    }
+    return validLines;
+  };
+
+  // Create PO using RPC. Two ways a line ends up unpriced (basis 'unknown',
+  // which blocks auto-approve so the PO waits for real numbers): the global
+  // "request pricing" toggle, or — with qty-first entry — simply leaving a
+  // line's optional cost blank. A positive cost posts as 'fixed'.
+  const createDraftPO = async (validLines: POLine[]) =>
+    SupplyChainRPC.createPurchaseOrder({
+      vendor_id: form.vendor_id,
+      vendor_address_id: form.vendor_address_id || undefined,
+      delivery_location_id: form.delivery_location_id,
+      lines: validLines.map((l) => {
+        const unpriced = requestQuote || !(l.unit_cost > 0);
+        return {
+          catalog_item_id: l.free_text ? undefined : l.catalog_item_id,
+          item_description: l.free_text ? l.item_description?.trim() : undefined,
+          uom_term_id: l.free_text ? l.uom_term_id : undefined,
+          qty_ordered: l.qty_ordered,
+          unit_cost: unpriced ? undefined : l.unit_cost,
+          price_basis: unpriced ? ('unknown' as const) : ('fixed' as const),
+        };
+      }),
+      notes: form.notes || undefined,
+    });
+
+  // Signature of the exact inputs a draft was saved from — lets a saved-draft
+  // preview be reused by Create (and invalidates it the moment anything changes).
+  const orderSignature = useMemo(
+    () => JSON.stringify({ v: form.vendor_id, a: form.vendor_address_id, d: form.delivery_location_id, n: form.notes, q: requestQuote, lines }),
+    [form.vendor_id, form.vendor_address_id, form.delivery_location_id, form.notes, requestQuote, lines],
+  );
+  // A previously saved draft is only reusable if the order is unchanged since.
+  const reusableDraft = draftPo && draftPo.sig === orderSignature ? draftPo : null;
+
+  // "Preview email": save the order as a draft (or reuse the matching one) and
+  // open the read-only vendor-email preview. Never sends. Not offered for
+  // punchout vendors (Amazon supplies pricing and there is no vendor email).
+  const handlePreview = async () => {
+    setError('');
+    if (previewSaving) return;
+    if (reusableDraft) { setPreviewOpen(true); return; }
+    setPreviewSaving(true);
+    try {
+      const validLines = buildValidLines();
+      const result = await createDraftPO(validLines);
+      if (!result?.po_id) throw AppError.internal('Could not save the draft to preview.');
+      setDraftPo({ id: result.po_id, number: result.po_number ?? null, sig: orderSignature });
+      setPreviewOpen(true);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setPreviewSaving(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -467,55 +561,14 @@ export default function CreatePurchaseOrderPage() {
     const amazonTab = isPunchoutVendor ? window.open('about:blank', '_blank') : null;
 
     try {
-      // Validate
-      if (!form.vendor_id) {
-        throw AppError.badRequest('Please select a vendor');
-      }
+      const validLines = buildValidLines();
 
-      if (!form.delivery_location_id) {
-        throw AppError.badRequest('Please select a delivery location');
-      }
-
-      const validLines = lines.filter((line) =>
-        line.qty_ordered > 0 &&
-        (line.free_text
-          ? !!line.item_description?.trim() && !!line.uom_term_id
-          : !!line.catalog_item_id) &&
-        (requestQuote || line.unit_cost >= 0)
-      );
-
-      if (validLines.length === 0) {
-        const hasFreeTextMissingUom = lines.some(
-          (l) => l.free_text && l.item_description?.trim() && !l.uom_term_id && l.qty_ordered > 0
-        );
-        throw AppError.badRequest(
-          hasFreeTextMissingUom
-            ? 'Pick a unit of measure for your typed-in item(s)'
-            : 'Please add at least one line item — pick from the vendor’s items or type your own'
-        );
-      }
-
-      // Create PO using RPC. Two ways a line ends up unpriced (basis 'unknown',
-      // which blocks auto-approve so the PO waits for real numbers): the global
-      // "request pricing" toggle, or — with qty-first entry — simply leaving a
-      // line's optional cost blank. A positive cost posts as 'fixed'.
-      const result = await SupplyChainRPC.createPurchaseOrder({
-        vendor_id: form.vendor_id,
-        vendor_address_id: form.vendor_address_id || undefined,
-        delivery_location_id: form.delivery_location_id,
-        lines: validLines.map((l) => {
-          const unpriced = requestQuote || !(l.unit_cost > 0);
-          return {
-            catalog_item_id: l.free_text ? undefined : l.catalog_item_id,
-            item_description: l.free_text ? l.item_description?.trim() : undefined,
-            uom_term_id: l.free_text ? l.uom_term_id : undefined,
-            qty_ordered: l.qty_ordered,
-            unit_cost: unpriced ? undefined : l.unit_cost,
-            price_basis: unpriced ? ('unknown' as const) : ('fixed' as const),
-          };
-        }),
-        notes: form.notes || undefined,
-      });
+      // Reuse the draft the preview already saved (when the order is unchanged),
+      // otherwise create it now. Punchout always creates fresh — it needs the
+      // punchout handoff below, which the preview path never runs.
+      const result = !isPunchoutVendor && reusableDraft
+        ? { po_id: reusableDraft.id, po_number: reusableDraft.number }
+        : await createDraftPO(validLines);
 
       // Punchout needs ASIN-mapped catalog lines and Amazon supplies the
       // prices — quote mode and free-text lines take the normal draft path.
@@ -1106,6 +1159,26 @@ export default function CreatePurchaseOrderPage() {
             </div>
           )}
 
+          {/* Preview the vendor email before creating — email vendors only.
+              Punchout vendors order through Amazon, so there's no vendor email
+              to preview; the note above explains the Amazon handoff. */}
+          {!isPunchoutVendor && (
+            <div>
+              <button
+                type="button"
+                onClick={handlePreview}
+                disabled={previewSaving || submitting}
+                className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {previewSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                {previewSaving ? 'Saving draft…' : 'Preview vendor email'}
+              </button>
+              <p className="mt-1 text-xs text-gray-500">
+                See exactly what the vendor will receive (email + PDF). Saves this order as a draft — nothing is sent.
+              </p>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3">
             <button
@@ -1128,6 +1201,12 @@ export default function CreatePurchaseOrderPage() {
           </div>
         </form>
       </div>
+
+      <POEmailPreviewModal
+        open={previewOpen}
+        poId={reusableDraft?.id ?? draftPo?.id ?? null}
+        onClose={() => setPreviewOpen(false)}
+      />
 
       <ItemPickerModal
         open={pickerLineIndex !== null}
