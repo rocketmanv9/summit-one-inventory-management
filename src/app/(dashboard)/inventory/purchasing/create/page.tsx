@@ -10,7 +10,8 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
-import { Plus, AlertCircle, Check, Package, MapPin } from 'lucide-react';
+import { useOrderContext, formatHint } from '@/components/purchasing/useOrderContext';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -151,6 +152,12 @@ export default function CreatePurchaseOrderPage() {
     { catalog_item_id: '', qty_ordered: 0, unit_cost: 0 },
   ]);
 
+  // Price hints (last paid / catalog list) + the best-vendor suggestion for the
+  // prefill. Qty-first entry keeps unit cost tucked away, so each line tracks
+  // whether the (optional) price field is being shown.
+  const { hints, suggestedVendor, fetchContext } = useOrderContext();
+  const [showPriceFor, setShowPriceFor] = useState<Record<number, boolean>>({});
+
   // Track parent selection per line + cached variants per parent
   const [lineParentIds, setLineParentIds] = useState<Record<number, string>>({});
   const [variantsByParent, setVariantsByParent] = useState<Record<string, CatalogItem[]>>({});
@@ -282,6 +289,31 @@ export default function CreatePurchaseOrderPage() {
     setForm((prev) => (prev.delivery_location_id ? prev : { ...prev, delivery_location_id: defaultLocationId }));
   }, [defaultLocationId, locations, form.delivery_location_id]);
 
+  // Load price hints for every catalog item currently on a line, plus the
+  // best-vendor suggestion for the chosen delivery location. Batched + cached
+  // in the hook, so this fires cheaply as lines and location change.
+  const lineItemIdsKey = lines.map((l) => l.catalog_item_id).filter(Boolean).sort().join(',');
+  useEffect(() => {
+    const ids = lines.map((l) => l.catalog_item_id).filter(Boolean);
+    if (ids.length === 0) return;
+    fetchContext(ids, form.delivery_location_id || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineItemIdsKey, form.delivery_location_id]);
+
+  // Apply the suggested vendor to the prefill — but only while no vendor is
+  // chosen yet, so it never clobbers a user's (or a ?vendor= param's) pick. The
+  // per-yard preferred-vendor effect above still wins once a location is set;
+  // this covers the "arrived via order-more, no location preference" case.
+  const vendorSuggested = useRef(false);
+  useEffect(() => {
+    if (vendorSuggested.current) return;
+    if (!suggestedVendor) return;
+    if (form.vendor_id) { vendorSuggested.current = true; return; }
+    if (!vendors.some((v) => v.id === suggestedVendor.vendor_id)) return;
+    vendorSuggested.current = true;
+    setForm((prev) => (prev.vendor_id ? prev : { ...prev, vendor_id: suggestedVendor.vendor_id, vendor_address_id: '' }));
+  }, [suggestedVendor, vendors, form.vendor_id]);
+
   // Suggest the vendor location closest to the delivery location once both are
   // chosen. Advisory only — purely informational, nothing is stored on the PO.
   useEffect(() => {
@@ -306,14 +338,32 @@ export default function CreatePurchaseOrderPage() {
 
   const loadData = async () => {
     try {
-      const [vendorsData, locationsData, itemsData] = await Promise.all([
+      // Settle each load independently: a single failing source (e.g. the
+      // catalog-items query 500ing on an environment missing a column) must not
+      // blank the whole form — vendor + delivery-location entry should still
+      // work, and the item picker just shows "no items". Mirrors the existing
+      // locations fallback below.
+      const [vendorsRes, locationsRes, itemsRes] = await Promise.allSettled([
         SupplyChainRPC.getVendors(),
         InventoryRPC.getLocations({ active: true }),
         InventoryRPC.getCatalogItems({ active: true }),
       ]);
+      const vendorsData = vendorsRes.status === 'fulfilled' ? vendorsRes.value : [];
+      const locationsData = locationsRes.status === 'fulfilled' ? locationsRes.value : [];
+      const itemsData = itemsRes.status === 'fulfilled' ? itemsRes.value : [];
       setVendors(vendorsData);
       setPageLocations(locationsData);
       setItems(itemsData);
+
+      // Surface a soft warning when a source failed, but keep the form usable.
+      const failed = [
+        vendorsRes.status === 'rejected' ? 'vendors' : null,
+        locationsRes.status === 'rejected' ? 'locations' : null,
+        itemsRes.status === 'rejected' ? 'items' : null,
+      ].filter(Boolean);
+      if (failed.length > 0) {
+        setError(`Some data could not be loaded (${failed.join(', ')}). You can still fill in what did load.`);
+      }
 
       // Prefill from query params (e.g. the "Create PO"/"Reorder" buttons on the
       // alerts and item pages pass item_id, qty, location_id, and vendor).
@@ -442,20 +492,25 @@ export default function CreatePurchaseOrderPage() {
         );
       }
 
-      // Create PO using RPC. Quote mode: no prices, basis 'unknown' — the
-      // vendor prices it, and the PO stays a draft until then.
+      // Create PO using RPC. Two ways a line ends up unpriced (basis 'unknown',
+      // which blocks auto-approve so the PO waits for real numbers): the global
+      // "request pricing" toggle, or — with qty-first entry — simply leaving a
+      // line's optional cost blank. A positive cost posts as 'fixed'.
       const result = await SupplyChainRPC.createPurchaseOrder({
         vendor_id: form.vendor_id,
         vendor_address_id: form.vendor_address_id || undefined,
         delivery_location_id: form.delivery_location_id,
-        lines: validLines.map((l) => ({
-          catalog_item_id: l.free_text ? undefined : l.catalog_item_id,
-          item_description: l.free_text ? l.item_description?.trim() : undefined,
-          uom_term_id: l.free_text ? l.uom_term_id : undefined,
-          qty_ordered: l.qty_ordered,
-          unit_cost: requestQuote ? undefined : l.unit_cost,
-          price_basis: requestQuote ? ('unknown' as const) : ('fixed' as const),
-        })),
+        lines: validLines.map((l) => {
+          const unpriced = requestQuote || !(l.unit_cost > 0);
+          return {
+            catalog_item_id: l.free_text ? undefined : l.catalog_item_id,
+            item_description: l.free_text ? l.item_description?.trim() : undefined,
+            uom_term_id: l.free_text ? l.uom_term_id : undefined,
+            qty_ordered: l.qty_ordered,
+            unit_cost: unpriced ? undefined : l.unit_cost,
+            price_basis: unpriced ? ('unknown' as const) : ('fixed' as const),
+          };
+        }),
         notes: form.notes || undefined,
       });
 
@@ -731,6 +786,13 @@ export default function CreatePurchaseOrderPage() {
                 const parentItem = parentId ? items.find((i) => i.id === parentId) : undefined;
                 const displayItem = parentItem || selectedItem;
                 const displayImageId = parentId || line.catalog_item_id;
+                // Show the cost field once asked for, or when the line already
+                // carries a price (e.g. the picker prefilled the vendor's cost).
+                const priceShown = !!showPriceFor[index] || line.unit_cost > 0;
+                // Honest price hint for this line's item (last paid / catalog / none).
+                const hint = formatHint(hints[line.catalog_item_id], {
+                  selectedVendorName: selectedVendor?.name ?? null,
+                });
 
                 return (
                   <div key={index} className="space-y-2">
@@ -830,7 +892,12 @@ export default function CreatePurchaseOrderPage() {
                         )}
                       </div>
 
-                      <div className="w-24">
+                      {/* Qty leads. Unit cost is optional and de-emphasized —
+                          it only appears once the person asks for it (or the
+                          line already has a price). Blank cost is fine: the line
+                          posts unpriced (request-pricing). */}
+                      <div className="w-28">
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Qty</label>
                         <input
                           type="number"
                           value={line.qty_ordered || ''}
@@ -845,34 +912,53 @@ export default function CreatePurchaseOrderPage() {
                           min="0"
                           step="0.01"
                           required
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
 
                       <div className="w-32">
                         {requestQuote ? (
-                          <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 text-center">
-                            Vendor quotes
-                          </div>
+                          <>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">Unit cost</label>
+                            <div className="px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700 text-center">
+                              Vendor quotes
+                            </div>
+                          </>
+                        ) : priceShown ? (
+                          <>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">
+                              Unit cost <span className="font-normal">(optional)</span>
+                            </label>
+                            <input
+                              type="number"
+                              value={line.unit_cost || ''}
+                              onChange={(e) =>
+                                updateLine(index, 'unit_cost', parseFloat(e.target.value) || 0)
+                              }
+                              placeholder="Leave blank to ask vendor"
+                              min="0"
+                              step="0.01"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </>
                         ) : (
-                          <input
-                            type="number"
-                            value={line.unit_cost || ''}
-                            onChange={(e) =>
-                              updateLine(index, 'unit_cost', parseFloat(e.target.value) || 0)
-                            }
-                            placeholder="Unit Cost"
-                            min="0"
-                            step="0.01"
-                            required
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
+                          <>
+                            <label className="block text-xs font-medium text-gray-400 mb-1">&nbsp;</label>
+                            <button
+                              type="button"
+                              onClick={() => setShowPriceFor((prev) => ({ ...prev, [index]: true }))}
+                              className="w-full px-3 py-2 border border-dashed border-gray-300 rounded-md text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600"
+                            >
+                              + Add price
+                            </button>
+                          </>
                         )}
                       </div>
 
-                      <div className="w-32">
+                      <div className="w-28">
+                        <label className="block text-xs font-medium text-gray-400 mb-1">Line total</label>
                         <div className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-sm font-medium text-right">
-                          {requestQuote ? '—' : `$${lineTotal.toFixed(2)}`}
+                          {requestQuote || !(line.unit_cost > 0) ? '—' : `$${lineTotal.toFixed(2)}`}
                         </div>
                       </div>
 
@@ -880,18 +966,45 @@ export default function CreatePurchaseOrderPage() {
                         <button
                           type="button"
                           onClick={() => removeLine(index)}
-                          className="px-3 py-2 text-red-600 hover:text-red-800"
+                          className="mt-6 px-3 py-2 text-red-600 hover:text-red-800"
                         >
                           ×
                         </button>
                       )}
                     </div>
 
-                    {selectedItem && (
-                      <div className="ml-0 text-sm text-gray-600">
-                        Unit: {uomLabels[selectedItem.uom_term_id || ''] || selectedItem.uom_term_id || 'N/A'}
-                      </div>
-                    )}
+                    {/* Unit-of-measure + honest price hint sit under the line. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                      {selectedItem && (
+                        <span className="text-gray-600">
+                          Unit: {uomLabels[selectedItem.uom_term_id || ''] || selectedItem.uom_term_id || 'N/A'}
+                        </span>
+                      )}
+                      {!requestQuote && (
+                        line.free_text ? (
+                          <span className="inline-flex items-center gap-1 text-gray-400">
+                            <Tag className="h-3 w-3" /> Custom line — no history
+                          </span>
+                        ) : line.catalog_item_id ? (
+                          <span className="inline-flex items-center gap-1 text-gray-500">
+                            <Tag className="h-3 w-3 text-gray-400" />
+                            {hint.text}
+                            {hint.price != null && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowPriceFor((prev) => ({ ...prev, [index]: true }));
+                                  updateLine(index, 'unit_cost', hint.price!);
+                                }}
+                                className="font-medium text-blue-600 hover:underline"
+                              >
+                                Use this price
+                              </button>
+                            )}
+                          </span>
+                        ) : null
+                      )}
+                    </div>
                   </div>
                 );
               })}
