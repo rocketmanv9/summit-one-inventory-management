@@ -1245,7 +1245,6 @@ export function useAiChat(options?: AiChatOptions) {
             "  **Purchase Orders** — \"Create a PO\", \"Show late orders\"\n" +
             "  **Transfers** — \"Move stock\", \"Show transfers\"\n" +
             "  **Analytics** — \"Inventory value?\", \"Turnover?\", \"Forecast?\"\n" +
-            "  **Dashboards** — \"Create a dashboard\"\n" +
             "  **Navigation** — \"Go to purchasing\"\n\n" +
             "Try rephrasing, or type **help** for the full list.";
           addMessage('assistant', fallbackMsg);

@@ -11,7 +11,6 @@ export const ADMIN_ONLY_TOOLS = new Set([
   'delete_item',
   'workflow_auto_reorder',  // non-dry-run mode
   'workflow_stock_rebalance',
-  'delete_dashboard',
   'approve_apparel_order',
   'reject_apparel_order',
 ]);

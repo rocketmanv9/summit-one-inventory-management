@@ -1,7 +1,7 @@
 /**
  * Server-Side Tool Executor
  *
- * Executes query_*, create_dashboard, and workflow_* tools on the server
+ * Executes query_*, write-verb, and workflow_* tools on the server
  * using the authenticated Supabase client from the session.
  * Returns { text, dataDisplay } for the chat route to feed back to OpenAI
  * and ultimately to the client.
