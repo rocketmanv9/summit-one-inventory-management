@@ -108,6 +108,47 @@ cleanly, on-hand unchanged afterward.
 | confirm_restock_order | claim draft → `rpc_create_purchase_order` → `po-email-service` | ✅ PO chain proven (see create_po). Email: for an `awaiting_approval` PO the tool correctly **holds** (does not email) — matches the approval-inbox gate. End-to-end email proof: see "Purchasing agent e2e" below. |
 | purchasing_assistant | `rpc_report_reorder_suggestions` grouping | ✅ 11 shortages grouped by vendor |
 
+### Purchasing agent end-to-end
+
+Fixture: test vendor **AUDIT-10 Test Vendor** (`contact_email=grant@acmoate.com`,
+`ordering_mode=email_po`, active Gmail connection on file for that address) + test
+item **AUDIT-10 Test Widget** (reorder_point 10, 0 on hand) + a `vendor_items`
+link ($25, preferred).
+
+1. **Draft** — `draft_restock_order` sweep/explicit-item logic and vendor pick
+   (`pickVendorForItem`) verified against the fixture; the low-stock candidate and
+   the forced-vendor path both resolve to the test vendor.
+2. **Order** — ran the exact confirm-step RPC, `rpc_create_purchase_order` with
+   `p_initiated_by='user'`, `p_tenant_id`, `p_acting_user_id` (acting identity is
+   honored only for a `role=service_role` JWT — verified: a plain call raises
+   "Authentication required", the service-role call succeeds). Created **PO 26-0030**
+   for the test vendor, 1 line 15×$25 to Portland, status **`awaiting_approval`**
+   (tenant auto-approve is off → correctly routed to the manager approval inbox,
+   `approval_reason` = "auto-approve is off"). Acting identity, vendor, line, and
+   delivery all correct.
+3. **Email** — exercised the real send path through the actual HTTP endpoint
+   `/api/inventory/purchasing/po-email` (the same `sendPurchaseOrderEmail` the
+   confirm tool calls), authenticated with the dev-login session against the
+   stage-backed worktree server:
+   - **GET preview → 200**: loaded PO 26-0030 through `loadPOContext` (the loader
+     the PDF generator and send share), resolved recipient **grant@acmoate.com**,
+     ship-to Portland, line "AUDIT-10 Test Widget (AUDIT10-WIDGET)" 15 @ $25. This
+     proves the compose/PDF-context path end-to-end.
+   - **POST send → 400 "Email sending is not configured"**: the endpoint tried
+     Gmail (an active `grant@acmoate.com` connection with `gmail.send` scope exists
+     for the tenant), couldn't mint a token because the **local dev env lacks
+     `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and the vault secret ref**, fell back
+     to Resend, and Resend isn't configured locally either (`RESEND_API_KEY` /
+     `ORDER_EMAIL_FROM` absent from `.env.local` — true in the main tree too). It
+     returned a precise, actionable error rather than failing silently.
+
+   **The SMTP handoff is the only leg not verified — blocked by missing email
+   secrets in local dev, not by any code defect.** Everything up to the send (PO
+   creation with correct acting identity, recipient resolution to Grant's address,
+   compose/PDF context) is proven through the real code paths. On an environment
+   with the Google OAuth client creds (or `RESEND_API_KEY`), this same call sends to
+   grant@acmoate.com. Flagged as a deviation in the final report.
+
 ## Enrichment / smart / ontology / apparel
 
 | Tool | Exercised via | Result |
