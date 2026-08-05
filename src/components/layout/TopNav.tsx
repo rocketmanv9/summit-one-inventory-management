@@ -8,6 +8,7 @@ import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { ViewAsPicker } from '@/components/layout/ViewAsPicker';
+import { LocationPicker } from '@/components/layout/LocationPicker';
 import { useAiPanel } from '@/lib/ai/panel-store';
 import { useTenantBranding } from '@/lib/tenant-branding';
 
@@ -81,6 +82,10 @@ export function TopNav() {
             </kbd>
           </button>
         </div>
+
+        {/* Active location — the loudest chrome after the logo: which yard's
+            data is on screen. Visible to everyone; scopes location-aware pages. */}
+        <LocationPicker />
 
         {/* Right side */}
         <div className="flex items-center gap-4">

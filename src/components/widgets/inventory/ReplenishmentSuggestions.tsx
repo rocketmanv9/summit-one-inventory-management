@@ -9,7 +9,7 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { createPurchaseOrder } from '@/lib/api/purchase-orders';
 import { errMessage } from '@/lib/client-errors';
 
-export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }) {
+export function ReplenishmentSuggestions({ widget, locationId }: { widget: DashboardWidget; locationId?: string }) {
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,10 @@ export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }
       setError(null);
       try {
         const result = await InventoryRPC.getReplenishmentSuggestions();
-        setData(result.slice(0, 10));
+        // Each suggestion is for one item at one location — scope to the active
+        // location when one is set; "All locations" shows every yard's needs.
+        const scoped = locationId ? result.filter((r) => r.location_id === locationId) : result;
+        setData(scoped.slice(0, 10));
       } catch (error) {
         console.error('Error fetching replenishment suggestions:', error);
         setError(errMessage(error, 'Unknown error'));
@@ -32,7 +35,7 @@ export function ReplenishmentSuggestions({ widget }: { widget: DashboardWidget }
       }
     }
     fetchData();
-  }, [widget.widget_key, widget.config]);
+  }, [widget.widget_key, widget.config, locationId]);
 
   // Creates a real draft PO for the suggestion (POs auto-approve in this app).
   // Amazon ordering happens from the PO itself via the purchasing page's

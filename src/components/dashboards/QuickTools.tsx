@@ -21,9 +21,18 @@ import { VendorQuickAddModal } from '@/components/vendors/VendorQuickAddModal';
 const TILE_CLS =
   'flex flex-col items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-4 text-center shadow-sm transition-all hover:border-blue-400 hover:shadow-md';
 
-export function QuickTools() {
+export function QuickTools({ locationId }: { locationId?: string }) {
   const router = useRouter();
   const [showVendorQuickAdd, setShowVendorQuickAdd] = useState(false);
+
+  // Carry the active location into deep-links whose target can preselect it, so
+  // "New PO"/"New cycle count" from the dashboard land on the yard you're viewing.
+  const poHref = locationId
+    ? `/inventory/purchasing/create?location_id=${locationId}`
+    : '/inventory/purchasing/create';
+  const countHref = locationId
+    ? `/inventory/cycle-counts?create=1&location=${locationId}`
+    : '/inventory/cycle-counts?create=1';
 
   return (
     <div>
@@ -39,12 +48,12 @@ export function QuickTools() {
           <span className="text-sm font-medium text-gray-900">Quick-add item</span>
         </Link>
 
-        <Link href="/inventory/purchasing/create" className={TILE_CLS}>
+        <Link href={poHref} className={TILE_CLS}>
           <ShoppingCart className="h-6 w-6 text-amber-600" />
           <span className="text-sm font-medium text-gray-900">New purchase order</span>
         </Link>
 
-        <Link href="/inventory/cycle-counts?create=1" className={TILE_CLS}>
+        <Link href={countHref} className={TILE_CLS}>
           <ClipboardCheck className="h-6 w-6 text-purple-600" />
           <span className="text-sm font-medium text-gray-900">New cycle count</span>
         </Link>

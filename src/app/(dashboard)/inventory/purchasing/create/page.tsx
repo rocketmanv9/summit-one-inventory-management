@@ -10,8 +10,9 @@ import { InventoryRPC } from '@/lib/rpc/inventory';
 import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
-import { Plus, AlertCircle, Check, Package } from 'lucide-react';
+import { Plus, AlertCircle, Check, Package, MapPin } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useActiveLocation } from '@/lib/active-location';
 
 interface Vendor {
   id: string;
@@ -51,12 +52,20 @@ export default function CreatePurchaseOrderPage() {
   const router = useRouter();
   const uomLabels = useUOMLabelMap();
   const { terms: uomTerms } = useUOMTerms();
+  const { defaultLocationId, activeLocation, locations: activeLocations } = useActiveLocation();
   // "Request quote": order quantities with no prices — the vendor fills them
   // in. Lines post with price_basis 'unknown', which blocks auto-approve, so
   // the PO lands as a draft awaiting the vendor's pricing.
   const [requestQuote, setRequestQuote] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [pageLocations, setPageLocations] = useState<Location[]>([]);
+  // Fall back to the app-wide active-location list so the delivery-location
+  // dropdown (and its active-location default) still populate even if this
+  // page's own bulk load fails partway. Preferred-vendor niceties only apply
+  // to the page's richer rows, which is fine — the fallback rows just deliver.
+  const locations: Location[] = pageLocations.length > 0
+    ? pageLocations
+    : activeLocations.map((l) => ({ id: l.id, name: l.name, location_type: l.location_type_name ? { name: l.location_type_name } : null }));
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -105,7 +114,7 @@ export default function CreatePurchaseOrderPage() {
       });
       if (res.ok) {
         const json = await res.json().catch(() => null);
-        setLocations((prev) => prev.map((l) =>
+        setPageLocations((prev) => prev.map((l) =>
           l.id === deliveryLocation.id
             ? { ...l, preferred_vendor_id: form.vendor_id, last_event_id: json?.data?.last_event_id ?? l.last_event_id }
             : l
@@ -257,7 +266,21 @@ export default function CreatePurchaseOrderPage() {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Belt-and-suspenders: if the active location resolves *after* loadData ran
+  // (it loads async), seed the delivery location from it — but only while the
+  // field is still blank, so we never overwrite a URL param or a user's pick.
+  const deliverySeeded = useRef(false);
+  useEffect(() => {
+    if (deliverySeeded.current) return;
+    if (!defaultLocationId) return;
+    if (form.delivery_location_id) { deliverySeeded.current = true; return; }
+    if (!locations.some((l) => l.id === defaultLocationId)) return;
+    deliverySeeded.current = true;
+    setForm((prev) => (prev.delivery_location_id ? prev : { ...prev, delivery_location_id: defaultLocationId }));
+  }, [defaultLocationId, locations, form.delivery_location_id]);
 
   // Suggest the vendor location closest to the delivery location once both are
   // chosen. Advisory only — purely informational, nothing is stored on the PO.
@@ -289,7 +312,7 @@ export default function CreatePurchaseOrderPage() {
         InventoryRPC.getCatalogItems({ active: true }),
       ]);
       setVendors(vendorsData);
-      setLocations(locationsData);
+      setPageLocations(locationsData);
       setItems(itemsData);
 
       // Prefill from query params (e.g. the "Create PO"/"Reorder" buttons on the
@@ -300,10 +323,19 @@ export default function CreatePurchaseOrderPage() {
       const locId = sp.get('location_id');
       const vendorParam = sp.get('vendor');
 
+      // Delivery location defaults to: an explicit ?location_id= (from an
+      // alert/reorder link), else the app-wide active location, else blank.
+      // Editing it here is local to this PO — it never changes the active location.
+      const seededLocation =
+        locId && locationsData.some((l) => l.id === locId)
+          ? locId
+          : defaultLocationId && locationsData.some((l) => l.id === defaultLocationId)
+            ? defaultLocationId
+            : '';
+
       setForm((prev) => ({
         ...prev,
-        delivery_location_id:
-          locId && locationsData.some((l) => l.id === locId) ? locId : prev.delivery_location_id,
+        delivery_location_id: seededLocation || prev.delivery_location_id,
         vendor_id:
           (vendorParam &&
             (vendorsData.find((v) => v.id === vendorParam) ??
@@ -627,6 +659,16 @@ export default function CreatePurchaseOrderPage() {
                     </option>
                   ))}
                 </select>
+                {activeLocation && form.delivery_location_id === activeLocation.id ? (
+                  <p className="mt-1 flex items-center gap-1 text-xs text-primary">
+                    <MapPin className="h-3 w-3" />
+                    Defaulted to your active location ({activeLocation.name}). Change it here without affecting the rest of the app.
+                  </p>
+                ) : activeLocation ? (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Your active location is {activeLocation.name} — delivering elsewhere on this PO won&apos;t change it.
+                  </p>
+                ) : null}
               </div>
 
               <div className="md:col-span-2">

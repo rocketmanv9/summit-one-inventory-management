@@ -23,10 +23,16 @@ interface LowStockItem {
   severity: string;
 }
 
-export function LowStockWidget({ widget }: { widget: DashboardWidget }) {
+export function LowStockWidget({ widget, locationId }: { widget: DashboardWidget; locationId?: string }) {
   const [items, setItems] = useState<LowStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // The low-stock rollup is item-level (reorder point is a per-item threshold on
+  // total stock), so the list itself is tenant-wide. When a location is active
+  // we point "View all" at that yard's stock view so the drill-down is scoped.
+  const viewAllHref = locationId
+    ? `/inventory/stock?filter=low&location=${locationId}`
+    : '/inventory/stock?filter=low';
 
   useEffect(() => {
     loadLowStockItems();
@@ -143,7 +149,7 @@ export function LowStockWidget({ widget }: { widget: DashboardWidget }) {
             {items.length > 10 && (
               <div className="text-center pt-3 border-t">
                 <Link
-                  href="/inventory/stock?filter=low"
+                  href={viewAllHref}
                   className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                 >
                   View all {items.length} low-stock items →

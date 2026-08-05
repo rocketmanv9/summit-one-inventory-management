@@ -15,9 +15,11 @@
  */
 
 import Link from 'next/link';
+import { MapPin, Globe } from 'lucide-react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { MyAssignedCounts } from '@/components/counts/MyAssignedCounts';
+import { useActiveLocation } from '@/lib/active-location';
 
 import { LowStockWidget } from '@/components/widgets/inventory/LowStockWidget';
 import { InventoryForecastWidget } from '@/components/widgets/inventory/InventoryForecastWidget';
@@ -36,14 +38,14 @@ import { QuickTools } from './QuickTools';
  * Build a stand-in DashboardWidget for a widget component that expects the prop.
  * These are never persisted — the fixed dashboard owns composition, not the DB.
  */
-function fixedWidget(widgetKey: string, title: string): DashboardWidget {
+function fixedWidget(widgetKey: string, title: string, config: Record<string, any> = {}): DashboardWidget {
   return {
     id: `fixed:${widgetKey}`,
     tenant_id: '',
     dashboard_id: 'fixed',
     widget_key: widgetKey,
     title,
-    config: {},
+    config,
     layout: { x: 0, y: 0, w: 4, h: 1 },
     refresh_seconds: 0,
     created_at: '',
@@ -89,15 +91,44 @@ function Panel({
 }
 
 export function FixedDashboard() {
+  const { activeLocation, isScoped, defaultLocationId } = useActiveLocation();
+  // Widgets whose data has a location dimension get scoped to the active
+  // location; tenant-wide value metrics stay tenant-wide but are labelled.
+  const scopeId = defaultLocationId; // undefined when "All locations"
+
   return (
     <div className="p-6 sm:p-8 space-y-8">
       <PageHeader
         title="Inventory Dashboard"
-        description="Your yard at a glance — what needs attention, what's moving today, and what to plan next."
+        description={
+          isScoped && activeLocation
+            ? `${activeLocation.name} at a glance — what needs attention, what's moving today, and what to plan next.`
+            : "Your yards at a glance — what needs attention, what's moving today, and what to plan next."
+        }
       />
 
+      {/* Active-location context — the numbers below react to this. */}
+      <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm">
+        {isScoped && activeLocation ? (
+          <>
+            <MapPin className="h-4 w-4 shrink-0 text-primary" />
+            <span className="text-gray-700">
+              Showing <span className="font-semibold">{activeLocation.name}</span>. Location-specific widgets below are scoped to this yard; tenant-wide totals are labelled &ldquo;all yards.&rdquo;
+            </span>
+            <span className="ml-auto text-xs text-muted-foreground">Change the location in the top bar</span>
+          </>
+        ) : (
+          <>
+            <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="text-gray-700">
+              Showing <span className="font-semibold">all locations</span>. Pick a yard in the top bar to focus the dashboard on it.
+            </span>
+          </>
+        )}
+      </div>
+
       {/* Quick tools — reuse the existing modals/routes, no new flows. */}
-      <QuickTools />
+      <QuickTools locationId={scopeId} />
 
       {/* Counts assigned to me — personal action list, keep it up top. */}
       <MyAssignedCounts />
@@ -109,7 +140,10 @@ export function FixedDashboard() {
           sub="Stock below reorder, and where you're heading net-negative."
         />
         <div className="grid gap-5 lg:grid-cols-2">
-          <LowStockWidget widget={fixedWidget('inventory.widget.low_stock_alerts', 'Low Stock')} />
+          <LowStockWidget
+            widget={fixedWidget('inventory.widget.low_stock_alerts', 'Low Stock')}
+            locationId={scopeId}
+          />
           <Panel title="Forecast — net position" href="/inventory/metrics" linkLabel="Metrics">
             <InventoryForecastWidget
               widget={fixedWidget('inventory.widget.inventory_forecast', 'Forecast')}
@@ -122,7 +156,11 @@ export function FixedDashboard() {
       <section>
         <SectionHeader title="Today" sub="Receiving activity as it happens." />
         <div className="grid gap-5 lg:grid-cols-2">
-          <Panel title="Recent receipts" href="/inventory/movements" linkLabel="Movements">
+          <Panel
+            title={isScoped && activeLocation ? `Recent receipts — all yards` : 'Recent receipts'}
+            href="/inventory/movements"
+            linkLabel="Movements"
+          >
             <RecentReceiptsRealtime
               widget={fixedWidget('flow.widget.recent_receipts_realtime', 'Recent Receipts')}
             />
@@ -130,6 +168,7 @@ export function FixedDashboard() {
           <Panel title="Cycle count suggestions" href="/inventory/cycle-counts" linkLabel="Cycle counts">
             <CycleCountSuggestions
               widget={fixedWidget('flow.widget.cycle_count_suggestions', 'Cycle Counts')}
+              locationId={scopeId}
             />
           </Panel>
         </div>
@@ -145,11 +184,13 @@ export function FixedDashboard() {
           <Panel title="Replenishment suggestions" href="/inventory/purchasing" linkLabel="Purchasing">
             <ReplenishmentSuggestions
               widget={fixedWidget('inventory.widget.replenishment_suggestions', 'Replenishment')}
+              locationId={scopeId}
             />
           </Panel>
           <Panel title="Transfer suggestions" href="/inventory/transfers" linkLabel="Transfers">
             <TransferSuggestions
               widget={fixedWidget('inventory.widget.transfer_suggestions', 'Transfers')}
+              locationId={scopeId}
             />
           </Panel>
         </div>
@@ -159,7 +200,11 @@ export function FixedDashboard() {
       <section>
         <SectionHeader
           title="Value & health"
-          sub="Overall position, capital sitting idle, and yard capacity."
+          sub={
+            isScoped
+              ? 'Overall position, capital sitting idle, and yard capacity — across all yards.'
+              : 'Overall position, capital sitting idle, and yard capacity.'
+          }
         />
         <div className="space-y-5">
           <InventorySummaryWidget

@@ -11,9 +11,10 @@ import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { EyeOff, Camera, Scale, UserCheck } from 'lucide-react';
+import { EyeOff, Camera, Scale, UserCheck, MapPin } from 'lucide-react';
 import { apiWrite, authenticatedFetch } from '@/lib/api-client';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
+import { useActiveLocation } from '@/lib/active-location';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 
 const COUNT_TYPE_LABELS: Record<string, string> = {
@@ -78,6 +79,7 @@ function CycleCountsPageContent() {
   const help = useHowItWorks('inventory-cycle-counts-help');
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { defaultLocationId, activeLocation } = useActiveLocation();
   const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -489,7 +491,12 @@ function CycleCountsPageContent() {
             <>
               {!help.show && <HowThisWorksButton onClick={help.open} />}
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => {
+                  // Preselect the active location so a new count defaults to the
+                  // yard you're viewing; the modal still lets you change it.
+                  setCreateInitialValues(defaultLocationId ? { locationId: defaultLocationId } : null);
+                  setShowCreateModal(true);
+                }}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
                 + Start Cycle Count
@@ -497,6 +504,15 @@ function CycleCountsPageContent() {
             </>
           }
         />
+
+        {activeLocation && (
+          <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <MapPin className="h-4 w-4 shrink-0 text-primary" />
+            <span className="text-gray-700">
+              New counts default to <span className="font-semibold">{activeLocation.name}</span> — your active location. You can pick a different location in the dialog.
+            </span>
+          </div>
+        )}
 
         {help.show && (
           <HowItWorksCard
@@ -643,7 +659,7 @@ function CycleCountsPageContent() {
 
         {showCreateModal && (
           <CreateCycleCountModal
-            initialLocationId={createInitialValues?.locationId}
+            initialLocationId={createInitialValues?.locationId ?? defaultLocationId}
             initialCountType={createInitialValues?.countType}
             initialItemIds={createInitialValues?.itemIds}
             onClose={() => {

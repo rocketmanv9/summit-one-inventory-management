@@ -7,7 +7,7 @@ import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { errMessage } from '@/lib/client-errors';
 
-export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
+export function CycleCountSuggestions({ widget, locationId }: { widget: DashboardWidget; locationId?: string }) {
   const router = useRouter();
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -18,8 +18,11 @@ export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
       setIsLoading(true);
       setError(null);
       try {
-        const result = await InventoryRPC.getCycleCountSuggestions(10);
-        setData(result);
+        // Each suggestion is item-at-location; pull extra when scoping so the
+        // list stays full after filtering to the active location.
+        const result = await InventoryRPC.getCycleCountSuggestions(locationId ? 50 : 10);
+        const scoped = locationId ? result.filter((r) => r.location_id === locationId) : result;
+        setData(scoped.slice(0, 10));
       } catch (error) {
         console.error('Error fetching cycle count suggestions:', error);
         setError(errMessage(error, 'Unknown error'));
@@ -28,7 +31,7 @@ export function CycleCountSuggestions({ widget }: { widget: DashboardWidget }) {
       }
     }
     fetchData();
-  }, [widget.widget_key, widget.config]);
+  }, [widget.widget_key, widget.config, locationId]);
 
   if (isLoading) {
     return (

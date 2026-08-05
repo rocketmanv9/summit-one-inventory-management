@@ -35,6 +35,7 @@ import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { errMessage } from '@/lib/client-errors';
+import { useActiveLocation } from '@/lib/active-location';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,17 +122,28 @@ export default function InventoryPage() {
   const router = useRouter();
   const uomLabels = useUOMLabelMap();
   const { terms: uomTerms } = useUOMTerms();
+  const { defaultLocationId, isScoped: locationScoped, locations: activeLocations } = useActiveLocation();
 
   const [items, setItems] = useState<Item[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
-  const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
+  const [pageLocations, setPageLocations] = useState<Array<{ id: string; name: string }>>([]);
+  // Prefer the page's own list, but fall back to the app-wide active-location
+  // list so the location filter (and the active-location default) still work
+  // even if this page's bulk load fails partway.
+  const locations = pageLocations.length > 0
+    ? pageLocations
+    : activeLocations.map((l) => ({ id: l.id, name: l.name }));
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
+  // True once the location filter has been seeded (from the URL, the active
+  // location, or an explicit user choice) — stops the active-location default
+  // from clobbering a choice the user made.
+  const locationSeeded = useRef(false);
   const [showInactive, setShowInactive] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -199,7 +211,7 @@ export default function InventoryPage() {
       setItems((itemData || []) as unknown as Item[]);
       setBalances((balanceData || []) as unknown as Balance[]);
       setCategories((cats || []).map((c: any) => ({ id: c.id, name: c.name })));
-      setLocations((locs || []).map((l: any) => ({ id: l.id, name: l.name })));
+      setPageLocations((locs || []).map((l: any) => ({ id: l.id, name: l.name })));
     } catch (error) {
       console.error('Error loading inventory:', error);
     } finally {
@@ -220,7 +232,12 @@ export default function InventoryPage() {
     const location = params.get('location');
     if (q) setSearch(q);
     if (filter === 'low' || filter === 'out') setStatusFilter(filter);
-    if (location) setLocationFilter(location);
+    // An explicit ?location= wins and pins the filter; otherwise the active
+    // location seeds it (in the effect below, once locations resolve).
+    if (location) {
+      setLocationFilter(location);
+      locationSeeded.current = true;
+    }
     // ?quickadd=1 (&q= prefills the name) — the PO item picker's "not in the
     // catalog?" escape hatch lands here with the modal already open.
     if (params.get('quickadd') === '1') {
@@ -234,6 +251,7 @@ export default function InventoryPage() {
   // links and bookmarks keep their location context. Movements shown in
   // expanded rows are location-scoped, so drop that cache too.
   const changeLocationFilter = useCallback((locId: string) => {
+    locationSeeded.current = true;
     setLocationFilter(locId);
     setMovementsByItem({});
     const params = new URLSearchParams(window.location.search);
@@ -242,6 +260,19 @@ export default function InventoryPage() {
     const qs = params.toString();
     window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
   }, []);
+
+  // Default the location filter to the app-wide active location the first time
+  // it resolves — unless the URL already pinned one, or the user changed it.
+  // "All locations" active leaves the filter empty (today's behavior).
+  useEffect(() => {
+    if (locationSeeded.current) return;
+    if (!defaultLocationId) return;
+    // Only apply once the location is real (present in the loaded list), so a
+    // stale stored id can't pin the page to a location that no longer exists.
+    if (locations.length > 0 && !locations.some((l) => l.id === defaultLocationId)) return;
+    locationSeeded.current = true;
+    changeLocationFilter(defaultLocationId);
+  }, [defaultLocationId, locations, changeLocationFilter]);
 
   const selectedLocation = useMemo(
     () => locations.find((l) => l.id === locationFilter) ?? null,
