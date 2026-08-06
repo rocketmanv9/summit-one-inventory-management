@@ -15,13 +15,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Inbox, Loader2, ShoppingCart, XCircle } from 'lucide-react';
+import { CheckCircle2, Inbox, Loader2, ShoppingCart, Sparkles, XCircle } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 
 interface InboxItem {
   id: string;
   po_number: string;
+  origin: 'user' | 'agent' | 'auto_reorder';
   vendor_name: string | null;
   is_amazon: boolean;
   buyer_name: string;
@@ -279,6 +280,14 @@ export default function ApprovalsInboxPage() {
                       {item.delivery_location && ` · to ${item.delivery_location}`}
                       {tab === 'pending' && ` · waiting ${age(item.created_at)}`}
                     </p>
+
+                    {/* AI-drafted restock: this PO came from the nightly reorder
+                        pass, not a person. Badge it so approval is a glance. */}
+                    {item.origin === 'auto_reorder' && (
+                      <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-800">
+                        <Sparkles className="h-3 w-3" /> AI-drafted
+                      </span>
+                    )}
 
                     {/* Pending: the reason it needs sign-off */}
                     {tab === 'pending' && item.reason && (

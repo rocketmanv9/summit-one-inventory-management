@@ -111,7 +111,7 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   let query = sc
     .from('purchase_orders')
     .select(
-      'id, po_number, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(qty_ordered, unit_cost, estimated_unit_cost, status)',
+      'id, po_number, origin, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(qty_ordered, unit_cost, estimated_unit_cost, status)',
       { count: 'exact' }
     );
 
@@ -165,6 +165,8 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
     return {
       id: p.id,
       po_number: p.po_number,
+      // 'auto_reorder' → AI-drafted restock; drives the inbox badge.
+      origin: p.origin ?? 'user',
       vendor_name: p.vendor_name_snapshot,
       is_amazon: p.vendor_code_snapshot === 'AMAZON-BIZ',
       buyer_user_id: p.created_by_user_id,

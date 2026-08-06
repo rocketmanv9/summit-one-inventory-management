@@ -36,7 +36,7 @@ import {
 import { createBrowserAuthedClient } from '@/supabase/client';
 import type { PurchaseOrder as POType } from '@/types/purchase-orders';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { Smartphone, FileSearch, MailCheck } from 'lucide-react';
+import { Smartphone, FileSearch, MailCheck, Sparkles } from 'lucide-react';
 
 interface PurchaseOrder {
   id: string;
@@ -46,6 +46,8 @@ interface PurchaseOrder {
   vendor_code_snapshot?: string;
   delivery_location_id?: string;
   status: string;
+  origin?: string;
+  approval_reason?: string;
   expected_delivery_date?: string;
   notes?: string;
   created_at: string;
@@ -831,9 +833,19 @@ function PODetailPanel({
       </div>
 
       <div className="p-4 space-y-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono font-medium text-lg">{po.po_number}</span>
           <StatusChip status={poStatusChipLabel(livePo.status)} />
+          {/* Origin badge: this PO was drafted by the nightly auto-reorder pass,
+              not entered by a person. */}
+          {po.origin === 'auto_reorder' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800"
+              title={po.approval_reason || 'Drafted by the nightly auto-reorder pass'}
+            >
+              <Sparkles className="h-3 w-3" /> AI-drafted
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4">
