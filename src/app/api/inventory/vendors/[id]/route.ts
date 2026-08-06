@@ -4,6 +4,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { pickVendorColumns } from '@/lib/vendor-columns';
 import { sanitizeEmailDomains, upsertVendorEmailDomains } from '@/lib/vendor-email-domains';
 import { assertCapability } from '@/lib/access-server';
+import { assertVendorCodeAvailable, isVendorCodeConflict, normalizeVendorCode, vendorCodeConflictError } from '@/lib/vendor-code';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -69,11 +70,19 @@ export const PATCH = createSessionWriteRoute(async ({ ctx, req, log, supabase, i
   const updates: Record<string, unknown> = { ...pickVendorColumns(raw), last_event_id: idempotencyKey };
 
   const sc = (supabase as any).schema('supply_chain');
+  // UNIQUE (tenant_id, code) — inactive vendors hold codes too; 409 with the
+  // holder's name beats the raw constraint violation.
+  if (updates.code !== undefined) updates.code = normalizeVendorCode(updates.code);
+  if (updates.code) await assertVendorCodeAvailable(sc, log, updates.code as string, id);
   let q = sc.from('vendors').update(updates).eq('id', id);
   if (expected_last_event_id) q = q.eq('last_event_id', expected_last_event_id);
   const { data, error } = await q.select('id, last_event_id').maybeSingle();
 
-  if (error) { log.error('vendor.update_failed', { error: error.message }); throw AppError.internal(error.message); }
+  if (error) {
+    if (isVendorCodeConflict(error)) throw vendorCodeConflictError(String(updates.code));
+    log.error('vendor.update_failed', { error: error.message });
+    throw AppError.internal(error.message);
+  }
   if (!data) {
     if (expected_last_event_id) throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
     throw AppError.notFound('Vendor not found');

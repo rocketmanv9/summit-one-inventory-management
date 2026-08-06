@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { pickVendorColumns } from '@/lib/vendor-columns';
 import { assertCapability } from '@/lib/access-server';
 import { sanitizeEmailDomains, upsertVendorEmailDomains } from '@/lib/vendor-email-domains';
+import { assertVendorCodeAvailable, isVendorCodeConflict, normalizeVendorCode, vendorCodeConflictError } from '@/lib/vendor-code';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -92,6 +93,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     throw AppError.conflict('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
   }
 
+  // The DB enforces UNIQUE (tenant_id, code), and inactive vendors still hold
+  // their codes — pre-check so the caller gets a 409 naming the holder.
+  if (fields.code !== undefined) fields.code = normalizeVendorCode(fields.code);
+  if (fields.code) await assertVendorCodeAvailable(sc, log, fields.code, existing?.id);
+
   // Inactive vendor with the same name → reactivate it (OCC).
   if (existing && !existing.active) {
     let q = sc.from('vendors')
@@ -101,6 +107,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
     const { data: restored, error: restoreError } = await q.select('id, last_event_id').single();
     if (restoreError) {
+      if (isVendorCodeConflict(restoreError)) throw vendorCodeConflictError(fields.code);
       log.error('vendor.restore_failed', { error: restoreError.message });
       throw AppError.internal(restoreError.message);
     }
@@ -114,6 +121,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .single();
 
   if (error) {
+    if (isVendorCodeConflict(error)) throw vendorCodeConflictError(fields.code);
     log.error('vendor.create_failed', { error: error.message });
     throw AppError.internal(error.message);
   }
