@@ -29,6 +29,7 @@ import { CategoryModal } from '@/components/modals/CategoryModal';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { AdjustStockModal } from '@/components/inventory/AdjustStockModal';
+import { MinLevelWizard } from '@/components/inventory/MinLevelWizard';
 import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
@@ -48,6 +49,7 @@ interface Item {
   uom_term_id: string | null;
   tracking_mode: string;
   reorder_point: number | null;
+  min_stock_level: number | null;
   active: boolean | null;
   is_parent?: boolean | null;
   parent_item_id?: string | null;
@@ -156,6 +158,7 @@ export default function InventoryPage() {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [labelDialog, setLabelDialog] = useState<BarcodeLabelItem[] | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showMinLevelWizard, setShowMinLevelWizard] = useState(false);
 
   const [imageRefreshKey, setImageRefreshKey] = useState(0);
   const topLevelIds = useMemo(
@@ -642,6 +645,24 @@ export default function InventoryPage() {
   const lowCount = rows.filter((r) => r.status === 'low' && r.item.active !== false).length;
   const outCount = rows.filter((r) => r.status === 'out' && r.item.active !== false).length;
 
+  // Stock items with no min level AND no reorder point are invisible to the
+  // Low Stock system. When enough of the catalog is unconfigured, surface the
+  // "Set min levels" entry so the AI wizard can wake it up in one pass.
+  const itemsLackingLevels = useMemo(
+    () =>
+      items.filter(
+        (i) =>
+          !i.parent_item_id &&
+          i.is_parent !== true &&
+          i.active !== false &&
+          i.tracking_mode !== 'serialized' &&
+          i.min_stock_level == null &&
+          i.reorder_point == null,
+      ).length,
+    [items],
+  );
+  const showMinLevelEntry = itemsLackingLevels >= 3;
+
   const statusChips: Array<{ key: StatusFilter; label: string }> = [
     { key: 'all', label: 'All' },
     { key: 'low', label: `Low stock${lowCount ? ` (${lowCount})` : ''}` },
@@ -659,6 +680,19 @@ export default function InventoryPage() {
           actions={
             <div className="flex gap-3 items-center">
               {!help.show && <HowThisWorksButton onClick={help.open} />}
+              {showMinLevelEntry && (
+                <button
+                  onClick={() => setShowMinLevelWizard(true)}
+                  title={`${itemsLackingLevels} items have no min/reorder level — let AI propose them from usage`}
+                  className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-primary transition-colors hover:bg-primary/10"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Set min levels
+                  <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold">
+                    {itemsLackingLevels}
+                  </span>
+                </button>
+              )}
               <button
                 onClick={() => setScannerOpen(true)}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
@@ -1348,6 +1382,17 @@ export default function InventoryPage() {
           items={labelDialog}
           entityType="item"
           onClose={() => setLabelDialog(null)}
+        />
+      )}
+
+      {showMinLevelWizard && (
+        <MinLevelWizard
+          onClose={() => setShowMinLevelWizard(false)}
+          onAccepted={async () => {
+            // Levels changed on the server — reload so status chips and the
+            // "lacking levels" entry reflect the new thresholds.
+            await fetchAll();
+          }}
         />
       )}
     </AppShell>
