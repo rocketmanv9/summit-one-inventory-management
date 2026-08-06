@@ -127,6 +127,8 @@ export interface TenantSettings {
   vendor_auto_approve_limits: Record<string, number> | null;
   /** How the proactive agent handles reorder needs: notify | auto_draft | auto_send. */
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  /** When true, the nightly cron turns top cycle-count suggestions into assigned counts. */
+  auto_schedule_counts_enabled: boolean;
   /** What Isabelle is allowed to do, per capability: off | ask | auto. */
   agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;

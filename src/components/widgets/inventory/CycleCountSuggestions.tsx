@@ -3,15 +3,62 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { CalendarPlus, Loader2, Check } from 'lucide-react';
 import type { DashboardWidget } from '@/types/dashboard';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { apiWrite } from '@/lib/api-client';
+import { useSession } from '@/hooks/useSession';
 import { errMessage } from '@/lib/client-errors';
 
 export function CycleCountSuggestions({ widget, locationId }: { widget: DashboardWidget; locationId?: string }) {
   const router = useRouter();
+  const { session } = useSession();
+  const canSchedule = session?.role === 'admin' || session?.role === 'manager';
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleMsg, setScheduleMsg] = useState<string | null>(null);
+  const [scheduleErr, setScheduleErr] = useState<string | null>(null);
+
+  // The distinct locations across the visible suggestions — what "Schedule
+  // these" acts on. One count gets created per location.
+  const visibleLocationIds = [...new Set(data.map((r) => r.location_id).filter(Boolean))] as string[];
+
+  async function handleScheduleThese() {
+    if (scheduling || visibleLocationIds.length === 0) return;
+    setScheduling(true);
+    setScheduleMsg(null);
+    setScheduleErr(null);
+    try {
+      const res = await apiWrite('/api/inventory/cycle-counts/auto-schedule', 'POST', {
+        location_ids: visibleLocationIds,
+        max_locations: visibleLocationIds.length,
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to schedule counts');
+      }
+      const created = json?.data?.createdCount ?? 0;
+      const reused = json?.data?.reusedCount ?? 0;
+      const skippedTerminal = json?.data?.skippedTerminal ?? 0;
+      setScheduleMsg(
+        created > 0
+          ? `Scheduled ${created} count${created === 1 ? '' : 's'}${reused ? ` (${reused} already scheduled)` : ''}.`
+          : reused > 0
+            ? 'These locations already have scheduled counts.'
+            : skippedTerminal > 0
+              ? 'Already scheduled and cancelled today — the nightly run will re-offer these tomorrow.'
+              : 'Nothing to schedule right now.',
+      );
+      // Refresh the router so the counts list picks up the new counts.
+      router.refresh();
+    } catch (err) {
+      setScheduleErr(errMessage(err, 'Failed to schedule counts'));
+    } finally {
+      setScheduling(false);
+    }
+  }
 
   useEffect(() => {
     async function fetchData() {
@@ -62,7 +109,32 @@ export function CycleCountSuggestions({ widget, locationId }: { widget: Dashboar
   }
 
   return (
-    <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
+    <div className="flex flex-col">
+      {canSchedule && (
+        <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2 border-b">
+          <div className="text-xs text-muted-foreground">
+            {visibleLocationIds.length > 0 && (
+              <>Turn these into assigned counts across {visibleLocationIds.length} location{visibleLocationIds.length === 1 ? '' : 's'}.</>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleScheduleThese}
+            disabled={scheduling || visibleLocationIds.length === 0}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary border border-primary/30 rounded hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarPlus className="w-3.5 h-3.5" />}
+            Schedule these
+          </button>
+        </div>
+      )}
+      {(scheduleMsg || scheduleErr) && (
+        <div className={`flex items-center gap-1.5 px-4 py-2 text-xs ${scheduleErr ? 'text-red-600 bg-red-50' : 'text-green-700 bg-green-50'}`}>
+          {!scheduleErr && <Check className="w-3.5 h-3.5" />}
+          {scheduleErr || scheduleMsg}
+        </div>
+      )}
+      <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
       {data.map((item, idx) => (
         <div key={idx} className="flex items-start justify-between text-sm border-b pb-2">
           <div className="flex-1 min-w-0">
@@ -117,6 +189,7 @@ export function CycleCountSuggestions({ widget, locationId }: { widget: Dashboar
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

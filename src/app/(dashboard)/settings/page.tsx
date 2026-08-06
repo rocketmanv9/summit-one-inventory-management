@@ -51,6 +51,7 @@ type SettingsForm = {
   auto_approve_enabled: boolean;
   auto_approve_limit: string;
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  auto_schedule_counts_enabled: boolean;
   agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
@@ -86,6 +87,7 @@ export default function SettingsPage() {
     auto_approve_enabled: true,
     auto_approve_limit: '',
     reorder_mode: 'auto_draft',
+    auto_schedule_counts_enabled: false,
     agent_permissions: {
       stock_adjust: 'ask',
       stock_issue: 'ask',
@@ -144,6 +146,7 @@ export default function SettingsPage() {
           auto_approve_enabled: data.auto_approve_enabled ?? true,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
           reorder_mode: data.reorder_mode || 'auto_draft',
+          auto_schedule_counts_enabled: data.auto_schedule_counts_enabled ?? false,
           agent_permissions: {
             stock_adjust: 'ask',
             stock_issue: 'ask',
@@ -213,6 +216,7 @@ export default function SettingsPage() {
         auto_approve_enabled: form.auto_approve_enabled,
         auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
         reorder_mode: form.reorder_mode,
+        auto_schedule_counts_enabled: form.auto_schedule_counts_enabled,
         agent_permissions: form.agent_permissions,
         vendor_auto_approve_limits: vendorLimitsObj,
         vendor_code_strategy: form.vendor_code_strategy,
@@ -415,6 +419,39 @@ export default function SettingsPage() {
                   </div>
                 </label>
               ))}
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">Auto-schedule cycle counts</label>
+                <p className="text-sm text-gray-500">
+                  When on, a nightly job turns the top cycle-count suggestions into real assigned
+                  counts (one per location, spread across your qualified counters, scheduled for the
+                  next day). You can still schedule on demand from the Cycle Count Suggestions widget
+                  regardless of this setting.
+                </p>
+              </div>
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                  form.auto_schedule_counts_enabled
+                    ? 'border-primary bg-primary/5'
+                    : 'border-gray-200 hover:border-gray-300'
+                } ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.auto_schedule_counts_enabled}
+                  onChange={(e) => setForm({ ...form, auto_schedule_counts_enabled: e.target.checked })}
+                  className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary"
+                  disabled={!isAdmin}
+                />
+                <div>
+                  <div className="text-sm font-medium">Schedule suggested counts nightly</div>
+                  <div className="text-sm text-gray-500">
+                    Off by default. Turn on once your qualified counters are set up.
+                  </div>
+                </div>
+              </label>
             </div>
 
             <div className="space-y-3 border-t pt-4">
