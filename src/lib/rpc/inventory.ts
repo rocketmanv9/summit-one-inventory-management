@@ -1928,7 +1928,25 @@ export const InventoryRPC = {
       throw AppError.internal(`Failed to fetch low stock items: ${error.message}`);
     }
 
-    return data;
+    // mv_low_stock_summary exposes name/sku/min_stock_level/reorder_point/
+    // total_available; the widget expects item_name/item_sku/total_on_hand and a
+    // severity. Map here so the widget renders a named row (the MV carries no
+    // severity — derive it: at/below reorder point is critical, otherwise below
+    // the min-level buffer is a warning).
+    return (data || []).map((r: any) => {
+      const available = Number(r.total_available) || 0;
+      const threshold = r.reorder_point != null ? Number(r.reorder_point) : Number(r.min_stock_level) || 0;
+      return {
+        catalog_item_id: r.catalog_item_id,
+        item_name: r.name,
+        item_sku: r.sku,
+        total_on_hand: available,
+        total_available: available,
+        reorder_point: threshold,
+        min_stock_level: r.min_stock_level != null ? Number(r.min_stock_level) : null,
+        severity: available <= threshold ? 'critical' : 'warning',
+      };
+    });
   },
 
   /**
