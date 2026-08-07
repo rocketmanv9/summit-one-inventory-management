@@ -73,6 +73,9 @@ export default function CreatePurchaseOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // Names of items auto-added to the vendor's catalog on this save — shown as a
+  // small confirmation so the order-any-item side effect is visible, not silent.
+  const [linkedItemNames, setLinkedItemNames] = useState<string[]>([]);
   // Nearest of the selected vendor's locations to the chosen delivery location.
   const [nearest, setNearest] = useState<{
     label: string | null; city: string | null; state: string | null; distance_mi: number | null;
@@ -254,6 +257,30 @@ export default function CreatePurchaseOrderPage() {
     }
     return m;
   }, [vendorItemRows, form.vendor_address_id]);
+
+  // The set of catalog-item IDs the selected vendor already carries — drives
+  // the "Carried" badge in the all-catalog picker and the auto-link decision on
+  // save (an item NOT in this set gets linked to the vendor when the PO saves).
+  const vendorItemIdSet = useMemo(
+    () => new Set(vendorItemRows.map((r) => r.catalog_item_id)),
+    [vendorItemRows],
+  );
+
+  // Full-catalog picker list for "All items" mode: every active parent/standalone
+  // catalog item (the same `items` already loaded for enrichment). Non-punchout
+  // only — punchout keeps its vendor-linked-only picker.
+  const allPickerItems = useMemo(
+    () =>
+      items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        sku: i.sku,
+        description: i.description ?? null,
+        uom_term_id: i.uom_term_id ?? null,
+        is_parent: i.is_parent,
+      })),
+    [items],
+  );
 
   // Picker list = the vendor's items, enriched with description/uom/variant
   // info from the full catalog when available.
@@ -520,6 +547,45 @@ export default function CreatePurchaseOrderPage() {
       notes: form.notes || undefined,
     });
 
+  // Order-any-item: after the PO saves, link any catalog item on it that this
+  // vendor doesn't already carry, seeding the vendor's price from the line's
+  // entered cost (null if left blank — being orderable is the point). Idempotent
+  // (the route upserts on the natural key), company-wide (vendor_address_id null),
+  // never preferred. Punchout vendors are excluded — they stay catalog-only.
+  // Best-effort: a link failure must not fail the just-created PO.
+  const autoLinkVendorItems = async (validLines: POLine[]) => {
+    if (isPunchoutVendor || !form.vendor_id) return;
+    const seen = new Set<string>();
+    const toLink = validLines.filter((l) => {
+      if (l.free_text || !l.catalog_item_id) return false;
+      if (vendorItemIdSet.has(l.catalog_item_id)) return false;
+      if (seen.has(l.catalog_item_id)) return false;
+      seen.add(l.catalog_item_id);
+      return true;
+    });
+    if (toLink.length === 0) return;
+
+    const linkedNames: string[] = [];
+    for (const l of toLink) {
+      try {
+        await SupplyChainRPC.createVendorItem({
+          vendor_id: form.vendor_id,
+          catalog_item_id: l.catalog_item_id,
+          vendor_sku: '',
+          vendor_address_id: null,
+          unit_cost: l.unit_cost > 0 ? l.unit_cost : null,
+          is_preferred: false,
+        });
+        const name = items.find((i) => i.id === l.catalog_item_id)?.name;
+        linkedNames.push(name || 'Item');
+      } catch {
+        // Non-fatal: the PO is already saved. The link can be added later on the
+        // vendor's Items page; we just skip the confirmation for this one.
+      }
+    }
+    if (linkedNames.length > 0) setLinkedItemNames(linkedNames);
+  };
+
   // Signature of the exact inputs a draft was saved from — lets a saved-draft
   // preview be reused by Create (and invalidates it the moment anything changes).
   const orderSignature = useMemo(
@@ -616,6 +682,13 @@ export default function CreatePurchaseOrderPage() {
         }
       }
 
+      // Non-punchout drafts: make every ordered item orderable from this vendor
+      // going forward by linking any it doesn't already carry (price-seeded).
+      // Runs before the redirect so the confirmation shows; best-effort inside.
+      if (result?.po_id) {
+        await autoLinkVendorItems(validLines);
+      }
+
       amazonTab?.close();
       setSuccess(true);
       setTimeout(() => {
@@ -656,11 +729,18 @@ export default function CreatePurchaseOrderPage() {
 
         {/* Success Message */}
         {success && (
-          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
-            <Check className="h-5 w-5 text-green-600" />
-            <span className="text-green-800">
-              Purchase Order created successfully! Redirecting...
-            </span>
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2">
+            <Check className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+            <div className="text-green-800">
+              <div>Purchase Order created successfully! Redirecting...</div>
+              {linkedItemNames.length > 0 && (
+                <div className="mt-1 text-sm text-green-700">
+                  Added {linkedItemNames.length === 1
+                    ? `${linkedItemNames[0]} to ${selectedVendor?.name || 'the vendor'}'s catalog`
+                    : `${linkedItemNames.length} items to ${selectedVendor?.name || 'the vendor'}'s catalog`} — orderable from them next time.
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1214,10 +1294,16 @@ export default function CreatePurchaseOrderPage() {
         items={pickerItems}
         imageMap={imageMap}
         uomLabels={uomLabels}
+        enableAllMode={!isPunchoutVendor}
+        allItems={allPickerItems}
+        vendorItemIds={vendorItemRows.map((r) => r.catalog_item_id)}
+        vendorName={selectedVendor?.name ?? null}
         emptyMessage={
           !form.vendor_id
             ? 'Choose a vendor above to see the items they supply.'
-            : 'This vendor has no linked items yet. Add them on the vendor’s Items page.'
+            : isPunchoutVendor
+              ? 'This vendor has no linked items yet. Add them on the vendor’s Items page.'
+              : 'This vendor has no linked items yet — switch to “All items” to order anything, and it’ll be added to their catalog.'
         }
         selectedIds={[
           ...lines.map((l) => l.catalog_item_id).filter(Boolean),
