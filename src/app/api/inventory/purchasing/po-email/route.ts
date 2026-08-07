@@ -33,6 +33,8 @@ export const GET = createSessionReadRoute(async ({ req, session }) => {
       recipient: ctx.vendorEmail,
       has_recipient: !!ctx.vendorEmail,
       ship_to: ctx.shipToName,
+      ship_to_address: ctx.shipToAddress,
+      delivery_label: ctx.deliveryLabel,
       needed_by: ctx.neededBy,
       notes: ctx.notes,
       company_name: ctx.company.name,

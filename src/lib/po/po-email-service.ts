@@ -86,6 +86,8 @@ export async function sendPurchaseOrderEmail(
     poNumber: ctx.poNumber,
     vendorName: ctx.vendorName,
     shipTo: ctx.shipToName,
+    shipToAddress: ctx.shipToAddress,
+    deliveryLabel: ctx.deliveryLabel,
     lines: ctxLinesToEmailLines(ctx),
     neededBy: ctx.neededBy,
     notes: ctx.notes,

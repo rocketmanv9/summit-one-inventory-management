@@ -39,6 +39,11 @@ export interface POContext {
   vendorContactName: string | null;
   vendorAddress: string | null;
 
+  /**
+   * Label for the delivery block on the PDF/email: 'SHIP TO' for a delivery PO
+   * (delivery_method 'ship'), 'PICKUP AT' for a will-call pickup.
+   */
+  deliveryLabel: 'SHIP TO' | 'PICKUP AT';
   shipToName: string | null;
   shipToAddress: string | null;
 
@@ -91,6 +96,92 @@ function formatAddress(parts: {
   return out || null;
 }
 
+/** A tenant location's raw address columns, as loaded from inventory.locations. */
+interface LocationAddressRow {
+  id?: string;
+  parent_location_id?: string | null;
+  address_line_1?: string | null;
+  address_line_2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  shipping_address?: string | null;
+  address?: string | null;
+}
+
+/** Format one location row's own address, or null if it carries no usable address. */
+function locationOwnAddress(loc: LocationAddressRow): string | null {
+  return (
+    formatAddress({
+      street1: loc.address_line_1,
+      street2: loc.address_line_2,
+      city: loc.city,
+      state: loc.state,
+      zip: loc.postal_code,
+    }) ||
+    // Fall back to the free-text shipping/address fields; treat blank/whitespace
+    // as absent (sub-bins store address='' rather than NULL).
+    (loc.shipping_address?.trim() || loc.address?.trim() || null)
+  );
+}
+
+/**
+ * Resolve a tenant location's street address, inheriting from its parent when
+ * the location carries no address of its own (Grant's rule: sub-bins like
+ * "Portland Shed" show their parent yard's address). Walks up
+ * parent_location_id defensively (bounded hops, cycle-guarded). Returns the
+ * chosen location's own name plus the first non-empty address found up the
+ * chain — so the name line stays the sub-bin while the address is inherited.
+ *
+ * Shared by the PDF/email loader and (via the create-page preview API) the
+ * create-UI address preview, so both render byte-identical resolution.
+ */
+export async function resolveLocationAddress(
+  admin: AdminClient,
+  tenantId: string,
+  locationId: string,
+): Promise<{ name: string | null; address: string | null }> {
+  const inv = admin.schema('inventory');
+  const SELECT =
+    'id, name, parent_location_id, address_line_1, address_line_2, city, state, postal_code, shipping_address, address';
+
+  const { data: loc, error } = await inv
+    .from('locations')
+    .select(SELECT)
+    .eq('id', locationId)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error('resolveLocationAddress: location lookup failed', error.message);
+    return { name: null, address: null };
+  }
+  if (!loc) return { name: null, address: null };
+
+  const name = loc.name ?? null;
+  let address = locationOwnAddress(loc);
+
+  // Walk up the parent chain until we find an address (or run out of parents).
+  // Bounded + cycle-guarded so a mis-parented location can never loop forever.
+  const seen = new Set<string>([loc.id]);
+  let parentId: string | null = loc.parent_location_id ?? null;
+  let hops = 0;
+  while (!address && parentId && hops < 5 && !seen.has(parentId)) {
+    seen.add(parentId);
+    hops += 1;
+    const { data: parent } = await inv
+      .from('locations')
+      .select(SELECT)
+      .eq('id', parentId)
+      .limit(1)
+      .maybeSingle();
+    if (!parent) break;
+    address = locationOwnAddress(parent);
+    parentId = parent.parent_location_id ?? null;
+  }
+
+  return { name, address };
+}
+
 export async function loadPOContext(
   admin: AdminClient,
   tenantId: string,
@@ -102,7 +193,7 @@ export async function loadPOContext(
   const { data: po, error: poErr } = await sc
     .from('purchase_orders')
     .select(
-      'id, po_number, status, vendor_id, vendor_name_snapshot, delivery_location_id, order_date, needed_by_date, notes',
+      'id, po_number, status, vendor_id, vendor_name_snapshot, delivery_method, delivery_location_id, pickup_location_id, order_date, needed_by_date, notes',
     )
     .eq('id', poId)
     .eq('tenant_id', tenantId)
@@ -115,6 +206,10 @@ export async function loadPOContext(
   let vendorEmail: string | null = null;
   let vendorContactName: string | null = null;
   let vendorAddress: string | null = null;
+  // The vendor's will-call/pickup location, used when this PO is a pickup with
+  // no tenant will-call location chosen. Prefers an address_type 'pickup' row,
+  // then falls back to the vendor's first address on file.
+  let vendorPickup: { name: string | null; address: string | null } | null = null;
   if (po.vendor_id) {
     const { data: vendor } = await sc
       .from('vendors')
@@ -129,51 +224,53 @@ export async function loadPOContext(
     }
     // Optional richer vendor address (multi-address table added recently).
     try {
-      const { data: addr } = await sc
+      const { data: addrs } = await sc
         .from('vendor_addresses')
-        .select('street1, street2, city, state, zip')
+        .select('address_type, label, street1, street2, city, state, zip')
         .eq('vendor_id', po.vendor_id)
         .eq('tenant_id', tenantId)
-        .limit(1)
-        .maybeSingle();
-      if (addr) vendorAddress = formatAddress(addr);
+        .order('address_type')
+        .limit(50);
+      const rows = addrs ?? [];
+      if (rows.length > 0) {
+        vendorAddress = formatAddress(rows[0]);
+        // Pickup source: a 'pickup'-typed address wins, else the first on file.
+        const pickupRow = rows.find((a: any) => a.address_type === 'pickup') ?? rows[0];
+        vendorPickup = {
+          name: pickupRow.label?.trim() || vendorName,
+          address: formatAddress(pickupRow),
+        };
+      }
     } catch {
       // table may not exist in this environment
     }
   }
 
-  // Ship-to location
+  // Delivery block — 'ship' renders SHIP TO with the delivery location's
+  // address; 'pickup' renders PICKUP AT with either a chosen tenant will-call
+  // location or the vendor's pickup address. Both location lookups resolve the
+  // street address from the parent when the chosen location has none of its own
+  // (sub-bins inherit the parent yard's address).
+  const isPickup = po.delivery_method === 'pickup';
+  const deliveryLabel: 'SHIP TO' | 'PICKUP AT' = isPickup ? 'PICKUP AT' : 'SHIP TO';
   let shipToName: string | null = null;
   let shipToAddress: string | null = null;
-  if (po.delivery_location_id) {
-    // NOTE: the structured columns are address_line_1 / address_line_2 (underscore
-    // before the digit). An earlier select used address_line1 / address_line2,
-    // which made PostgREST reject the whole query — silently blanking the entire
-    // Ship-To block (name included) on every PO PDF and email.
-    const { data: loc, error: locErr } = await inv
-      .from('locations')
-      .select('name, address_line_1, address_line_2, city, state, postal_code, shipping_address, address')
-      .eq('id', po.delivery_location_id)
-      .limit(1)
-      .maybeSingle();
-    if (locErr) {
-      // Don't kill the PO over a ship-to lookup, but make the failure visible.
-      console.error('loadPOContext: ship-to location lookup failed', locErr.message);
+
+  if (isPickup) {
+    if (po.pickup_location_id) {
+      // On-site will-call at one of the tenant's own locations.
+      const resolved = await resolveLocationAddress(admin, tenantId, po.pickup_location_id);
+      shipToName = resolved.name;
+      shipToAddress = resolved.address;
+    } else if (vendorPickup) {
+      // Pickup straight from the vendor's counter/plant.
+      shipToName = vendorPickup.name;
+      shipToAddress = vendorPickup.address;
     }
-    if (loc) {
-      shipToName = loc.name ?? null;
-      shipToAddress =
-        formatAddress({
-          street1: loc.address_line_1,
-          street2: loc.address_line_2,
-          city: loc.city,
-          state: loc.state,
-          zip: loc.postal_code,
-        }) ||
-        // Fall back to the free-text shipping/address fields if the structured
-        // ones aren't populated for this location.
-        (loc.shipping_address?.trim() || loc.address?.trim() || null);
-    }
+  } else if (po.delivery_location_id) {
+    const resolved = await resolveLocationAddress(admin, tenantId, po.delivery_location_id);
+    shipToName = resolved.name;
+    shipToAddress = resolved.address;
   }
 
   // Lines
@@ -237,6 +334,7 @@ export async function loadPOContext(
     vendorEmail,
     vendorContactName,
     vendorAddress,
+    deliveryLabel,
     shipToName,
     shipToAddress,
     company,

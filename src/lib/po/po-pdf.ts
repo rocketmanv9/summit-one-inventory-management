@@ -133,7 +133,7 @@ export async function generatePurchaseOrderPdf(ctx: POContext): Promise<Uint8Arr
     PAGE.margin,
   );
   const shipBottom = drawBlock(
-    'SHIP TO',
+    ctx.deliveryLabel,
     ctx.shipToName || ctx.shipToAddress
       ? [ctx.shipToName, ctx.shipToAddress]
       : ['(see vendor instructions)'],

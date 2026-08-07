@@ -80,6 +80,11 @@ export default function CreatePurchaseOrderPage() {
   const [nearest, setNearest] = useState<{
     label: string | null; city: string | null; state: string | null; distance_mi: number | null;
   } | null>(null);
+  // Resolved delivery/pickup address shown under the picker — the exact block
+  // the vendor sees on the PDF/email. For a tenant location it walks up to the
+  // parent's address when the location has none of its own (sub-bin inheritance),
+  // resolved server-side via the shared resolveLocationAddress helper.
+  const [addressPreview, setAddressPreview] = useState<{ name: string | null; address: string | null } | null>(null);
 
   // No po_number or expected-delivery inputs: the system generates PO numbers,
   // and a delivery date isn't knowable at order time — it gets set on the PO
@@ -87,7 +92,13 @@ export default function CreatePurchaseOrderPage() {
   const [form, setForm] = useState({
     vendor_id: '',
     vendor_address_id: '', // '' = company-wide default pricing
+    // 'ship' → delivered to a tenant location; 'pickup' → will-call. Schema
+    // default is 'ship'.
+    delivery_method: 'ship' as 'ship' | 'pickup',
     delivery_location_id: '',
+    // For pickup: '' means pick up from the vendor's address; a location id means
+    // an on-site will-call at one of the tenant's own locations.
+    pickup_location_id: '',
     notes: '',
   });
 
@@ -148,8 +159,13 @@ export default function CreatePurchaseOrderPage() {
 
   // The selected vendor's branches/plants — lets the PO record which branch it
   // is priced against, and switches line prefills to branch-specific prices.
+  // Also the source of the pickup address when a PO is picked up from the vendor.
   const [vendorBranches, setVendorBranches] = useState<
-    Array<{ id: string; label: string | null; city: string | null; state: string | null }>
+    Array<{
+      id: string; label: string | null; address_type?: string | null;
+      street1?: string | null; street2?: string | null;
+      city: string | null; state: string | null; zip?: string | null;
+    }>
   >([]);
 
   const [lines, setLines] = useState<POLine[]>([
@@ -375,6 +391,61 @@ export default function CreatePurchaseOrderPage() {
     return () => { cancelled = true; };
   }, [form.vendor_id, form.delivery_location_id]);
 
+  // The vendor's pickup address = an address_type 'pickup' row if present, else
+  // the vendor's first address on file. Mirrors the server (po-context) so the
+  // UI preview matches the PDF for a vendor-pickup PO.
+  const vendorPickupBranch = useMemo(() => {
+    if (vendorBranches.length === 0) return null;
+    return vendorBranches.find((b) => b.address_type === 'pickup') ?? vendorBranches[0];
+  }, [vendorBranches]);
+
+  const formatBranchAddress = (b: {
+    street1?: string | null; street2?: string | null; city: string | null; state: string | null; zip?: string | null;
+  } | null): string | null => {
+    if (!b) return null;
+    const line1 = [b.street1, b.street2].filter(Boolean).join(', ');
+    const line2 = [b.city, b.state, b.zip].filter(Boolean).join(' ');
+    return [line1, line2].filter(Boolean).join('\n') || null;
+  };
+
+  // Resolve the address shown under the delivery/pickup picker. Delivery and
+  // on-site pickup resolve the tenant location server-side (parent inheritance);
+  // vendor pickup uses the vendor's own address, formatted client-side.
+  useEffect(() => {
+    let cancelled = false;
+    const locId =
+      form.delivery_method === 'ship'
+        ? form.delivery_location_id
+        : form.pickup_location_id;
+
+    // Vendor pickup (no tenant will-call location chosen): show the vendor addr.
+    if (form.delivery_method === 'pickup' && !form.pickup_location_id) {
+      setAddressPreview(
+        vendorPickupBranch
+          ? {
+              name: vendorPickupBranch.label?.split(' (')[0] || selectedVendor?.name || null,
+              address: formatBranchAddress(vendorPickupBranch),
+            }
+          : null,
+      );
+      return;
+    }
+
+    if (!locId) { setAddressPreview(null); return; }
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/locations/${locId}/resolved-address`);
+        if (!res.ok) { if (!cancelled) setAddressPreview(null); return; }
+        const json = await res.json();
+        if (!cancelled) setAddressPreview(json.data ?? null);
+      } catch {
+        if (!cancelled) setAddressPreview(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.delivery_method, form.delivery_location_id, form.pickup_location_id, vendorPickupBranch]);
+
   const loadData = async () => {
     try {
       // Settle each load independently: a single failing source (e.g. the
@@ -499,7 +570,7 @@ export default function CreatePurchaseOrderPage() {
     if (!form.vendor_id) {
       throw AppError.badRequest('Please select a vendor');
     }
-    if (!form.delivery_location_id) {
+    if (form.delivery_method === 'ship' && !form.delivery_location_id) {
       throw AppError.badRequest('Please select a delivery location');
     }
 
@@ -532,7 +603,12 @@ export default function CreatePurchaseOrderPage() {
     SupplyChainRPC.createPurchaseOrder({
       vendor_id: form.vendor_id,
       vendor_address_id: form.vendor_address_id || undefined,
-      delivery_location_id: form.delivery_location_id,
+      delivery_method: form.delivery_method,
+      // Delivery persists the drop-off location; pickup persists the (optional)
+      // tenant will-call location — a blank pickup location means picking up
+      // from the vendor's own address.
+      delivery_location_id: form.delivery_method === 'ship' ? form.delivery_location_id : undefined,
+      pickup_location_id: form.delivery_method === 'pickup' ? (form.pickup_location_id || undefined) : undefined,
       lines: validLines.map((l) => {
         const unpriced = requestQuote || !(l.unit_cost > 0);
         return {
@@ -589,8 +665,8 @@ export default function CreatePurchaseOrderPage() {
   // Signature of the exact inputs a draft was saved from — lets a saved-draft
   // preview be reused by Create (and invalidates it the moment anything changes).
   const orderSignature = useMemo(
-    () => JSON.stringify({ v: form.vendor_id, a: form.vendor_address_id, d: form.delivery_location_id, n: form.notes, q: requestQuote, lines }),
-    [form.vendor_id, form.vendor_address_id, form.delivery_location_id, form.notes, requestQuote, lines],
+    () => JSON.stringify({ v: form.vendor_id, a: form.vendor_address_id, m: form.delivery_method, d: form.delivery_location_id, p: form.pickup_location_id, n: form.notes, q: requestQuote, lines }),
+    [form.vendor_id, form.vendor_address_id, form.delivery_method, form.delivery_location_id, form.pickup_location_id, form.notes, requestQuote, lines],
   );
   // A previously saved draft is only reusable if the order is unchanged since.
   const reusableDraft = draftPo && draftPo.sig === orderSignature ? draftPo : null;
@@ -832,34 +908,106 @@ export default function CreatePurchaseOrderPage() {
               </div>
 
               <div>
+                {/* Delivery vs Pickup — the vendor either ships to a yard or the
+                    crew picks it up. Drives the SHIP TO / PICKUP AT block on the
+                    PO. Defaults to Delivery (schema default 'ship'). */}
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Delivery Location *
+                  Fulfillment *
                 </label>
-                <select
-                  value={form.delivery_location_id}
-                  onChange={(e) =>
-                    setForm({ ...form, delivery_location_id: e.target.value })
-                  }
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select location...</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name} ({loc.location_type?.name || 'Location'})
-                    </option>
+                <div className="mb-3 inline-flex rounded-md border border-gray-300 p-0.5 bg-gray-50">
+                  {(['ship', 'pickup'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setForm((prev) => ({ ...prev, delivery_method: m }))}
+                      className={`px-4 py-1.5 text-sm font-medium rounded transition-colors ${
+                        form.delivery_method === m
+                          ? 'bg-white text-blue-700 shadow-sm'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {m === 'ship' ? 'Delivery' : 'Pickup'}
+                    </button>
                   ))}
-                </select>
-                {activeLocation && form.delivery_location_id === activeLocation.id ? (
-                  <p className="mt-1 flex items-center gap-1 text-xs text-primary">
-                    <MapPin className="h-3 w-3" />
-                    Defaulted to your active location ({activeLocation.name}). Change it here without affecting the rest of the app.
-                  </p>
-                ) : activeLocation ? (
-                  <p className="mt-1 text-xs text-gray-500">
-                    Your active location is {activeLocation.name} — delivering elsewhere on this PO won&apos;t change it.
-                  </p>
-                ) : null}
+                </div>
+
+                {form.delivery_method === 'ship' ? (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Delivery Location *
+                    </label>
+                    <select
+                      value={form.delivery_location_id}
+                      onChange={(e) =>
+                        setForm({ ...form, delivery_location_id: e.target.value })
+                      }
+                      required
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select location...</option>
+                      {locations.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {loc.name} ({loc.location_type?.name || 'Location'})
+                        </option>
+                      ))}
+                    </select>
+                    {activeLocation && form.delivery_location_id === activeLocation.id ? (
+                      <p className="mt-1 flex items-center gap-1 text-xs text-primary">
+                        <MapPin className="h-3 w-3" />
+                        Defaulted to your active location ({activeLocation.name}). Change it here without affecting the rest of the app.
+                      </p>
+                    ) : activeLocation ? (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Your active location is {activeLocation.name} — delivering elsewhere on this PO won&apos;t change it.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Pickup Location
+                    </label>
+                    <select
+                      value={form.pickup_location_id}
+                      onChange={(e) => setForm({ ...form, pickup_location_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">
+                        {vendorPickupBranch
+                          ? `Pick up from ${selectedVendor?.name || 'the vendor'}`
+                          : selectedVendor
+                            ? `${selectedVendor.name} (no address on file)`
+                            : 'Pick up from the vendor'}
+                      </option>
+                      {locations.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          Will-call at {loc.name} ({loc.location_type?.name || 'Location'})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Leave on the vendor to pick up at their counter/plant, or choose one of your locations for on-site will-call.
+                    </p>
+                  </>
+                )}
+
+                {/* Resolved address preview — exactly what the vendor sees on the
+                    PDF/email. Sub-bins show their parent yard's inherited address. */}
+                {(addressPreview?.name || addressPreview?.address) && (
+                  <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
+                    <div className="mb-0.5 font-semibold uppercase tracking-wide text-gray-500">
+                      {form.delivery_method === 'ship' ? 'Ship to' : 'Pickup at'}
+                    </div>
+                    {addressPreview.name && <div className="font-medium text-gray-800">{addressPreview.name}</div>}
+                    {addressPreview.address ? (
+                      addressPreview.address.split('\n').map((ln, i) => (
+                        <div key={i} className="text-gray-600">{ln}</div>
+                      ))
+                    ) : (
+                      <div className="text-amber-600">No address on file — add one so the vendor knows where to go.</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="md:col-span-2">

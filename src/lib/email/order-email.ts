@@ -94,6 +94,10 @@ export interface POEmailParams {
   poNumber: string;
   vendorName: string;
   shipTo?: string | null;
+  /** Multi-line street address of the delivery/pickup target (name is `shipTo`). */
+  shipToAddress?: string | null;
+  /** 'SHIP TO' (delivery) or 'PICKUP AT' (will-call) — drives the block wording. */
+  deliveryLabel?: 'SHIP TO' | 'PICKUP AT';
   lines: POEmailLine[];
   neededBy?: string | null;
   notes?: string | null;
@@ -133,8 +137,13 @@ export function buildPurchaseOrderEmail(p: POEmailParams): { subject: string; ht
       (l) => `  - ${l.description} — ${fmtQty(l)}${l.unitPrice != null ? ` @ ${money(l.unitPrice)} = ${lineTotal(l)}` : ''}`,
     ),
   ];
+  // Delivery vs pickup wording, with the resolved street address inline so the
+  // vendor sees where to ship or where the crew will pick up — not just a name.
+  const isPickup = p.deliveryLabel === 'PICKUP AT';
+  const shipLabel = isPickup ? 'Pick up at' : 'Deliver to';
+  const shipValue = [p.shipTo, p.shipToAddress?.replace(/\n/g, ', ')].filter(Boolean).join(' — ');
   if (allPriced) textLines.push('', `Order total: ${money(orderTotal)}`);
-  if (p.shipTo) textLines.push('', `Deliver to: ${p.shipTo}`);
+  if (shipValue) textLines.push('', `${shipLabel}: ${shipValue}`);
   if (p.neededBy) textLines.push(`Needed by: ${fmtDate(p.neededBy)}`);
   if (p.notes?.trim()) textLines.push('', `Notes: ${p.notes.trim()}`);
   if (p.message?.trim()) textLines.push('', p.message.trim());
@@ -158,7 +167,7 @@ export function buildPurchaseOrderEmail(p: POEmailParams): { subject: string; ht
     : '';
 
   const metaBits: string[] = [];
-  if (p.shipTo) metaBits.push(`<p style="margin:4px 0;"><strong>Deliver to:</strong> ${escapeHtml(p.shipTo)}</p>`);
+  if (shipValue) metaBits.push(`<p style="margin:4px 0;"><strong>${escapeHtml(shipLabel)}:</strong> ${escapeHtml(shipValue)}</p>`);
   if (p.neededBy) metaBits.push(`<p style="margin:4px 0;"><strong>Needed by:</strong> ${escapeHtml(fmtDate(p.neededBy))}</p>`);
   if (p.notes?.trim()) metaBits.push(`<p style="margin:4px 0;"><strong>Notes:</strong> ${escapeHtml(p.notes.trim())}</p>`);
   const messageHtml = p.message?.trim() ? `<p style="margin:16px 0;white-space:pre-wrap;">${escapeHtml(p.message.trim())}</p>` : '';

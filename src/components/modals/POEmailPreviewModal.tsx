@@ -31,6 +31,8 @@ interface Preview {
   recipient: string | null;
   has_recipient: boolean;
   ship_to: string | null;
+  ship_to_address: string | null;
+  delivery_label: 'SHIP TO' | 'PICKUP AT';
   needed_by: string | null;
   notes: string | null;
   company_name: string | null;
@@ -93,6 +95,8 @@ export function POEmailPreviewModal({ open, poId, onClose }: POEmailPreviewModal
       poNumber: preview.po_number,
       vendorName: preview.vendor_name,
       shipTo: preview.ship_to,
+      shipToAddress: preview.ship_to_address,
+      deliveryLabel: preview.delivery_label,
       lines: preview.lines.map((l) => ({
         description: l.description,
         quantity: l.quantity,
