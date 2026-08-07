@@ -178,6 +178,7 @@ type TransferWithRelations = {
   completed_at: string | null;
   cancelled_at: string | null;
   last_event_id: string | null;
+  assigned_to_user_ids?: string[] | null;
   from_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
   to_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
   transfer_lines?: Array<{
@@ -1293,7 +1294,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, assigned_to_user_ids, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .order('created_at', { ascending: false });
 
@@ -1335,7 +1336,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, assigned_to_user_ids, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .eq('id', transferId)
       .maybeSingle();
@@ -1424,6 +1425,37 @@ export const InventoryRPC = {
       { expected_last_event_id: lastEventId },
       'Transfer was updated by someone else. Please refresh and try again.',
     );
+  },
+
+  /**
+   * Assign a transfer to a set of users (idempotent replace of the full set).
+   * Each assignee gets a task on their My Day card; the transfer carries a
+   * denormalized assigned_to_user_ids summary. Pass [] to clear assignment.
+   */
+  async assignTransfer(transferId: string, userIds: string[]): Promise<{ id: string; assigned_to_user_ids: string[] }> {
+    return writeJson(
+      `/api/inventory/transfers/${transferId}/assign`,
+      'POST',
+      { user_ids: userIds },
+      'Failed to assign transfer.',
+    );
+  },
+
+  /**
+   * Full tenant roster for the transfer assignment picker. Reuses the
+   * count-qualified endpoint (which returns everyone — HR people + app users);
+   * transfers have no qualification gate, so the `qualified` flag is ignored.
+   */
+  async getAssignableUsers(): Promise<Array<{ user_id: string; name: string; email: string | null; role: string | null }>> {
+    const res = await fetch('/api/inventory/count-qualified', { credentials: 'include' });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok) throw AppError.internal(json.error?.message || 'Failed to load people.');
+    return (json.data || []).map((u: any) => ({
+      user_id: u.user_id,
+      name: u.name,
+      email: u.email ?? null,
+      role: u.role ?? null,
+    }));
   },
 
   /**

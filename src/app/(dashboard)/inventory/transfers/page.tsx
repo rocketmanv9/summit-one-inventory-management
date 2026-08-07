@@ -34,10 +34,13 @@ type Transfer = {
   completed_at: string | null;
   cancelled_at: string | null;
   last_event_id: string | null;
+  assigned_to_user_ids?: string[] | null;
   from_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
   to_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
   transfer_lines?: TransferLine[];
 };
+
+type AssignableUser = { user_id: string; name: string; email: string | null; role: string | null };
 
 type LocationOption = {
   id: string;
@@ -88,6 +91,8 @@ function TransfersPageContent() {
   const [partialReceiveTransfer, setPartialReceiveTransfer] = useState<Transfer | null>(null);
   const [showFixMistakeModal, setShowFixMistakeModal] = useState(false);
   const [fixMistakeTransfer, setFixMistakeTransfer] = useState<Transfer | null>(null);
+  const [assignTransfer, setAssignTransfer] = useState<Transfer | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [createPrefill, setCreatePrefill] = useState<CreatePrefill | null>(null);
   const consumedCreateParams = useRef(false);
 
@@ -114,6 +119,16 @@ function TransfersPageContent() {
   useEffect(() => {
     fetchTransfers();
   }, [filters.status]); // Only depend on the specific filter value, not the whole object
+
+  // Roster for the assign picker + chip labels (names for assigned_to_user_ids).
+  useEffect(() => {
+    InventoryRPC.getAssignableUsers()
+      .then(setAssignableUsers)
+      .catch(() => setAssignableUsers([]));
+  }, []);
+
+  const userNameById = (id: string) =>
+    assignableUsers.find((u) => u.user_id === id)?.name || `${id.slice(0, 8)}…`;
 
   const fetchTransfers = async () => {
     setLoading(true);
@@ -300,6 +315,34 @@ function TransfersPageContent() {
       ),
     },
     {
+      key: 'assigned',
+      header: 'Assigned',
+      render: (row: Transfer) => {
+        const ids = row.assigned_to_user_ids || [];
+        if (ids.length === 0) {
+          return <span className="text-xs text-muted-foreground">Unassigned</span>;
+        }
+        return (
+          <div className="flex flex-wrap gap-1">
+            {ids.slice(0, 3).map((id) => (
+              <span
+                key={id}
+                className="px-2 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-800"
+                title={userNameById(id)}
+              >
+                {userNameById(id)}
+              </span>
+            ))}
+            {ids.length > 3 && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
+                +{ids.length - 3}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       key: 'created_at',
       header: 'Created',
       sortable: true,
@@ -310,6 +353,18 @@ function TransfersPageContent() {
       header: '',
       render: (row: Transfer) => (
         <div className="flex gap-2">
+          {row.status !== 'completed' && row.status !== 'cancelled' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setAssignTransfer(row);
+              }}
+              className="px-2 py-1 text-xs bg-indigo-100 text-indigo-800 rounded hover:bg-indigo-200"
+              title="Assign this transfer to one or more people"
+            >
+              {(row.assigned_to_user_ids || []).length > 0 ? 'Reassign' : 'Assign'}
+            </button>
+          )}
           {row.status === 'draft' && (
             <>
               <button
@@ -608,8 +663,135 @@ function TransfersPageContent() {
             }}
           />
         )}
+        {assignTransfer && (
+          <AssignTransferModal
+            transfer={assignTransfer}
+            users={assignableUsers}
+            onClose={() => setAssignTransfer(null)}
+            onAssigned={() => {
+              setAssignTransfer(null);
+              fetchTransfers();
+            }}
+          />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+function AssignTransferModal({
+  transfer,
+  users,
+  onClose,
+  onAssigned,
+}: {
+  transfer: Transfer;
+  users: AssignableUser[];
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(transfer.assigned_to_user_ids || []),
+  );
+  const [search, setSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const filtered = users.filter((u) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      u.name.toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
+  });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await InventoryRPC.assignTransfer(transfer.id, [...selected]);
+      onAssigned();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign transfer.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+        <div className="border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">Assign transfer</h3>
+          <p className="text-sm text-muted-foreground">
+            {transfer.from_location?.name} → {transfer.to_location?.name}
+            {' · '}
+            Everyone selected gets it on their My Day.
+          </p>
+        </div>
+        <div className="px-5 py-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search people by name, email, or role…"
+            className="mb-3 w-full rounded border px-3 py-2 text-sm"
+          />
+          {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
+          <div className="max-h-72 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">No people found.</div>
+            ) : (
+              filtered.map((u) => {
+                const on = selected.has(u.user_id);
+                return (
+                  <label
+                    key={u.user_id}
+                    className="flex cursor-pointer items-center gap-3 rounded px-2 py-2 hover:bg-gray-50"
+                  >
+                    <input type="checkbox" checked={on} onChange={() => toggle(u.user_id)} />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{u.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {[u.email, u.role].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-between border-t px-5 py-3">
+          <span className="text-sm text-muted-foreground">{selected.size} selected</span>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save assignment'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
