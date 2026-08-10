@@ -594,6 +594,7 @@ export default function VendorsPage() {
             onClose={() => setShowQuickAdd(false)}
             onSuccess={() => { setShowQuickAdd(false); fetchVendors(); }}
             onReview={(draft) => { setShowQuickAdd(false); setDraftVendor(draft); }}
+            onUseExisting={(v) => { setShowQuickAdd(false); router.push(`/inventory/vendors/${v.id}`); }}
           />
         )}
 

@@ -7,6 +7,7 @@ import { pickVendorColumns } from '@/lib/vendor-columns';
 import { assertCapability } from '@/lib/access-server';
 import { sanitizeEmailDomains, upsertVendorEmailDomains } from '@/lib/vendor-email-domains';
 import { assertVendorCodeAvailable, isVendorCodeConflict, normalizeVendorCode, vendorCodeConflictError } from '@/lib/vendor-code';
+import { findVendorMatches, isStrongMatch } from '@/lib/vendor-match';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -65,7 +66,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const body = await req.json();
   const { id: _id, created_at, tenant_id, last_event_id: _lei,
           contacts: _c, addresses: _a, vendor_type_id, is_active, description,
-          email_domains, ...rest } = body ?? {};
+          email_domains, force, ...rest } = body ?? {};
   const emailDomains = sanitizeEmailDomains(EmailDomainsSchema.parse(email_domains ?? undefined));
   const raw: Record<string, any> = { ...rest };
   // Accept GV-style field names from the Vendors UI.
@@ -113,6 +114,33 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     }
     await upsertVendorEmailDomains(sc, log, ctx.tenantId!, restored.id, emailDomains);
     return { data: restored, status: 200, events: [] };
+  }
+
+  // Fuzzy duplicate guard (item 01): the exact-name 409 above only catches
+  // identical names. Run the same matcher the UI uses so no caller — AI web
+  // search, AI suggest, email, manual, or a future API client — can silently
+  // create a near-dupe (e.g. "Lakeside Industries Foster Road Asphalt Plant"
+  // against the existing "Lakeside Industries" with that exact plant address).
+  // Only the explicit "create new anyway" path sends force:true.
+  if (force !== true) {
+    const matches = await findVendorMatches(sc, ctx.tenantId!, {
+      name: fields.name,
+      street1: fields.address_line_1 ?? null,
+      city: fields.city ?? null,
+      state: fields.state ?? null,
+      zip: fields.postal_code ?? null,
+      website: fields.portal_url ?? raw.website ?? null,
+      email: fields.contact_email ?? null,
+      domain: emailDomains[0] ?? null,
+      phone: fields.contact_phone ?? fields.phone_number ?? null,
+    }, log);
+    const strong = matches.filter(isStrongMatch);
+    if (strong.length > 0) {
+      throw AppError.conflict(
+        `This looks like an existing vendor (${strong[0].vendor_name}). Use the existing vendor, add this as one of its addresses, or confirm you want to create a new vendor anyway.`,
+        { matches: strong },
+      );
+    }
   }
 
   const { data, error } = await sc.from('vendors')

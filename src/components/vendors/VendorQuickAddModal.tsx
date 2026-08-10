@@ -31,9 +31,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Building2, CheckCircle2, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
-import { createVendorFromDraft, type VendorDraft } from '@/lib/vendor-draft';
+import {
+  createVendorFromDraft,
+  addDraftToExistingVendor,
+  checkVendorMatches,
+  type VendorDraft,
+  type VendorMatchResult,
+} from '@/lib/vendor-draft';
 import { discoverVendors, type VendorCandidate } from '@/lib/ai/client';
 
 interface VendorSuggestion {
@@ -57,6 +63,8 @@ interface VendorQuickAddModalProps {
   onReview: (draft: VendorDraft) => void;
   /** Existing vendor names — flags web-search candidates you already have. */
   existingNames?: string[];
+  /** "Use existing vendor" from the duplicate gate — navigate to / select it. */
+  onUseExisting?: (vendor: { id: string; name: string }) => void;
 }
 
 interface QuickForm {
@@ -101,7 +109,7 @@ const SEARCH_EXAMPLES = [
   'equipment rental in Beaverton',
 ];
 
-export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existingNames = [] }: VendorQuickAddModalProps) {
+export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existingNames = [], onUseExisting }: VendorQuickAddModalProps) {
   const [phase, setPhase] = useState<'input' | 'results' | 'review'>('input');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -116,6 +124,16 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
   const [searching, setSearching] = useState(false);
   const [candidates, setCandidates] = useState<VendorCandidate[]>([]);
   const [extras, setExtras] = useState<Pick<VendorCandidate, 'street1' | 'zip' | 'phone' | 'email'> | null>(null);
+  // Duplicate gate: matches for the vendor being reviewed, whether we're still
+  // checking, and whether the user has explicitly chosen "create new anyway".
+  const [matches, setMatches] = useState<VendorMatchResult[]>([]);
+  const [strongThreshold, setStrongThreshold] = useState(72);
+  const [matchChecking, setMatchChecking] = useState(false);
+  const [forceCreate, setForceCreate] = useState(false);
+  const [attachingTo, setAttachingTo] = useState<string | null>(null);
+  // Results phase: best existing-vendor match per candidate index, so we can flag
+  // "Already in your vendors" even when the name differs but the address matches.
+  const [candidateMatches, setCandidateMatches] = useState<Record<number, VendorMatchResult>>({});
 
   const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
   const existingSet = new Set(existingNames.map(normalizeName));
@@ -135,7 +153,76 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     setSearching(false);
     setCandidates([]);
     setExtras(null);
+    setMatches([]);
+    setMatchChecking(false);
+    setForceCreate(false);
+    setAttachingTo(null);
+    setCandidateMatches({});
   }, [open]);
+
+  /**
+   * Annotate discovery/email candidates with their best existing-vendor match so
+   * the user sees "Already in your vendors" (name OR address) before picking.
+   * Fire-and-forget; failures just leave a candidate un-annotated.
+   */
+  async function annotateCandidates(list: VendorCandidate[]) {
+    const entries = await Promise.all(list.map(async (c, i) => {
+      const domain = domainFromWebsite(c.website) || (c.email ? c.email.split('@')[1] : null);
+      const res = await checkVendorMatches({
+        name: c.name,
+        street1: c.street1 ?? null,
+        city: c.city ?? null,
+        state: c.state ?? null,
+        zip: c.zip ?? null,
+        website: c.website ?? null,
+        email: c.email ?? null,
+        domain,
+        phone: c.phone ?? null,
+      });
+      const best = res.matches.find((m) => m.confidence >= res.strongThreshold);
+      return best ? ([i, best] as const) : null;
+    }));
+    const map: Record<number, VendorMatchResult> = {};
+    for (const e of entries) if (e) map[e[0]] = e[1];
+    setCandidateMatches(map);
+  }
+
+  // Whenever we land on (or edit within) the review phase, re-check for existing
+  // vendors this candidate might duplicate. All four add paths funnel here, so
+  // this is the single client-side gate. Debounced so typing in the form doesn't
+  // hammer the endpoint. Any strong match forces an explicit override to save.
+  const reviewName = phase === 'review' ? form.name.trim() : '';
+  useEffect(() => {
+    if (phase !== 'review' || reviewName.length < 2) {
+      setMatches([]);
+      return;
+    }
+    let cancelled = false;
+    setMatchChecking(true);
+    const t = setTimeout(async () => {
+      const domain = domainFromWebsite(form.website)
+        || (form.contact_email.includes('@') ? form.contact_email.split('@')[1] : null);
+      const res = await checkVendorMatches({
+        name: reviewName,
+        street1: extras?.street1 ?? null,
+        city: form.city.trim() || null,
+        state: form.state.trim() || null,
+        zip: extras?.zip ?? null,
+        website: form.website.trim() || null,
+        email: form.contact_email.trim() || null,
+        domain: domain,
+        phone: form.contact_phone.trim() || extras?.phone || null,
+      });
+      if (cancelled) return;
+      setMatches(res.matches);
+      setStrongThreshold(res.strongThreshold);
+      setMatchChecking(false);
+      // Editing the candidate invalidates a prior "create anyway" decision.
+      setForceCreate(false);
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, reviewName, form.city, form.state, form.website, form.contact_email, form.contact_phone, extras]);
 
   function setField(field: keyof QuickForm, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -204,9 +291,12 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     try {
       const found = await discoverVendors(input);
       setCandidates(found);
+      setCandidateMatches({});
       setPhase('results');
       if (found.length === 0) {
         setError('No matches found — try a broader description or a different area.');
+      } else {
+        void annotateCandidates(found);
       }
     } catch {
       setError('Web search failed. Try again.');
@@ -236,7 +326,11 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
         return;
       }
       setCandidates(json.results || []);
+      setCandidateMatches({});
       setPhase('results');
+      if ((json.results || []).length > 0) {
+        void annotateCandidates(json.results);
+      }
       if ((json.results || []).length === 0) {
         setError(
           json.searched > 0
@@ -320,6 +414,13 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     };
   }
 
+  // Strong (blocking) matches vs. low-confidence hints. A strong match blocks
+  // confirm until the user explicitly chooses "create new anyway".
+  const strongMatches = matches.filter((m) => m.confidence >= strongThreshold);
+  const hintMatches = matches.filter((m) => m.confidence < strongThreshold);
+  const blockedByMatch = strongMatches.length > 0 && !forceCreate;
+  const topMatch = strongMatches[0];
+
   async function handleSave() {
     if (form.name.trim().length < 2) {
       setError('Vendor name is required (at least 2 characters).');
@@ -328,12 +429,33 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     setSaving(true);
     setError(null);
     try {
-      const created = await createVendorFromDraft(buildDraft());
+      // forceCreate is only ever true after the user clicked "Create new anyway"
+      // on the warning, so it flows to the server guard as force:true.
+      const created = await createVendorFromDraft({ ...buildDraft(), force: forceCreate || undefined });
       onSuccess(created);
     } catch (err: any) {
       setError(err?.message || 'Failed to save vendor.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** "Use existing vendor" — don't create anything; hand the match to the parent. */
+  function handleUseExisting(match: VendorMatchResult) {
+    onUseExisting?.({ id: match.vendor_id, name: match.vendor_name });
+  }
+
+  /** "Add as new address/branch" — attach this draft to the matched vendor. */
+  async function handleAttachToExisting(match: VendorMatchResult) {
+    setAttachingTo(match.vendor_id);
+    setError(null);
+    try {
+      const result = await addDraftToExistingVendor(match.vendor_id, match.vendor_name, buildDraft());
+      onSuccess(result);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to add branch to the existing vendor.');
+    } finally {
+      setAttachingTo(null);
     }
   }
 
@@ -458,7 +580,11 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
               </Alert>
             )}
             {candidates.map((c, i) => {
-              const already = existingSet.has(normalizeName(c.name));
+              const match = candidateMatches[i];
+              const already = !!match || existingSet.has(normalizeName(c.name));
+              const matchLabel = match
+                ? `Already in your vendors — ${match.vendor_name}`
+                : 'Already in your vendors';
               const addr = [c.street1, [c.city, c.state].filter(Boolean).join(', '), c.zip].filter(Boolean).join(' · ');
               return (
                 <button
@@ -471,8 +597,11 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
                     <span className="text-sm font-semibold">{c.name}</span>
                     {c.category && <span className="text-xs text-muted-foreground">{c.category}</span>}
                     {already && (
-                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                        Already in your vendors
+                      <span
+                        className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+                        title={match?.reasons?.join(' · ')}
+                      >
+                        {matchLabel}
                       </span>
                     )}
                     <span className="ml-auto text-xs font-medium text-purple-600">Use</span>
@@ -498,6 +627,90 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
                 <Sparkles className="h-4 w-4 text-purple-500" />
                 <AlertDescription className="text-purple-900">
                   Details filled in by AI. Review and adjust as needed.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {matchChecking && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" /> Checking for existing vendors…
+              </p>
+            )}
+
+            {/* Strong duplicate — block confirm until the user resolves it. */}
+            {topMatch && (
+              <div className="rounded-lg border-2 border-amber-300 bg-amber-50/70 p-3 space-y-2.5">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-amber-900">
+                      {topMatch.confidence}% match — {topMatch.vendor_name}
+                    </p>
+                    <ul className="mt-1 space-y-0.5 text-xs text-amber-800">
+                      {topMatch.reasons.map((r, i) => (
+                        <li key={i} className="flex items-start gap-1">
+                          <span aria-hidden>•</span><span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                {!forceCreate ? (
+                  <div className="space-y-1.5">
+                    <Button
+                      type="button"
+                      className="w-full justify-start"
+                      onClick={() => handleUseExisting(topMatch)}
+                      disabled={saving || attachingTo !== null}
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" /> Use existing vendor
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => handleAttachToExisting(topMatch)}
+                      disabled={saving || attachingTo !== null}
+                    >
+                      {attachingTo === topMatch.vendor_id
+                        ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        : <Building2 className="h-4 w-4 mr-2" />}
+                      Add as a new address/branch of {topMatch.vendor_name}
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => setForceCreate(true)}
+                      disabled={saving || attachingTo !== null}
+                      className="w-full pt-1 text-xs font-medium text-red-600 hover:text-red-700 underline disabled:opacity-50"
+                    >
+                      No — these are different companies. Create a new vendor anyway.
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 rounded-md bg-red-50 px-2.5 py-1.5">
+                    <span className="text-xs font-medium text-red-700">
+                      Creating a new vendor despite the match.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setForceCreate(false)}
+                      className="text-xs font-medium text-muted-foreground hover:text-foreground underline"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Low-confidence — passive hint, does not block. */}
+            {!topMatch && hintMatches.length > 0 && (
+              <Alert className="border-slate-200 bg-slate-50/60">
+                <AlertCircle className="h-4 w-4 text-slate-500" />
+                <AlertDescription className="text-slate-700 text-xs">
+                  Similar {hintMatches.length === 1 ? 'vendor' : 'vendors'} already in your list:{' '}
+                  {hintMatches.map((m) => m.vendor_name).join(', ')}. Double-check this isn&apos;t a duplicate.
                 </AlertDescription>
               </Alert>
             )}
@@ -624,9 +837,14 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
               >
                 Back
               </Button>
-              <Button type="button" onClick={handleSave} disabled={saving || form.name.trim().length < 2}>
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || attachingTo !== null || form.name.trim().length < 2 || blockedByMatch}
+                title={blockedByMatch ? 'Resolve the duplicate match above first' : undefined}
+              >
                 {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {saving ? 'Saving…' : 'Add Vendor'}
+                {saving ? 'Saving…' : forceCreate ? 'Create New Vendor' : 'Add Vendor'}
               </Button>
             </>
           ) : phase === 'results' ? (

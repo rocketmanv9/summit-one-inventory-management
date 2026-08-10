@@ -42,6 +42,60 @@ export interface VendorDraft {
    *  supply_chain.vendor_email_domains so the email → item-suggestions scanner
    *  can match this vendor. */
   email_domains?: string[];
+  /** Set true only by the explicit "create new vendor anyway" path — bypasses
+   *  the server-side fuzzy duplicate guard in POST /api/inventory/vendors. */
+  force?: boolean;
+}
+
+/** One ranked duplicate match returned by POST /api/inventory/vendors/match. */
+export interface VendorMatchResult {
+  vendor_id: string;
+  vendor_name: string;
+  confidence: number;
+  reasons: string[];
+}
+
+export interface VendorMatchResponse {
+  matches: VendorMatchResult[];
+  strongThreshold: number;
+  hintThreshold: number;
+}
+
+/**
+ * Ask the server whether a candidate vendor looks like an existing one. Used by
+ * the quick-add review phase to gate confirm. Returns empty on any failure so a
+ * matcher hiccup never blocks the user (the server POST guard is the backstop).
+ */
+export async function checkVendorMatches(input: {
+  name: string;
+  street1?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  website?: string | null;
+  email?: string | null;
+  domain?: string | null;
+  phone?: string | null;
+  exclude_vendor_id?: string | null;
+}): Promise<VendorMatchResponse> {
+  const fallback: VendorMatchResponse = { matches: [], strongThreshold: 72, hintThreshold: 45 };
+  try {
+    const res = await fetch('/api/inventory/vendors/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return fallback;
+    const json = await res.json();
+    return {
+      matches: Array.isArray(json.matches) ? json.matches : [],
+      strongThreshold: json.strongThreshold ?? 72,
+      hintThreshold: json.hintThreshold ?? 45,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 export function draftHasAddress(a?: VendorDraftAddress): boolean {
@@ -107,6 +161,7 @@ export async function createVendorFromDraft(draft: VendorDraft): Promise<{ id: s
     notes,
     portal_url: draft.website?.trim() || null,
     email_domains: emailDomains.length > 0 ? emailDomains : undefined,
+    force: draft.force === true ? true : undefined,
     contact_name: contact?.name?.trim() || null,
     contact_email: contact?.email?.trim() || null,
     contact_phone: contact?.phone?.trim() || null,
@@ -147,4 +202,59 @@ export async function createVendorFromDraft(draft: VendorDraft): Promise<{ id: s
   }
 
   return { id: vendorId, name };
+}
+
+/**
+ * "Add as new address/branch of an existing vendor" — the middle option of the
+ * duplicate gate. Instead of creating a second vendor row, attach this draft's
+ * address (and contact, if any) to the vendor the matcher flagged. Geocodes the
+ * address so the new branch lands on the map / in nearest-location ranking.
+ */
+export async function addDraftToExistingVendor(
+  vendorId: string,
+  vendorName: string,
+  draft: VendorDraft,
+): Promise<{ id: string; name: string }> {
+  const addr = draftHasAddress(draft.address) ? draft.address! : null;
+  const contact = draftHasContact(draft.contact) ? draft.contact! : null;
+  if (!addr && !contact) {
+    // Nothing new to attach — treat as "use existing" (no-op write).
+    return { id: vendorId, name: vendorName };
+  }
+
+  if (addr) {
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    const geo = await geocodeStructured({
+      street1: addr.street1, street2: addr.street2, city: addr.city,
+      state: addr.state, zip: addr.zip, country: addr.country,
+    });
+    if (geo) { latitude = geo.latitude; longitude = geo.longitude; }
+
+    await subFetch(`/api/inventory/vendors/${vendorId}/addresses`, 'POST', {
+      address_type: 'general',
+      // Label the branch with its city so it reads well in the vendor's address list.
+      label: addr.city?.trim() || draft.name.trim() || null,
+      street1: addr.street1?.trim() || null,
+      street2: addr.street2?.trim() || null,
+      city: addr.city?.trim() || null,
+      state: addr.state?.trim() || null,
+      zip: addr.zip?.trim() || null,
+      country: addr.country?.trim() || null,
+      latitude,
+      longitude,
+    });
+  }
+
+  if (contact) {
+    await subFetch(`/api/inventory/vendors/${vendorId}/contacts`, 'POST', {
+      name: contact.name?.trim() || null,
+      email: contact.email?.trim() || null,
+      phone: contact.phone?.trim() || null,
+      title: contact.title?.trim() || null,
+      is_primary: false,
+    });
+  }
+
+  return { id: vendorId, name: vendorName };
 }
