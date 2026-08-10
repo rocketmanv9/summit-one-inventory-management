@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles, Loader2, GitBranch, ChevronRight } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -326,6 +326,23 @@ export default function SettingsPage() {
           </p>
         </div>
       )}
+
+      {/* Related settings surfaces that live on their own page. */}
+      <a
+        href="/settings/purchase-approvals"
+        className="mb-6 flex max-w-5xl items-center gap-3 rounded-lg border bg-white p-4 hover:border-primary hover:bg-primary/5"
+      >
+        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <GitBranch className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Purchase approvals</span>
+          <span className="block text-sm text-gray-500">
+            See who approves purchases for whom and from where, and simulate any buyer/location.
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />
+      </a>
 
       <div className="max-w-5xl">
         <form onSubmit={handleSubmit} className="space-y-6">
