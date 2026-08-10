@@ -200,7 +200,8 @@ export default function PurchaseLinksPage() {
           Define the outside sites a role is allowed to buy from — for example{' '}
           <strong>Business cards on Canva</strong> for Estimators. Each link shows up as a quick
           action <strong>only for the positions you pick here</strong>. Leave positions empty to
-          keep a link admin-only.
+          keep a link admin-only. Buying <strong>from your own catalog</strong> instead?{' '}
+          <a href="/settings/buyable-groups" className="font-medium underline">Who can buy what</a>.
         </p>
       </div>
 
