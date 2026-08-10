@@ -42,6 +42,10 @@
     {
       "path": "/api/system/cron/item-suggestions",
       "schedule": "45 13 * * *"
+    },
+    {
+      "path": "/api/system/cron/abandon-stale-order-sessions",
+      "schedule": "20 * * * *"
     }
   ]
 }

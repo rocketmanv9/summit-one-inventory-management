@@ -846,6 +846,16 @@ function PODetailPanel({
               <Sparkles className="h-3 w-3" /> AI-drafted
             </span>
           )}
+          {/* Origin badge: this PO was drafted from a guided external purchase
+              (item 06) — screenshots captured on the site, AI-extracted into lines. */}
+          {po.origin === 'guided_purchase' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800"
+              title="Drafted from a guided external purchase — verify against the confirmation email"
+            >
+              <Sparkles className="h-3 w-3" /> From guided purchase
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4">
