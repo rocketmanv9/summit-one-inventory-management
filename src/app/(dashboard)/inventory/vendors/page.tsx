@@ -16,6 +16,7 @@ import { geocodeAddress } from '@/lib/geocode';
 import { apiErrorMessage, errMessage } from '@/lib/client-errors';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { VendorModal } from '@/components/vendors/VendorModal';
+import { VendorMergeModal } from '@/components/vendors/VendorMergeModal';
 import { VendorQuickAddModal } from '@/components/vendors/VendorQuickAddModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
 import type { VendorDraft } from '@/lib/vendor-draft';
@@ -128,6 +129,8 @@ export default function VendorsPage() {
   const [removeTarget, setRemoveTarget] = useState<Vendor | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState('');
+  // The duplicate vendor being folded into another via the merge tool.
+  const [mergeSource, setMergeSource] = useState<Vendor | null>(null);
 
   /* ---- Fetching ---- */
 
@@ -336,6 +339,15 @@ export default function VendorsPage() {
             >
               Notes
             </button>
+            {row.is_active && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setMergeSource(row); }}
+                className="px-2 py-1 text-xs bg-amber-50 text-amber-700 rounded hover:bg-amber-100"
+                title="Merge this vendor into another (for duplicates)"
+              >
+                Merge
+              </button>
+            )}
             {row.is_active ? (
               <button
                 onClick={(e) => { e.stopPropagation(); handleRemove(row); }}
@@ -629,6 +641,20 @@ export default function VendorsPage() {
           error={removeError}
           onConfirm={confirmRemove}
           onCancel={() => { setRemoveTarget(null); setRemoveError(''); }}
+        />
+
+        {/* Merge Vendor (fold a duplicate into the real one) */}
+        <VendorMergeModal
+          open={!!mergeSource}
+          source={mergeSource}
+          vendors={vendors}
+          onClose={() => setMergeSource(null)}
+          onMerged={({ targetId }) => {
+            setMergeSource(null);
+            fetchVendors();
+            // Land the user on the surviving vendor's full profile.
+            router.push(`/inventory/vendors/${targetId}`);
+          }}
         />
       </div>
     </AppShell>
