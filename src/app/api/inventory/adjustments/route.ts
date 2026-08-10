@@ -6,8 +6,11 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 // The reason codes rpc_adjust_inventory accepts (same allow-list the AI bridge's
 // adjust_stock / adjust_stock_delta actions enforce). Anything else falls back
-// to 'other'.
+// to 'other'. 'estimate_update' is the loose-tracking eyeball-update reason —
+// only valid when the request sets estimate:true (see below), so the audit
+// trail reads "estimate updated" rather than "counted".
 const VALID_ADJUST_REASONS = ['count_variance', 'damage', 'theft', 'expiration', 'other'] as const;
+const ESTIMATE_REASON = 'estimate_update';
 
 /**
  * POST /api/inventory/adjustments
@@ -35,13 +38,18 @@ const AdjustSchema = z
     reason: z.string().optional(),
     notes: z.string().max(500).optional(),
     override_reason: z.string().max(500).optional(),
+    // Loose-tracking "eyeball update": stamps last_verified_at/by on the item
+    // and records the movement with a distinguishable reason so history reads
+    // "estimate updated", not "counted". Ignored for precise items — the flag
+    // just changes the audit framing, the ledger math is identical.
+    estimate: z.boolean().optional(),
   })
   .refine((b) => (b.mode === 'set' ? b.new_qty != null : b.delta != null && b.delta !== 0), {
     message: 'set mode requires new_qty; delta mode requires a non-zero delta',
   });
 
 export const POST = createSessionWriteRoute(
-  async ({ req, log, supabase }) => {
+  async ({ req, ctx, log, supabase }) => {
     const body = AdjustSchema.parse(await req.json());
     const inv = (supabase as any).schema('inventory');
 
@@ -66,9 +74,14 @@ export const POST = createSessionWriteRoute(
         ? (body.new_qty as number)
         : Math.max(0, previousQty + (body.delta as number));
 
-    const reason = VALID_ADJUST_REASONS.includes(body.reason as any) ? body.reason : 'other';
-    const defaultNote =
-      body.mode === 'set'
+    const reason = body.estimate
+      ? ESTIMATE_REASON
+      : VALID_ADJUST_REASONS.includes(body.reason as any)
+        ? body.reason
+        : 'other';
+    const defaultNote = body.estimate
+      ? `Estimate updated (was ~${previousQty})`
+      : body.mode === 'set'
         ? `Set via mobile (was ${previousQty})`
         : `${(body.delta as number) > 0 ? '+' : ''}${body.delta} via mobile`;
 
@@ -91,10 +104,28 @@ export const POST = createSessionWriteRoute(
       throw AppError.badRequest(guardrail?.message || 'Adjustment blocked by guardrail policy');
     }
 
+    // Eyeball update: mark the item's estimate as freshly re-trued. This is a
+    // metadata timestamp on catalog_items (not a ledger movement), so it emits
+    // no event of its own — the stock movement above already carries the change.
+    if (body.estimate) {
+      const { error: stampError } = await inv
+        .from('catalog_items')
+        .update({
+          last_verified_at: new Date().toISOString(),
+          last_verified_by: ctx.userId ?? null,
+        })
+        .eq('id', body.catalog_item_id);
+      if (stampError) {
+        // Non-fatal: the qty already moved; log and keep the success response.
+        log.error('adjustment.estimate_stamp_failed', { error: stampError.message });
+      }
+    }
+
     log.info('adjustment.completed', {
       itemId: body.catalog_item_id,
       locationId: body.location_id,
       mode: body.mode,
+      estimate: body.estimate === true,
       previousQty,
       newQty,
     });

@@ -40,6 +40,7 @@ interface Proposal {
   reorder_qty: number | null;
   rationale: string;
   enough_history: boolean;
+  loose_tracking?: boolean;
 }
 
 interface Summary {
@@ -376,6 +377,14 @@ export function MinLevelWizard({
                                       >
                                         {CLASS_LABEL[p.classification]}
                                       </span>
+                                      {p.loose_tracking && (
+                                        <span
+                                          title="Loosely tracked — this level is based on an estimated on-hand"
+                                          className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
+                                        >
+                                          based on estimate
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="font-mono text-xs text-muted-foreground">
                                       {p.sku}
@@ -386,7 +395,7 @@ export function MinLevelWizard({
                                     </div>
                                   </td>
                                   <td className="px-3 py-2 text-right font-mono">
-                                    {p.qty_on_hand.toLocaleString()}
+                                    {p.loose_tracking ? '~' : ''}{p.qty_on_hand.toLocaleString()}
                                   </td>
                                   <td className="px-3 py-2 text-right font-mono text-muted-foreground">
                                     {p.usage_30d.toLocaleString()}

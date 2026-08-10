@@ -357,6 +357,33 @@ export const InventoryRPC = {
   },
 
   /**
+   * Loose-tracking eyeball update — set a new estimated on-hand for a loose
+   * item at a location. Goes through the /api/inventory/adjustments route (not
+   * the RPC directly) because the route stamps last_verified_at/by on the item
+   * and records the movement with the distinguishable 'estimate_update' reason.
+   */
+  async updateEstimate(params: {
+    catalog_item_id: string;
+    location_id: string;
+    new_qty: number;
+    notes?: string;
+  }): Promise<{ previous_qty: number; new_qty: number }> {
+    return writeJson<{ previous_qty: number; new_qty: number }>(
+      '/api/inventory/adjustments',
+      'POST',
+      {
+        catalog_item_id: params.catalog_item_id,
+        location_id: params.location_id,
+        mode: 'set',
+        new_qty: params.new_qty,
+        estimate: true,
+        notes: params.notes,
+      },
+      'Failed to update estimate',
+    );
+  },
+
+  /**
    * Get catalog items
    * Table: inventory.catalog_items
    */
@@ -2681,6 +2708,12 @@ export const InventoryRPC = {
       variant_attributes?: Record<string, string> | null;
       variant_dimensions?: string[] | null;
       variant_options?: Record<string, string[]> | null;
+      // Loose-tracking (estimate mode): when loose_tracking is true, quantities
+      // for this item are estimates. last_verified_at is when the estimate was
+      // last re-trued (eyeball update or count) — drives the staleness warning.
+      loose_tracking?: boolean;
+      last_verified_at?: string | null;
+      last_verified_by?: string | null;
     };
     on_hand: number;
     reserved: number;

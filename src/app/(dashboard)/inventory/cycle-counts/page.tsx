@@ -1502,7 +1502,14 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                 );
               }
 
-              const acceptedLines = varianceLines.filter(l => l.decision_status === 'accepted');
+              // Loose-tracking items don't produce "discrepancies" — the count
+              // IS the re-truing. They come back pre-accepted (decision_reason
+              // 'estimate_retrued'); pull them out of the accepted list so they
+              // read as "estimates re-trued" rather than variances to worry about.
+              const isEstimateLine = (l: any) =>
+                l.catalog_item?.loose_tracking || l.decision_reason === 'estimate_retrued';
+              const estimateLines = varianceLines.filter(l => l.decision_status === 'accepted' && isEstimateLine(l));
+              const acceptedLines = varianceLines.filter(l => l.decision_status === 'accepted' && !isEstimateLine(l));
               const investigatingLines = varianceLines.filter(l => l.decision_status === 'investigating');
               const rejectedLines = varianceLines.filter(l => l.decision_status === 'rejected');
 
@@ -1515,7 +1522,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
               return (
                 <>
                   {/* Combined Preview of Changes */}
-                  {(acceptedLines.length > 0 || investigatingLines.length > 0 || rejectedLines.length > 0 || varianceLines.length === 0) && (
+                  {(acceptedLines.length > 0 || estimateLines.length > 0 || investigatingLines.length > 0 || rejectedLines.length > 0 || varianceLines.length === 0) && (
                     <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="text-sm font-medium text-blue-900">📋 What Will Happen When You Approve:</div>
@@ -1524,6 +1531,7 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                       
                       <div className="text-xs text-blue-700 space-y-0.5 pb-2 border-b border-blue-200">
                         {acceptedLines.length > 0 && <div>• {acceptedLines.length} variance(s) will be adjusted</div>}
+                        {estimateLines.length > 0 && <div>• {estimateLines.length} estimate(s) re-trued (loosely-tracked items)</div>}
                         {investigatingLines.length > 0 && <div>• {investigatingLines.length} variance(s) marked for investigation</div>}
                         {rejectedLines.length > 0 && <div>• {rejectedLines.length} count(s) rejected</div>}
                         {varianceLines.length === 0 && <div>• No variance detected - counts match expected</div>}
@@ -1555,6 +1563,30 @@ function CycleCountDetailPanel({ cycleCount, onClose, onUpdate }: {
                                     <span>→ {newQty} {uomLabels[(item as any)?.uom_term_id] || 'units'}</span>
                                   </div>
                                 )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {estimateLines.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-xs font-semibold text-violet-800 uppercase tracking-wide">Estimates Re-trued (Loosely-tracked — Not Discrepancies):</div>
+                          {estimateLines.map((line) => {
+                            const item = line.catalog_item;
+                            const delta = (line.qty_counted || 0) - line.qty_expected;
+                            const newQty = line.qty_expected + delta;
+                            const unit = uomLabels[(item as any)?.uom_term_id] || 'units';
+                            return (
+                              <div key={line.id} className="pl-3 border-l-2 border-violet-300">
+                                <div className="text-xs font-medium text-violet-900">{item?.name || 'Unknown Item'}</div>
+                                <div className="text-xs text-violet-700 flex items-center gap-2 mt-0.5">
+                                  <span>Estimate: ~{line.qty_expected} {unit}</span>
+                                  <span className={delta < 0 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
+                                    {delta >= 0 ? '+' : ''}{delta}
+                                  </span>
+                                  <span>→ ~{newQty} {unit}</span>
+                                </div>
                               </div>
                             );
                           })}

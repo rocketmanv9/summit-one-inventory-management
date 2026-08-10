@@ -29,6 +29,7 @@ import { ReferenceLinksEditor } from '@/components/items/ReferenceLinksEditor';
 import { ItemAmazonMapping } from '@/components/items/ItemAmazonMapping';
 import { cleanReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { formatEstimateQty, estimateStaleness } from '@/lib/items/loose-tracking';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import {
   AdjustStockModal,
@@ -127,6 +128,16 @@ export default function ItemDetailPage() {
   const [adjustError, setAdjustError] = useState('');
   const [guardrailBlock, setGuardrailBlock] = useState<GuardrailBlock>(null);
 
+  // Loose-tracking "Update estimate" sheet — a lightweight eyeball correction
+  // (pick a location, type a new ~qty). Distinct from Adjust Stock: no reason
+  // picker, and it stamps last_verified so the estimate reads fresh.
+  const [showEstimateModal, setShowEstimateModal] = useState(false);
+  const [estimateLocationId, setEstimateLocationId] = useState('');
+  const [estimateQty, setEstimateQty] = useState('');
+  const [estimateSaving, setEstimateSaving] = useState(false);
+  const [estimateError, setEstimateError] = useState('');
+  const [looseToggleSaving, setLooseToggleSaving] = useState(false);
+
   // Serialized units of this item + who currently has each one, managed here
   // (assign/return/label) so identification lives on the item page.
   type ItemUnit = Awaited<ReturnType<typeof InventoryRPC.getAssets>>[number];
@@ -191,9 +202,9 @@ export default function ItemDetailPage() {
     setSnapshot(fresh);
   };
 
-  // Lazy-load locations the first time the adjust modal opens.
+  // Lazy-load locations the first time the adjust OR estimate modal opens.
   useEffect(() => {
-    if (!showAdjustModal || adjustLocations.length > 0) return;
+    if ((!showAdjustModal && !showEstimateModal) || adjustLocations.length > 0) return;
     (async () => {
       try {
         const locations = await InventoryRPC.getLocations({ active: true });
@@ -202,7 +213,68 @@ export default function ItemDetailPage() {
         console.error('Error loading locations:', err);
       }
     })();
-  }, [showAdjustModal, adjustLocations.length]);
+  }, [showAdjustModal, showEstimateModal, adjustLocations.length]);
+
+  const openEstimateModal = () => {
+    if (!snapshot?.item) return;
+    setEstimateError('');
+    // Default to the location that already holds the most of this item, so the
+    // common single-location case is one tap.
+    const top = [...snapshot.locations].sort((a, b) => Number(b.on_hand) - Number(a.on_hand))[0];
+    setEstimateLocationId(top?.location_id || '');
+    setEstimateQty(top ? String(top.on_hand) : '');
+    setShowEstimateModal(true);
+  };
+
+  const submitEstimate = async () => {
+    setEstimateError('');
+    if (!snapshot?.item || snapshot.item.is_parent) {
+      setEstimateError('Estimates apply to a single stocked item.');
+      return;
+    }
+    if (!estimateLocationId) {
+      setEstimateError('Select a location.');
+      return;
+    }
+    const qty = Number(estimateQty);
+    if (!Number.isFinite(qty) || qty < 0) {
+      setEstimateError('Enter a valid estimated quantity.');
+      return;
+    }
+    setEstimateSaving(true);
+    try {
+      await InventoryRPC.updateEstimate({
+        catalog_item_id: snapshot.item.id,
+        location_id: estimateLocationId,
+        new_qty: qty,
+      });
+      setShowEstimateModal(false);
+      await reloadSnapshot();
+    } catch (err: any) {
+      setEstimateError(err?.message || 'Failed to update estimate.');
+    } finally {
+      setEstimateSaving(false);
+    }
+  };
+
+  const toggleLooseTracking = async (next: boolean) => {
+    if (!snapshot?.item) return;
+    const lastEventId = snapshot.item.last_event_id;
+    if (!lastEventId) return;
+    setLooseToggleSaving(true);
+    try {
+      await InventoryRPC.updateCatalogItem(
+        snapshot.item.id,
+        { loose_tracking: next } as any,
+        lastEventId,
+      );
+      await reloadSnapshot();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update tracking mode.');
+    } finally {
+      setLooseToggleSaving(false);
+    }
+  };
 
   const openAdjustModal = () => {
     if (!snapshot?.item) return;
@@ -415,6 +487,12 @@ export default function ItemDetailPage() {
   const reorderPoint = item.reorder_point ?? 0;
   const isLowStock = reorderPoint > 0 && Number(snapshot.available) <= reorderPoint;
 
+  // Loose-tracking (estimate mode): decorate on-hand as ~N and surface freshness.
+  const isLoose = Boolean((item as any).loose_tracking);
+  const estimateState = isLoose ? estimateStaleness((item as any).last_verified_at) : null;
+  const displayQty = (value: number | null | undefined) =>
+    isLoose ? formatEstimateQty(formatQty(value)) : formatQty(value);
+
   const locationColumns = [
     {
       key: 'location_name',
@@ -433,7 +511,7 @@ export default function ItemDetailPage() {
       key: 'on_hand',
       header: 'On Hand',
       className: 'text-right font-mono',
-      render: (row: StockSnapshot['locations'][number]) => formatQty(row.on_hand),
+      render: (row: StockSnapshot['locations'][number]) => displayQty(row.on_hand),
     },
     {
       key: 'reserved',
@@ -481,6 +559,12 @@ export default function ItemDetailPage() {
                 }
                 actions={
                   <div className="flex items-center gap-2">
+                    {isLoose && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+                        <BarChart3 className="h-3.5 w-3.5" />
+                        Estimate
+                      </span>
+                    )}
                     <StatusChip status={item.active ? 'active' : 'inactive'} />
                   </div>
                 }
@@ -502,11 +586,24 @@ export default function ItemDetailPage() {
           </div>
         )}
 
+        {/* Estimate staleness — loose items whose last verify is old (or never). */}
+        {isLoose && estimateState?.stale && (
+          <div className="flex items-center gap-3 rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+            <Clock className="h-5 w-5 shrink-0 text-violet-600" />
+            <div>
+              <p className="text-sm font-medium text-violet-800">Estimate may be stale</p>
+              <p className="text-xs text-violet-700">
+                This {estimateState.label} — push an eyeball update or run a count to re-true it.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Stock Snapshot Cards */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard
-            label="On Hand"
-            value={formatQty(snapshot.on_hand)}
+            label={isLoose ? 'On Hand (estimate)' : 'On Hand'}
+            value={displayQty(snapshot.on_hand)}
             icon={Package}
           />
           <StatCard
@@ -531,6 +628,15 @@ export default function ItemDetailPage() {
 
         {/* Quick Actions */}
         <div className="flex flex-wrap gap-2">
+          {isLoose && (
+            <button
+              onClick={openEstimateModal}
+              className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 transition-colors"
+            >
+              <Clock className="h-4 w-4" />
+              Update estimate
+            </button>
+          )}
           <button
             onClick={openAdjustModal}
             className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors"
@@ -560,6 +666,50 @@ export default function ItemDetailPage() {
             Create PO
           </button>
         </div>
+
+        {/* Tracking mode — Loosely tracked toggle. Serialized items keep exact
+            per-unit tracking, so the estimate mode only makes sense for fungible
+            stock; hide it for parent/variant items. */}
+        {!item.is_parent && (
+          <div className="rounded-xl border bg-background p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 text-base font-semibold">
+                  <BarChart3 className="h-4 w-4" />
+                  Loosely tracked
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  For stuff you can&apos;t count exactly (consumables, bulk, stuff that walks).
+                  We&apos;ll treat quantities as estimates — shown as ~N, no variance alarms on
+                  counts, and anyone can push a quick update to keep the number roughly right.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isLoose}
+                disabled={looseToggleSaving}
+                onClick={() => toggleLooseTracking(!isLoose)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  isLoose ? 'bg-violet-600' : 'bg-muted-foreground/30'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    isLoose ? 'translate-x-5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            {isLoose && (
+              <p className="mt-3 text-xs text-violet-700">
+                {estimateState?.label
+                  ? estimateState.label[0].toUpperCase() + estimateState.label.slice(1)
+                  : 'Estimate mode on.'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Identifiers & Labels */}
         <div className="rounded-xl border bg-background p-5">
@@ -1040,6 +1190,62 @@ export default function ItemDetailPage() {
             }
           }}
         />
+      )}
+      {showEstimateModal && snapshot?.item && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border bg-background p-6 shadow-xl">
+            <div className="mb-1 flex items-center gap-2">
+              <Clock className="h-5 w-5 text-violet-600" />
+              <h3 className="text-lg font-semibold">Update estimate</h3>
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              A quick eyeball correction for {snapshot.item.name}. Sets the estimated on-hand and
+              marks it freshly verified — no variance review, logged as an estimate update.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Location</label>
+                <select
+                  value={estimateLocationId}
+                  onChange={(e) => setEstimateLocationId(e.target.value)}
+                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                >
+                  <option value="">Select a location…</option>
+                  {adjustLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Estimated quantity (~)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={estimateQty}
+                  onChange={(e) => setEstimateQty(e.target.value)}
+                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                  placeholder="About how many?"
+                />
+              </div>
+              {estimateError && <p className="text-sm text-red-600">{estimateError}</p>}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setShowEstimateModal(false)}
+                className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitEstimate}
+                disabled={estimateSaving}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+              >
+                {estimateSaving ? 'Saving…' : 'Save estimate'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </AppShell>
   );

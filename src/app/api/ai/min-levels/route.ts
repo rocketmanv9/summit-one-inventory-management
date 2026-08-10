@@ -81,6 +81,9 @@ interface Proposal {
   rationale: string;
   // Distinguishes "we ran the model" from "we floored this to null pre-model".
   enough_history: boolean;
+  // Loosely-tracked (estimate mode): the on-hand these levels reason from is an
+  // estimate, so the wizard shows a "based on an estimate" caveat.
+  loose_tracking: boolean;
 }
 
 const num = (v: unknown): number => {
@@ -158,6 +161,20 @@ export const POST = createSessionReadRoute(async ({ session, log }) => {
     return Response.json({ proposals: [], summary: { total: 0, proposed: 0, no_history: 0 } });
   }
 
+  // Which of these items are loosely tracked — so the wizard can caveat any
+  // level reasoned from an estimated on-hand. One cheap lookup; the facts RPC
+  // doesn't carry the flag.
+  const looseIds = new Set<string>();
+  {
+    const { data: looseRows } = await inv
+      .from('catalog_items')
+      .select('id')
+      .eq('loose_tracking', true)
+      .in('id', facts.map((f) => f.catalog_item_id))
+      .limit(facts.length);
+    for (const r of looseRows || []) looseIds.add((r as any).id);
+  }
+
   // UOM labels for display (GV is a separate project — resolve via the SDK).
   let uomLabelMap: Record<string, string> = {};
   try {
@@ -197,6 +214,7 @@ export const POST = createSessionReadRoute(async ({ session, log }) => {
       reorder_qty: null,
       rationale: 'Not enough usage or count history to propose a level yet.',
       enough_history: false,
+      loose_tracking: looseIds.has(f.catalog_item_id),
     });
   }
 
@@ -353,6 +371,7 @@ export const POST = createSessionReadRoute(async ({ session, log }) => {
               ? 'No meaningful recent movement — no level proposed.'
               : 'Proposed from recent usage.',
       enough_history: true,
+      loose_tracking: looseIds.has(f.catalog_item_id),
     });
   }
 
