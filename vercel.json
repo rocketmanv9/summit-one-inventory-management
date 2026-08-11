@@ -46,6 +46,10 @@
     {
       "path": "/api/system/cron/abandon-stale-order-sessions",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/system/cron/hr-sync",
+      "schedule": "25 12 * * *"
     }
   ]
 }
