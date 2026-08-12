@@ -76,6 +76,12 @@ export default function CreatePurchaseOrderPage() {
   // Names of items auto-added to the vendor's catalog on this save — shown as a
   // small confirmation so the order-any-item side effect is visible, not silent.
   const [linkedItemNames, setLinkedItemNames] = useState<string[]>([]);
+  // Fleet shop-request → PO handoff (item 16 fleet half). Set only when the page
+  // was opened with ?source=fleet_shop_request&source_ref=<fleet request id>.
+  // Non-fleet prefills leave this null so their path is byte-for-byte unchanged.
+  // On draft-create we post the drafted PO's number back to fleet so the shop
+  // request's "PO drafting…" chip flips to the real number.
+  const [fleetSourceRef, setFleetSourceRef] = useState<string | null>(null);
   // Nearest of the selected vendor's locations to the chosen delivery location.
   const [nearest, setNearest] = useState<{
     label: string | null; city: string | null; state: string | null; distance_mi: number | null;
@@ -506,6 +512,42 @@ export default function CreatePurchaseOrderPage() {
       if (itemId && itemsData.some((i) => i.id === itemId)) {
         setLines([{ catalog_item_id: itemId, qty_ordered: qty ? parseFloat(qty) || 0 : 0, unit_cost: 0 }]);
       }
+
+      // Fleet shop-request handoff (item 16). Guarded on source so the item_id /
+      // reorder prefill above is untouched for every other caller. Fleet redirects
+      // to ?source=fleet_shop_request&source_ref=<uuid>&notes=<text>&location_id=
+      // <inv-loc>&lines=<base64 JSON of [{desc, qty}]>. location_id is already
+      // consumed by the seededLocation logic above — we only add lines + notes here.
+      if (sp.get('source') === 'fleet_shop_request') {
+        const sourceRef = sp.get('source_ref');
+        if (sourceRef) setFleetSourceRef(sourceRef);
+
+        const linesParam = sp.get('lines');
+        if (linesParam) {
+          try {
+            const parsed = JSON.parse(atob(linesParam)) as Array<{ desc?: string; qty?: number }>;
+            const seeded: POLine[] = parsed
+              .filter((l) => l && typeof l.desc === 'string' && l.desc.trim())
+              .map((l) => ({
+                catalog_item_id: '',
+                free_text: true,
+                item_description: l.desc!.trim(),
+                qty_ordered: typeof l.qty === 'number' && l.qty > 0 ? l.qty : 1,
+                unit_cost: 0,
+              }));
+            // Only replace the default empty line when we actually decoded lines —
+            // a malformed/empty payload leaves the normal blank editor in place.
+            if (seeded.length > 0) setLines(seeded);
+          } catch {
+            // Malformed base64/JSON: fall back to the blank editor. The notes below
+            // and the source-ref post-back still apply so the request can be filled
+            // in by hand and still stamped back to fleet on create.
+          }
+        }
+
+        const notes = sp.get('notes');
+        if (notes) setForm((prev) => ({ ...prev, notes: notes || prev.notes }));
+      }
     } catch (err: any) {
       setError(`Failed to load data: ${err.message}`);
     } finally {
@@ -763,6 +805,29 @@ export default function CreatePurchaseOrderPage() {
       // Runs before the redirect so the confirmation shows; best-effort inside.
       if (result?.po_id) {
         await autoLinkVendorItems(validLines);
+      }
+
+      // Fleet shop-request post-back: if this PO came from a fleet shop request
+      // (source=fleet_shop_request), tell fleet the draft's number so its board
+      // chip flips from "PO drafting…" to the real number. Best-effort — the PO
+      // is already saved; a failed post-back must never fail the create.
+      if (result?.po_id && fleetSourceRef) {
+        try {
+          await fetch('/api/fleet-callback/shop-request-po', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Idempotency-Key': crypto.randomUUID(),
+            },
+            body: JSON.stringify({
+              source_ref: fleetSourceRef,
+              po_id: result.po_id,
+              po_number: result.po_number ?? null,
+            }),
+          });
+        } catch {
+          // Non-fatal: the draft exists; the chip flip can be retried later.
+        }
       }
 
       amazonTab?.close();
