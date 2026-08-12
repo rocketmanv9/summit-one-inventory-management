@@ -161,6 +161,15 @@ export interface PurchaseOrder {
   created_by_user_id?: string;
   approved_by_user_id?: string;
   approved_at?: string;
+  // Approval routing (item 09/14): where it needs sign-off, who it routed to,
+  // the approver's own words, and the structured resolution trace.
+  approval_reason?: string;
+  approver_user_id?: string;
+  approved_reason?: string;
+  approval_route?: Record<string, unknown> | null;
+  rejected_by_user_id?: string;
+  rejected_at?: string;
+  rejected_reason?: string;
   sent_at?: string;
   sent_by_user_id?: string;
   

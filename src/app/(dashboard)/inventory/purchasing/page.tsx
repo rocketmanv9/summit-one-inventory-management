@@ -23,6 +23,7 @@ import { RowActionMenu, type RowActionItem } from '@/components/ui/RowActionMenu
 import { PurchaseOrderActivity } from '@/components/purchasing/PurchaseOrderActivity';
 import { PurchaseDocuments } from '@/components/purchasing/PurchaseDocuments';
 import { PurchaseTimeline } from '@/components/purchasing/PurchaseTimeline';
+import { POApprovalTrail, type ApprovalRoute } from '@/components/purchasing/POApprovalTrail';
 import { DocumentSearchBar } from '@/components/purchasing/DocumentSearchBar';
 import { MySpendCard } from '@/components/spend/MySpendCard';
 import { useSession } from '@/hooks/useSession';
@@ -48,6 +49,16 @@ interface PurchaseOrder {
   status: string;
   origin?: string;
   approval_reason?: string;
+  // Approval routing (item 09/14) — surfaced in the detail panel's trail.
+  created_by_user_id?: string;
+  approver_user_id?: string | null;
+  approved_by_user_id?: string;
+  approved_at?: string;
+  approved_reason?: string | null;
+  approval_route?: Record<string, unknown> | null;
+  rejected_by_user_id?: string;
+  rejected_at?: string;
+  rejected_reason?: string | null;
   expected_delivery_date?: string;
   notes?: string;
   created_at: string;
@@ -757,6 +768,8 @@ function PODetailPanel({
   const [livePo, setLivePo] = useState<PurchaseOrder>(po);
   const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
   const [confirmedAt, setConfirmedAt] = useState<string | null>(null);
+  // Names for the approval-trail visual (buyer / routed approver / decider).
+  const [approvalNames, setApprovalNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setLivePo(po);
@@ -813,6 +826,34 @@ function PODetailPanel({
     fetchReceipts();
   }, [po.id]);
 
+  // Resolve the buyer / routed-approver / decider names for the approval trail.
+  // local_users lives in the public schema; one small batched lookup.
+  useEffect(() => {
+    const ids = [
+      livePo.created_by_user_id,
+      (livePo as any).approver_user_id,
+      livePo.approved_by_user_id,
+      (livePo as any).rejected_by_user_id,
+    ].filter(Boolean) as string[];
+    const need = [...new Set(ids)].filter((id) => !(id in approvalNames));
+    if (need.length === 0) return;
+    let alive = true;
+    (async () => {
+      const { data } = await createBrowserAuthedClient()
+        .from('local_users')
+        .select('user_id, name, email')
+        .in('user_id', need);
+      if (!alive || !data) return;
+      setApprovalNames((prev) => {
+        const next = { ...prev };
+        for (const u of data as any[]) next[u.user_id] = u.name || u.email || 'Unknown';
+        return next;
+      });
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePo.created_by_user_id, (livePo as any).approver_user_id, livePo.approved_by_user_id, (livePo as any).rejected_by_user_id]);
+
   const fetchReceipts = async () => {
     setLoadingReceipts(true);
     try {
@@ -857,6 +898,59 @@ function PODetailPanel({
             </span>
           )}
         </div>
+
+        {/* Approval routing trail (item 14): who requested, who it routed to
+            (loud ⚠ for the anonymous admin pool), and the decision + reasons.
+            Only shown once the PO has entered the approval lifecycle. */}
+        {(livePo.status === 'awaiting_approval' ||
+          (livePo as any).approval_route ||
+          (livePo as any).approver_user_id ||
+          livePo.approved_reason ||
+          (livePo as any).rejected_reason) && (
+          <div className="rounded-lg border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Approval routing
+            </div>
+            <POApprovalTrail
+              buyerName={
+                livePo.created_by_user_id
+                  ? approvalNames[livePo.created_by_user_id] || 'Buyer'
+                  : 'Nightly auto-reorder'
+              }
+              buyerIsMachine={!livePo.created_by_user_id && livePo.origin === 'auto_reorder'}
+              approverName={
+                (livePo as any).approver_user_id
+                  ? approvalNames[(livePo as any).approver_user_id] || 'Approver'
+                  : null
+              }
+              isPool={livePo.status === 'awaiting_approval' && !(livePo as any).approver_user_id}
+              decision={
+                livePo.approved_at
+                  ? 'approved'
+                  : (livePo as any).rejected_at
+                    ? 'denied'
+                    : 'pending'
+              }
+              decidedBy={
+                livePo.approved_at
+                  ? livePo.approved_by_user_id
+                    ? approvalNames[livePo.approved_by_user_id] || null
+                    : null
+                  : (livePo as any).rejected_by_user_id
+                    ? approvalNames[(livePo as any).rejected_by_user_id] || null
+                    : null
+              }
+              decidedAt={livePo.approved_at || (livePo as any).rejected_at || null}
+              decisionReason={
+                livePo.approved_at
+                  ? livePo.approved_reason || null
+                  : (livePo as any).rejected_reason || null
+              }
+              needReason={livePo.status === 'awaiting_approval' ? livePo.approval_reason || null : null}
+              route={((livePo as any).approval_route as ApprovalRoute) || null}
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <div className="p-3 bg-muted/30 rounded-lg">

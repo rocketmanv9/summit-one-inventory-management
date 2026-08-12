@@ -18,6 +18,10 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Inbox, Loader2, ShoppingCart, Sparkles, XCircle } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { POApprovalTrail, type ApprovalRoute } from '@/components/purchasing/POApprovalTrail';
+
+// Short approve-reason presets (mirrors the deny flow's free-text-with-nudge).
+const APPROVE_PRESETS = ['Within budget', 'Needed for the job', 'Verified pricing', 'Routine restock'];
 
 interface InboxItem {
   id: string;
@@ -26,11 +30,16 @@ interface InboxItem {
   vendor_name: string | null;
   is_amazon: boolean;
   buyer_name: string;
+  buyer_is_machine?: boolean;
   delivery_location: string | null;
   reason: string | null;
   total: number;
   created_at: string;
   can_decide: boolean;
+  approver_name: string | null;
+  is_pool: boolean;
+  approval_route: ApprovalRoute | null;
+  approved_reason: string | null;
   decided_by: string | null;
   decided_at: string | null;
   rejection_reason: string | null;
@@ -66,6 +75,8 @@ export default function ApprovalsInboxPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<InboxItem | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [approving, setApproving] = useState<InboxItem | null>(null);
+  const [approveReason, setApproveReason] = useState('');
   const [error, setError] = useState('');
 
   // Date filter (history tabs only).
@@ -140,6 +151,8 @@ export default function ApprovalsInboxPage() {
       }
       setRejecting(null);
       setRejectReason('');
+      setApproving(null);
+      setApproveReason('');
       setItems((prev) => prev.filter((i) => i.id !== item.id));
       // A decision moves a PO between tabs — refresh the label counts.
       void loadCounts();
@@ -152,9 +165,6 @@ export default function ApprovalsInboxPage() {
     const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
     return days === 0 ? 'today' : days === 1 ? '1 day' : `${days} days`;
   };
-
-  const decidedOn = (iso: string) =>
-    new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
   const isHistory = tab !== 'pending';
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -288,41 +298,32 @@ export default function ApprovalsInboxPage() {
                         <Sparkles className="h-3 w-3" /> AI-drafted
                       </span>
                     )}
-
-                    {/* Pending: the reason it needs sign-off */}
-                    {tab === 'pending' && item.reason && (
-                      <p className="mt-1.5 inline-block rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
-                        {item.reason}
-                      </p>
-                    )}
-
-                    {/* History: who decided + when */}
-                    {isHistory && item.decided_at && (
-                      <p className="mt-1.5 text-xs">
-                        {tab === 'approved' ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-700">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Approved
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-red-700">
-                            <XCircle className="h-3.5 w-3.5" /> Denied
-                          </span>
-                        )}
-                        <span className="text-muted-foreground">
-                          {' '}by {item.decided_by || 'Unknown'} · {decidedOn(item.decided_at)}
-                        </span>
-                      </p>
-                    )}
-                    {tab === 'denied' && item.rejection_reason && (
-                      <p className="mt-1.5 inline-block rounded-md bg-red-50 px-2 py-1 text-xs text-red-800">
-                        {item.rejection_reason}
-                      </p>
-                    )}
                   </div>
                   <ShoppingCart className="h-4 w-4 shrink-0 text-muted-foreground" />
                 </div>
 
-                {/* Pending: the decision controls (unchanged) */}
+                {/* Routing visual (item 14): who it was requested by, routed to,
+                    and decided by — with the loud ⚠ pool state. */}
+                <div className="mt-3">
+                  <POApprovalTrail
+                    buyerName={item.buyer_name}
+                    buyerIsMachine={item.buyer_is_machine}
+                    approverName={item.approver_name}
+                    isPool={item.is_pool}
+                    decision={tab === 'approved' ? 'approved' : tab === 'denied' ? 'denied' : 'pending'}
+                    decidedBy={item.decided_by}
+                    decidedAt={item.decided_at}
+                    decisionReason={
+                      tab === 'denied' ? item.rejection_reason : tab === 'approved' ? item.approved_reason : null
+                    }
+                    needReason={tab === 'pending' ? item.reason : null}
+                    route={item.approval_route}
+                    compact
+                  />
+                </div>
+
+                {/* Pending: the decision controls. Approve now captures a reason
+                    just like reject (item 14) — short presets + free text. */}
                 {tab === 'pending' && (
                   rejecting?.id === item.id ? (
                     <div className="mt-3 space-y-2">
@@ -349,10 +350,50 @@ export default function ApprovalsInboxPage() {
                         </button>
                       </div>
                     </div>
+                  ) : approving?.id === item.id ? (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {APPROVE_PRESETS.map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setApproveReason(p)}
+                            className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                              approveReason === p
+                                ? 'border-emerald-400 bg-emerald-50 text-emerald-800'
+                                : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        value={approveReason}
+                        onChange={(e) => setApproveReason(e.target.value)}
+                        placeholder="Why approve? Recorded on the PO."
+                        autoFocus
+                        className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => decide(item, 'approve', approveReason)}
+                          disabled={busyId === item.id || approveReason.trim().length < 2}
+                          className="flex-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          {busyId === item.id ? 'Approving…' : 'Approve with this reason'}
+                        </button>
+                        <button
+                          onClick={() => { setApproving(null); setApproveReason(''); }}
+                          className="rounded-md border px-3 py-2 text-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   ) : (
                     <div className="mt-3 flex gap-2">
                       <button
-                        onClick={() => decide(item, 'approve')}
+                        onClick={() => { setApproving(item); setApproveReason(''); }}
                         disabled={!item.can_decide || busyId === item.id}
                         title={item.can_decide ? 'Approve this PO' : 'You can’t approve your own PO'}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"

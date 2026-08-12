@@ -19,12 +19,15 @@ const DecisionSchema = z.object({
 /**
  * POST /api/inventory/purchasing/approvals/:id — the inbox verdict.
  *
- * approve → status 'approved' (+stamps); the buyer sends it like any approved PO.
+ * approve → status 'approved' (+stamps, +approved_reason); the buyer sends it
+ *           like any approved PO.
  * reject  → back to 'draft' with rejected_* stamped (buyer can fix + resubmit).
  *
- * Guards: PO must be awaiting_approval; actor must be its routed approver or
- * an admin; nobody decides their own PO. The status-transition trigger
- * notifies the buyer either way.
+ * Reasons both ways (sprint item 14): approve now captures the approver's own
+ * words in approved_reason, the mirror of a reject's rejected_reason. The web
+ * UI requires it; the API keeps `reason` OPTIONAL on approve so the mobile
+ * approval runner (item 09) stays compatible until it catches up. FOLLOW-UP:
+ * once mobile sends a reason on approve, make it required here too.
  */
 export const POST = createSessionWriteRoute(async ({ ctx, req, supabase, idempotencyKey, log }) => {
   const tenantId = ctx.tenantId!;
@@ -63,6 +66,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, supabase, idempot
         status: 'approved',
         approved_at: new Date().toISOString(),
         approved_by_user_id: userId,
+        // The approver's own words (web UI requires it; API optional for mobile
+        // compat). Null when omitted — never a fabricated reason.
+        approved_reason: body.reason?.trim() || null,
         last_event_id: idempotencyKey,
       }
     : {

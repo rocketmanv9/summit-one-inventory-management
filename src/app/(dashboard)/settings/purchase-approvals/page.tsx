@@ -177,9 +177,12 @@ export default function PurchaseApprovalsPage() {
   };
 
   const activeOverrides = (data?.overrides ?? []).filter((o) => o.approver_user_id);
+  const totalLocations = data?.overrides?.length ?? 0;
+  const nonAdminBuyers = (data?.supervisor_routing ?? []).filter((r) => !r.is_admin);
   const noSupervisor = (data?.supervisor_routing ?? []).filter(
     (r) => r.falls_through_to_admins && !r.is_admin,
   );
+  const withSupervisor = nonAdminBuyers.length - noSupervisor.length;
 
   return (
     <AppShell>
@@ -211,6 +214,60 @@ export default function PurchaseApprovalsPage() {
           ) : null}
         </p>
       </div>
+
+      {/* Config health (item 14): make the routing's real weaknesses loud.
+          A yard with no approver + a buyer with no supervisor = the PO drops
+          into the anonymous admin pool, which is exactly how the Zach case
+          went silent. */}
+      {data && !loading && !error && (
+        <div className="mb-6 grid gap-3 sm:grid-cols-2">
+          <div
+            className={`rounded-lg border p-4 ${
+              activeOverrides.length === 0 ? 'border-amber-300 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <MapPin className={`h-4 w-4 ${activeOverrides.length === 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
+              <span className="text-sm font-semibold text-gray-900">Location approvers</span>
+            </div>
+            <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">
+              {activeOverrides.length}
+              <span className="text-base font-medium text-gray-500"> / {totalLocations} set</span>
+            </p>
+            <p className="mt-1 text-xs text-gray-600">
+              {activeOverrides.length === 0
+                ? 'No location has a named approver — every purchase falls to the default path below. Set one on a yard to route its purchases to a real person.'
+                : `${totalLocations - activeOverrides.length} location${totalLocations - activeOverrides.length === 1 ? '' : 's'} still route via the default path.`}
+            </p>
+          </div>
+
+          <div
+            className={`rounded-lg border p-4 ${
+              noSupervisor.length > 0 ? 'border-amber-300 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <UserCog className={`h-4 w-4 ${noSupervisor.length > 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
+              <span className="text-sm font-semibold text-gray-900">Supervisor coverage</span>
+            </div>
+            <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">
+              {withSupervisor}
+              <span className="text-base font-medium text-gray-500"> / {nonAdminBuyers.length} covered</span>
+            </p>
+            <p className="mt-1 text-xs text-gray-600">
+              {noSupervisor.length > 0 ? (
+                <>
+                  <span className="font-semibold text-amber-800">{noSupervisor.length}</span> non-admin buyer
+                  {noSupervisor.length === 1 ? '' : 's'} have no supervisor on file — their over-limit purchases
+                  fall to the admin pool. Supervisors are set in the HR app.
+                </>
+              ) : (
+                'Every non-admin buyer has a supervisor — the default path always resolves to a person.'
+              )}
+            </p>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center gap-2 py-16 text-gray-500">

@@ -111,7 +111,7 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   let query = sc
     .from('purchase_orders')
     .select(
-      'id, po_number, origin, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(line_number, catalog_item_id, item_description, qty_ordered, unit_cost, estimated_unit_cost, status)',
+      'id, po_number, origin, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, approved_reason, approval_route, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(line_number, catalog_item_id, item_description, qty_ordered, unit_cost, estimated_unit_cost, status)',
       { count: 'exact' }
     );
 
@@ -142,12 +142,13 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
     throw AppError.internal(error.message);
   }
 
-  // Buyer + decider + delivery-location names in one hop each.
+  // Buyer + decider + routed-approver + delivery-location names in one hop each.
   const buyerIds = (pos ?? []).map((p: any) => p.created_by_user_id);
   const deciderIds = (pos ?? []).map((p: any) =>
     params.status === 'denied' ? p.rejected_by_user_id : p.approved_by_user_id
   );
-  const userIds = [...new Set([...buyerIds, ...deciderIds].filter(Boolean))];
+  const approverIds = (pos ?? []).map((p: any) => p.approver_user_id);
+  const userIds = [...new Set([...buyerIds, ...deciderIds, ...approverIds].filter(Boolean))];
   const locIds = [...new Set((pos ?? []).map((p: any) => p.delivery_location_id).filter(Boolean))];
   const [{ data: people }, { data: locs }] = await Promise.all([
     userIds.length
@@ -187,6 +188,15 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
 
   const items = (pos ?? []).map((p: any) => {
     const deciderId = params.status === 'denied' ? p.rejected_by_user_id : p.approved_by_user_id;
+    // Machine-authored reorder POs have no human buyer (created_by_user_id NULL
+    // since item 14) — render the honest source, never a person's name.
+    const isMachineBuyer = !p.created_by_user_id && p.origin === 'auto_reorder';
+    const buyerName = isMachineBuyer
+      ? 'Nightly auto-reorder'
+      : nameById.get(p.created_by_user_id) || 'Unknown';
+    // Pending POs with no named approver sit in the anonymous admin pool — the
+    // "ether". Flag it loud so the UI can shout "unrouted".
+    const isPool = !p.approver_user_id;
     return {
       id: p.id,
       po_number: p.po_number,
@@ -195,9 +205,18 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
       vendor_name: p.vendor_name_snapshot,
       is_amazon: p.vendor_code_snapshot === 'AMAZON-BIZ',
       buyer_user_id: p.created_by_user_id,
-      buyer_name: nameById.get(p.created_by_user_id) || 'Unknown',
+      buyer_name: buyerName,
+      buyer_is_machine: isMachineBuyer,
       delivery_location: locById.get(p.delivery_location_id) || null,
       reason: p.approval_reason,
+      // Who this PO was routed to (null = admin pool). Feeds the routing visual.
+      approver_user_id: p.approver_user_id || null,
+      approver_name: p.approver_user_id ? nameById.get(p.approver_user_id) || 'Unknown' : null,
+      is_pool: isPool,
+      // Structured routing trace (item 14). Additive — old consumers ignore it.
+      approval_route: p.approval_route ?? null,
+      // The approver's own words on sign-off (approved tab). Null when omitted.
+      approved_reason: p.approved_reason ?? null,
       total: (p.purchase_order_lines ?? [])
         .filter((l: any) => l.status !== 'cancelled')
         .reduce((sum: number, l: any) => sum + Number(l.qty_ordered) * Number(l.unit_cost ?? l.estimated_unit_cost ?? 0), 0),
