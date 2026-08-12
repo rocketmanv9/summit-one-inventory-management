@@ -91,7 +91,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   }
 
   if (existing?.active) {
-    throw AppError.conflict('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
+    // Attach the existing vendor as a 100%-confidence match so the UI's
+    // duplicate cards can offer "use existing" — same shape as the fuzzy gate
+    // below, never a dead-end 409. forceable:false because identical names
+    // can't be force-created (create-or-restore keys on the exact name).
+    throw AppError.conflict(
+      'A vendor with this name already exists. Edit the existing vendor or choose a different name.',
+      {
+        forceable: false,
+        matches: [{ vendor_id: existing.id, vendor_name: fields.name, confidence: 100, reasons: ['Exact name match'] }],
+      },
+    );
   }
 
   // The DB enforces UNIQUE (tenant_id, code), and inactive vendors still hold

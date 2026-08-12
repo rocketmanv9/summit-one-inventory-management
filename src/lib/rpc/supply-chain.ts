@@ -14,7 +14,10 @@ import type { Database } from 'types/supabase';
 async function writeJson<T = unknown>(url: string, method: 'POST' | 'PATCH' | 'DELETE', body: unknown, errMsg: string): Promise<T> {
   const res = await apiWrite(url, method, body);
   const json = await res.json().catch(() => ({} as any));
-  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg);
+  // Keep the server's details on conflicts — the vendor duplicate gate attaches
+  // its scored matches there so the UI can offer "use existing" instead of a
+  // dead-end error message.
+  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg, json.error?.details);
   if (!res.ok) {
     const fieldErrs = json.error?.details?.errors;
     const detail = Array.isArray(fieldErrs) && fieldErrs.length

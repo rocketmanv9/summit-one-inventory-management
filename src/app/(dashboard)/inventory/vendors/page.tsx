@@ -21,7 +21,7 @@ import { VendorQuickAddModal } from '@/components/vendors/VendorQuickAddModal';
 import { VendorLocationsMap } from '@/components/vendors/VendorLocationsMap';
 import type { VendorDraft } from '@/lib/vendor-draft';
 import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
-import { Globe, Library, MapPin, Sparkles } from 'lucide-react';
+import { Copy, Globe, Library, MapPin, Sparkles } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -405,6 +405,13 @@ export default function VendorsPage() {
               {activeTab === 'my-vendors' ? (
               <CapabilityGate capability="vendors.manage">
                 <div className="flex gap-2">
+                  <Link
+                    href="/inventory/vendors/duplicates"
+                    className="px-4 py-2 border rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors inline-flex items-center gap-1.5"
+                    title="Scan your vendors for likely duplicates and merge them"
+                  >
+                    <Copy className="h-4 w-4" /> Duplicates
+                  </Link>
                   <button
                     onClick={() => setShowAddModal(true)}
                     className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors"

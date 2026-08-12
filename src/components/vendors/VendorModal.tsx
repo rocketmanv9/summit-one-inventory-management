@@ -15,7 +15,8 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2, Search, MapPin, Plus, Trash2 } from 'lucide-react';
 import { searchVendorOnline } from '@/lib/ai/client';
-import type { VendorDraft } from '@/lib/vendor-draft';
+import type { VendorDraft, VendorMatchResult } from '@/lib/vendor-draft';
+import { VendorMatchCard } from '@/components/vendors/VendorMatchCard';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { geocodeStructured } from '@/lib/geocode';
@@ -162,6 +163,11 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [codeSettings, setCodeSettings] = useState<VendorCodeSettings | null>(null);
+  // Duplicate matches from the server's 409 gate (create mode) — rendered as
+  // match cards so the conflict is recoverable, never a dead end. dupForceable
+  // is false for the exact-name conflict, which can't be bypassed with force.
+  const [dupMatches, setDupMatches] = useState<VendorMatchResult[]>([]);
+  const [dupForceable, setDupForceable] = useState(true);
 
   const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
 
@@ -332,6 +338,8 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setDupMatches([]);
+    setDupForceable(true);
     setSearchDone(false);
     setSubmitting(false);
     setSavingMsg(null);
@@ -518,7 +526,7 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
     phone: c.phone.trim() || null, title: c.title.trim() || null, is_primary: c.is_primary,
   });
 
-  async function handleSave() {
+  async function handleSave(forceCreate = false) {
     const name = basics.name.trim();
     if (name.length < 2) { setError('Vendor name is required (at least 2 characters).'); return; }
 
@@ -527,6 +535,7 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
 
     setSubmitting(true);
     setError(null);
+    setDupMatches([]);
 
     try {
       // 1. Geocode filled addresses lacking coords (sequential — Nominatim is rate-limited).
@@ -578,6 +587,9 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
       } else {
         const created = await SupplyChainRPC.createVendor({
           ...payload,
+          // Only the explicit "create anyway" retry (from the duplicate-match
+          // panel) bypasses the server's fuzzy duplicate gate.
+          ...(forceCreate ? { force: true } : {}),
         } as any);
         vendorId = created.id;
       }
@@ -617,6 +629,14 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
 
       onSuccess({ id: vendorId, name });
     } catch (err: any) {
+      // Duplicate-gate 409: the server attaches its confidence-scored matches.
+      // Render them as cards (use existing / view / create anyway) instead of a
+      // dead-end error.
+      const matches = err?.details?.matches;
+      if (!isEdit && Array.isArray(matches) && matches.length > 0) {
+        setDupMatches(matches as VendorMatchResult[]);
+        setDupForceable(err?.details?.forceable !== false);
+      }
       setError(err?.message || 'Failed to save vendor.');
     } finally {
       setSubmitting(false);
@@ -907,12 +927,42 @@ export function VendorModal({ open, onClose, onSuccess, initialName, initialDraf
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
+
+          {/* Duplicate matches from the server's 409 gate — recoverable, not a
+              dead end: use the existing vendor, view it, or create anyway. */}
+          {dupMatches.length > 0 && (
+            <div className="space-y-2">
+              {dupMatches.map((m) => (
+                <VendorMatchCard
+                  key={m.vendor_id}
+                  match={m}
+                  strong
+                  onUseExisting={(match) => onSuccess({ id: match.vendor_id, name: match.vendor_name })}
+                  disabled={submitting}
+                />
+              ))}
+              {dupForceable ? (
+                <button
+                  type="button"
+                  onClick={() => handleSave(true)}
+                  disabled={submitting}
+                  className="w-full pt-0.5 text-xs font-medium text-red-600 hover:text-red-700 underline disabled:opacity-50"
+                >
+                  These are different companies — create a new vendor anyway.
+                </button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A vendor with this exact name already exists — use it, or change the name to create a separate vendor.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         )}
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
-          <Button type="button" onClick={handleSave} disabled={submitting || searching || loading}>
+          <Button type="button" onClick={() => handleSave()} disabled={submitting || searching || loading}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {submitting ? (savingMsg || 'Saving…') : isEdit ? 'Save Changes' : 'Create Vendor'}
           </Button>

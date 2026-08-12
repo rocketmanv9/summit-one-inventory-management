@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, AlertTriangle, Building2, CheckCircle2, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import {
   createVendorFromDraft,
@@ -41,6 +41,7 @@ import {
   type VendorMatchResult,
 } from '@/lib/vendor-draft';
 import { discoverVendors, type VendorCandidate } from '@/lib/ai/client';
+import { VendorMatchCard } from '@/components/vendors/VendorMatchCard';
 
 interface VendorSuggestion {
   name: string;
@@ -130,6 +131,9 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
   const [strongThreshold, setStrongThreshold] = useState(72);
   const [matchChecking, setMatchChecking] = useState(false);
   const [forceCreate, setForceCreate] = useState(false);
+  // False when the server said the conflict can't be forced (exact-name 409) —
+  // hides the "create anyway" escape hatch for that case.
+  const [canForce, setCanForce] = useState(true);
   const [attachingTo, setAttachingTo] = useState<string | null>(null);
   // Results phase: best existing-vendor match per candidate index, so we can flag
   // "Already in your vendors" even when the name differs but the address matches.
@@ -156,6 +160,7 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     setMatches([]);
     setMatchChecking(false);
     setForceCreate(false);
+    setCanForce(true);
     setAttachingTo(null);
     setCandidateMatches({});
   }, [open]);
@@ -217,8 +222,10 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       setMatches(res.matches);
       setStrongThreshold(res.strongThreshold);
       setMatchChecking(false);
-      // Editing the candidate invalidates a prior "create anyway" decision.
+      // Editing the candidate invalidates a prior "create anyway" decision
+      // (and any server verdict that the conflict couldn't be forced).
       setForceCreate(false);
+      setCanForce(true);
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -419,7 +426,6 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
   const strongMatches = matches.filter((m) => m.confidence >= strongThreshold);
   const hintMatches = matches.filter((m) => m.confidence < strongThreshold);
   const blockedByMatch = strongMatches.length > 0 && !forceCreate;
-  const topMatch = strongMatches[0];
 
   async function handleSave() {
     if (form.name.trim().length < 2) {
@@ -434,7 +440,18 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       const created = await createVendorFromDraft({ ...buildDraft(), force: forceCreate || undefined });
       onSuccess(created);
     } catch (err: any) {
-      setError(err?.message || 'Failed to save vendor.');
+      // Server-side duplicate gate (409): never a dead end. The guard attaches
+      // its matches to the error details — surface them as the same match cards
+      // so the user can pick "use existing", attach a branch, or force-create.
+      const serverMatches = err?.details?.matches;
+      if (Array.isArray(serverMatches) && serverMatches.length > 0) {
+        setMatches(serverMatches as VendorMatchResult[]);
+        setForceCreate(false);
+        setCanForce(err?.details?.forceable !== false);
+        setError(err?.message || 'This looks like an existing vendor — resolve the match below.');
+      } else {
+        setError(err?.message || 'Failed to save vendor.');
+      }
     } finally {
       setSaving(false);
     }
@@ -637,60 +654,41 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
               </p>
             )}
 
-            {/* Strong duplicate — block confirm until the user resolves it. */}
-            {topMatch && (
-              <div className="rounded-lg border-2 border-amber-300 bg-amber-50/70 p-3 space-y-2.5">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-amber-900">
-                      {topMatch.confidence}% match — {topMatch.vendor_name}
-                    </p>
-                    <ul className="mt-1 space-y-0.5 text-xs text-amber-800">
-                      {topMatch.reasons.map((r, i) => (
-                        <li key={i} className="flex items-start gap-1">
-                          <span aria-hidden>•</span><span>{r}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                {!forceCreate ? (
-                  <div className="space-y-1.5">
-                    <Button
-                      type="button"
-                      className="w-full justify-start"
-                      onClick={() => handleUseExisting(topMatch)}
-                      disabled={saving || attachingTo !== null}
-                    >
-                      <CheckCircle2 className="h-4 w-4 mr-2" /> Use existing vendor
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-start"
-                      onClick={() => handleAttachToExisting(topMatch)}
-                      disabled={saving || attachingTo !== null}
-                    >
-                      {attachingTo === topMatch.vendor_id
-                        ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        : <Building2 className="h-4 w-4 mr-2" />}
-                      Add as a new address/branch of {topMatch.vendor_name}
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => setForceCreate(true)}
-                      disabled={saving || attachingTo !== null}
-                      className="w-full pt-1 text-xs font-medium text-red-600 hover:text-red-700 underline disabled:opacity-50"
-                    >
-                      No — these are different companies. Create a new vendor anyway.
-                    </button>
-                  </div>
+            {/* Strong duplicates — red/prominent cards; block confirm until resolved. */}
+            {strongMatches.length > 0 && (
+              <div className="space-y-2">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-red-700">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  This looks like {strongMatches.length === 1 ? 'a vendor' : 'vendors'} you already have
+                </p>
+                {strongMatches.map((m) => (
+                  <VendorMatchCard
+                    key={m.vendor_id}
+                    match={m}
+                    strong
+                    onUseExisting={handleUseExisting}
+                    onAttach={handleAttachToExisting}
+                    attachingTo={attachingTo}
+                    disabled={saving || attachingTo !== null}
+                  />
+                ))}
+                {!canForce ? (
+                  <p className="text-xs text-muted-foreground">
+                    A vendor with this exact name already exists — use it, or change the name to create a separate vendor.
+                  </p>
+                ) : !forceCreate ? (
+                  <button
+                    type="button"
+                    onClick={() => setForceCreate(true)}
+                    disabled={saving || attachingTo !== null}
+                    className="w-full pt-0.5 text-xs font-medium text-red-600 hover:text-red-700 underline disabled:opacity-50"
+                  >
+                    No — these are different companies. Create a new vendor anyway.
+                  </button>
                 ) : (
                   <div className="flex items-center justify-between gap-2 rounded-md bg-red-50 px-2.5 py-1.5">
                     <span className="text-xs font-medium text-red-700">
-                      Creating a new vendor despite the match.
+                      Creating a new vendor despite the match{strongMatches.length === 1 ? '' : 'es'}.
                     </span>
                     <button
                       type="button"
@@ -704,15 +702,23 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
               </div>
             )}
 
-            {/* Low-confidence — passive hint, does not block. */}
-            {!topMatch && hintMatches.length > 0 && (
-              <Alert className="border-slate-200 bg-slate-50/60">
-                <AlertCircle className="h-4 w-4 text-slate-500" />
-                <AlertDescription className="text-slate-700 text-xs">
-                  Similar {hintMatches.length === 1 ? 'vendor' : 'vendors'} already in your list:{' '}
-                  {hintMatches.map((m) => m.vendor_name).join(', ')}. Double-check this isn&apos;t a duplicate.
-                </AlertDescription>
-              </Alert>
+            {/* Low-confidence — subtle cards, passive hint, does not block. */}
+            {hintMatches.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Similar {hintMatches.length === 1 ? 'vendor' : 'vendors'} already in your list —
+                  double-check this isn&apos;t a duplicate:
+                </p>
+                {hintMatches.map((m) => (
+                  <VendorMatchCard
+                    key={m.vendor_id}
+                    match={m}
+                    strong={false}
+                    onUseExisting={handleUseExisting}
+                    disabled={saving || attachingTo !== null}
+                  />
+                ))}
+              </div>
             )}
 
             <div className="space-y-2">
