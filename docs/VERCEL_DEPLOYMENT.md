@@ -85,9 +85,10 @@ DIRECT_URL=postgresql://postgres.xxx:[PASSWORD]@aws-0-us-east-1.pooler.supabase.
 
 #### **Core SSO Integration**
 ```bash
-# MUST match Core's APP_ENCRYPTION_KEY
-CORE_SSO_SECRET=your-sso-secret-key
-NEXT_PUBLIC_CORE_URL=https://dev.summit-one.app
+CORE_EXCHANGE_URL=https://core.your-domain.com/api/auth/exchange
+CORE_ANON_KEY=your-core-anon-key
+NEXT_PUBLIC_CORE_APP_URL=https://core.your-domain.com
+INTERNAL_JWT_SECRET=your-chassis-jwt-secret
 ```
 
 #### **Webhook Configuration**
@@ -262,13 +263,13 @@ API route handler failed
 
 ### Subsequent Deployments
 
-Vercel automatically deploys on every push to the main branch:
+Vercel deploys on pushes to dev, stage, and prod branches. CI runs migrations before deploying.
 
 1. **Push changes to Git:**
    ```bash
    git add .
    git commit -m "Your commit message"
-   git push origin main
+   git push origin dev
    ```
 
 2. **Vercel auto-deploys:**
@@ -306,10 +307,10 @@ curl https://your-app.vercel.app/api/health
 # Expected: {"status":"ok","timestamp":"..."}
 ```
 
-### 2. **Environment Variables Check**
+### 2. **Debug Check**
 ```bash
-curl https://your-app.vercel.app/api/debug/env-check
-# Should show all NEXT_PUBLIC_ variables
+curl https://your-app.vercel.app/api/system/debug
+# Returns system diagnostic information
 ```
 
 ### 3. **Authentication Flow**

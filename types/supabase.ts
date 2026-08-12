@@ -394,8 +394,8 @@ export type Database = {
           target_level: number | null
           tenant_id: string
           tracking_mode: string
-          unit_of_measure: string | null
           uom: string | null
+          uom_term_id: string
           updated_at: string
           updated_by: string | null
         }
@@ -429,8 +429,8 @@ export type Database = {
           target_level?: number | null
           tenant_id: string
           tracking_mode: string
-          unit_of_measure?: string | null
           uom?: string | null
+          uom_term_id: string
           updated_at?: string
           updated_by?: string | null
         }
@@ -464,8 +464,8 @@ export type Database = {
           target_level?: number | null
           tenant_id?: string
           tracking_mode?: string
-          unit_of_measure?: string | null
           uom?: string | null
+          uom_term_id?: string
           updated_at?: string
           updated_by?: string | null
         }
@@ -1450,7 +1450,6 @@ export type Database = {
           external_ref: Json | null
           id: string
           last_event_id: string | null
-          location_type: string
           location_type_id: string
           name: string
           parent_location_id: string | null
@@ -1466,7 +1465,6 @@ export type Database = {
           external_ref?: Json | null
           id?: string
           last_event_id?: string | null
-          location_type: string
           location_type_id: string
           name: string
           parent_location_id?: string | null
@@ -1482,7 +1480,6 @@ export type Database = {
           external_ref?: Json | null
           id?: string
           last_event_id?: string | null
-          location_type?: string
           location_type_id?: string
           name?: string
           parent_location_id?: string | null
@@ -3069,9 +3066,10 @@ export type Database = {
           tenant_id: string | null
           unit_cost: number | null
           updated_at: string | null
+          vendor_address_id: string | null
           vendor_id: string | null
           vendor_sku: string | null
-          vendor_uom: string | null
+          vendor_uom_term_id: string | null
         }
         Insert: {
           catalog_item_id?: string | null
@@ -3086,9 +3084,10 @@ export type Database = {
           tenant_id?: string | null
           unit_cost?: number | null
           updated_at?: string | null
+          vendor_address_id?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Update: {
           catalog_item_id?: string | null
@@ -3103,9 +3102,10 @@ export type Database = {
           tenant_id?: string | null
           unit_cost?: number | null
           updated_at?: string | null
+          vendor_address_id?: string | null
           vendor_id?: string | null
           vendor_sku?: string | null
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Relationships: [
           {
@@ -4548,9 +4548,10 @@ export type Database = {
           tenant_id: string
           unit_cost: number | null
           updated_at: string
+          vendor_address_id: string | null
           vendor_id: string
           vendor_sku: string
-          vendor_uom: string | null
+          vendor_uom_term_id: string | null
         }
         Insert: {
           catalog_item_id: string
@@ -4566,9 +4567,10 @@ export type Database = {
           tenant_id: string
           unit_cost?: number | null
           updated_at?: string
+          vendor_address_id?: string | null
           vendor_id: string
           vendor_sku: string
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Update: {
           catalog_item_id?: string
@@ -4584,9 +4586,10 @@ export type Database = {
           tenant_id?: string
           unit_cost?: number | null
           updated_at?: string
+          vendor_address_id?: string | null
           vendor_id?: string
           vendor_sku?: string
-          vendor_uom?: string | null
+          vendor_uom_term_id?: string | null
         }
         Relationships: [
           {

@@ -33,7 +33,7 @@ export async function createPurchaseOrder(
   try {
     const { data, error } = await supabase.rpc('rpc_create_purchase_order', {
       p_vendor_id: request.vendor_id,
-      p_po_number: request.po_number,
+      p_po_number: request.po_number ?? null,
       p_delivery_method: request.delivery_method,
       p_needed_by_date: request.needed_by_date,
       p_cost_context: request.cost_context,
@@ -44,7 +44,8 @@ export async function createPurchaseOrder(
       p_vendor_quote_ref: request.vendor_quote_ref || null,
       p_notes: request.notes || null,
       p_attachments: request.attachments || [],
-      p_lines: request.lines
+      p_lines: request.lines,
+      p_vendor_address_id: request.vendor_address_id || null
     });
     
     if (error) {
@@ -206,8 +207,10 @@ export async function getVendorDefaults(
 export async function getPurchaseOrderWithDetails(
   poId: string
 ): Promise<{ data: PurchaseOrderWithDetails | null; error: Error | null }> {
-  const supabase = createBrowserAuthedClient().schema('supply_chain');
-  
+  const client = createBrowserAuthedClient();
+  const supabase = client.schema('supply_chain');
+  const inventory = client.schema('inventory');
+
   try {
     // Fetch PO header
     const { data: po, error: poError } = await supabase
@@ -247,18 +250,18 @@ export async function getPurchaseOrderWithDetails(
     let pickup_location = null;
     
     if (po.delivery_location_id) {
-      const { data: locData } = await supabase
+      const { data: locData } = await inventory
         .from('locations')
-        .select('id, name, type')
+        .select('id, name')
         .eq('id', po.delivery_location_id)
         .single();
       delivery_location = locData;
     }
-    
+
     if (po.pickup_location_id) {
-      const { data: locData } = await supabase
+      const { data: locData } = await inventory
         .from('locations')
-        .select('id, name, type')
+        .select('id, name')
         .eq('id', po.pickup_location_id)
         .single();
       pickup_location = locData;
@@ -542,6 +545,36 @@ export async function updatePurchaseOrderStatus(
 }
 
 /**
+ * Mark free-text (non-catalog) PO lines as received by setting their absolute
+ * cumulative qty_received. There's no stock to post for these, so we write the
+ * line directly; the update_po_line_status BEFORE trigger derives the line
+ * status and update_po_status_from_lines rolls the header up to
+ * partially_received / fully_received. Pass the NEW cumulative qty_received per
+ * line (existing + amount received now), not a delta.
+ *
+ * Raw supabase-js writes don't throw on error, so each update selects the row
+ * and the error is surfaced explicitly.
+ */
+export async function receivePurchaseOrderLines(
+  poId: string,
+  lines: Array<{ id: string; qty_received: number }>
+): Promise<{ error: Error | null }> {
+  const supabase = createBrowserAuthedClient().schema('supply_chain');
+  for (const line of lines) {
+    const { data, error } = await supabase
+      .from('purchase_order_lines')
+      .update({ qty_received: line.qty_received })
+      .eq('id', line.id)
+      .eq('po_id', poId)
+      .select('id')
+      .single();
+    if (error) return { error: new Error(error.message) };
+    if (!data) return { error: new Error('Could not update a PO line — it may have changed. Please refresh and retry.') };
+  }
+  return { error: null };
+}
+
+/**
  * Void (soft-delete) a purchase order with optimistic concurrency control.
  * Sets status to 'voided' instead of hard-deleting so the existing
  * trigger_po_status_events trigger emits a status-change event to the outbox.
@@ -594,7 +627,11 @@ export async function updatePurchaseOrder(
     notes?: string | null;
     lines?: Array<{
       id?: string;
-      catalog_item_id: string;
+      // Either a catalog line (catalog_item_id) or a free-text line
+      // (item_description + optional uom_term_id).
+      catalog_item_id?: string | null;
+      item_description?: string | null;
+      uom_term_id?: string | null;
       qty_ordered: number;
       unit_cost: number;
     }>;
@@ -626,8 +663,45 @@ export async function updatePurchaseOrder(
       return { data: null, error: new Error('Purchase order was updated by someone else. Please refresh and try again.') };
     }
 
-    // TODO: Handle line updates (requires deleting old lines and inserting new ones)
-    // For now, this is a simplified implementation
+    // Replace line items when provided. Editing is only exposed for draft POs (no
+    // receipts yet), so a wholesale delete + re-insert is safe — the status-from-lines
+    // triggers only fire on received quantities and leave the PO status untouched here.
+    if (updates.lines) {
+      const { error: deleteError } = await supabase
+        .from('purchase_order_lines')
+        .delete()
+        .eq('po_id', poId);
+
+      if (deleteError) {
+        console.error('Error clearing PO lines:', deleteError);
+        return { data: null, error: new Error(deleteError.message) };
+      }
+
+      if (updates.lines.length > 0) {
+        const lineRows = updates.lines.map((line, index) => ({
+          tenant_id: data.tenant_id,
+          po_id: poId,
+          line_number: index + 1,
+          catalog_item_id: line.catalog_item_id ?? null,
+          item_description: line.item_description ?? null,
+          uom_term_id: line.uom_term_id ?? null,
+          qty_ordered: line.qty_ordered,
+          unit_cost: line.unit_cost,
+          status: 'pending',
+          // last_event_id is NOT NULL + UNIQUE per row — one fresh id per line.
+          last_event_id: globalThis.crypto.randomUUID(),
+        }));
+
+        const { error: insertError } = await supabase
+          .from('purchase_order_lines')
+          .insert(lineRows);
+
+        if (insertError) {
+          console.error('Error inserting PO lines:', insertError);
+          return { data: null, error: new Error(insertError.message) };
+        }
+      }
+    }
 
     return { data: { success: true }, error: null };
   } catch (err) {

@@ -52,7 +52,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, fetch, supab
       last_event_id: idempotencyKey,
     }],
   };
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/system/example-write',
 });

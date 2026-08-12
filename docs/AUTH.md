@@ -1,6 +1,6 @@
 # Authentication
 
-Last verified: 2026-02-13
+Last verified: 2026-05-14
 Source of truth: runtime code
 
 ## 1) Overview
@@ -17,7 +17,7 @@ This service does not use Supabase Auth. It implements a custom Summit One Core 
    - `refresh_token` expiring in 7 days with `token_use: 'refresh'`
 7. The callback sets cookies `access_token` and `refresh_token` as HttpOnly, SameSite=Lax, Path=/, and Secure only in production.
 8. The callback redirects to `/dashboard`.
-9. Middleware in [middleware.ts](middleware.ts) allows access to protected routes only if `access_token` cookie exists.
+9. Auth on API routes is enforced by chassis route factories (`createSessionReadRoute`, `createSessionWriteRoute`), not by middleware.
 
 If there is no ticket, the home page calls `/api/auth/token`. When unauthenticated, it redirects to `${NEXT_PUBLIC_CORE_APP_URL}/login`.
 
@@ -66,17 +66,15 @@ Helpers in [src/lib/auth.ts](src/lib/auth.ts):
 - Required claims: `sub` and `app_metadata.tenant_id`.
 - `requireAuth()` throws when missing.
 
-## 9) Middleware protection
-Middleware in [middleware.ts](middleware.ts) protects:
-- `/api/:path*`, `/dashboard/:path*`, `/debug/:path*`, `/examples/:path*`, `/inventory/:path*`, `/operations/:path*`, `/purchasing/:path*`, `/settings/:path*`
+## 9) Route-level auth enforcement
+Middleware in [middleware.ts](middleware.ts) is a pass-through — it does not check cookies or enforce auth.
 
-Public API allowlist:
-- `/api/health`
-- `/api/auth/*`, `/api/mock/*`, `/api/debug/*`
+Auth is enforced at the **route level** by chassis route factories:
+- `createSessionReadRoute` / `createSessionWriteRoute` — require a valid session (access_token cookie with tenant_id claim)
+- `createReadRoute` / `createWriteRoute` — no session required (used for public, mobile, and auth routes)
+- `createWebhookRoute` — validates webhook signatures
 
-Behavior:
-- Protected API route without `access_token` cookie returns `401` JSON.
-- Protected page route without `access_token` cookie redirects to `NEXT_PUBLIC_CORE_APP_URL` (or `/` fallback).
+If a session route receives a request without a valid access_token, the chassis returns a `401` JSON response automatically.
 
 ## 10) Tenant isolation and RLS
 Tenant isolation is enforced in the database using RLS and tenant injection triggers. From migrations in [supabase/migrations](supabase/migrations):
@@ -101,20 +99,17 @@ RLS policies across `inventory`, `supply_chain`, and selected `public` tables ty
 - `DELETE /api/auth/session` also clears cookies.
 
 ## 13) Dev and mock auth
-Current dev-only code paths:
-- `GET /api/mock/sso/validate` in [src/app/api/mock/sso/validate/route.ts](src/app/api/mock/sso/validate/route.ts) accepts `ticket_*` values and returns `{ user_id, tenant_id, role }`.
-- `/dev-login` in [src/app/dev-login/page.tsx](src/app/dev-login/page.tsx) posts to `/api/auth/exchange` and calls `supabase.auth.setSession(...)`.
-
-Current mismatches in the tree:
-- No `/api/auth/exchange` route exists.
-- `/auth/callback` requires a 32-character ticket while the mock validator expects `ticket_*`.
-- The mock validator returns snake_case keys, but `/auth/callback` expects camelCase fields.
+Dev-only code paths:
+- `/dev-login` in [src/app/dev-login/page.tsx](src/app/dev-login/page.tsx) posts to `/api/auth/exchange`.
+- `POST /api/auth/exchange` in [src/app/api/auth/exchange/route.ts](src/app/api/auth/exchange/route.ts) mints tokens for development use. Blocked in production unless `ALLOW_DEV_LOGIN` is set. Uses `DEV_TENANT_ID` env var (defaults to `052abee2-ffdc-470e-975a-b917dde72b8e`).
 
 ## 14) Auth-related environment variables
-- CORE_EXCHANGE_URL: Core ticket exchange endpoint.
-- CORE_SUPABASE_ANON_KEY: Core anon key for exchange requests.
-- SUPABASE_JWT_SECRET: HS256 secret used to sign and verify JWTs.
-- NEXT_PUBLIC_CORE_APP_URL: Core base URL for redirects.
-- NEXT_PUBLIC_SERVICE_BASE_URL: Service base URL used by logout fallback.
-- NEXT_PUBLIC_SUPABASE_URL: Supabase project URL.
-- NEXT_PUBLIC_SUPABASE_ANON_KEY: Supabase anon key for client requests.
+- `CORE_EXCHANGE_URL`: Core ticket exchange endpoint.
+- `CORE_ANON_KEY`: Core anon key for exchange requests (used by chassis).
+- `SUPABASE_JWT_SECRET`: HS256 secret used to sign and verify JWTs.
+- `INTERNAL_JWT_SECRET`: Chassis internal JWT secret.
+- `NEXT_PUBLIC_CORE_APP_URL`: Core base URL for redirects.
+- `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anon key for client requests.
+- `ALLOW_DEV_LOGIN`: Enable dev-only login page (development only).
+- `DEV_TENANT_ID`: Tenant ID for dev login (development only).

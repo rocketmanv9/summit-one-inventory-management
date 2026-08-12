@@ -19,7 +19,11 @@ const READ_INTENTS: Set<IntentType> = new Set([
   'list_locations',
   'list_transfers',
   'list_assets',
+  'print_labels',
   'list_receipts',
+  'list_reservations',
+  'list_categories',
+  'global_search',
   'inventory_summary',
   'help',
   'navigate',
@@ -43,7 +47,22 @@ const ANALYTICS_INTENTS = new Set([
 const WORKFLOW_INTENTS = new Set([
   'workflow_auto_reorder',
   'workflow_stock_rebalance',
-  'create_dashboard',
+  'smart_stock_receive',
+  'smart_add_location',
+  'smart_register_asset',
+  'search_vendors_online',
+  'set_preferred_vendor',
+  'enrich_vendor',
+  'enrich_item',
+  'query_reservations',
+  'query_asset_value',
+  'draft_purchase_request',
+  'extract_document',
+  'list_pending_apparel_orders',
+  'approve_apparel_order',
+  'reject_apparel_order',
+  'semantic_search',
+  'purchasing_assistant',
 ]);
 
 export function classifyIntent(intent: IntentType | string): ChatIntent {
@@ -95,6 +114,27 @@ export interface AiDashboardLinkDisplay {
   dashboardName: string;
 }
 
+// ─── Tool Error Contract ─────────────────────────────────────────────
+
+export interface ToolError {
+  code: 'missing_param' | 'not_found' | 'validation' | 'conflict' | 'upstream' | 'internal';
+  message: string;
+  missingFields?: string[];
+  suggestions?: string[];
+}
+
+// ─── Tool Governance ─────────────────────────────────────────────────
+
+export interface ToolGovernance {
+  name: string;
+  riskLevel: 'low' | 'medium' | 'high';
+  requiresConfirmation: boolean;
+  requiresIdempotency: boolean;
+  readAfterWrite: boolean;
+  auditEventType?: string;
+  permissionsRequired?: string[];
+}
+
 // ─── Chat Action (proposal → execution lifecycle) ─────────────────────
 
 export type ChatActionStatus = 'proposed' | 'confirmed' | 'executing' | 'completed' | 'failed';
@@ -121,11 +161,19 @@ export interface Message {
   status?: 'success' | 'error' | 'executing';
   selectOptions?: Array<{ label: string; value: string }>;
   navigateTo?: string;
+  /** Custom label for the navigation button (e.g. "View Vendors"). Defaults to "Go to page". */
+  navigateLabel?: string;
+  /** When true, force-show the nav button. When absent, only shown for mutation results (status='success'). */
+  showNavigation?: boolean;
   isConfirm?: boolean;
   /** When a MUTATION is proposed, the message carries the action for preview */
   action?: ChatAction;
   /** When a server-side query returns structured data, the message carries it for rich rendering */
   dataDisplay?: AiDataDisplay;
+  /** Base64 data URL of an attached image */
+  imageUrl?: string;
+  /** Confidence score (0–1) estimated from response content and tool results */
+  confidence?: number;
 }
 
 // ─── Active Flow ──────────────────────────────────────────────────────
@@ -175,6 +223,8 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
     { label: 'Add item', message: 'Add a catalog item' },
     { label: 'List items', message: 'List items' },
     { label: 'Velocity', message: 'Show item velocity analysis' },
+    { label: 'Categories', message: 'List categories' },
+    { label: 'Add category', message: 'Add a category' },
   ],
   '/inventory/purchasing': [
     { label: 'Create PO', message: 'Create a purchase order' },
@@ -195,11 +245,21 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
   '/inventory/assets': [
     { label: 'New asset', message: 'Create an asset' },
     { label: 'List assets', message: 'List assets' },
+    { label: 'Print labels', message: 'Print labels for all assets' },
+  ],
+  '/inventory/reservations': [
+    { label: 'Reserve stock', message: 'Create a reservation' },
+    { label: 'List reservations', message: 'Show reservations' },
+    { label: 'Release reservation', message: 'Release a reservation' },
+  ],
+  '/inventory/categories': [
+    { label: 'List categories', message: 'List categories' },
+    { label: 'Add category', message: 'Add a category' },
   ],
   '/dashboard': [
     { label: 'KPIs', message: 'Show me inventory KPIs' },
     { label: 'Low stock', message: 'Show low stock items' },
-    { label: 'Exec dashboard', message: 'Create an executive dashboard' },
+    { label: 'Reorder', message: 'What should I reorder?' },
     { label: 'Valuation', message: "What's my total inventory value?" },
   ],
 };

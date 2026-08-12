@@ -105,37 +105,6 @@ export const DASHBOARD_TEMPLATES: Record<string, DashboardTemplate> = {
     ],
   },
 
-  procurement: {
-    name: 'Procurement',
-    description: 'Purchase order tracking — open POs, late deliveries, supplier spend, and PO aging.',
-    widgets: [
-      {
-        widget_key: 'procurement.widget.open_purchase_orders_realtime',
-        title: 'Open Purchase Orders',
-        layout: { x: 0, y: 0, w: 8, h: 5 },
-        config: { display: 'table', limit: 10 },
-      },
-      {
-        widget_key: 'procurement.widget.late_deliveries',
-        title: 'Late Deliveries',
-        layout: { x: 8, y: 0, w: 4, h: 5 },
-        config: { display: 'table', limit: 10 },
-      },
-      {
-        widget_key: 'procurement.widget.supplier_spend',
-        title: 'Supplier Spend',
-        layout: { x: 0, y: 5, w: 6, h: 5 },
-        config: { display: 'chart' },
-      },
-      {
-        widget_key: 'procurement.widget.po_aging',
-        title: 'PO Aging',
-        layout: { x: 6, y: 5, w: 6, h: 5 },
-        config: { display: 'table' },
-      },
-    ],
-  },
-
   inventory_health: {
     name: 'Inventory Health',
     description: 'Stock health analysis — low stock items, dead stock, overstocked items, and inventory forecast.',

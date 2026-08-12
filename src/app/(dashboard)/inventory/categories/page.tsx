@@ -5,15 +5,19 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Tags, Filter, ArrowRightLeft } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { CategoryModal } from '@/components/modals/CategoryModal';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import type { Database } from 'types/supabase';
 
 type Category = Database['inventory']['Tables']['item_categories']['Row'];
 
 export default function CategoriesPage() {
+  const help = useHowItWorks('inventory-categories-help');
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -23,6 +27,9 @@ export default function CategoriesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Category | undefined>();
   const [reassignCount, setReassignCount] = useState(0);
   const [reassignError, setReassignError] = useState('');
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const formatDate = (value?: string | null) => {
     if (!value) return '-';
@@ -58,19 +65,32 @@ export default function CategoriesPage() {
         return;
       }
 
-      if (!confirm('Are you sure you want to delete this category?')) {
-        return;
-      }
-
-      if (!category.last_event_id) {
-        throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
-      }
-
-      await InventoryRPC.deleteItemCategory(category.id, category.last_event_id);
-      fetchCategories();
+      setDeleteError('');
+      setConfirmDeleteTarget(category);
     } catch (err) {
       console.error('Error deleting category:', err);
       alert(err instanceof Error ? err.message : 'Failed to delete category');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+
+    try {
+      if (!confirmDeleteTarget.last_event_id) {
+        throw AppError.badRequest('Missing last_event_id for this category. Please refresh and try again.');
+      }
+
+      await InventoryRPC.deleteItemCategory(confirmDeleteTarget.id, confirmDeleteTarget.last_event_id);
+      setConfirmDeleteTarget(null);
+      fetchCategories();
+    } catch (err) {
+      console.error('Error deleting category:', err);
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete category');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -102,7 +122,7 @@ export default function CategoriesPage() {
         <div className="flex gap-3">
           <button
             onClick={() => setEditingCategory(row)}
-            className="text-primary hover:text-primary/80 text-sm font-medium"
+            className="text-slate-600 hover:text-slate-900 text-sm font-medium"
           >
             Edit
           </button>
@@ -140,14 +160,35 @@ export default function CategoriesPage() {
           title="Item Categories"
           description="Manage item categories for inventory organization"
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Add Category
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Add Category
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How categories work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create your buckets', body: 'Use + Add Category to define groups like Raw Material, Consumable, or Safety. Every item belongs to exactly one category.' },
+              { title: 'Use them everywhere', body: 'Categories show up as one-click filter chips on the Inventory page and group items in reporting, so keep the list short and meaningful.' },
+              { title: 'Rename freely', body: 'Edit changes a category’s name in place — items keep their assignment, no re-tagging needed.' },
+              { title: 'Delete safely', body: 'Deleting a category with items in it first asks you to reassign those items to another category, so nothing is left uncategorized.' },
+            ]}
+            glossary={[
+              { Icon: Tags, term: 'Category', blurb: 'the single bucket an item belongs to — its main grouping across the app' },
+              { Icon: Filter, term: 'Filter chip', blurb: 'each category becomes a clickable chip on the Inventory page for instant narrowing' },
+              { Icon: ArrowRightLeft, term: 'Reassign', blurb: 'moving a category’s items into another category before the old one is deleted' },
+            ]}
+          />
+        )}
 
         <FilterBar
           filters={filterConfig}
@@ -205,6 +246,20 @@ export default function CategoriesPage() {
             onError={(message) => setReassignError(message)}
           />
         )}
+
+        {/* Delete category confirmation (no items attached) */}
+        <ConfirmDialog
+          open={!!confirmDeleteTarget}
+          title="Delete category"
+          message="Are you sure you want to delete this category?"
+          confirmLabel="Delete"
+          loadingLabel="Deleting..."
+          destructive
+          loading={deleting}
+          error={deleteError}
+          onConfirm={confirmDelete}
+          onCancel={() => { setConfirmDeleteTarget(null); setDeleteError(''); }}
+        />
       </div>
     </AppShell>
   );

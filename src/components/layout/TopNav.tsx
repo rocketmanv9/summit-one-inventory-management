@@ -1,27 +1,55 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
+import { Search, User, ChevronDown, LogOut, Settings, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/supabase/client';
 import { CommandPalette } from '@/components/search/CommandPalette';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
+import { ViewAsPicker } from '@/components/layout/ViewAsPicker';
+import { LocationPicker } from '@/components/layout/LocationPicker';
 import { useAiPanel } from '@/lib/ai/panel-store';
+import { useTenantBranding } from '@/lib/tenant-branding';
 
 export function TopNav() {
   const router = useRouter();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isMac, setIsMac] = useState(false);
+  const [session, setSession] = useState<{ name: string; email: string; tenantId: string; role: string } | null>(null);
   const aiPanel = useAiPanel();
+  const { branding } = useTenantBranding();
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setIsMac(navigator.platform.toUpperCase().indexOf('MAC') >= 0);
   }, []);
 
-  // TODO: Get from auth context
-  const tenantName = 'Acme Asphalt & Concrete';
-  const userName = 'Admin User';
-  const userRole = 'Administrator';
+  useEffect(() => {
+    fetch('/api/auth/session')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated) {
+          setSession({ name: data.name, email: data.email, tenantId: data.tenantId, role: data.role });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const userName = session?.name ?? 'Loading...';
+  const userRole = session?.role ?? 'Loading...';
+  const tenantName = branding.display_name || session?.name || 'Loading...';
+  const tenantId = session?.tenantId ? session.tenantId.substring(0, 8) : '...';
 
   const handleLogout = async () => {
     try {
@@ -55,14 +83,21 @@ export function TopNav() {
           </button>
         </div>
 
+        {/* Active location — the loudest chrome after the logo: which yard's
+            data is on screen. Visible to everyone; scopes location-aware pages. */}
+        <LocationPicker />
+
         {/* Right side */}
         <div className="flex items-center gap-4">
+          {/* View-as-position picker (admins/devs only) */}
+          <ViewAsPicker />
+
           {/* AI Assistant Toggle */}
           <button
             onClick={aiPanel.toggle}
             className={`relative flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               aiPanel.isOpen
-                ? 'bg-blue-100 text-blue-700'
+                ? 'bg-primary/10 text-primary'
                 : 'hover:bg-muted text-muted-foreground hover:text-foreground'
             }`}
             aria-label="Toggle AI assistant"
@@ -75,16 +110,7 @@ export function TopNav() {
           </button>
 
           {/* Notifications */}
-          <button
-            className="relative rounded-lg p-2 hover:bg-muted"
-            aria-label="Notifications"
-          >
-            <Bell className="h-5 w-5" />
-            <span className="absolute right-1.5 top-1.5 flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive" />
-            </span>
-          </button>
+          <NotificationsBell />
 
           {/* Divider */}
           <div className="h-6 w-px bg-border" />
@@ -93,12 +119,12 @@ export function TopNav() {
           <div className="hidden text-right lg:block">
             <p className="text-sm font-medium">{tenantName}</p>
             <p className="text-xs text-muted-foreground">
-              Tenant ID: ae837809
+              Tenant ID: {tenantId}
             </p>
           </div>
 
           {/* User Menu */}
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center gap-2 rounded-lg p-2 hover:bg-muted"

@@ -27,16 +27,21 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     tenantId: session.tenantId,
   });
 
+  // Pass tenant explicitly — same reasoning as the item snapshot route: the
+  // SECURITY DEFINER RPC's current_tenant_id() fallback depends on a GUC set by
+  // a prior set_claim request that PostgREST pooling can strand on another
+  // connection. p_tenant_id resolves tenant atomically within this call.
   const { data, error } = await (supabase as any).schema('inventory').rpc('rpc_location_inventory_snapshot', {
     p_location_id: id,
+    p_tenant_id: session.tenantId,
   });
 
   if (error) {
-    log.error('[LocationSnapshot] RPC error:', error);
+    log.error('[LocationSnapshot] RPC error', { locationId: id, code: error.code, message: error.message });
     if (error.message?.includes('not found')) {
       throw AppError.notFound('Location not found');
     }
-    throw AppError.internal('Snapshot failed');
+    throw AppError.internal(`Location snapshot failed: ${error.message ?? 'unknown error'}`);
   }
 
   return Response.json(data);

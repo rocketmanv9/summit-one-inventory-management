@@ -1,40 +1,61 @@
 /**
- * AI Chat API Route
+ * AI Chat API Route — Streaming
+ *
  * Server-side OpenAI integration for the inventory assistant.
+ * Returns SSE stream with events: delta, tool_call, data_result, done.
  *
  * - Auth handled by chassis route factory
  * - Returns { fallbackToKeyword: true } if no API key configured
- * - Calls OpenAI with function tools and returns structured JSON
- * - Server-side tools (query_*, create_dashboard, workflow_*) are executed
- *   here and their results fed back to OpenAI for natural language summary
- * - Falls back gracefully on any error
+ * - Persists messages to ai_conversations / ai_messages
+ * - Rate limited (20 req/min via aiRateLimit)
+ * - Server-side tools executed inline, results fed back to OpenAI
+ * - Tool governance: admin-only tools filtered by user role
  */
 
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { INVENTORY_TOOLS } from '@/lib/ai/tools';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt';
+import { getAiUserContext, formatUserContextForPrompt } from '@/lib/ai/user-context';
 import { isServerTool, executeServerTool, type ServerToolContext } from '@/lib/ai/server-tools';
+import { resolveUserRole, filterToolsForRole, canExecuteTool } from '@/lib/ai/tool-governance';
+import { toolRegistry } from '@/lib/ai/tool-registry';
+import '@/lib/ai/tool-registrations';
+import { checkRateLimit, aiRateLimit } from '@/lib/rate-limit';
+import { estimateCost } from '@/lib/ai/cost';
+import { selectModel } from '@/lib/ai/model-router';
+import { estimateConfidence, shouldHedge, getHedgeText } from '@/lib/ai/confidence';
+import { getRelevantMemories, formatMemoriesForPrompt, extractMemories, storeMemories } from '@/lib/ai/memory';
+import { isGraphWorkflowEnabled, runChatGraph } from '@/lib/ai/workflow/chat-graph';
 import OpenAI from 'openai';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
-const MAX_MESSAGES = 20;
-const MAX_SERVER_TOOL_ROUNDS = 3;
+const MAX_MESSAGES = 40;
+const MAX_SERVER_TOOL_ROUNDS = 5;
 
 function fallbackResponse() {
   return Response.json({ fallbackToKeyword: true });
 }
 
 export const POST = createSessionReadRoute(async ({ req, session, log }) => {
+  // ── Rate limit check ─────────────────────────────────────────────────
+  const rateLimitResult = await checkRateLimit(req, aiRateLimit);
+  if (!rateLimitResult.success) {
+    return rateLimitResult.response!;
+  }
+
   // Check for API key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
+    log.warn('[AI Chat] No OPENAI_API_KEY configured — falling back to keyword mode');
     return fallbackResponse();
   }
 
   try {
     const body = await req.json();
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = body.messages || [];
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; imageUrl?: string }> = body.messages || [];
+    const conversationId: string | undefined = body.conversation_id;
+    const surface: string = body.surface || 'corner';
 
     if (messages.length === 0) {
       return fallbackResponse();
@@ -42,32 +63,116 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
 
     // Trim to last N messages
     const trimmed = messages.slice(-MAX_MESSAGES);
+    const lastUserMessage = trimmed[trimmed.length - 1];
 
-    // Build OpenAI messages
+    // ── Build tenant-scoped Supabase client for persistence ─────────────
+    const supabase = await createTenantServiceClient({
+      url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      tenantId: session.tenantId,
+    });
+    const inv = (supabase as any).schema('inventory');
+
+    // ── Resolve user role + identity ─────────────────────────────────────
+    // local_users is in the public schema, so use `supabase` directly (not `inv`).
+    // Identity (name/position from the HR mirrors) is cached 5 min per user and
+    // feeds the system prompt so Isabelle knows who she's talking to.
+    const [userRole, aiUserContext] = await Promise.all([
+      resolveUserRole(supabase, session.userId, session.tenantId),
+      getAiUserContext(supabase, session.userId, session.tenantId),
+    ]);
+
+    // Load tenant-specific tool config for overrides
+    const tenantToolConfig = await toolRegistry.loadTenantConfig(supabase, session.tenantId);
+    const filteredTools = toolRegistry.getOpenAITools(userRole, tenantToolConfig);
+    log.info(`[AI Chat] User role: ${userRole}, tools available: ${filteredTools.length}/${toolRegistry.names().length}`);
+
+    // ── Select model based on conversation complexity ──────────────────
+    const hasImage = trimmed.some((m) => !!m.imageUrl);
+    const hasToolHistory = trimmed.some((m) => m.content?.includes('[Action:'));
+    const selectedModel = selectModel({
+      messageCount: trimmed.length,
+      hasImage,
+      hasToolHistory,
+      lastUserMessage: lastUserMessage?.content || '',
+    });
+
+    // ── Ensure conversation exists ──────────────────────────────────────
+    let activeConversationId = conversationId;
+    if (!activeConversationId) {
+      // Auto-create conversation
+      const title = (lastUserMessage?.content || 'New conversation').slice(0, 100);
+      const { data: conv } = await inv
+        .from('ai_conversations')
+        .insert({
+          tenant_id: session.tenantId,
+          user_id: session.userId,
+          title,
+          surface,
+          model: selectedModel,
+        })
+        .select('id')
+        .single();
+      activeConversationId = conv?.id;
+    }
+
+    // ── Persist user message ────────────────────────────────────────────
+    if (activeConversationId && lastUserMessage) {
+      await inv
+        .from('ai_messages')
+        .insert({
+          tenant_id: session.tenantId,
+          conversation_id: activeConversationId,
+          role: 'user',
+          content: lastUserMessage.content,
+          image_url: lastUserMessage.imageUrl || null,
+        });
+    }
+
+    // ── Retrieve relevant memories for context ──────────────────────────
+    let memorySuffix = '';
+    try {
+      const memories = await getRelevantMemories(
+        supabase,
+        session.tenantId,
+        session.userId,
+        lastUserMessage?.content || '',
+      );
+      memorySuffix = formatMemoriesForPrompt(memories);
+    } catch {
+      // Memory retrieval is non-critical
+    }
+
+    // Build OpenAI messages — convert user messages with images to multimodal content
+    const systemPromptContent =
+      buildSystemPrompt(undefined, undefined, formatUserContextForPrompt(aiUserContext)) + memorySuffix;
     const openaiMessages: OpenAI.ChatCompletionMessageParam[] = [
-      { role: 'system', content: buildSystemPrompt() },
-      ...trimmed.map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
+      { role: 'system', content: systemPromptContent },
+      ...trimmed.map((m) => {
+        if (m.role === 'user' && m.imageUrl) {
+          return {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: m.content || 'What is this item?' },
+              { type: 'image_url' as const, image_url: { url: m.imageUrl, detail: 'low' as const } },
+            ],
+          };
+        }
+        return {
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        };
+      }),
     ];
 
     const openai = new OpenAI({ apiKey });
 
-    // Build server tool context (lazy — only created if a server tool is called)
+    // Build server tool context (lazy)
     let serverToolCtx: ServerToolContext | null = null;
     const getServerToolCtx = async (): Promise<ServerToolContext> => {
       if (!serverToolCtx) {
-        const supabase = await createTenantServiceClient({
-          url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-          tenantId: session.tenantId,
-        });
-
-        // Derive base URL from request
         const url = new URL(req.url);
         const baseUrl = `${url.protocol}//${url.host}`;
-
         serverToolCtx = {
           supabase,
           tenantId: session.tenantId,
@@ -79,124 +184,431 @@ export const POST = createSessionReadRoute(async ({ req, session, log }) => {
       return serverToolCtx;
     };
 
-    // ── Tool execution loop ──────────────────────────────────────────
-    // OpenAI may pick a server tool. If so, execute it, feed the result
-    // back as a tool response, and let OpenAI generate a NL summary.
+    // ── Streaming SSE response ──────────────────────────────────────────
+    const startTime = Date.now();
+    let totalTokens = 0;
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    const toolsCalled: string[] = [];
+    const toolsCalledInSession: Array<{ success: boolean; name: string }> = [];
 
-    let lastDataDisplay: import('@/lib/ai/types').AiDataDisplay | null = null;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        function sendEvent(event: string, data: any) {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        }
 
-    for (let round = 0; round < MAX_SERVER_TOOL_ROUNDS; round++) {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: openaiMessages,
-        tools: INVENTORY_TOOLS,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 1024,
-      });
-
-      const choice = completion.choices[0];
-      if (!choice) {
-        return fallbackResponse();
-      }
-
-      const message = choice.message;
-
-      // ── No tool call → return text (possibly after a server tool round)
-      if (!message.tool_calls || message.tool_calls.length === 0) {
-        if (message.content) {
-          // If we executed a server tool in a previous round, return data_result
-          if (lastDataDisplay) {
-            return Response.json({
-              type: 'data_result',
-              content: message.content,
-              dataDisplay: lastDataDisplay,
+        // Helper: log usage to ai_usage_log (fire-and-forget, never blocks stream)
+        async function logUsage() {
+          try {
+            const usage = {
+              prompt_tokens: totalPromptTokens,
+              completion_tokens: totalCompletionTokens,
+              total_tokens: totalTokens,
+            };
+            await inv.from('ai_usage_log').insert({
+              tenant_id: session.tenantId,
+              user_id: session.userId,
+              conversation_id: activeConversationId || null,
+              model: selectedModel,
+              prompt_tokens: totalPromptTokens,
+              completion_tokens: totalCompletionTokens,
+              total_tokens: totalTokens,
+              estimated_cost_usd: estimateCost(selectedModel, usage),
+              latency_ms: Date.now() - startTime,
+              tools_called: toolsCalled,
+              intent_type: toolsCalled.length > 0 ? toolsCalled[toolsCalled.length - 1] : null,
+              surface,
             });
+          } catch (usageErr: any) {
+            log.warn('[AI Chat] Failed to log usage', { error: usageErr.message });
           }
-          return Response.json({
-            type: 'text',
-            content: message.content,
+        }
+
+        try {
+          let lastDataDisplay: import('@/lib/ai/types').AiDataDisplay | null = null;
+          let fullAssistantContent = '';
+
+          // ── LangGraph workflow path (feature-flagged) ─────────────
+          if (isGraphWorkflowEnabled()) {
+            try {
+              const ctx = await getServerToolCtx();
+              const graphResult = await runChatGraph({
+                tenantId: session.tenantId,
+                userId: session.userId,
+                userMessage: lastUserMessage?.content || '',
+                conversationId: activeConversationId || null,
+                userRole,
+                surface,
+                serverToolCtx: ctx,
+                supabase,
+              });
+
+              // Stream the graph result as SSE events
+              if (graphResult.response) {
+                sendEvent('delta', { content: graphResult.response });
+                fullAssistantContent = graphResult.response;
+              }
+
+              if (graphResult.dataDisplay) {
+                sendEvent('data_result', { dataDisplay: graphResult.dataDisplay });
+                lastDataDisplay = graphResult.dataDisplay;
+              }
+
+              // Persist assistant message
+              let assistantMessageId: string | undefined;
+              if (activeConversationId) {
+                const { data: savedMsg } = await inv
+                  .from('ai_messages')
+                  .insert({
+                    tenant_id: session.tenantId,
+                    conversation_id: activeConversationId,
+                    role: 'assistant',
+                    content: graphResult.response || null,
+                    data_display: graphResult.dataDisplay || null,
+                    metadata: {
+                      graph: true,
+                      nodesVisited: graphResult.nodesVisited,
+                      confidence: graphResult.confidence,
+                      latency_ms: Date.now() - startTime,
+                    },
+                  })
+                  .select('id')
+                  .single();
+                assistantMessageId = savedMsg?.id;
+              }
+
+              sendEvent('done', {
+                conversation_id: activeConversationId,
+                message_id: assistantMessageId,
+                tokens: 0,
+                latency_ms: Date.now() - startTime,
+                model: 'langgraph',
+                confidence: graphResult.confidence,
+              });
+
+              controller.close();
+              return;
+            } catch (graphErr: any) {
+              // Graph workflow failed — fall through to existing OpenAI loop
+              log.warn('[AI Chat] Graph workflow failed, falling back to OpenAI loop', {
+                error: graphErr.message,
+              });
+            }
+          }
+
+          for (let round = 0; round < MAX_SERVER_TOOL_ROUNDS; round++) {
+            const streamResponse = await openai.chat.completions.create({
+              model: selectedModel,
+              messages: openaiMessages,
+              tools: filteredTools,
+              tool_choice: 'auto',
+              temperature: 0.4,
+              max_tokens: 4096,
+              stream: true,
+              stream_options: { include_usage: true },
+            });
+
+            let accumulatedContent = '';
+            let toolCallId = '';
+            let toolCallFunctionName = '';
+            let toolCallArguments = '';
+            let hasToolCall = false;
+            let roundTokens = 0;
+
+            for await (const chunk of streamResponse) {
+              // Capture usage from the final chunk
+              if (chunk.usage) {
+                roundTokens = chunk.usage.total_tokens || 0;
+                totalTokens += roundTokens;
+                totalPromptTokens += chunk.usage.prompt_tokens || 0;
+                totalCompletionTokens += chunk.usage.completion_tokens || 0;
+              }
+
+              const delta = chunk.choices[0]?.delta;
+              if (!delta) continue;
+
+              // Text content delta — stream to client
+              if (delta.content) {
+                accumulatedContent += delta.content;
+                sendEvent('delta', { content: delta.content });
+              }
+
+              // Tool call accumulation
+              if (delta.tool_calls && delta.tool_calls.length > 0) {
+                hasToolCall = true;
+                const tc = delta.tool_calls[0];
+                if (tc.id) toolCallId = tc.id;
+                if (tc.function?.name) toolCallFunctionName = tc.function.name;
+                if (tc.function?.arguments) toolCallArguments += tc.function.arguments;
+              }
+            }
+
+            // ── No tool call → done ──────────────────────────────────
+            if (!hasToolCall) {
+              // If OpenAI returned empty content after a tool result, use the last tool's text
+              if (!accumulatedContent && toolsCalledInSession.length > 0 && lastDataDisplay) {
+                const lastToolMsg = openaiMessages.filter((m) => m.role === 'tool').pop();
+                if (lastToolMsg && 'content' in lastToolMsg && lastToolMsg.content) {
+                  accumulatedContent = String(lastToolMsg.content);
+                  sendEvent('delta', { content: accumulatedContent });
+                }
+              }
+              fullAssistantContent = accumulatedContent;
+
+              // Persist assistant message
+              let assistantMessageId: string | undefined;
+              if (activeConversationId) {
+                const { data: savedMsg } = await inv
+                  .from('ai_messages')
+                  .insert({
+                    tenant_id: session.tenantId,
+                    conversation_id: activeConversationId,
+                    role: 'assistant',
+                    content: accumulatedContent || null,
+                    data_display: lastDataDisplay || null,
+                    metadata: { tokens: totalTokens, latency_ms: Date.now() - startTime, model: selectedModel },
+                  })
+                  .select('id')
+                  .single();
+                assistantMessageId = savedMsg?.id;
+
+                // Update conversation token count + title
+                const updates: Record<string, any> = {
+                  total_tokens: totalTokens,
+                  updated_at: new Date().toISOString(),
+                };
+                await inv
+                  .from('ai_conversations')
+                  .update(updates)
+                  .eq('id', activeConversationId);
+              }
+
+              // Send final done event
+              if (lastDataDisplay) {
+                sendEvent('data_result', { dataDisplay: lastDataDisplay });
+              }
+
+              const confidence = estimateConfidence({
+                content: fullAssistantContent,
+                toolResults: toolsCalledInSession,
+                dataDisplayPresent: !!lastDataDisplay,
+              });
+
+              // Append hedge text for low-confidence responses
+              if (shouldHedge(confidence) && fullAssistantContent.length > 0) {
+                const hedge = getHedgeText();
+                sendEvent('delta', { content: hedge });
+                fullAssistantContent += hedge;
+              }
+
+              sendEvent('done', {
+                conversation_id: activeConversationId,
+                message_id: assistantMessageId,
+                tokens: totalTokens,
+                latency_ms: Date.now() - startTime,
+                model: selectedModel,
+                confidence,
+              });
+
+              await logUsage();
+
+              // ── Extract & store memories (fire-and-forget) ─────────
+              // Skip memory extraction for short conversations or trivial messages
+              const GREETING_PATTERNS = /^\s*(hi|hey|hello|thanks|thank you|ok|okay|sure|got it|yep|yes|no|bye|goodbye|cheers)\s*[.!?]*\s*$/i;
+              const lastMsg = lastUserMessage?.content || '';
+              const shouldExtractMemories = trimmed.length >= 4 && !GREETING_PATTERNS.test(lastMsg);
+
+              if (shouldExtractMemories) {
+                try {
+                  const turns = trimmed.map((m) => ({
+                    role: m.role as 'user' | 'assistant',
+                    content: m.content,
+                  }));
+                  if (fullAssistantContent) {
+                    turns.push({ role: 'assistant', content: fullAssistantContent });
+                  }
+                  const extracted = await extractMemories(turns);
+                  if (extracted.length > 0) {
+                    await storeMemories(
+                      supabase,
+                      session.tenantId,
+                      session.userId,
+                      activeConversationId || null,
+                      extracted,
+                    );
+                  }
+                } catch {
+                  // Memory extraction is non-critical
+                }
+              }
+
+              controller.close();
+              return;
+            }
+
+            // ── Tool call handling ───────────────────────────────────
+
+            // Parse tool arguments
+            let params: Record<string, any> = {};
+            try {
+              params = JSON.parse(toolCallArguments || '{}');
+            } catch {
+              // empty params on parse failure
+            }
+
+            // ── Server-side role guard ───────────────────────────────
+            // Even though we filter tools sent to OpenAI, this is a
+            // defense-in-depth check in case the model hallucinates
+            // a tool name that was not in the filtered list.
+            if (!toolRegistry.canExecute(toolCallFunctionName, userRole)) {
+              log.warn(`[AI Chat] Blocked tool ${toolCallFunctionName} for role ${userRole}`);
+              sendEvent('delta', { content: "\n\nI'm sorry, but you don't have permission to use that tool. Please contact an admin.\n\n" });
+              sendEvent('done', {
+                conversation_id: activeConversationId,
+                tokens: totalTokens,
+                latency_ms: Date.now() - startTime,
+                model: selectedModel,
+              });
+              await logUsage();
+              controller.close();
+              return;
+            }
+
+            // Client-side tool — return for client execution
+            if (!toolRegistry.isServerTool(toolCallFunctionName)) {
+              toolsCalled.push(toolCallFunctionName);
+              const stringParams: Record<string, string> = {};
+              for (const [key, value] of Object.entries(params)) {
+                if (value !== null && value !== undefined && value !== '') {
+                  stringParams[key] = String(value);
+                }
+              }
+
+              sendEvent('tool_call', {
+                type: 'tool_use',
+                intent: toolCallFunctionName,
+                params: stringParams,
+              });
+
+              // Persist tool_use message
+              if (activeConversationId) {
+                await inv.from('ai_messages').insert({
+                  tenant_id: session.tenantId,
+                  conversation_id: activeConversationId,
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{ id: toolCallId, function: { name: toolCallFunctionName, arguments: toolCallArguments } }],
+                  metadata: { tokens: totalTokens, model: selectedModel },
+                });
+              }
+
+              sendEvent('done', {
+                conversation_id: activeConversationId,
+                tokens: totalTokens,
+                latency_ms: Date.now() - startTime,
+                model: selectedModel,
+              });
+
+              await logUsage();
+              controller.close();
+              return;
+            }
+
+            // Server-side tool — execute and loop
+            toolsCalled.push(toolCallFunctionName);
+            log.info(`[AI Chat] Executing server tool: ${toolCallFunctionName}`, { params });
+            sendEvent('delta', { content: `\n\n_Running ${toolCallFunctionName}..._\n\n` });
+
+            const ctx = await getServerToolCtx();
+            let toolResult;
+            try {
+              toolResult = await toolRegistry.execute(toolCallFunctionName, params, ctx);
+              toolsCalledInSession.push({ success: true, name: toolCallFunctionName });
+            } catch (toolErr: any) {
+              toolResult = { text: `Error: ${toolErr.message}`, dataDisplay: null as any, durationMs: 0 };
+              toolsCalledInSession.push({ success: false, name: toolCallFunctionName });
+            }
+            lastDataDisplay = toolResult.dataDisplay;
+
+            // ── Persist tool execution audit record ──────────────
+            if (activeConversationId) {
+              try {
+                await inv.from('ai_messages').insert({
+                  tenant_id: session.tenantId,
+                  conversation_id: activeConversationId,
+                  role: 'tool',
+                  content: toolResult.text?.slice(0, 2000) || null,
+                  metadata: {
+                    tool_name: toolCallFunctionName,
+                    params_keys: Object.keys(params),
+                    success: toolsCalledInSession[toolsCalledInSession.length - 1]?.success ?? false,
+                    duration_ms: toolResult.durationMs || 0,
+                  },
+                });
+              } catch {
+                // Audit logging is non-critical
+              }
+            }
+
+            sendEvent('data_result', { dataDisplay: toolResult.dataDisplay });
+
+            // Feed tool result back into conversation for next round
+            openaiMessages.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: toolCallId,
+                type: 'function',
+                function: { name: toolCallFunctionName, arguments: toolCallArguments },
+              }],
+            });
+
+            openaiMessages.push({
+              role: 'tool',
+              tool_call_id: toolCallId,
+              content: toolResult.text,
+            });
+
+            // Loop continues — OpenAI will generate a NL summary
+          }
+
+          // Exhausted tool rounds
+          if (lastDataDisplay) {
+            sendEvent('data_result', { dataDisplay: lastDataDisplay });
+          }
+
+          const exhaustedConfidence = estimateConfidence({
+            content: fullAssistantContent,
+            toolResults: toolsCalledInSession,
+            dataDisplayPresent: !!lastDataDisplay,
           });
+
+          sendEvent('done', {
+            conversation_id: activeConversationId,
+            tokens: totalTokens,
+            latency_ms: Date.now() - startTime,
+            model: selectedModel,
+            confidence: exhaustedConfidence,
+          });
+          await logUsage();
+          controller.close();
+        } catch (err: any) {
+          log.error('[AI Chat] Stream error:', err.message || err);
+          sendEvent('error', { message: err.message || 'Stream error' });
+          controller.close();
         }
-        return fallbackResponse();
-      }
+      },
+    });
 
-      const toolCall = message.tool_calls[0];
-      if (toolCall.type !== 'function') {
-        return fallbackResponse();
-      }
-
-      const functionName = toolCall.function.name;
-
-      // Parse tool arguments
-      let params: Record<string, any> = {};
-      try {
-        params = JSON.parse(toolCall.function.arguments || '{}');
-      } catch {
-        // If argument parsing fails, use empty params
-      }
-
-      // ── Client-side tool → return for client execution
-      if (!isServerTool(functionName)) {
-        // Flatten all values to strings for consistency with the chat system
-        const stringParams: Record<string, string> = {};
-        for (const [key, value] of Object.entries(params)) {
-          if (value !== null && value !== undefined && value !== '') {
-            stringParams[key] = String(value);
-          }
-        }
-
-        return Response.json({
-          type: 'tool_use',
-          intent: functionName,
-          params: stringParams,
-        });
-      }
-
-      // ── Server-side tool → execute and feed result back to OpenAI
-      log.info(`[AI Chat] Executing server tool: ${functionName}`, { params });
-
-      const ctx = await getServerToolCtx();
-      const toolResult = await executeServerTool(functionName, params, ctx);
-
-      // Store the data display for the final response
-      lastDataDisplay = toolResult.dataDisplay;
-
-      // Add the assistant's tool call message and the tool result to conversation
-      openaiMessages.push({
-        role: 'assistant',
-        content: null,
-        tool_calls: [
-          {
-            id: toolCall.id,
-            type: 'function',
-            function: {
-              name: functionName,
-              arguments: toolCall.function.arguments || '{}',
-            },
-          },
-        ],
-      });
-
-      openaiMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: toolResult.text,
-      });
-
-      // Loop continues — OpenAI will now generate a NL summary
-    }
-
-    // If we exhausted rounds, return the last data display with the raw text
-    if (lastDataDisplay) {
-      return Response.json({
-        type: 'data_result',
-        content: 'Here are the results from your query.',
-        dataDisplay: lastDataDisplay,
-      });
-    }
-
-    return fallbackResponse();
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
   } catch (err: any) {
     log.error('[AI Chat] Error:', err.message || err);
     return fallbackResponse();

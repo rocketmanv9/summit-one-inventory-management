@@ -2,8 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-// eslint-disable-next-line no-restricted-imports -- dev-only page needs raw Supabase client
-import { createClient } from '@supabase/supabase-js';
 
 export default function DevLoginPage() {
   const router = useRouter();
@@ -13,43 +11,28 @@ export default function DevLoginPage() {
   async function handleDevLogin() {
     setLoading(true);
     setMessage('');
-    
+
     try {
       const response = await fetch('/api/auth/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticket: 'ticket_dev_local' }),
+        credentials: 'include',
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
-
-        const { error } = await supabase.auth.setSession({
-          access_token: data.access_token,
-          refresh_token: data.refresh_token
-        });
-
-        if (error) {
-          setMessage(`✗ Error: ${error.message}`);
-          setLoading(false);
-          return;
-        }
-
-        setMessage('✓ Session created! Redirecting...');
+        setMessage('Session created! Redirecting...');
         setTimeout(() => {
           router.push('/dashboard');
-        }, 1000);
+        }, 500);
       } else {
-        setMessage(`✗ Error: ${data.error}`);
+        setMessage(`Error: ${data.error || data.message || 'Exchange failed'}`);
         setLoading(false);
       }
     } catch (error) {
-      setMessage(`✗ Error: ${error}`);
+      setMessage(`Error: ${error}`);
       setLoading(false);
     }
   }
@@ -65,13 +48,12 @@ export default function DevLoginPage() {
             Local testing only - bypasses SSO
           </p>
         </div>
-        
+
         <div className="space-y-4">
           <div className="bg-blue-50 border border-blue-200 rounded p-4 text-sm">
             <p className="font-semibold text-blue-900">Test Credentials:</p>
             <p className="text-blue-800 mt-1">Email: dev@test.com</p>
             <p className="text-blue-800">Role: Admin</p>
-            <p className="text-blue-800">Tenant: {process.env.NEXT_PUBLIC_TENANT_ID || 'Default'}</p>
           </div>
 
           <button
@@ -84,8 +66,8 @@ export default function DevLoginPage() {
 
           {message && (
             <div className={`p-3 rounded text-sm text-center ${
-              message.includes('✓') 
-                ? 'bg-green-50 text-green-800 border border-green-200' 
+              message.includes('Redirecting')
+                ? 'bg-green-50 text-green-800 border border-green-200'
                 : 'bg-red-50 text-red-800 border border-red-200'
             }`}>
               {message}

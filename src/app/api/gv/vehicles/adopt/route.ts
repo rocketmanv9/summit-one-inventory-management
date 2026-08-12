@@ -27,4 +27,4 @@ export const POST = createSessionWriteRoute(async ({ ctx, req }) => {
     // GV service emits its own events — no local outbox events needed
     events: [],
   };
-}, { serviceName: SERVICE_NAME, scope: 'POST /api/gv/vehicles/adopt' });
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'POST /api/gv/vehicles/adopt' });

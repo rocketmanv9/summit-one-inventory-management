@@ -268,6 +268,75 @@ describe('Cross-Tenant Security', () => {
   });
 });
 
+describe('local_users write lockdown (migration 20260529000001)', () => {
+  // local_users must be writable ONLY by the service role (the core-events
+  // webhook). An authenticated browser client must not be able to insert ANY
+  // row — own-tenant, cross-tenant, or with an elevated role — because
+  // local_users.role overrides the Core session role on login/refresh.
+  function authedClient(jwt: string) {
+    return createClient(supabaseUrl, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+      global: { headers: { Authorization: `Bearer ${jwt}` } },
+    });
+  }
+
+  it('blocks an authenticated user from inserting their OWN local_users row', async () => {
+    const jwt1 = await getJWTForUser(user1Email, 'test-password-123');
+    const supabase = authedClient(jwt1!);
+
+    const { data, error } = await supabase
+      .from('local_users')
+      .insert({
+        user_id: crypto.randomUUID(),
+        tenant_id: tenant1Id, // own tenant
+        email: 'self@example.com',
+        name: 'Self Insert',
+        role: 'member',
+      })
+      .select();
+
+    expect(error).toBeDefined(); // RLS denies: no INSERT policy for authenticated
+    expect(data).toBeNull();
+  });
+
+  it('blocks self privilege-escalation via role=admin', async () => {
+    const jwt1 = await getJWTForUser(user1Email, 'test-password-123');
+    const supabase = authedClient(jwt1!);
+
+    const { data, error } = await supabase
+      .from('local_users')
+      .insert({
+        user_id: crypto.randomUUID(),
+        tenant_id: tenant1Id,
+        email: 'escalate@example.com',
+        name: 'Escalation Attempt',
+        role: 'admin', // would grant admin on next token refresh if it landed
+      })
+      .select();
+
+    expect(error).toBeDefined();
+    expect(data).toBeNull();
+  });
+
+  it('blocks inserting a cross-tenant local_users row', async () => {
+    const jwt1 = await getJWTForUser(user1Email, 'test-password-123');
+    const supabase = authedClient(jwt1!);
+
+    const { data, error } = await supabase
+      .from('local_users')
+      .insert({
+        user_id: crypto.randomUUID(),
+        tenant_id: tenant2Id, // different tenant
+        email: 'cross@example.com',
+        name: 'Cross Tenant',
+        role: 'admin',
+      })
+      .select();
+
+    expect(error).toBeDefined();
+    expect(data).toBeNull();
+  });
+});
+
 describe('Service Role vs JWT Comparison', () => {
   it('should demonstrate service role bypasses RLS (dangerous)', async () => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);

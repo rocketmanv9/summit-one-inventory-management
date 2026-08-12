@@ -3,34 +3,41 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SubTabs } from '@/components/ui/SubTabs';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { ArrowLeftRight, Activity, BookOpen, Link2 } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 
 interface StockMovement {
   id: string;
   catalog_item_id: string;
-  location_id: string;
+  location_id: string | null;
   movement_type: string;
-  qty: number;
-  reference_type?: string;
-  reference_id?: string;
-  notes?: string;
+  quantity_delta: number;
+  posting_status: string | null;
+  reason: string | null;
+  source_ref_type: string | null;
+  source_ref_id: string | null;
+  reversal_ref_id: string | null;
+  occurred_at: string | null;
   created_at: string;
-  catalog_items?: { id: string; name: string; sku: string };
-  locations?: { id: string; name: string };
+  last_event_id: string | null;
+  catalog_items?: { id: string; name: string; sku: string } | null;
+  locations?: { id: string; name: string } | null;
 }
 
 interface InventoryEvent {
   id: string;
   tenant_id: string;
-  catalog_item_id?: string;
-  location_id?: string;
   event_type: string;
-  qty?: number;
-  payload?: any;
   occurred_at: string;
+  actor_user_id: string | null;
+  source_system: string | null;
+  payload?: any;
+  created_at: string;
 }
 
 interface LedgerEntry {
@@ -49,6 +56,7 @@ interface LedgerEntry {
 }
 
 export default function AuditPage() {
+  const help = useHowItWorks('inventory-audit-help');
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [events, setEvents] = useState<InventoryEvent[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -100,19 +108,19 @@ export default function AuditPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ type: activeTab === 'movements' ? 'movements' : 'events' });
-      if (filters.movement_type) params.set('movement_type', filters.movement_type);
-      if (filters.catalog_item_id) params.set('catalog_item_id', filters.catalog_item_id);
-      if (filters.start_date) params.set('start_date', filters.start_date);
-      if (filters.end_date) params.set('end_date', filters.end_date);
-
-      const res = await fetch(`/api/inventory/audit?${params}`);
-      const { data } = await res.json();
-
       if (activeTab === 'movements') {
-        setMovements(data?.movements || []);
+        const data = await InventoryRPC.getStockMovements({
+          movement_type: filters.movement_type || undefined,
+          catalog_item_id: filters.catalog_item_id || undefined,
+        });
+        setMovements(data as StockMovement[]);
       } else {
-        setEvents(data?.events || []);
+        const data = await InventoryRPC.getInventoryEvents({
+          event_type: filters.event_type || undefined,
+          start_date: filters.start_date || undefined,
+          end_date: filters.end_date || undefined,
+        });
+        setEvents(data);
       }
     } catch (error) {
       console.error('Error fetching audit data:', error);
@@ -123,10 +131,10 @@ export default function AuditPage() {
 
   const movementColumns = [
     {
-      key: 'created_at',
+      key: 'occurred_at',
       header: 'Date/Time',
       sortable: true,
-      render: (row: StockMovement) => new Date(row.created_at).toLocaleString(),
+      render: (row: StockMovement) => new Date(row.occurred_at || row.created_at).toLocaleString(),
     },
     {
       key: 'movement_type',
@@ -151,12 +159,12 @@ export default function AuditPage() {
       render: (row: StockMovement) => row.locations?.name || '-',
     },
     {
-      key: 'qty',
+      key: 'quantity_delta',
       header: 'Qty',
       className: 'text-right font-mono',
       render: (row: StockMovement) => (
-        <span className={row.qty >= 0 ? 'text-green-600' : 'text-red-600'}>
-          {row.qty >= 0 ? '+' : ''}{row.qty}
+        <span className={row.quantity_delta >= 0 ? 'text-green-600' : 'text-red-600'}>
+          {row.quantity_delta >= 0 ? '+' : ''}{row.quantity_delta}
         </span>
       ),
     },
@@ -165,15 +173,15 @@ export default function AuditPage() {
       header: 'Reference',
       render: (row: StockMovement) => (
         <div className="text-sm">
-          {row.reference_type && (
-            <span className="font-medium capitalize">{row.reference_type}</span>
+          {row.source_ref_type && (
+            <span className="font-medium capitalize">{row.source_ref_type}</span>
           )}
-          {row.reference_id && (
+          {row.source_ref_id && (
             <span className="text-muted-foreground ml-1 font-mono text-xs">
-              {row.reference_id.slice(0, 8)}
+              {row.source_ref_id.slice(0, 8)}
             </span>
           )}
-          {!row.reference_type && '-'}
+          {!row.source_ref_type && '-'}
         </div>
       ),
     },
@@ -194,24 +202,18 @@ export default function AuditPage() {
       ),
     },
     {
-      key: 'catalog_item_id',
-      header: 'Item ID',
+      key: 'source_system',
+      header: 'Source',
       render: (row: InventoryEvent) => (
-        <span className="font-mono text-xs">{row.catalog_item_id?.slice(0, 8) || '-'}</span>
+        <span className="text-sm">{row.source_system || '-'}</span>
       ),
     },
     {
-      key: 'location_id',
-      header: 'Location ID',
+      key: 'actor_user_id',
+      header: 'Actor',
       render: (row: InventoryEvent) => (
-        <span className="font-mono text-xs">{row.location_id?.slice(0, 8) || '-'}</span>
+        <span className="font-mono text-xs">{row.actor_user_id?.slice(0, 8) || '-'}</span>
       ),
-    },
-    {
-      key: 'qty',
-      header: 'Qty',
-      className: 'text-right font-mono',
-      render: (row: InventoryEvent) => row.qty ?? '-',
     },
     {
       key: 'id',
@@ -316,47 +318,46 @@ export default function AuditPage() {
           title="Audit Ledger"
           description="View stock movements and inventory events. Example: See the complete history of how 1000 tons of asphalt moved through your system: received from vendor → stored in yard → transferred to Truck #5 → issued to Highway 101 project."
           actions={
-            <button
-              onClick={activeTab === 'ledger' ? fetchLedgerData : fetchData}
-              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-            >
-              Refresh
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={activeTab === 'ledger' ? fetchLedgerData : fetchData}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Refresh
+              </button>
+            </>
           }
         />
 
-        <div className="flex gap-2 border-b">
-          <button
-            onClick={() => setActiveTab('movements')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'movements'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Stock Movements
-          </button>
-          <button
-            onClick={() => setActiveTab('events')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'events'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Inventory Events
-          </button>
-          <button
-            onClick={() => setActiveTab('ledger')}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-              activeTab === 'ledger'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Ledger Explorer
-          </button>
-        </div>
+        {help.show && (
+          <HowItWorksCard
+            title="How the audit ledger works"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Pick a view', body: 'Stock Movements is every quantity change, newest first. Inventory Events is the raw event stream behind them. Ledger Explorer replays one item at one location with running balances.' },
+              { title: 'Narrow it down', body: 'Filter movements by type (received, issued, adjusted, transferred, counted…) and date range. The ledger asks for an item + location pair before loading.' },
+              { title: 'Inspect a row', body: 'Click any movement or event to open the detail panel — full quantities, reason, timestamps, and the raw event payload for events.' },
+              { title: 'Follow the trail', body: 'Each movement carries a source reference back to the transfer, purchase order, count, or reservation that caused it, so any quantity can be explained end to end.' },
+            ]}
+            glossary={[
+              { Icon: ArrowLeftRight, term: 'Stock movement', blurb: 'a signed quantity change (+ received, − issued) for one item at one location; the ledger is append-only' },
+              { Icon: Activity, term: 'Inventory event', blurb: 'the underlying system event (who, when, what payload) that produced one or more movements' },
+              { Icon: BookOpen, term: 'Ledger Explorer', blurb: 'before/after running balances for a single item + location — the sum of movements is the on-hand quantity' },
+              { Icon: Link2, term: 'Source reference', blurb: 'the document behind a movement (transfer, PO, cycle count, reservation), shown with its short ID' },
+            ]}
+          />
+        )}
+
+        <SubTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'movements', label: 'Stock Movements' },
+            { value: 'events', label: 'Inventory Events' },
+            { value: 'ledger', label: 'Ledger Explorer' },
+          ]}
+        />
 
         {activeTab === 'ledger' ? (
           <>
@@ -477,34 +478,40 @@ export default function AuditPage() {
                           <div>
                             <div className="text-muted-foreground">Item</div>
                             <div className="font-medium">
-                              {(selectedItem as StockMovement).catalog_items?.name}
+                              {(selectedItem as StockMovement).catalog_items?.name || '-'}
                             </div>
                             <div className="font-mono text-xs">
-                              {(selectedItem as StockMovement).catalog_items?.sku}
+                              {(selectedItem as StockMovement).catalog_items?.sku || ''}
                             </div>
                           </div>
                           <div>
                             <div className="text-muted-foreground">Location</div>
-                            <div>{(selectedItem as StockMovement).locations?.name}</div>
+                            <div>{(selectedItem as StockMovement).locations?.name || '-'}</div>
                           </div>
                           <div>
                             <div className="text-muted-foreground">Quantity</div>
                             <div className={`font-mono text-lg ${
-                              (selectedItem as StockMovement).qty >= 0 ? 'text-green-600' : 'text-red-600'
+                              (selectedItem as StockMovement).quantity_delta >= 0 ? 'text-green-600' : 'text-red-600'
                             }`}>
-                              {(selectedItem as StockMovement).qty >= 0 ? '+' : ''}
-                              {(selectedItem as StockMovement).qty}
+                              {(selectedItem as StockMovement).quantity_delta >= 0 ? '+' : ''}
+                              {(selectedItem as StockMovement).quantity_delta}
                             </div>
                           </div>
-                          {(selectedItem as StockMovement).notes && (
+                          {(selectedItem as StockMovement).reason && (
                             <div>
-                              <div className="text-muted-foreground">Notes</div>
-                              <div>{(selectedItem as StockMovement).notes}</div>
+                              <div className="text-muted-foreground">Reason</div>
+                              <div>{(selectedItem as StockMovement).reason}</div>
+                            </div>
+                          )}
+                          {(selectedItem as StockMovement).posting_status && (
+                            <div>
+                              <div className="text-muted-foreground">Status</div>
+                              <StatusChip status={(selectedItem as StockMovement).posting_status!} />
                             </div>
                           )}
                           <div>
                             <div className="text-muted-foreground">Timestamp</div>
-                            <div>{new Date((selectedItem as StockMovement).created_at).toLocaleString()}</div>
+                            <div>{new Date((selectedItem as StockMovement).occurred_at || (selectedItem as StockMovement).created_at).toLocaleString()}</div>
                           </div>
                           <div>
                             <div className="text-muted-foreground">Movement ID</div>
@@ -523,6 +530,12 @@ export default function AuditPage() {
                             <div className="text-muted-foreground">Occurred At</div>
                             <div>{new Date((selectedItem as InventoryEvent).occurred_at).toLocaleString()}</div>
                           </div>
+                          {(selectedItem as InventoryEvent).source_system && (
+                            <div>
+                              <div className="text-muted-foreground">Source System</div>
+                              <div>{(selectedItem as InventoryEvent).source_system}</div>
+                            </div>
+                          )}
                           {(selectedItem as InventoryEvent).payload && (
                             <div>
                               <div className="text-muted-foreground mb-1">Payload</div>

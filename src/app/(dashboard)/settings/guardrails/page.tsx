@@ -105,6 +105,7 @@ export default function GuardrailSettingsPage() {
         <span className={`inline-flex px-2 py-1 text-xs font-medium rounded ${
           row.rule === 'negative_inventory' ? 'bg-red-100 text-red-800' :
           row.rule === 'over_receipt' ? 'bg-orange-100 text-orange-800' :
+          row.rule === 'uom_converted' ? 'bg-teal-100 text-teal-800' :
           'bg-yellow-100 text-yellow-800'
         }`}>
           {row.rule.replace(/_/g, ' ')}
@@ -161,6 +162,36 @@ export default function GuardrailSettingsPage() {
           description="Configure operational guardrails to prevent inventory mistakes. These policies apply to all stock mutations (adjustments, transfers, receiving)."
         />
 
+        {/* Effective policy — always active, even before anything is saved */}
+        <div className="bg-white rounded-lg border p-4">
+          <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Currently in force</h3>
+          <p className="text-xs text-gray-500 mt-0.5 mb-3">
+            These guardrails are active right now{policy.id ? '' : ' (built-in defaults — nothing saved yet)'} and
+            checked on every adjustment, transfer, and receipt.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-md bg-gray-50 border p-3">
+              <div className="text-xs text-gray-500">Over-receipt</div>
+              <div className="font-medium mt-0.5">
+                {policy.over_receipt_policy === 'block' ? 'Blocked' : 'Allowed with audit'}
+                {policy.over_receipt_threshold_pct > 0 ? ` beyond +${policy.over_receipt_threshold_pct}%` : ' beyond PO quantity'}
+              </div>
+            </div>
+            <div className="rounded-md bg-gray-50 border p-3">
+              <div className="text-xs text-gray-500">Unit mismatch at receiving</div>
+              <div className="font-medium mt-0.5">
+                {policy.uom_mismatch_policy === 'block' ? 'Blocked (unless a conversion exists)'
+                  : policy.uom_mismatch_policy === 'warn' ? 'Converted or logged as warning'
+                  : 'Not checked'}
+              </div>
+            </div>
+            <div className="rounded-md bg-gray-50 border p-3">
+              <div className="text-xs text-gray-500">Override reason</div>
+              <div className="font-medium mt-0.5">{policy.require_override_reason ? 'Required' : 'Optional'}</div>
+            </div>
+          </div>
+        </div>
+
         {/* Info Box */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">
@@ -170,8 +201,13 @@ export default function GuardrailSettingsPage() {
               <p className="text-sm text-blue-700 mt-1">
                 Guardrails prevent common inventory errors. When set to &quot;Block&quot;, the operation is rejected
                 with a clear error message. When set to &quot;Allow with audit&quot;, the user can override with a
-                reason that is logged for review. Negative inventory rules are managed separately in the
-                <a href="/settings/negative-inventory" className="underline ml-1">Negative Inventory</a> settings.
+                reason that is logged for review.
+              </p>
+              <p className="text-sm text-blue-700 mt-2">
+                <a href="/settings/negative-inventory" className="underline">Negative inventory</a> is a separate,
+                independent check: guardrails decide whether an <em>operation</em> is allowed, negative-inventory
+                rules decide whether the resulting <em>stock balance</em> may go below zero. An operation can pass
+                guardrails and still be rejected because it would drive stock negative.
               </p>
             </div>
           </div>
@@ -220,12 +256,16 @@ export default function GuardrailSettingsPage() {
                 onChange={(e) => setPolicy({ ...policy, uom_mismatch_policy: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="block">Block (reject if no conversion)</option>
+                <option value="block">Block (reject mismatched units)</option>
                 <option value="warn">Warn (allow but log)</option>
                 <option value="off">Off (no check)</option>
               </select>
               <p className="text-xs text-gray-500 mt-1">
-                Controls validation when receiving in a different UOM than the item&apos;s base UOM.
+                Checked when posting a receipt whose purchase unit (from the PO line) differs from the
+                item&apos;s stocking unit. If a <a href="/settings/uom-conversions" className="underline">UOM
+                conversion</a> exists, the quantity is converted to the stocking unit automatically and the
+                policy doesn&apos;t apply. Without a conversion: <span className="font-medium">Block</span> rejects
+                the receipt, <span className="font-medium">Warn</span> posts it as-received and logs an exception below.
               </p>
             </div>
 

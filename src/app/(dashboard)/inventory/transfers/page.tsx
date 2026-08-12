@@ -2,13 +2,17 @@
 
 import { AppError } from '@rocketmanv9/chassis/errors';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Truck, PackageCheck, Undo2, ScanLine } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 type TransferLine = {
   id: string;
@@ -30,10 +34,13 @@ type Transfer = {
   completed_at: string | null;
   cancelled_at: string | null;
   last_event_id: string | null;
+  assigned_to_user_ids?: string[] | null;
   from_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
   to_location?: { id: string; name: string; location_type?: { name?: string } | null } | null;
   transfer_lines?: TransferLine[];
 };
+
+type AssignableUser = { user_id: string; name: string; email: string | null; role: string | null };
 
 type LocationOption = {
   id: string;
@@ -45,11 +52,34 @@ type CatalogItemOption = {
   id: string;
   name: string;
   sku: string;
-  unit_of_measure?: string | null;
+  uom_term_id?: string | null;
   tracking_mode?: string | null;
 };
 
+type CreatePrefill = {
+  fromLocationId?: string;
+  toLocationId?: string;
+  itemId?: string;
+  qty?: number;
+};
+
 export default function TransfersPage() {
+  return (
+    <Suspense fallback={
+      <AppShell>
+        <div className="py-8 text-center text-muted-foreground">Loading...</div>
+      </AppShell>
+    }>
+      <TransfersPageContent />
+    </Suspense>
+  );
+}
+
+function TransfersPageContent() {
+  const help = useHowItWorks('inventory-transfers-help');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -61,10 +91,44 @@ export default function TransfersPage() {
   const [partialReceiveTransfer, setPartialReceiveTransfer] = useState<Transfer | null>(null);
   const [showFixMistakeModal, setShowFixMistakeModal] = useState(false);
   const [fixMistakeTransfer, setFixMistakeTransfer] = useState<Transfer | null>(null);
+  const [assignTransfer, setAssignTransfer] = useState<Transfer | null>(null);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
+  const [createPrefill, setCreatePrefill] = useState<CreatePrefill | null>(null);
+  const consumedCreateParams = useRef(false);
+
+  // Auto-open the create modal once when arriving with ?create=1 (e.g. from the
+  // Transfer Suggestions widget), then clear the params so refresh doesn't re-open it.
+  useEffect(() => {
+    if (consumedCreateParams.current) return;
+    if (searchParams.get('create') !== '1') return;
+    consumedCreateParams.current = true;
+
+    const from = searchParams.get('from') || undefined;
+    const to = searchParams.get('to') || undefined;
+    const item = searchParams.get('item') || undefined;
+    const qtyParam = searchParams.get('qty');
+    const qty = qtyParam !== null && Number.isFinite(Number(qtyParam)) && Number(qtyParam) > 0
+      ? Number(qtyParam)
+      : undefined;
+
+    setCreatePrefill({ fromLocationId: from, toLocationId: to, itemId: item, qty });
+    setShowCreateModal(true);
+    router.replace(pathname, { scroll: false });
+  }, [searchParams, router, pathname]);
 
   useEffect(() => {
     fetchTransfers();
   }, [filters.status]); // Only depend on the specific filter value, not the whole object
+
+  // Roster for the assign picker + chip labels (names for assigned_to_user_ids).
+  useEffect(() => {
+    InventoryRPC.getAssignableUsers()
+      .then(setAssignableUsers)
+      .catch(() => setAssignableUsers([]));
+  }, []);
+
+  const userNameById = (id: string) =>
+    assignableUsers.find((u) => u.user_id === id)?.name || `${id.slice(0, 8)}…`;
 
   const fetchTransfers = async () => {
     setLoading(true);
@@ -251,6 +315,34 @@ export default function TransfersPage() {
       ),
     },
     {
+      key: 'assigned',
+      header: 'Assigned',
+      render: (row: Transfer) => {
+        const ids = row.assigned_to_user_ids || [];
+        if (ids.length === 0) {
+          return <span className="text-xs text-muted-foreground">Unassigned</span>;
+        }
+        return (
+          <div className="flex flex-wrap gap-1">
+            {ids.slice(0, 3).map((id) => (
+              <span
+                key={id}
+                className="px-2 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-800"
+                title={userNameById(id)}
+              >
+                {userNameById(id)}
+              </span>
+            ))}
+            {ids.length > 3 && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
+                +{ids.length - 3}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
       key: 'created_at',
       header: 'Created',
       sortable: true,
@@ -261,6 +353,18 @@ export default function TransfersPage() {
       header: '',
       render: (row: Transfer) => (
         <div className="flex gap-2">
+          {row.status !== 'completed' && row.status !== 'cancelled' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setAssignTransfer(row);
+              }}
+              className="px-2 py-1 text-xs bg-indigo-100 text-indigo-800 rounded hover:bg-indigo-200"
+              title="Assign this transfer to one or more people"
+            >
+              {(row.assigned_to_user_ids || []).length > 0 ? 'Reassign' : 'Assign'}
+            </button>
+          )}
           {row.status === 'draft' && (
             <>
               <button
@@ -403,14 +507,43 @@ export default function TransfersPage() {
           title="Transfers"
           description="Manage inventory transfers between locations. Example: Transfer 50 tons of aggregate from Main Yard to Truck #7 for delivery to the I-95 paving project, or move excess rebar from Job Site A back to the warehouse."
           actions={
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-            >
-              + Create Transfer
-            </button>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Create Transfer
+              </button>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How transfers work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Create a draft', body: 'Pick a from-location and a to-location, then add line items. Stock items take a quantity; serialized items have you pick the specific assets by tag.' },
+              { title: 'Ship it', body: 'Shipping moves the transfer to In Transit — the stock leaves the from-location. Drafts can still be edited or cancelled before this point.' },
+              { title: 'Receive it', body: 'Full Receive lands everything at the destination in one step. Partial receive takes deliveries in batches until every line is complete (not available for serialized assets).' },
+              { title: 'Fix mistakes', body: 'Undo a shipment that never happened, reverse a wrong receipt, or create a return transfer for stock that physically needs to go back. Overrides are logged for audit.' },
+            ]}
+            legend={[
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">Draft</span>, text: 'being set up — editable' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">In Transit</span>, text: 'shipped, awaiting receipt' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Partially Received</span>, text: 'some lines still outstanding' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Completed</span>, text: 'fully received' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Cancelled</span>, text: 'voided — can be undone back to draft' },
+            ]}
+            glossary={[
+              { Icon: Truck, term: 'Ship / Receive', blurb: 'the two physical halves of a transfer — stock leaves the source when shipped and lands at the destination when received' },
+              { Icon: PackageCheck, term: 'Partial receive', blurb: 'receive line quantities in multiple batches when a shipment arrives in pieces' },
+              { Icon: ScanLine, term: 'Serialized items', blurb: 'tracked as individual assets by tag/serial — you select exact units and they move as a whole' },
+              { Icon: Undo2, term: 'Fix Mistake', blurb: 'accounting corrections (undo ship, reverse receipt) vs. a return transfer, which physically moves stock back' },
+            ]}
+          />
+        )}
 
         <div className="grid grid-cols-5 gap-4">
           <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
@@ -470,9 +603,17 @@ export default function TransfersPage() {
 
         {showCreateModal && (
           <CreateTransferModal
-            onClose={() => setShowCreateModal(false)}
+            initialFromLocationId={createPrefill?.fromLocationId}
+            initialToLocationId={createPrefill?.toLocationId}
+            initialItemId={createPrefill?.itemId}
+            initialQty={createPrefill?.qty}
+            onClose={() => {
+              setShowCreateModal(false);
+              setCreatePrefill(null);
+            }}
             onCreated={() => {
               setShowCreateModal(false);
+              setCreatePrefill(null);
               fetchTransfers();
             }}
           />
@@ -522,8 +663,135 @@ export default function TransfersPage() {
             }}
           />
         )}
+        {assignTransfer && (
+          <AssignTransferModal
+            transfer={assignTransfer}
+            users={assignableUsers}
+            onClose={() => setAssignTransfer(null)}
+            onAssigned={() => {
+              setAssignTransfer(null);
+              fetchTransfers();
+            }}
+          />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+function AssignTransferModal({
+  transfer,
+  users,
+  onClose,
+  onAssigned,
+}: {
+  transfer: Transfer;
+  users: AssignableUser[];
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(transfer.assigned_to_user_ids || []),
+  );
+  const [search, setSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const filtered = users.filter((u) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      u.name.toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
+  });
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await InventoryRPC.assignTransfer(transfer.id, [...selected]);
+      onAssigned();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign transfer.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+        <div className="border-b px-5 py-4">
+          <h3 className="text-lg font-semibold">Assign transfer</h3>
+          <p className="text-sm text-muted-foreground">
+            {transfer.from_location?.name} → {transfer.to_location?.name}
+            {' · '}
+            Everyone selected gets it on their My Day.
+          </p>
+        </div>
+        <div className="px-5 py-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search people by name, email, or role…"
+            className="mb-3 w-full rounded border px-3 py-2 text-sm"
+          />
+          {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
+          <div className="max-h-72 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">No people found.</div>
+            ) : (
+              filtered.map((u) => {
+                const on = selected.has(u.user_id);
+                return (
+                  <label
+                    key={u.user_id}
+                    className="flex cursor-pointer items-center gap-3 rounded px-2 py-2 hover:bg-gray-50"
+                  >
+                    <input type="checkbox" checked={on} onChange={() => toggle(u.user_id)} />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{u.name}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {[u.email, u.role].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
+        <div className="flex items-center justify-between border-t px-5 py-3">
+          <span className="text-sm text-muted-foreground">{selected.size} selected</span>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save assignment'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1008,12 +1276,31 @@ function TransferDetailPanel({ transfer, onClose }: { transfer: Transfer; onClos
   );
 }
 
-function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateTransferModal({
+  onClose,
+  onCreated,
+  initialFromLocationId,
+  initialToLocationId,
+  initialItemId,
+  initialQty,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  initialFromLocationId?: string;
+  initialToLocationId?: string;
+  initialItemId?: string;
+  initialQty?: number;
+}) {
+  const uomLabels = useUOMLabelMap();
   const [form, setForm] = useState({
-    from_location_id: '',
-    to_location_id: '',
+    from_location_id: initialFromLocationId || '',
+    to_location_id: initialToLocationId || '',
     notes: '',
-    lines: [{ catalog_item_id: '', qty: '', asset_ids: [] as string[] }],
+    lines: [{
+      catalog_item_id: initialItemId || '',
+      qty: initialQty != null ? String(initialQty) : '',
+      asset_ids: [] as string[],
+    }],
   });
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [items, setItems] = useState<Array<{
@@ -1027,6 +1314,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const prefillReconciled = useRef(!initialItemId);
 
   // Load locations on mount
   useEffect(() => {
@@ -1055,7 +1343,37 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
       setLoadingItems(true);
       try {
         const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
-        setItems(data || []);
+        const loaded = ((data || []) as any[]);
+        setItems(loaded as any);
+
+        // Reconcile a prefilled item once options are loaded (e.g. opened from
+        // the Transfer Suggestions widget): clear it if it isn't stocked at the
+        // from-location, or load assets if it's serialized.
+        if (!prefillReconciled.current && initialItemId) {
+          prefillReconciled.current = true;
+          const match = loaded.find((it) => it.catalog_item_id === initialItemId);
+          if (!match) {
+            setForm((prev) => ({
+              ...prev,
+              lines: prev.lines.map((line, idx) =>
+                idx === 0 && line.catalog_item_id === initialItemId
+                  ? { ...line, catalog_item_id: '', qty: '' }
+                  : line
+              ),
+            }));
+          } else if (isSerializedMode(match.catalog_items?.tracking_mode)) {
+            // Serialized items select assets instead of a free qty
+            setForm((prev) => ({
+              ...prev,
+              lines: prev.lines.map((line, idx) =>
+                idx === 0 && line.catalog_item_id === initialItemId
+                  ? { ...line, qty: '', asset_ids: [] }
+                  : line
+              ),
+            }));
+            loadAssetsForLine(0, initialItemId);
+          }
+        }
       } catch (err) {
         console.error('[CreateTransferModal] Error loading items:', err);
         setItems([]);
@@ -1307,7 +1625,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
                                 : (item.qty_available ?? 0);
                               return (
                                 <option key={item.catalog_item_id} value={item.catalog_item_id}>
-                                  {item.catalog_items?.name} ({item.catalog_items?.sku}) - {serialized ? 'Assets' : 'Available'}: {availableCount} {serialized ? '' : item.catalog_items?.unit_of_measure || ''}
+                                  {item.catalog_items?.name} ({item.catalog_items?.sku}) - {serialized ? 'Assets' : 'Available'}: {availableCount} {serialized ? '' : uomLabels[(item.catalog_items as any)?.uom_term_id] || ''}
                                 </option>
                               );
                             })}
@@ -1407,6 +1725,7 @@ function CreateTransferModal({ onClose, onCreated }: { onClose: () => void; onCr
 }
 
 function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfer; onClose: () => void; onUpdated: () => void }) {
+  const uomLabels = useUOMLabelMap();
   const [form, setForm] = useState<{
     from_location_id: string;
     to_location_id: string;
@@ -1460,7 +1779,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
       setLoadingItems(true);
       try {
         const data = await InventoryRPC.getItemsAtLocation(form.from_location_id);
-        setItems(data || []);
+        setItems((data || []) as any);
       } catch (err) {
         console.error('Error loading items:', err);
         setItems([]);
@@ -1603,7 +1922,7 @@ function EditTransferModal({ transfer, onClose, onUpdated }: { transfer: Transfe
                         <option value="">Select item...</option>
                         {items.map((item) => (
                           <option key={item.catalog_item_id} value={item.catalog_item_id}>
-                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - {item.catalog_items?.unit_of_measure}
+                            {item.catalog_items?.name} ({item.catalog_items?.sku}) - {uomLabels[(item.catalog_items as any)?.uom_term_id] || ''}
                           </option>
                         ))}
                       </select>

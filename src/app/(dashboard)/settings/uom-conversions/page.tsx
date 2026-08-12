@@ -5,12 +5,13 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface UomConversion {
   id: string;
-  from_uom: string;
-  to_uom: string;
+  from_uom_term_id: string;
+  to_uom_term_id: string;
   conversion_factor: number;
   is_bidirectional: boolean;
   last_event_id: string;
@@ -18,6 +19,7 @@ interface UomConversion {
 }
 
 export default function UomConversionsPage() {
+  const uomLabels = useUOMLabelMap();
   const [conversions, setConversions] = useState<UomConversion[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -39,7 +41,7 @@ export default function UomConversionsPage() {
   };
 
   const handleDelete = async (conv: UomConversion) => {
-    if (!confirm(`Delete conversion ${conv.from_uom} -> ${conv.to_uom}?`)) return;
+    if (!confirm(`Delete conversion ${uomLabels[conv.from_uom_term_id] || conv.from_uom_term_id} -> ${uomLabels[conv.to_uom_term_id] || conv.to_uom_term_id}?`)) return;
     try {
       await InventoryRPC.deleteUomConversion(conv.id, conv.last_event_id);
       await fetchConversions();
@@ -50,19 +52,19 @@ export default function UomConversionsPage() {
 
   const columns = [
     {
-      key: 'from_uom',
+      key: 'from_uom_term_id',
       header: 'From UOM',
       sortable: true,
       render: (row: UomConversion) => (
-        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{row.from_uom}</code>
+        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{uomLabels[row.from_uom_term_id] || row.from_uom_term_id}</code>
       ),
     },
     {
-      key: 'to_uom',
+      key: 'to_uom_term_id',
       header: 'To UOM',
       sortable: true,
       render: (row: UomConversion) => (
-        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{row.to_uom}</code>
+        <code className="bg-gray-100 px-2 py-1 rounded text-sm">{uomLabels[row.to_uom_term_id] || row.to_uom_term_id}</code>
       ),
     },
     {
@@ -85,12 +87,16 @@ export default function UomConversionsPage() {
     {
       key: 'description',
       header: 'Meaning',
-      render: (row: UomConversion) => (
-        <span className="text-sm text-muted-foreground">
-          1 {row.from_uom} = {row.conversion_factor} {row.to_uom}
-          {row.is_bidirectional && ` (and 1 ${row.to_uom} = ${(1 / row.conversion_factor).toFixed(6)} ${row.from_uom})`}
-        </span>
-      ),
+      render: (row: UomConversion) => {
+        const fromLabel = uomLabels[row.from_uom_term_id] || row.from_uom_term_id;
+        const toLabel = uomLabels[row.to_uom_term_id] || row.to_uom_term_id;
+        return (
+          <span className="text-sm text-muted-foreground">
+            1 {fromLabel} = {row.conversion_factor} {toLabel}
+            {row.is_bidirectional && ` (and 1 ${toLabel} = ${(1 / row.conversion_factor).toFixed(6)} ${fromLabel})`}
+          </span>
+        );
+      },
     },
     {
       key: 'actions',
@@ -128,9 +134,16 @@ export default function UomConversionsPage() {
             <div className="flex-1">
               <h3 className="font-medium text-blue-900">About UOM Conversions</h3>
               <p className="text-sm text-blue-700 mt-1">
-                UOM conversions let you express quantities in different units. Bidirectional conversions
-                work both ways automatically. The system can chain conversions (A to B to C) if a direct
-                path is not available.
+                <span className="font-medium">Where these apply:</span> when a receipt is posted and the
+                PO line&apos;s purchase unit differs from the item&apos;s stocking unit, the received quantity
+                (and unit cost) is converted to the stocking unit automatically using these rules. If no
+                conversion exists, the <a href="/settings/guardrails" className="underline">UOM mismatch
+                guardrail</a> decides whether the receipt is blocked or posted as-received with a warning.
+              </p>
+              <p className="text-sm text-blue-700 mt-2">
+                Bidirectional conversions work both ways automatically, and the system can chain two rules
+                (A→B→C) when there is no direct path. Conversions are not yet applied to transfers, counts,
+                or reservations — those always use the stocking unit.
               </p>
             </div>
           </div>
@@ -159,9 +172,10 @@ export default function UomConversionsPage() {
 }
 
 function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { terms: uomTerms, loading: uomLoading } = useUOMTerms();
   const [form, setForm] = useState({
-    from_uom: '',
-    to_uom: '',
+    from_uom_term_id: '',
+    to_uom_term_id: '',
     conversion_factor: '',
     is_bidirectional: true,
   });
@@ -174,7 +188,7 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
     setError('');
 
     try {
-      if (!form.from_uom || !form.to_uom || !form.conversion_factor) {
+      if (!form.from_uom_term_id || !form.to_uom_term_id || !form.conversion_factor) {
         throw AppError.badRequest('All fields are required');
       }
 
@@ -184,11 +198,11 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
       }
 
       await InventoryRPC.createUomConversion({
-        from_uom: form.from_uom.toUpperCase(),
-        to_uom: form.to_uom.toUpperCase(),
+        from_uom_term_id: form.from_uom_term_id,
+        to_uom_term_id: form.to_uom_term_id,
         conversion_factor: factor,
         is_bidirectional: form.is_bidirectional,
-      });
+      } as any);
 
       onCreated();
     } catch (err: any) {
@@ -216,25 +230,39 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1">From UOM *</label>
-              <input
-                type="text"
-                value={form.from_uom}
-                onChange={(e) => setForm({ ...form, from_uom: e.target.value })}
+              <select
+                value={form.from_uom_term_id}
+                onChange={(e) => setForm({ ...form, from_uom_term_id: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g., EA"
                 required
-              />
+              >
+                <option value="">Select UOM...</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">To UOM *</label>
-              <input
-                type="text"
-                value={form.to_uom}
-                onChange={(e) => setForm({ ...form, to_uom: e.target.value })}
+              <select
+                value={form.to_uom_term_id}
+                onChange={(e) => setForm({ ...form, to_uom_term_id: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="e.g., DZ"
                 required
-              />
+              >
+                <option value="">Select UOM...</option>
+                {uomLoading ? (
+                  <option disabled>Loading...</option>
+                ) : (
+                  uomTerms.map((t) => (
+                    <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                  ))
+                )}
+              </select>
             </div>
           </div>
 
@@ -246,12 +274,35 @@ function CreateUomConversionModal({ onClose, onCreated }: { onClose: () => void;
               value={form.conversion_factor}
               onChange={(e) => setForm({ ...form, conversion_factor: e.target.value })}
               className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g., 12 (1 DZ = 12 EA)"
+              placeholder="e.g., 12 (1 Dozen = 12 Each)"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              How many &quot;To&quot; units in 1 &quot;From&quot; unit. Example: 1 EA = 1/12 DZ, so factor is 0.0833
+              How many &quot;To&quot; units make up <strong>one</strong> &quot;From&quot; unit.
+              Dozen → Each is 12, not 0.0833.
             </p>
+            {(() => {
+              const factor = parseFloat(form.conversion_factor);
+              const fromLabel = uomTerms.find((t) => t.term_id === form.from_uom_term_id)?.label;
+              const toLabel = uomTerms.find((t) => t.term_id === form.to_uom_term_id)?.label;
+              if (!fromLabel || !toLabel || isNaN(factor) || factor <= 0) return null;
+              if (form.from_uom_term_id === form.to_uom_term_id) {
+                return (
+                  <p className="text-xs text-red-600 mt-2">
+                    From and To are the same unit — a conversion to itself has no effect.
+                  </p>
+                );
+              }
+              return (
+                <div className="mt-2 rounded-md bg-teal-50 border border-teal-200 p-2 text-sm text-teal-900">
+                  <div>1 {fromLabel} = <strong>{factor}</strong> {toLabel}</div>
+                  <div>100 {fromLabel} = <strong>{100 * factor}</strong> {toLabel}</div>
+                  {form.is_bidirectional && (
+                    <div className="text-teal-700">1 {toLabel} = {(1 / factor).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')} {fromLabel} (reverse)</div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex items-center gap-2">

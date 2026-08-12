@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import BugReportButton from "@/components/bug-report-button";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ChatBotWrapper } from "@/components/chat/ChatBotWrapper";
@@ -26,9 +27,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
         <ErrorBoundary>
           <Suspense fallback={<div className="min-h-screen" />}>
@@ -36,6 +38,7 @@ export default function RootLayout({
           </Suspense>
           <ChatBotWrapper />
         </ErrorBoundary>
+        <BugReportButton />
       </body>
     </html>
   );

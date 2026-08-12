@@ -1,28 +1,23 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Loader2, ExternalLink, Check, XCircle } from 'lucide-react';
+import { X, Send, Loader2, ExternalLink, Check, XCircle, Trash2 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
-import { AddVendorModal } from '@/components/modals/AddVendorModal';
+import { VendorModal } from '@/components/vendors/VendorModal';
 import { useAiChat } from '@/lib/ai/useAiChat';
 import { QUICK_ACTIONS } from '@/lib/ai/types';
 import type { Message, ChatAction } from '@/lib/ai/types';
 import { AiDataRenderer } from '@/components/ai/AiDataRenderer';
+import { ImageAttachment } from '@/components/ai/ImageAttachment';
 
 // ─── Component ────────────────────────────────────────────────────────
 
-export function ChatBot() {
+interface ChatBotProps {
+  onClose?: () => void;
+}
+
+export function ChatBot({ onClose }: ChatBotProps) {
   const pathname = usePathname();
-
-  // Persist open/closed state in localStorage
-  const [isOpen, setIsOpen] = useState(false);
-  const [hasMounted, setHasMounted] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('chatbot-open') === 'true';
-    setIsOpen(saved);
-    setHasMounted(true);
-  }, []);
 
   const chat = useAiChat({
     mode: 'corner',
@@ -32,22 +27,15 @@ export function ChatBot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Persist open/closed state
-  useEffect(() => {
-    localStorage.setItem('chatbot-open', String(isOpen));
-  }, [isOpen]);
-
   // Auto-scroll on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chat.messages]);
 
-  // Focus input when opened
+  // Focus input when mounted
   useEffect(() => {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isOpen]);
+    inputRef.current?.focus();
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -62,17 +50,8 @@ export function ChatBot() {
 
   return (
     <>
-      {/* Floating Button */}
-      <button
-        onClick={() => setIsOpen((prev) => !prev)}
-        className={`fixed bottom-6 right-6 p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all hover:scale-110 z-50 ${isOpen ? 'hidden' : ''}`}
-        aria-label="Open chat assistant"
-      >
-        <MessageCircle className="w-6 h-6" />
-      </button>
-
       {/* Vendor Modal */}
-      <AddVendorModal
+      <VendorModal
         open={chat.vendorModal.open}
         onClose={chat.vendorModal.onClose}
         onSuccess={chat.vendorModal.onSuccess}
@@ -80,29 +59,36 @@ export function ChatBot() {
       />
 
       {/* Chat Window */}
-      <div
-        className={`fixed bottom-6 right-6 w-[420px] h-[620px] bg-white rounded-xl shadow-2xl flex flex-col z-50 border border-gray-200 overflow-hidden transition-all duration-200 origin-bottom-right ${
-          isOpen
-            ? 'scale-100 opacity-100 pointer-events-auto'
-            : 'scale-95 opacity-0 pointer-events-none'
-        }`}
-      >
+      <div className="fixed bottom-6 right-6 w-[420px] h-[620px] bg-white rounded-xl shadow-2xl flex flex-col z-50 border border-gray-200 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-blue-600 text-white">
           <div className="flex items-center gap-2">
-            <MessageCircle className="w-5 h-5" />
             <div>
-              <h3 className="font-semibold text-sm">Inventory Assistant</h3>
-              <p className="text-xs text-blue-100">Ask me anything</p>
+              <h3 className="font-semibold text-sm">Isabelle Martinez</h3>
+              <p className="text-xs text-blue-100">Inventory Assistant</p>
             </div>
           </div>
-          <button
-            onClick={() => setIsOpen(false)}
-            className="hover:bg-blue-700 rounded p-1 transition-colors"
-            aria-label="Close chat"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {chat.messages.length > 1 && (
+              <button
+                onClick={chat.startNewConversation}
+                className="hover:bg-blue-700 rounded p-1 transition-colors"
+                aria-label="Clear chat history"
+                title="Clear chat"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="hover:bg-blue-700 rounded p-1 transition-colors"
+                aria-label="Close chat"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Messages */}
@@ -206,7 +192,13 @@ export function ChatBot() {
 
         {/* Input */}
         <div className="p-3 border-t">
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <ImageAttachment
+              pendingImage={chat.pendingImage}
+              onImageAttach={(dataUrl) => chat.setPendingImage(dataUrl)}
+              onImageRemove={() => chat.setPendingImage(null)}
+              disabled={chat.isLoading}
+            />
             <input
               ref={inputRef}
               type="text"
@@ -214,16 +206,18 @@ export function ChatBot() {
               onChange={(e) => chat.setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                chat.activeFlow
-                  ? 'Type your answer...'
-                  : 'Ask me anything...'
+                chat.pendingImage
+                  ? 'Describe the image or say "add 4 to Auburn Yard"...'
+                  : chat.activeFlow
+                    ? 'Type your answer...'
+                    : 'Ask me anything...'
               }
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               disabled={chat.isLoading}
             />
             <button
               onClick={() => chat.sendMessage()}
-              disabled={!chat.input.trim() || chat.isLoading}
+              disabled={(!chat.input.trim() && !chat.pendingImage) || chat.isLoading}
               className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Send message"
             >
@@ -262,6 +256,15 @@ function MessageBubble({
                 : 'bg-gray-100 text-gray-900'
         }`}
       >
+        {/* Attached image */}
+        {message.imageUrl && (
+          <img
+            src={message.imageUrl}
+            alt="Attached"
+            className="rounded max-w-[200px] max-h-[200px] object-contain mb-1"
+          />
+        )}
+
         {message.status === 'executing' ? (
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -273,13 +276,13 @@ function MessageBubble({
           </div>
         )}
 
-        {message.navigateTo && message.status !== 'executing' && (
+        {message.navigateTo && message.status !== 'executing' && (message.showNavigation || message.status === 'success') && (
           <button
             onClick={() => onNavigate(message.navigateTo!)}
             className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 underline"
           >
             <ExternalLink className="w-3 h-3" />
-            Go to page
+            {message.navigateLabel || 'Go to page'}
           </button>
         )}
 
@@ -287,6 +290,7 @@ function MessageBubble({
           className={`text-xs mt-1 ${
             message.role === 'user' ? 'text-blue-100' : 'text-gray-400'
           }`}
+          suppressHydrationWarning
         >
           {message.timestamp.toLocaleTimeString([], {
             hour: '2-digit',

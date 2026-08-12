@@ -14,6 +14,7 @@ export type IntentType =
   | 'list_items'
   | 'update_stock'
   | 'adjust_stock'
+  | 'adjust_stock_delta'
   | 'check_stock'
   | 'low_stock'
   | 'issue_inventory'
@@ -26,7 +27,15 @@ export type IntentType =
   | 'list_transfers'
   | 'create_asset'
   | 'list_assets'
+  | 'print_labels'
   | 'list_receipts'
+  | 'create_reservation'
+  | 'release_reservation'
+  | 'list_reservations'
+  | 'receive_po'
+  | 'list_categories'
+  | 'add_category'
+  | 'global_search'
   | 'inventory_summary'
   | 'navigate'
   | 'help'
@@ -251,6 +260,22 @@ const INTENT_PATTERNS: IntentPattern[] = [
     keywords: [['list', 'transfers'], ['show', 'transfers'], ['view', 'transfers']],
   },
 
+  // Label printing — must precede create_asset so "create asset labels" and
+  // "make labels" resolve here instead of the asset-registration flow.
+  {
+    type: 'print_labels',
+    patterns: [
+      /print\s+(?:\w+\s+)*(?:labels?|barcodes?|tags?)/i,
+      /(?:need|make|generate|create|get)\s+(?:\w+\s+)*labels?/i,
+      /labels?\s+for\s+/i,
+      /(?:asset|barcode|qr)\s+(?:tags?|labels?)/i,
+    ],
+    keywords: [['print', 'labels'], ['need', 'labels'], ['make', 'labels'], ['asset', 'tags'], ['print', 'barcodes']],
+    paramExtractors: {
+      location: /(?:in|at|from)\s+(?:my\s+|the\s+|our\s+)?["']?([^"'\n,?.!]+?)["']?\s*[?.!]?$/i,
+    },
+  },
+
   // Asset operations
   {
     type: 'create_asset',
@@ -277,6 +302,85 @@ const INTENT_PATTERNS: IntentPattern[] = [
       /(?:list|show|get|view|see)\s+(?:all\s+)?(?:recent\s+)?receipts/i,
     ],
     keywords: [['list', 'receipts'], ['show', 'receipts'], ['view', 'receipts']],
+  },
+
+  // Reservation operations
+  {
+    type: 'create_reservation',
+    patterns: [
+      /create\s+(a\s+)?(new\s+)?reservation/i,
+      /reserve\s+(?:some\s+)?(?:stock|inventory|material|items?)/i,
+      /reserve\s+\d+/i,
+    ],
+    keywords: [['create', 'reservation'], ['reserve', 'stock'], ['reserve']],
+    paramExtractors: {
+      item: /(?:of|for)\s+["']?([^"'\n,]+?)["']?\s*(?:at|from|$)/i,
+      quantity: /(\d+(?:\.\d+)?)\s+(?:units?|bags?|tons?|each|gallons?|pieces?)/i,
+    },
+  },
+  {
+    type: 'release_reservation',
+    patterns: [
+      /release\s+(a\s+)?(the\s+)?reservation/i,
+      /cancel\s+(a\s+)?(the\s+)?reservation/i,
+      /unreserve/i,
+    ],
+    keywords: [['release', 'reservation'], ['cancel', 'reservation'], ['unreserve']],
+  },
+  {
+    type: 'list_reservations',
+    patterns: [
+      /(?:list|show|get|view|see)\s+(?:all\s+)?(?:my\s+)?(?:active\s+)?reservations/i,
+      /(?:what|which)\s+reservations/i,
+    ],
+    keywords: [['list', 'reservations'], ['show', 'reservations'], ['view', 'reservations']],
+  },
+
+  // Receive PO
+  {
+    type: 'receive_po',
+    patterns: [
+      /receive\s+(a\s+)?(?:purchase\s+order|po|delivery|shipment)/i,
+      /record\s+(a\s+)?receipt/i,
+      /log\s+(a\s+)?receipt/i,
+    ],
+    keywords: [['receive', 'po'], ['receive', 'order'], ['record', 'receipt']],
+  },
+
+  // Category operations
+  {
+    type: 'list_categories',
+    patterns: [
+      /(?:list|show|get|view|see)\s+(?:all\s+)?(?:item\s+)?categories/i,
+      /(?:what|which)\s+categories/i,
+    ],
+    keywords: [['list', 'categories'], ['show', 'categories']],
+  },
+  {
+    type: 'add_category',
+    patterns: [
+      /(?:add|create)\s+(a\s+)?(new\s+)?(?:item\s+)?category/i,
+      /new\s+category/i,
+    ],
+    keywords: [['add', 'category'], ['create', 'category'], ['new', 'category']],
+    paramExtractors: {
+      name: /(?:named?|called?)\s+["']?([^"'\n,]+)["']?/i,
+    },
+  },
+
+  // Global search
+  {
+    type: 'global_search',
+    patterns: [
+      /search\s+(?:for\s+)?(?:everything|all|across)/i,
+      /find\s+(?:everything|all|across)/i,
+      /global\s+search/i,
+      /search\s+(?:for\s+)?["']?(.+?)["']?$/i,
+    ],
+    keywords: [['search', 'everything'], ['search', 'all'], ['global', 'search'], ['find', 'everything']],
+    paramExtractors: {
+      query: /(?:search|find)\s+(?:for\s+)?["']?(.+?)["']?$/i,
+    },
   },
 
   // Location operations

@@ -110,9 +110,10 @@ export function LocationTypeModal({ open, onClose, onSuccess, item }: LocationTy
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="lt-name">Name *</Label>
+            <Label htmlFor="lt-name">Name <span className="text-red-500">*</span></Label>
             <Input
               id="lt-name"
               value={name}
@@ -120,6 +121,7 @@ export function LocationTypeModal({ open, onClose, onSuccess, item }: LocationTy
               placeholder="e.g., Storage Facility"
               disabled={submitting}
               autoFocus
+              aria-required="true"
             />
             {name.trim() && (
               <p className="text-xs text-muted-foreground">
@@ -153,11 +155,12 @@ export function LocationTypeModal({ open, onClose, onSuccess, item }: LocationTy
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Update Type' : 'Create Type'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

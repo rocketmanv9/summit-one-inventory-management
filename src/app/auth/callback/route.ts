@@ -7,13 +7,14 @@ import {
   accessTokenCookieConfig,
   refreshTokenCookieConfig,
 } from '@rocketmanv9/chassis/auth';
+import { provisionAndEnrichLocalUser } from '@/lib/auth/provision-local-user';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 /**
  * SSO callback — Core redirects here with a one-time ticket.
  *
- * Flow: Core -> /auth/callback?ticket=XXX -> exchange ticket -> mint JWTs -> set cookies -> /dashboard
+ * Flow: Core -> /auth/callback?ticket=XXX -> exchange ticket -> enrich role -> mint JWTs -> set cookies -> /dashboard
  */
 export const GET = createReadRoute(async ({ req }) => {
   const { searchParams } = new URL(req.url);
@@ -27,7 +28,7 @@ export const GET = createReadRoute(async ({ req }) => {
 
   try {
     // 1. Exchange ticket with Core for user identity
-    const user = await exchangeTicketWithCore({
+    let user = await exchangeTicketWithCore({
       ticket,
       targetOrg,
       targetService: targetService || process.env.INTERNAL_JWT_ISSUER || undefined,
@@ -37,10 +38,14 @@ export const GET = createReadRoute(async ({ req }) => {
       },
     });
 
-    // 2. Mint access + refresh tokens signed with SUPABASE_JWT_SECRET
+    // 2. Provision/refresh the local_users row (self-heal for manually-added members)
+    //    and enrich role — local admin assignments take precedence over Core.
+    user = await provisionAndEnrichLocalUser(user);
+
+    // 3. Mint access + refresh tokens signed with SUPABASE_JWT_SECRET
     const { accessToken, refreshToken } = await mintSessionTokens(user);
 
-    // 3. Set httpOnly cookies
+    // 4. Set httpOnly cookies
     const cookieStore = await cookies();
     const accessCfg = accessTokenCookieConfig(accessToken);
     const refreshCfg = refreshTokenCookieConfig(refreshToken);
@@ -48,7 +53,7 @@ export const GET = createReadRoute(async ({ req }) => {
     cookieStore.set(accessCfg.name, accessCfg.value, accessCfg);
     cookieStore.set(refreshCfg.name, refreshCfg.value, refreshCfg);
 
-    // 4. Redirect to dashboard
+    // 5. Redirect to dashboard
     return NextResponse.redirect(new URL('/dashboard', req.url));
   } catch (error) {
     console.error('[Auth Callback] Exchange failed:', error);

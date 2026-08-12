@@ -112,9 +112,10 @@ export function ReservationTypeModal({ open, onClose, onSuccess, item }: Reserva
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="rt-name">Display Name *</Label>
+            <Label htmlFor="rt-name">Display Name <span className="text-red-500">*</span></Label>
             <Input
               id="rt-name"
               value={displayName}
@@ -122,17 +123,19 @@ export function ReservationTypeModal({ open, onClose, onSuccess, item }: Reserva
               placeholder="e.g., Job, Project, Customer Order"
               disabled={submitting}
               autoFocus
+              aria-required="true"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="rt-key">Type Key *</Label>
+            <Label htmlFor="rt-key">Type Key <span className="text-red-500">*</span></Label>
             <Input
               id="rt-key"
               value={typeKey}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setTypeKey(e.target.value); if (error) setError(null); }}
               placeholder="job, project, custom_label"
               disabled={submitting || isEdit}
+              aria-required="true"
             />
             {isEdit && (
               <p className="text-xs text-muted-foreground">Type key cannot be changed after creation.</p>
@@ -174,11 +177,12 @@ export function ReservationTypeModal({ open, onClose, onSuccess, item }: Reserva
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEdit ? 'Update Type' : 'Create Type'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

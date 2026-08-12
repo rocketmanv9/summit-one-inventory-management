@@ -6,7 +6,9 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, getTenantIdFromToken, getUserIdFromToken } from '@/lib/auth-token';
+import { apiWrite } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { parseReferenceLinks, type ReferenceLink } from '@/lib/items/reference-links';
 import type { Database } from 'types/supabase';
 
 type CatalogItemRow = Database['inventory']['Tables']['catalog_items']['Row'];
@@ -15,8 +17,6 @@ type CatalogItemUpdate = Database['inventory']['Tables']['catalog_items']['Updat
 type ItemCategoryRow = Database['inventory']['Tables']['item_categories']['Row'];
 type ItemCategoryInsert = Database['inventory']['Tables']['item_categories']['Insert'];
 type ItemCategoryUpdate = Database['inventory']['Tables']['item_categories']['Update'];
-type InventoryLevelRow = Database['inventory']['Tables']['inventory_levels']['Row'];
-type InventoryLevelInsert = Database['inventory']['Tables']['inventory_levels']['Insert'];
 type LocationRow = Database['inventory']['Tables']['locations']['Row'];
 type LocationInsert = Database['inventory']['Tables']['locations']['Insert'];
 type LocationUpdate = Database['inventory']['Tables']['locations']['Update'];
@@ -30,6 +30,9 @@ type AssignmentTypeRow = {
   type_key: string;
   display_name: string;
   description: string | null;
+  icon: string | null;
+  requires_id: boolean;
+  is_system: boolean;
   is_active: boolean;
   sort_order: number;
   last_event_id: string;
@@ -63,7 +66,7 @@ type CatalogItemWithCategory = {
   sku: string;
   description: string | null;
   category_id: string | null;
-  unit_of_measure: string | null;
+  uom_term_id: string;
   tracking_mode: string;
   reorder_point: number | null;
   min_stock_level: number | null;
@@ -75,7 +78,6 @@ type CatalogItemWithCategory = {
 };
 type CatalogItemInsertPayload = Omit<CatalogItemInsert, 'tenant_id'> & { tenant_id?: string };
 type CatalogItemUpdatePayload = Omit<CatalogItemUpdate, 'tenant_id'> & { tenant_id?: string };
-type InventoryLevelInsertPayload = Omit<InventoryLevelInsert, 'tenant_id'> & { tenant_id?: string };
 type ItemCategoryInsertPayload = Omit<ItemCategoryInsert, 'tenant_id'> & { tenant_id?: string };
 type ItemCategoryUpdatePayload = Omit<ItemCategoryUpdate, 'tenant_id'> & { tenant_id?: string };
 type LocationInsertPayload = Omit<LocationInsert, 'tenant_id'> & { tenant_id?: string };
@@ -84,7 +86,13 @@ type LocationTypeInsertPayload = Omit<LocationTypeInsert, 'tenant_id'> & { tenan
 type LocationTypeUpdatePayload = Omit<LocationTypeUpdate, 'tenant_id'> & { tenant_id?: string };
 type SkuSettingsInsertPayload = Omit<SkuSettingsInsert, 'tenant_id'> & { tenant_id?: string };
 type LocationWithType = LocationRow & { location_type?: Pick<LocationTypeRow, 'name'> | null };
-type AssetInsertPayload = Omit<AssetInsert, 'tenant_id'> & { tenant_id?: string };
+type AssetInsertPayload = Omit<AssetInsert, 'tenant_id'> & {
+  tenant_id?: string;
+  // Cross-service sync fields (added ahead of the generated DB types).
+  asset_kind?: string | null;
+  fleet_asset_id?: string | null;
+  source_system?: string | null;
+};
 type AssetUpdatePayload = Omit<AssetUpdate, 'tenant_id'> & { tenant_id?: string };
 type TransferUpdatePayload = {
   from_location_id: string;
@@ -102,16 +110,38 @@ type AssetWithRelations = {
   id: string;
   asset_tag: string;
   serial_number: string | null;
+  vin?: string | null;
   catalog_item_id: string | null;
   location_id: string | null;
+  home_location_id?: string | null;
   status: string | null;
   purchase_date: string | null;
   purchase_cost: number | null;
   warranty_expires: string | null;
   last_event_id: string | null;
+  created_at?: string | null;
   catalog_item?: Pick<CatalogItemRow, 'id' | 'name' | 'sku'> | null;
   location?: (LocationWithType & { location_type?: { id?: string; name?: string } | null }) | null;
-  asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id'> | null;
+  asset_state?: Pick<AssetStateRow, 'current_status' | 'current_location_id' | 'assigned_to_ref' | 'last_movement_at'> | null;
+};
+
+/** One row of an asset's custody ledger (who held it, when, return condition). */
+type AssetAssignmentHistoryRow = {
+  id: string;
+  assigned_to_type: string | null;
+  assigned_to_id: string | null;
+  assigned_at: string | null;
+  returned_at: string | null;
+  return_condition: string | null;
+  notes: string | null;
+};
+
+/** One immutable audit entry from inventory.asset_events. */
+type AssetEventRow = {
+  id: string;
+  event_type: string | null;
+  occurred_at: string | null;
+  payload: Record<string, unknown> | null;
 };
 
 type ReservationWithRelations = {
@@ -148,6 +178,7 @@ type TransferWithRelations = {
   completed_at: string | null;
   cancelled_at: string | null;
   last_event_id: string | null;
+  assigned_to_user_ids?: string[] | null;
   from_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
   to_location?: Pick<LocationRow, 'id' | 'name'> & { location_type?: { name?: string } | null } | null;
   transfer_lines?: Array<{
@@ -250,6 +281,32 @@ export interface AdjustInventoryResult {
   override_logged?: boolean;
 }
 
+/**
+ * Shared write-through helper for methods migrated onto chassis routes.
+ * Preserves the prior return shape (json.data) and 409 → AppError.conflict
+ * (optimistic-concurrency) behavior.
+ */
+async function writeJson<T = unknown>(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body: unknown,
+  errMsg: string,
+): Promise<T> {
+  const res = await apiWrite(url, method, body);
+  const json = await res.json().catch(() => ({} as any));
+  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg);
+  if (!res.ok) {
+    // Surface zod field errors (chassis returns details.errors: [{path,message}])
+    // so a generic "Validation failed" tells the user which field is wrong.
+    const fieldErrs = json.error?.details?.errors;
+    const detail = Array.isArray(fieldErrs) && fieldErrs.length
+      ? ` — ${fieldErrs.map((e: any) => `${e.path || 'field'}: ${e.message}`).join('; ')}`
+      : '';
+    throw AppError.internal((json.error?.message || errMsg) + detail);
+  }
+  return json.data as T;
+}
+
 export const InventoryRPC = {
   /**
    * Issue inventory (release from location)
@@ -300,6 +357,33 @@ export const InventoryRPC = {
   },
 
   /**
+   * Loose-tracking eyeball update — set a new estimated on-hand for a loose
+   * item at a location. Goes through the /api/inventory/adjustments route (not
+   * the RPC directly) because the route stamps last_verified_at/by on the item
+   * and records the movement with the distinguishable 'estimate_update' reason.
+   */
+  async updateEstimate(params: {
+    catalog_item_id: string;
+    location_id: string;
+    new_qty: number;
+    notes?: string;
+  }): Promise<{ previous_qty: number; new_qty: number }> {
+    return writeJson<{ previous_qty: number; new_qty: number }>(
+      '/api/inventory/adjustments',
+      'POST',
+      {
+        catalog_item_id: params.catalog_item_id,
+        location_id: params.location_id,
+        mode: 'set',
+        new_qty: params.new_qty,
+        estimate: true,
+        notes: params.notes,
+      },
+      'Failed to update estimate',
+    );
+  },
+
+  /**
    * Get catalog items
    * Table: inventory.catalog_items
    */
@@ -308,12 +392,14 @@ export const InventoryRPC = {
     category_id?: string;
     tracking_mode?: string;
     search?: string;
+    exclude_variants?: boolean;
+    parent_item_id?: string;
   }): Promise<CatalogItemWithCategory[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('catalog_items')
       .select(
-        'id, name, sku, description, category_id, unit_of_measure, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, item_categories(name)'
+        'id, name, sku, description, category_id, uom_term_id, tracking_mode, reorder_point, min_stock_level, max_stock_level, active, base_sku, last_event_id, is_parent, parent_item_id, variant_attributes, variant_dimensions, variant_options, item_categories(name)'
       )
       .order('name');
 
@@ -328,6 +414,14 @@ export const InventoryRPC = {
     }
     if (filters?.search) {
       query = query.or(`name.ilike.%${filters.search}%,sku.ilike.%${filters.search}%`);
+    }
+    // By default, hide variant children (show parents + standalone items)
+    if (filters?.exclude_variants !== false) {
+      query = query.is('parent_item_id', null);
+    }
+    // Filter to a specific parent's variants
+    if (filters?.parent_item_id) {
+      query = query.eq('parent_item_id', filters.parent_item_id);
     }
 
     const { data, error } = await query;
@@ -370,36 +464,14 @@ export const InventoryRPC = {
    * The trigger_catalog_item_events trigger handles outbox emission on UPDATE.
    */
   async reassignCatalogItemsCategory(oldCategoryId: string, newCategoryId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    // Fetch items to get their last_event_id for OCC
-    const { data: items, error: fetchError } = await supabase
-      .from('catalog_items')
-      .select('id, last_event_id')
-      .eq('category_id', oldCategoryId);
-
-    if (fetchError) {
-      throw AppError.internal(`Failed to fetch category items for reassignment: ${fetchError.message}`);
-    }
-
-    if (!items || items.length === 0) return;
-
-    for (const item of items) {
-      const { data: updated, error } = await supabase
-        .from('catalog_items')
-        .update({ category_id: newCategoryId })
-        .eq('id', item.id)
-        .eq('last_event_id', item.last_event_id)
-        .select('id')
-        .maybeSingle();
-
-      if (error) {
-        throw AppError.internal(`Failed to reassign catalog item ${item.id}: ${error.message}`);
-      }
-      if (!updated) {
-        throw AppError.conflict(`Concurrent modification detected on catalog item ${item.id} (OCC conflict)`);
-      }
-    }
+    // Routed through the chassis write route — the loop + per-row OCC now runs
+    // server-side (idempotent, tenant-scoped). Trigger owns event emission.
+    await writeJson(
+      '/api/inventory/items/reassign-category',
+      'POST',
+      { old_category_id: oldCategoryId, new_category_id: newCategoryId },
+      'Failed to reassign catalog items',
+    );
   },
 
   /**
@@ -410,14 +482,15 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('item_categories')
-      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id, created_at, updated_at')
+      .select('id, name, sku_prefix, sku_mode, parent_category_id, last_event_id, created_at, updated_at, gv_category_term_id')
       .order('name');
 
     if (error) {
       throw AppError.internal(`Failed to fetch item categories: ${error.message}`);
     }
 
-    return (data || []) as ItemCategoryRow[];
+    // Cast via unknown — gv_category_term_id not yet in generated types (added by migration)
+    return (data || []) as unknown as ItemCategoryRow[];
   },
 
   /**
@@ -425,86 +498,32 @@ export const InventoryRPC = {
    * Table: inventory.item_categories
    */
   async createItemCategory(payload: ItemCategoryInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: ItemCategoryInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create category: ${error.message}`);
-    }
-
-    return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
+    const { last_event_id, ...rest } = payload as ItemCategoryInsertPayload & { last_event_id?: string };
+    void last_event_id;
+    return writeJson<Pick<ItemCategoryRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/categories', 'POST', rest, 'Failed to create category');
   },
 
   /**
    * Update an item category with optimistic concurrency control
    */
   async updateItemCategory(id: string, updates: ItemCategoryUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as ItemCategoryUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string;
     };
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update category: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<ItemCategoryRow, 'id' | 'last_event_id'>;
+    void _id; void created_at; void tenant_id; void last_event_id;
+    return writeJson<Pick<ItemCategoryRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/categories/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update category');
   },
 
   /**
    * Delete an item category with optimistic concurrency control
    */
   async deleteItemCategory(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    const { error: skuError } = await supabase
-      .from('sku_settings')
-      .delete()
-      .eq('category_id', id);
-
-    if (skuError) {
-      throw AppError.internal(`Failed to delete category SKU settings: ${skuError.message}`);
-    }
-
-    const { data, error } = await supabase
-      .from('item_categories')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete category: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Category was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<ItemCategoryRow, 'id'>;
+    return writeJson<Pick<ItemCategoryRow, 'id'>>(
+      `/api/inventory/categories/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete category');
   },
 
   /**
@@ -530,76 +549,59 @@ export const InventoryRPC = {
    * Table: inventory.location_types
    */
   async createLocationType(payload: LocationTypeInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: LocationTypeInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('location_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create location type: ${error.message}`);
+    // Migrated to chassis route (idempotency + server-side validation; the
+    // location_types DB trigger owns event emission). Return shape preserved.
+    const { id, name, description, code } = payload as LocationTypeInsertPayload & { id?: string };
+    void id;
+    const res = await apiWrite('/api/inventory/location-types', 'POST', { name, description, code });
+    const json = await res.json();
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to create location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
+    return json.data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
   },
 
   /**
    * Delete a location type with optimistic concurrency control
    */
   async deleteLocationType(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('location_types')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete location type: ${error.message}`);
+    const res = await apiWrite(`/api/inventory/location-types/${id}`, 'DELETE', {
+      expected_last_event_id: lastEventId,
+    });
+    const json = await res.json();
+    if (res.status === 409) {
+      throw AppError.conflict(json.error?.message || 'Location type was updated by someone else. Please refresh and try again.');
     }
-    if (!data) {
-      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to delete location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id'>;
+    return json.data as Pick<LocationTypeRow, 'id'>;
   },
 
   /**
    * Update a location type with optimistic concurrency control
    */
   async updateLocationType(id: string, updates: LocationTypeUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as LocationTypeUpdatePayload & {
       id?: string;
       created_at?: string;
       tenant_id?: string;
       last_event_id?: string;
     };
+    void _id; void created_at; void tenant_id; void last_event_id;
 
-    const { data, error } = await supabase
-      .from('location_types')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update location type: ${error.message}`);
+    const res = await apiWrite(`/api/inventory/location-types/${id}`, 'PATCH', {
+      ...safeUpdates,
+      expected_last_event_id: lastEventId,
+    });
+    const json = await res.json();
+    if (res.status === 409) {
+      throw AppError.conflict(json.error?.message || 'Location type was updated by someone else. Please refresh and try again.');
     }
-    if (!data) {
-      throw AppError.conflict('Location type was updated by someone else. Please refresh and try again.');
+    if (!res.ok) {
+      throw AppError.internal(json.error?.message || 'Failed to update location type');
     }
-
-    return data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
+    return json.data as Pick<LocationTypeRow, 'id' | 'last_event_id'>;
   },
 
   /**
@@ -625,14 +627,7 @@ export const InventoryRPC = {
    * Table: inventory.sku_settings
    */
   async upsertSkuSettings(payload: SkuSettingsInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { error } = await supabase
-      .from('sku_settings')
-      .upsert(payload, { onConflict: 'category_id' });
-
-    if (error) {
-      throw AppError.internal(`Failed to update SKU settings: ${error.message}`);
-    }
+    await writeJson('/api/inventory/sku-settings', 'POST', payload, 'Failed to update SKU settings');
   },
 
   /**
@@ -645,7 +640,7 @@ export const InventoryRPC = {
       p_name: payload.name,
       p_description: payload.description ?? null,
       p_category_id: payload.category_id ?? null,
-      p_unit_of_measure: payload.unit_of_measure ?? null,
+      p_uom_term_id: payload.uom_term_id ?? null,
       p_tracking_mode: payload.tracking_mode ?? null,
       p_reorder_point: payload.reorder_point ?? null,
       p_base_sku: payload.base_sku ?? null,
@@ -667,7 +662,6 @@ export const InventoryRPC = {
    * Update a catalog item with optimistic concurrency control
    */
   async updateCatalogItem(id: string, updates: CatalogItemUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as CatalogItemUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -675,78 +669,49 @@ export const InventoryRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('catalog_items')
-      .update({ ...safeUpdates, last_event_id: lastEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update catalog item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<CatalogItemRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route. expected_last_event_id drives
+    // the version guard server-side; 409 → AppError.conflict (preserved UX).
+    return writeJson<Pick<CatalogItemRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/items/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Catalog item was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete a catalog item with optimistic concurrency control
    */
   async deleteCatalogItem(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
+    // Routed through the chassis OCC delete route (expected_last_event_id guard).
+    return writeJson<Pick<CatalogItemRow, 'id'>>(
+      `/api/inventory/items/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Catalog item was updated by someone else. Please refresh and try again.',
+    );
+  },
+
+  /**
+   * Get the reference links for a catalog item.
+   * Fetched separately from the stock snapshot (which omits this column).
+   * Table: inventory.catalog_items
+   */
+  async getCatalogItemLinks(id: string): Promise<ReferenceLink[]> {
+    // Cast to any — reference_links isn't in the generated types yet (added by
+    // migration 20260605000001), so the typed select-string would reject it.
+    const supabase = (createBrowserAuthedClient().schema('inventory') as any);
     const { data, error } = await supabase
       .from('catalog_items')
-      .delete()
+      .select('reference_links')
       .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
       .single();
 
     if (error) {
-      throw AppError.internal(`Failed to delete catalog item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Catalog item was updated by someone else. Please refresh and try again.');
+      throw AppError.internal(`Failed to fetch item links: ${error.message}`);
     }
 
-    return data as Pick<CatalogItemRow, 'id'>;
-  },
-
-  /**
-   * Get inventory levels for a catalog item
-   * Table: inventory.inventory_levels
-   */
-  async getInventoryLevelsForItem(catalogItemId: string): Promise<InventoryLevelRow[]> {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('inventory_levels')
-      .select('id, location_id, current_stock, reorder_point, target_stock')
-      .eq('catalog_item_id', catalogItemId);
-
-    if (error) {
-      throw AppError.internal(`Failed to fetch inventory levels: ${error.message}`);
-    }
-
-    return (data || []) as InventoryLevelRow[];
-  },
-
-  /**
-   * Upsert inventory levels
-   * Table: inventory.inventory_levels
-   */
-  async upsertInventoryLevels(payload: InventoryLevelInsertPayload[]) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { error } = await supabase
-      .from('inventory_levels')
-      .upsert(payload, { onConflict: 'catalog_item_id,location_id' });
-
-    if (error) {
-      throw AppError.internal(`Failed to save inventory levels: ${error.message}`);
-    }
+    return parseReferenceLinks((data as any)?.reference_links);
   },
 
   /**
@@ -757,7 +722,7 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('assignment_types')
-      .select('id, type_key, display_name, description, is_active, sort_order, last_event_id')
+      .select('id, type_key, display_name, description, icon, requires_id, is_system, is_active, sort_order, last_event_id')
       .order('sort_order');
 
     if (error) {
@@ -765,6 +730,22 @@ export const InventoryRPC = {
     }
 
     return (data || []) as AssignmentTypeRow[];
+  },
+
+  /**
+   * How many asset assignments reference each assignment type (by
+   * assigned_to_type). Used by the settings page to show "in use" counts.
+   */
+  async getAssignmentTypeUsage(typeKeys: string[]): Promise<Record<string, number>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const entries = await Promise.all(typeKeys.map(async (key) => {
+      const { count, error } = await supabase
+        .from('asset_assignments')
+        .select('id', { count: 'exact', head: true })
+        .eq('assigned_to_type', key);
+      return [key, error ? 0 : (count ?? 0)] as const;
+    }));
+    return Object.fromEntries(entries);
   },
 
   /**
@@ -779,28 +760,15 @@ export const InventoryRPC = {
     sort_order?: number;
     requires_id?: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      type_key: payload.type_key,
-      display_name: payload.display_name,
-      description: payload.description ?? null,
-      icon: payload.icon ?? null,
-      sort_order: payload.sort_order ?? 100,
-      requires_id: payload.requires_id ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create assignment type: ${error.message}`);
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/assignment-types', 'POST', {
+        type_key: payload.type_key,
+        display_name: payload.display_name,
+        description: payload.description ?? null,
+        icon: payload.icon ?? null,
+        sort_order: payload.sort_order ?? 100,
+        requires_id: payload.requires_id ?? true,
+      }, 'Failed to create assignment type');
   },
 
   /**
@@ -814,57 +782,29 @@ export const InventoryRPC = {
     requires_id?: boolean;
     is_active?: boolean;
   }, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .update({ ...updates, last_event_id: crypto.randomUUID() })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update assignment type: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assignment-types/${id}`, 'PATCH',
+      { ...updates, expected_last_event_id: lastEventId }, 'Failed to update assignment type');
   },
 
   /**
    * Delete an assignment type with optimistic concurrency control
    */
   async deleteAssignmentType(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('assignment_types')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete assignment type: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Assignment type was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssignmentTypeRow, 'id'>;
+    return writeJson<Pick<AssignmentTypeRow, 'id'>>(
+      `/api/inventory/assignment-types/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete assignment type');
   },
 
   /**
    * Get assets with related catalog and location data
    */
-  async getAssets(filters?: { status?: string; assigned?: boolean }): Promise<AssetWithRelations[]> {
+  async getAssets(filters?: { status?: string; assigned?: boolean; catalog_item_id?: string }): Promise<AssetWithRelations[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('assets')
       .select(
-        'id, asset_tag, serial_number, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
+        'id, asset_tag, serial_number, asset_kind, asset_type_term_id, equipment_class_id, make, model, model_year, catalog_item_id, location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name, location_type_id, location_type:location_type_id(id, name)), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id)'
       )
       .order('asset_tag');
 
@@ -875,6 +815,9 @@ export const InventoryRPC = {
     }
     if (filters?.assigned) {
       query = query.eq('status', 'assigned');
+    }
+    if (filters?.catalog_item_id) {
+      query = query.eq('catalog_item_id', filters.catalog_item_id);
     }
 
     const { data, error } = await query;
@@ -899,76 +842,52 @@ export const InventoryRPC = {
   },
 
   /**
+   * Open (un-returned) assignments for a set of assets — who currently has
+   * each unit. Table: inventory.asset_assignments.
+   */
+  async getOpenAssetAssignments(assetIds: string[]): Promise<Array<{
+    asset_id: string;
+    assigned_to_type: string;
+    assigned_to_id: string;
+    assigned_at: string;
+    notes: string | null;
+  }>> {
+    if (assetIds.length === 0) return [];
+    const supabase = createBrowserAuthedClient().schema('inventory') as any;
+    const { data, error } = await supabase
+      .from('asset_assignments')
+      .select('asset_id, assigned_to_type, assigned_to_id, assigned_at, notes')
+      .is('returned_at', null)
+      .in('asset_id', assetIds)
+      .order('assigned_at', { ascending: false })
+      .limit(500);
+
+    if (error) {
+      throw AppError.internal(`Failed to fetch assignments: ${error.message}`);
+    }
+    return data || [];
+  },
+
+  /**
    * Create asset
    */
   async createAsset(payload: AssetInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: AssetInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data: existingAsset, error: existingError } = await supabase
-      .from('assets')
-      .select('id, last_event_id, status')
-      .eq('asset_tag', insertPayload.asset_tag)
-      .maybeSingle();
-
-    if (existingError) {
-      throw AppError.internal(`Failed to check existing asset: ${existingError.message}`);
-    }
-
-    if (existingAsset && existingAsset.status !== 'retired') {
-      throw AppError.conflict('An asset with this tag already exists. Edit the existing asset or choose a different tag.');
-    }
-
-    if (existingAsset && existingAsset.status === 'retired') {
-      const nextEventId = crypto.randomUUID();
-      const updatePayload: AssetUpdatePayload = {
-        ...insertPayload,
-        status: insertPayload.status ?? 'available',
-        last_event_id: nextEventId,
-      };
-      delete (updatePayload as AssetUpdatePayload & { tenant_id?: string }).tenant_id;
-
-      let updateQuery = supabase
-        .from('assets')
-        .update(updatePayload)
-        .eq('id', existingAsset.id);
-
-      if (existingAsset.last_event_id) {
-        updateQuery = updateQuery.eq('last_event_id', existingAsset.last_event_id);
-      }
-
-      const { data: restored, error: restoreError } = await updateQuery
-        .select('id, last_event_id')
-        .single();
-
-      if (restoreError) {
-        throw AppError.internal(`Failed to restore asset: ${restoreError.message}`);
-      }
-
-      return restored as Pick<AssetRow, 'id' | 'last_event_id'>;
-    }
-
-    const { data, error } = await supabase
-      .from('assets')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create asset: ${error.message}`);
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis write route — the create-or-restore-retired
+    // logic now runs server-side (idempotent, tenant-scoped). The route stamps
+    // last_event_id; trigger_asset_events owns emission.
+    const { last_event_id, tenant_id, ...fields } = payload as AssetInsertPayload & { tenant_id?: string };
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/assets',
+      'POST',
+      fields,
+      'Failed to create asset',
+    );
   },
 
   /**
    * Update asset with optimistic concurrency control
    */
   async updateAsset(id: string, updates: AssetUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as AssetUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -976,46 +895,26 @@ export const InventoryRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('assets')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update asset: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route.
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assets/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Asset was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete asset with optimistic concurrency control
    */
   async deleteAsset(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const nextEventId = crypto.randomUUID();
-    const { data, error } = await supabase
-      .from('assets')
-      .update({ status: 'retired', last_event_id: nextEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete asset: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Asset was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<AssetRow, 'id' | 'last_event_id'>;
+    // Soft-delete (retire) routed through the chassis OCC delete route.
+    return writeJson<Pick<AssetRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/assets/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Asset was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -1048,14 +947,22 @@ export const InventoryRPC = {
   },
 
   /**
-   * Return asset via RPC
+   * Return asset via RPC.
+   * `return_condition` drives the resulting status server-side:
+   * good → available, damaged/needs_repair → in_repair, lost → out_of_service.
    */
-  async returnAsset(params: { asset_id: string; notes?: string; last_event_id: string }) {
+  async returnAsset(params: {
+    asset_id: string;
+    return_condition?: 'good' | 'damaged' | 'needs_repair' | 'lost';
+    notes?: string;
+    last_event_id: string;
+  }) {
     const { tenantId } = getAuthContext();
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase.rpc('rpc_inv_asset_return', {
       p_tenant_id: tenantId,
       p_asset_id: params.asset_id,
+      p_return_condition: params.return_condition ?? 'good',
       p_notes: params.notes ?? null,
       p_last_event_id: params.last_event_id,
     });
@@ -1068,9 +975,105 @@ export const InventoryRPC = {
   },
 
   /**
+   * Transfer (move) an asset to a different location via RPC.
+   * Updates the asset + asset_state read model, logs a `moved` asset_event,
+   * and publishes asset.moved. Idempotent via last_event_id.
+   */
+  async transferAsset(params: {
+    asset_id: string;
+    to_location_id: string;
+    notes?: string;
+    last_event_id: string;
+  }) {
+    const { tenantId, userId } = getAuthContext();
+    // Cast to any — rpc_inv_asset_transfer isn't in the generated types yet
+    // (added by migration 20260608000001).
+    const supabase = createBrowserAuthedClient().schema('inventory') as any;
+    const { data, error } = await supabase.rpc('rpc_inv_asset_transfer', {
+      p_tenant_id: tenantId,
+      p_asset_id: params.asset_id,
+      p_to_location_id: params.to_location_id,
+      p_actor_user_id: userId ?? null,
+      p_notes: params.notes ?? null,
+      p_last_event_id: params.last_event_id,
+    });
+
+    if (error) {
+      throw AppError.internal(`Failed to transfer asset: ${error.message}`);
+    }
+
+    return data as boolean;
+  },
+
+  /**
+   * Get a single asset with catalog/location relations + live state.
+   * Table: inventory.assets
+   */
+  async getAssetById(id: string): Promise<AssetWithRelations | null> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase
+      .from('assets')
+      .select(
+        'id, asset_tag, serial_number, vin, asset_kind, asset_type_term_id, equipment_class_id, make, model, model_year, catalog_item_id, location_id, home_location_id, status, purchase_date, purchase_cost, warranty_expires, last_event_id, created_at, catalog_item:catalog_item_id(id, name, sku), location:location_id(id, name), asset_state:asset_state!asset_state_asset_id_fkey(current_status, current_location_id, assigned_to_ref, last_movement_at)'
+      )
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      throw AppError.internal(`Failed to fetch asset: ${error.message}`);
+    }
+    if (!data) return null;
+
+    const item: any = data;
+    return {
+      ...item,
+      catalog_item: Array.isArray(item.catalog_item) ? item.catalog_item[0] ?? null : item.catalog_item ?? null,
+      location: Array.isArray(item.location) ? item.location[0] ?? null : item.location ?? null,
+      asset_state: Array.isArray(item.asset_state) ? item.asset_state[0] ?? null : item.asset_state ?? null,
+    } as AssetWithRelations;
+  },
+
+  /**
+   * Get the assignment + event history for an asset (audit trail).
+   * Tables: inventory.asset_assignments, inventory.asset_events
+   */
+  async getAssetHistory(id: string): Promise<{
+    assignments: AssetAssignmentHistoryRow[];
+    events: AssetEventRow[];
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const [assignmentsRes, eventsRes] = await Promise.all([
+      supabase
+        .from('asset_assignments')
+        .select('id, assigned_to_type, assigned_to_id, assigned_at, returned_at, return_condition, notes')
+        .eq('asset_id', id)
+        .order('assigned_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('asset_events')
+        .select('id, event_type, occurred_at, payload')
+        .eq('asset_id', id)
+        .order('occurred_at', { ascending: false })
+        .limit(100),
+    ]);
+
+    if (assignmentsRes.error) {
+      throw AppError.internal(`Failed to fetch asset assignments: ${assignmentsRes.error.message}`);
+    }
+    if (eventsRes.error) {
+      throw AppError.internal(`Failed to fetch asset events: ${eventsRes.error.message}`);
+    }
+
+    return {
+      assignments: (assignmentsRes.data || []) as AssetAssignmentHistoryRow[],
+      events: (eventsRes.data || []) as AssetEventRow[],
+    };
+  },
+
+  /**
    * Get reservations
    */
-  async getReservations(filters?: { status?: string; allocation_type?: string }): Promise<ReservationWithRelations[]> {
+  async getReservations(filters?: { status?: string; allocation_type?: string; catalog_item_id?: string }): Promise<ReservationWithRelations[]> {
     const supabase = createBrowserAuthedClient().schema('inventory');
     let query = supabase
       .from('reservations')
@@ -1084,6 +1087,9 @@ export const InventoryRPC = {
     }
     if (filters?.allocation_type) {
       query = query.eq('allocation_type', filters.allocation_type);
+    }
+    if (filters?.catalog_item_id) {
+      query = query.eq('catalog_item_id', filters.catalog_item_id);
     }
 
     const { data, error } = await query;
@@ -1315,7 +1321,7 @@ export const InventoryRPC = {
     let query = supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, assigned_to_user_ids, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .order('created_at', { ascending: false });
 
@@ -1357,7 +1363,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase
       .from('transfers')
       .select(
-        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
+        'id, status, notes, created_at, initiated_at, completed_at, cancelled_at, last_event_id, assigned_to_user_ids, from_location:from_location_id(id, name, location_type:location_type_id(name)), to_location:to_location_id(id, name, location_type:location_type_id(name)), transfer_lines(id, catalog_item_id, qty, qty_shipped, qty_received, line_number, last_event_id, catalog_items:catalog_item_id(id, name, sku, tracking_mode))'
       )
       .eq('id', transferId)
       .maybeSingle();
@@ -1418,138 +1424,65 @@ export const InventoryRPC = {
    * Update transfer and lines with optimistic concurrency control
    */
   async updateTransfer(transferId: string, transferLastEventId: string, payload: TransferUpdatePayload) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-
-    const { data: header, error: headerError } = await supabase
-      .from('transfers')
-      .update({
+    // Routed through the chassis write route — the header + line-reconciliation
+    // sequence (with per-row OCC) now runs server-side under the idempotency
+    // guard. transfer/transfer_line triggers own emission.
+    await writeJson(
+      `/api/inventory/transfers/${transferId}`,
+      'PATCH',
+      {
+        expected_last_event_id: transferLastEventId,
         from_location_id: payload.from_location_id,
         to_location_id: payload.to_location_id,
         notes: payload.notes,
-      })
-      .eq('id', transferId)
-      .eq('last_event_id', transferLastEventId)
-      .select('id')
-      .single();
-
-    if (headerError) {
-      throw AppError.internal(`Failed to update transfer: ${headerError.message}`);
-    }
-    if (!header) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
-
-    const { data: existingLines, error: existingError } = await supabase
-      .from('transfer_lines')
-      .select('id, last_event_id')
-      .eq('transfer_id', transferId);
-
-    if (existingError) {
-      throw AppError.internal(`Failed to load transfer lines: ${existingError.message}`);
-    }
-
-    const existing = existingLines || [];
-    const incomingIds = new Set(payload.lines.filter(line => line.id).map(line => line.id as string));
-
-    for (const line of existing) {
-      if (!incomingIds.has(line.id)) {
-        const { error: deleteError } = await supabase
-          .from('transfer_lines')
-          .delete()
-          .eq('id', line.id)
-          .eq('last_event_id', line.last_event_id);
-
-        if (deleteError) {
-          throw AppError.internal(`Failed to delete transfer line: ${deleteError.message}`);
-        }
-      }
-    }
-
-    for (let index = 0; index < payload.lines.length; index += 1) {
-      const line = payload.lines[index];
-      const lineNumber = index + 1;
-
-      if (line.id) {
-        if (!line.last_event_id) {
-          throw AppError.badRequest('Missing last_event_id for transfer line. Please refresh and try again.');
-        }
-
-        const { error: lineError } = await supabase
-          .from('transfer_lines')
-          .update({
-            catalog_item_id: line.catalog_item_id,
-            qty: line.qty,
-            line_number: lineNumber,
-          })
-          .eq('id', line.id)
-          .eq('last_event_id', line.last_event_id);
-
-        if (lineError) {
-          throw AppError.internal(`Failed to update transfer line: ${lineError.message}`);
-        }
-      } else {
-        const { error: insertError } = await supabase
-          .from('transfer_lines')
-          .insert({
-            transfer_id: transferId,
-            catalog_item_id: line.catalog_item_id,
-            qty: line.qty,
-            line_number: lineNumber,
-            last_event_id: crypto.randomUUID(),
-          });
-
-        if (insertError) {
-          throw AppError.internal(`Failed to add transfer line: ${insertError.message}`);
-        }
-      }
-    }
+        lines: payload.lines,
+      },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Ship transfer (draft -> in_transit)
    */
   async shipTransfer(transferId: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
+    // Routed through the chassis write route (per-line qty_shipped + header flip).
+    await writeJson(
+      `/api/inventory/transfers/${transferId}/ship`,
+      'POST',
+      { expected_last_event_id: lastEventId },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
+  },
 
-    const { data: lines, error: lineError } = await supabase
-      .from('transfer_lines')
-      .select('id, qty, last_event_id')
-      .eq('transfer_id', transferId);
+  /**
+   * Assign a transfer to a set of users (idempotent replace of the full set).
+   * Each assignee gets a task on their My Day card; the transfer carries a
+   * denormalized assigned_to_user_ids summary. Pass [] to clear assignment.
+   */
+  async assignTransfer(transferId: string, userIds: string[]): Promise<{ id: string; assigned_to_user_ids: string[] }> {
+    return writeJson(
+      `/api/inventory/transfers/${transferId}/assign`,
+      'POST',
+      { user_ids: userIds },
+      'Failed to assign transfer.',
+    );
+  },
 
-    if (lineError) {
-      throw AppError.internal(`Failed to load transfer lines: ${lineError.message}`);
-    }
-
-    if (!lines || lines.length === 0) {
-      throw AppError.notFound('No transfer lines found. Please refresh and try again.');
-    }
-
-    for (const line of lines) {
-      const { error: updateError } = await supabase
-        .from('transfer_lines')
-        .update({ qty_shipped: line.qty })
-        .eq('id', line.id)
-        .eq('last_event_id', line.last_event_id);
-
-      if (updateError) {
-        throw AppError.internal(`Failed to ship transfer line: ${updateError.message}`);
-      }
-    }
-
-    const { data, error } = await supabase
-      .from('transfers')
-      .update({ status: 'in_transit', initiated_at: new Date().toISOString() })
-      .eq('id', transferId)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to ship transfer: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
+  /**
+   * Full tenant roster for the transfer assignment picker. Reuses the
+   * count-qualified endpoint (which returns everyone — HR people + app users);
+   * transfers have no qualification gate, so the `qualified` flag is ignored.
+   */
+  async getAssignableUsers(): Promise<Array<{ user_id: string; name: string; email: string | null; role: string | null }>> {
+    const res = await fetch('/api/inventory/count-qualified', { credentials: 'include' });
+    const json = await res.json().catch(() => ({} as any));
+    if (!res.ok) throw AppError.internal(json.error?.message || 'Failed to load people.');
+    return (json.data || []).map((u: any) => ({
+      user_id: u.user_id,
+      name: u.name,
+      email: u.email ?? null,
+      role: u.role ?? null,
+    }));
   },
 
   /**
@@ -1605,21 +1538,13 @@ export const InventoryRPC = {
    * Cancel transfer (draft -> cancelled)
    */
   async cancelTransfer(transferId: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('transfers')
-      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-      .eq('id', transferId)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to cancel transfer: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Transfer was updated by someone else. Please refresh and try again.');
-    }
+    // Routed through the chassis write route (header status → cancelled, OCC).
+    await writeJson(
+      `/api/inventory/transfers/${transferId}/cancel`,
+      'POST',
+      { expected_last_event_id: lastEventId },
+      'Transfer was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -1714,7 +1639,7 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data: stockData, error: stockError } = await supabase
       .from('stock_balances')
-      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
+      .select('catalog_item_id, qty_available, catalog_items:catalog_item_id(id, name, sku, uom_term_id, tracking_mode)')
       .eq('location_id', locationId)
       .gt('qty_available', 0)
       .order('name', { foreignTable: 'catalog_items' });
@@ -1725,7 +1650,7 @@ export const InventoryRPC = {
 
     const { data: assetData, error: assetError } = await supabase
       .from('assets')
-      .select('catalog_item_id, catalog_item:catalog_item_id(id, name, sku, unit_of_measure, tracking_mode)')
+      .select('catalog_item_id, catalog_item:catalog_item_id(id, name, sku, uom_term_id, tracking_mode)')
       .eq('location_id', locationId)
       .in('status', ['available', 'assigned']);
 
@@ -1733,7 +1658,7 @@ export const InventoryRPC = {
       throw AppError.internal(`Failed to load location assets: ${assetError.message}`);
     }
 
-    const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null }>();
+    const assetCounts = new Map<string, { count: number; catalog_item: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null }>();
     (assetData || []).forEach((row) => {
       const catalogItemId = row.catalog_item_id as string | null;
       if (!catalogItemId) return;
@@ -1743,7 +1668,7 @@ export const InventoryRPC = {
       const existing = assetCounts.get(catalogItemId);
       assetCounts.set(catalogItemId, {
         count: (existing?.count || 0) + 1,
-        catalog_item: (catalogItem || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_item: (catalogItem || existing?.catalog_item || null) as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null,
       });
     });
 
@@ -1758,7 +1683,7 @@ export const InventoryRPC = {
       catalog_item_id: string;
       qty_available: number | null;
       asset_count?: number | null;
-      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
     }>();
 
     (stockData || []).forEach((row) => {
@@ -1769,7 +1694,7 @@ export const InventoryRPC = {
         catalog_item_id: row.catalog_item_id,
         qty_available: row.qty_available,
         asset_count: null,
-        catalog_items: catalogItems as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null,
+        catalog_items: catalogItems as Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null,
       });
     });
 
@@ -1785,7 +1710,7 @@ export const InventoryRPC = {
             catalog_item_id: string;
             qty_available: number | null;
             asset_count?: number | null;
-            catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+            catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
           });
           return;
         }
@@ -1799,7 +1724,7 @@ export const InventoryRPC = {
           catalog_item_id: string;
           qty_available: number | null;
           asset_count?: number | null;
-          catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+          catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
         });
       }
     });
@@ -1810,7 +1735,7 @@ export const InventoryRPC = {
       catalog_item_id: string;
       qty_available: number | null;
       asset_count?: number | null;
-      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'unit_of_measure' | 'tracking_mode'> | null;
+      catalog_items?: Pick<CatalogItemRow, 'id' | 'name' | 'sku' | 'uom_term_id' | 'tracking_mode'> | null;
     }>;
   },
 
@@ -1882,6 +1807,49 @@ export const InventoryRPC = {
   },
 
   /**
+   * Get inventory events
+   * Table: inventory.inventory_events
+   */
+  async getInventoryEvents(filters?: {
+    event_type?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<Array<{
+    id: string;
+    tenant_id: string;
+    event_type: string;
+    occurred_at: string;
+    actor_user_id: string | null;
+    source_system: string | null;
+    payload: any;
+    created_at: string;
+  }>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    let query = supabase
+      .from('inventory_events')
+      .select('id, tenant_id, event_type, occurred_at, actor_user_id, source_system, payload, created_at')
+      .order('occurred_at', { ascending: false })
+      .limit(200);
+
+    if (filters?.event_type) {
+      query = query.eq('event_type', filters.event_type);
+    }
+    if (filters?.start_date) {
+      query = query.gte('occurred_at', filters.start_date);
+    }
+    if (filters?.end_date) {
+      query = query.lte('occurred_at', filters.end_date);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw AppError.internal(`Failed to fetch inventory events: ${error.message}`);
+    }
+
+    return (data || []) as any[];
+  },
+
+  /**
    * Reverse stock movement via RPC
    */
   async reverseStockMovement(movementId: string, reason: string) {
@@ -1939,81 +1907,31 @@ export const InventoryRPC = {
   async createLocation(
     payload: LocationInsertPayload
   ) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload: LocationInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
+    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...rest } = payload as LocationInsertPayload & {
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string; location_type?: unknown;
     };
-
-    const { data, error } = await supabase
-      .from('locations')
-      .insert(insertPayload)
-      .select('*, location_type:location_type_id(name), last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create location: ${error.message}`);
-    }
-
-    return data;
+    void _id; void created_at; void tenant_id; void last_event_id; void location_type;
+    return writeJson<any>('/api/inventory/locations', 'POST', rest, 'Failed to create location');
   },
 
   /**
    * Update a location with optimistic concurrency control
    */
   async updateLocation(id: string, updates: LocationUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...restUpdates } = updates as LocationUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
-      location_type?: unknown;
+    const { id: _id, created_at, tenant_id, last_event_id, location_type, ...safeUpdates } = updates as LocationUpdatePayload & {
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string; location_type?: unknown;
     };
-    const safeUpdates =
-      typeof location_type === 'string'
-        ? { ...restUpdates, location_type }
-        : { ...restUpdates };
-
-    const { data, error } = await supabase
-      .from('locations')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('*, location_type:location_type_id(name), last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update location: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
-    }
-
-    return data;
+    void _id; void created_at; void tenant_id; void last_event_id; void location_type;
+    return writeJson<any>(`/api/inventory/locations/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update location');
   },
 
   /**
    * Delete a location with optimistic concurrency control
    */
   async deleteLocation(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('locations')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete location: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Location was updated by someone else. Please refresh and try again.');
-    }
-
-    return data;
+    return writeJson<any>(`/api/inventory/locations/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete location');
   },
 
   /**
@@ -2030,7 +1948,7 @@ export const InventoryRPC = {
       .from('stock_balances')
       .select(`
         *,
-        catalog_items:catalog_item_id(name, sku, unit_of_measure, reorder_point),
+        catalog_items:catalog_item_id(name, sku, uom_term_id, reorder_point),
         locations:location_id(name)
       `)
       .order('catalog_items(name)');
@@ -2069,7 +1987,25 @@ export const InventoryRPC = {
       throw AppError.internal(`Failed to fetch low stock items: ${error.message}`);
     }
 
-    return data;
+    // mv_low_stock_summary exposes name/sku/min_stock_level/reorder_point/
+    // total_available; the widget expects item_name/item_sku/total_on_hand and a
+    // severity. Map here so the widget renders a named row (the MV carries no
+    // severity — derive it: at/below reorder point is critical, otherwise below
+    // the min-level buffer is a warning).
+    return (data || []).map((r: any) => {
+      const available = Number(r.total_available) || 0;
+      const threshold = r.reorder_point != null ? Number(r.reorder_point) : Number(r.min_stock_level) || 0;
+      return {
+        catalog_item_id: r.catalog_item_id,
+        item_name: r.name,
+        item_sku: r.sku,
+        total_on_hand: available,
+        total_available: available,
+        reorder_point: threshold,
+        min_stock_level: r.min_stock_level != null ? Number(r.min_stock_level) : null,
+        severity: available <= threshold ? 'critical' : 'warning',
+      };
+    });
   },
 
   /**
@@ -2116,6 +2052,22 @@ export const InventoryRPC = {
   },
 
   /**
+   * How many reservations reference each reservation type (by allocation_type).
+   * Used by the settings page to show "in use" counts and warn before delete.
+   */
+  async getReservationTypeUsage(typeKeys: string[]): Promise<Record<string, number>> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const entries = await Promise.all(typeKeys.map(async (key) => {
+      const { count, error } = await supabase
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('allocation_type', key);
+      return [key, error ? 0 : (count ?? 0)] as const;
+    }));
+    return Object.fromEntries(entries);
+  },
+
+  /**
    * Create reservation type
    */
   async createReservationType(payload: {
@@ -2125,29 +2077,14 @@ export const InventoryRPC = {
     sort_order?: number;
     is_active?: boolean;
   }) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      tenant_id: tenantId,
-      type_key: payload.type_key,
-      display_name: payload.display_name,
-      description: payload.description ?? null,
-      sort_order: payload.sort_order ?? 0,
-      is_active: payload.is_active ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/reservation-types', 'POST', {
+        type_key: payload.type_key,
+        display_name: payload.display_name,
+        description: payload.description ?? null,
+        sort_order: payload.sort_order ?? 0,
+        is_active: payload.is_active ?? true,
+      }, 'Failed to create reservation type');
   },
 
   /**
@@ -2159,47 +2096,16 @@ export const InventoryRPC = {
     sort_order?: number;
     is_active?: boolean;
   }) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const updatePayload = {
-      ...updates,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .update(updatePayload)
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id' | 'last_event_id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/reservation-types/${id}`, 'PATCH', updates, 'Failed to update reservation type');
   },
 
   /**
    * Delete reservation type
    */
   async deleteReservationType(id: string) {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('reservation_types')
-      .delete()
-      .eq('id', id)
-      .eq('tenant_id', tenantId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete reservation type: ${error.message}`);
-    }
-
-    return data as Pick<ReservationTypeRow, 'id'>;
+    return writeJson<Pick<ReservationTypeRow, 'id'>>(
+      `/api/inventory/reservation-types/${id}`, 'DELETE', {}, 'Failed to delete reservation type');
   },
 
   // ==========================================================================
@@ -2212,8 +2118,8 @@ export const InventoryRPC = {
    */
   async getUomConversions(): Promise<Array<{
     id: string;
-    from_uom: string;
-    to_uom: string;
+    from_uom_term_id: string;
+    to_uom_term_id: string;
     conversion_factor: number;
     is_bidirectional: boolean;
     last_event_id: string;
@@ -2222,8 +2128,8 @@ export const InventoryRPC = {
     const supabase = createBrowserAuthedClient().schema('inventory');
     const { data, error } = await supabase
       .from('uom_conversions')
-      .select('id, from_uom, to_uom, conversion_factor, is_bidirectional, last_event_id, created_at')
-      .order('from_uom');
+      .select('id, from_uom_term_id, to_uom_term_id, conversion_factor, is_bidirectional, last_event_id, created_at')
+      .order('from_uom_term_id');
 
     if (error) {
       throw AppError.internal(`Failed to fetch UOM conversions: ${error.message}`);
@@ -2237,54 +2143,27 @@ export const InventoryRPC = {
    * Table: inventory.uom_conversions
    */
   async createUomConversion(payload: {
-    from_uom: string;
-    to_uom: string;
+    from_uom_term_id: string;
+    to_uom_term_id: string;
     conversion_factor: number;
     is_bidirectional?: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      from_uom: payload.from_uom.toUpperCase(),
-      to_uom: payload.to_uom.toUpperCase(),
-      conversion_factor: payload.conversion_factor,
-      is_bidirectional: payload.is_bidirectional ?? true,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('uom_conversions')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create UOM conversion: ${error.message}`);
-    }
-
-    return data as { id: string; last_event_id: string };
+    return writeJson<{ id: string; last_event_id: string }>(
+      '/api/inventory/uom-conversions', 'POST', {
+        from_uom_term_id: payload.from_uom_term_id,
+        to_uom_term_id: payload.to_uom_term_id,
+        conversion_factor: payload.conversion_factor,
+        is_bidirectional: payload.is_bidirectional ?? true,
+      }, 'Failed to create UOM conversion');
   },
 
   /**
    * Delete a UOM conversion with OCC
    */
   async deleteUomConversion(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('uom_conversions')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete UOM conversion: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('UOM conversion was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as { id: string };
+    return writeJson<{ id: string }>(
+      `/api/inventory/uom-conversions/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete UOM conversion');
   },
 
   /**
@@ -2296,8 +2175,8 @@ export const InventoryRPC = {
     const { data, error } = await supabase.rpc('convert_uom', {
       p_tenant_id: tenantId,
       p_qty: qty,
-      p_from_uom: fromUom,
-      p_to_uom: toUom,
+      p_from_uom_term_id: fromUom,
+      p_to_uom_term_id: toUom,
     });
 
     if (error) {
@@ -2545,7 +2424,7 @@ export const InventoryRPC = {
     location_name: string;
     location_type: string | null;
     max_capacity: number | null;
-    capacity_uom: string | null;
+    capacity_uom_term_id: string | null;
     current_qty: number;
     utilization_pct: number | null;
     is_over_capacity: boolean;
@@ -2634,70 +2513,22 @@ export const InventoryRPC = {
     catalog_item_id?: string | null;
     allow_negative: boolean;
   }) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const insertPayload = {
-      scope: payload.scope,
-      category_id: payload.category_id ?? null,
-      catalog_item_id: payload.catalog_item_id ?? null,
-      allow_negative: payload.allow_negative,
-      last_event_id: crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('negative_inventory_config')
-      .upsert(insertPayload, {
-        onConflict: 'tenant_id,scope,COALESCE(category_id,\'00000000-0000-0000-0000-000000000000\'::uuid),COALESCE(catalog_item_id,\'00000000-0000-0000-0000-000000000000\'::uuid)',
-      })
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to save negative inventory config: ${error.message}`);
-    }
-
-    return data as { id: string; last_event_id: string };
+    return writeJson<{ id: string; last_event_id: string }>(
+      '/api/inventory/negative-inventory', 'POST', {
+        scope: payload.scope,
+        category_id: payload.category_id ?? null,
+        catalog_item_id: payload.catalog_item_id ?? null,
+        allow_negative: payload.allow_negative,
+      }, 'Failed to save negative inventory config');
   },
 
   /**
    * Delete negative inventory config with OCC
    */
   async deleteNegativeInventoryConfig(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('negative_inventory_config')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete negative inventory config: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Config was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as { id: string };
-  },
-
-  /**
-   * Auto-create draft PO from reorder alert
-   * RPC: inventory.auto_create_draft_po
-   */
-  async autoCreateDraftPO(alertId: string): Promise<string | null> {
-    const { tenantId } = getAuthContext();
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase.rpc('auto_create_draft_po', {
-      p_alert_id: alertId,
-      p_tenant_id: tenantId,
-    });
-
-    if (error) {
-      throw AppError.internal(`Failed to auto-create draft PO: ${error.message}`);
-    }
-
-    return data as string | null;
+    return writeJson<{ id: string }>(
+      `/api/inventory/negative-inventory/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete negative inventory config');
   },
 
   /**
@@ -2710,7 +2541,7 @@ export const InventoryRPC = {
   async wizardCreateItem(params: {
     name: string;
     description?: string | null;
-    unit_of_measure?: string;
+    uom_term_id?: string | null;
     tracking_mode?: string;
     reorder_point?: number | null;
     base_sku?: string | null;
@@ -2742,15 +2573,22 @@ export const InventoryRPC = {
     } | null;
     initial_qty?: number | null;
     initial_cost?: number | null;
+    barcode?: string | null;
+    create_assets?: Array<{ asset_tag: string; serial_number?: string }> | null;
+    has_variants?: boolean;
+    variant_dimensions?: string[] | null;
+    variant_options?: Record<string, string[]> | null;
     idempotency_key: string;
   }): Promise<{
     success: boolean;
     idempotent_hit: boolean;
     item_id: string;
     item_sku: string;
+    item_barcode?: string;
     category_id: string | null;
     vendor_id: string | null;
     location_id: string | null;
+    created_asset_tags?: string[];
     created_entities: Array<{
       type: string;
       id?: string;
@@ -2765,7 +2603,7 @@ export const InventoryRPC = {
     const { data, error } = await supabase.rpc('rpc_wizard_create_item', {
       p_name: params.name,
       p_description: params.description ?? null,
-      p_unit_of_measure: params.unit_of_measure ?? 'EA',
+      p_uom_term_id: params.uom_term_id ?? null,
       p_tracking_mode: params.tracking_mode ?? 'stock',
       p_reorder_point: params.reorder_point ?? null,
       p_base_sku: params.base_sku ?? null,
@@ -2780,6 +2618,11 @@ export const InventoryRPC = {
       p_create_location: params.create_location ?? null,
       p_initial_qty: params.initial_qty ?? null,
       p_initial_cost: params.initial_cost ?? null,
+      p_barcode: params.barcode ?? null,
+      p_create_assets: params.create_assets ? JSON.stringify(params.create_assets) : null,
+      p_has_variants: params.has_variants ?? false,
+      p_variant_dimensions: params.variant_dimensions ?? null,
+      p_variant_options: params.variant_options ?? null,
       p_idempotency_key: params.idempotency_key,
     });
 
@@ -2824,16 +2667,53 @@ export const InventoryRPC = {
    * Item stock snapshot: on_hand, reserved, available, inbound, locations breakdown.
    * RPC: inventory.rpc_item_stock_snapshot
    */
+  async createItemVariants(parentItemId: string, variants: Array<{
+    attributes: Record<string, string>;
+    sku_suffix: string;
+    barcode?: string;
+  }>): Promise<{
+    success: boolean;
+    parent_item_id: string;
+    variant_ids: string[];
+    count: number;
+  }> {
+    const supabase = createBrowserAuthedClient().schema('inventory');
+    const { data, error } = await supabase.rpc('rpc_create_item_variants', {
+      p_parent_item_id: parentItemId,
+      p_variants: JSON.stringify(variants),
+      p_idempotency_key: crypto.randomUUID(),
+    });
+
+    if (error) {
+      throw AppError.internal(`Failed to create variants: ${error.message}`);
+    }
+
+    return data as any;
+  },
+
   async getItemStockSnapshot(catalogItemId: string): Promise<{
     item: {
       id: string;
       name: string;
       sku: string;
-      unit_of_measure: string | null;
+      barcode: string | null;
+      uom_term_id: string;
       tracking_mode: string;
       reorder_point: number | null;
       category_name: string | null;
       active: boolean;
+      last_event_id: string | null;
+      is_parent?: boolean;
+      parent_item_id?: string | null;
+      variant_attributes?: Record<string, string> | null;
+      variant_dimensions?: string[] | null;
+      variant_options?: Record<string, string[]> | null;
+      // Loose-tracking (estimate mode): when loose_tracking is true, quantities
+      // for this item are estimates. last_verified_at is when the estimate was
+      // last re-trued (eyeball update or count) — drives the staleness warning.
+      loose_tracking?: boolean;
+      last_verified_at?: string | null;
+      last_verified_by?: string | null;
     };
     on_hand: number;
     reserved: number;
@@ -2846,6 +2726,16 @@ export const InventoryRPC = {
       reserved: number;
       available: number;
     }>;
+    variants?: Array<{
+      variant_id: string;
+      variant_name: string;
+      variant_sku: string;
+      variant_barcode: string | null;
+      variant_attributes: Record<string, string>;
+      on_hand: number;
+      reserved: number;
+      available: number;
+    }> | null;
     last_movement_at: string | null;
     last_count_at: string | null;
   }> {
@@ -2873,7 +2763,7 @@ export const InventoryRPC = {
       active: boolean;
       location_type: string | null;
       max_capacity: number | null;
-      capacity_uom: string | null;
+      capacity_uom_term_id: string | null;
     };
     totals: {
       on_hand: number;
@@ -2885,7 +2775,7 @@ export const InventoryRPC = {
       item_id: string;
       item_name: string;
       sku: string | null;
-      unit_of_measure: string | null;
+      uom_term_id: string | null;
       on_hand: number;
       reserved: number;
       available: number;
@@ -2948,28 +2838,12 @@ export const InventoryRPC = {
     uom_mismatch_policy: string;
     require_override_reason: boolean;
   }): Promise<any> {
-    const tenantId = getTenantIdFromToken(getStoredAccessToken() || '');
-    if (!tenantId) throw AppError.unauthorized('No tenant ID');
-
-    const supabase = createBrowserAuthedClient().schema('inventory');
-    const { data, error } = await supabase
-      .from('guardrail_policies')
-      .upsert({
-        tenant_id: tenantId,
-        over_receipt_policy: params.over_receipt_policy,
-        over_receipt_threshold_pct: params.over_receipt_threshold_pct,
-        uom_mismatch_policy: params.uom_mismatch_policy,
-        require_override_reason: params.require_override_reason,
-        last_event_id: crypto.randomUUID(),
-      }, { onConflict: 'tenant_id' })
-      .select()
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to save guardrail policies: ${error.message}`);
-    }
-
-    return data;
+    return writeJson('/api/inventory/guardrail-policies', 'POST', {
+      over_receipt_policy: params.over_receipt_policy,
+      over_receipt_threshold_pct: params.over_receipt_threshold_pct,
+      uom_mismatch_policy: params.uom_mismatch_policy,
+      require_override_reason: params.require_override_reason,
+    }, 'Failed to save guardrail policies');
   },
 
   /**

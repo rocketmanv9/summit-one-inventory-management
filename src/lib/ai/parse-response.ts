@@ -5,6 +5,7 @@
 
 import type { IntentType } from '@/lib/chat/intents';
 import type { AiDataDisplay } from './types';
+import { INVENTORY_TOOLS } from './tools';
 
 export interface ToolUseResult {
   type: 'tool_use';
@@ -27,26 +28,23 @@ export type ParsedAIResponse = ToolUseResult | TextResult | DataResult;
 
 /**
  * All valid intent names that map to function tool names.
+ *
+ * Derived from the canonical INVENTORY_TOOLS registry so this gate can never
+ * drift behind the tool list. Previously this was a hand-maintained set; any
+ * client tool accidentally left out of it was silently dropped by the parser
+ * (the tool_call SSE event would parse to null and no-op). Building it from the
+ * registry guarantees every defined tool passes the gate.
+ *
+ * Legacy aliases that are valid intents but not OpenAI tool names are added
+ * explicitly:
+ *  - `update_stock` — older alias for adjust_stock used by the keyword parser.
+ *  - `help` — built-in navigation/help intent, handled client-side without a tool.
  */
-const VALID_INTENTS: Set<string> = new Set([
-  // Client-side CRUD/list tools
-  'add_vendor', 'update_vendor', 'delete_vendor', 'list_vendors',
-  'add_item', 'update_item', 'delete_item', 'list_items',
-  'adjust_stock', 'update_stock', 'check_stock', 'low_stock',
-  'issue_inventory',
-  'create_po', 'list_pos', 'late_orders',
-  'list_locations', 'add_location',
-  'create_transfer', 'list_transfers',
-  'create_asset', 'list_assets',
-  'list_receipts',
-  'inventory_summary', 'navigate', 'help',
-  // Server-side analytics tools
-  'query_inventory_summary', 'query_stock_valuation', 'query_low_stock_report',
-  'query_dead_stock', 'query_velocity_analysis', 'query_movement_summary',
-  'query_reorder_suggestions', 'query_forecast', 'query_inventory_turnover',
-  'query_po_status',
-  // Dashboard & workflow tools
-  'create_dashboard', 'workflow_auto_reorder', 'workflow_stock_rebalance',
+const LEGACY_INTENT_ALIASES = ['update_stock', 'help'] as const;
+
+const VALID_INTENTS: Set<string> = new Set<string>([
+  ...INVENTORY_TOOLS.flatMap((t) => ('function' in t && t.function?.name ? [t.function.name] : [])),
+  ...LEGACY_INTENT_ALIASES,
 ]);
 
 /**

@@ -11,12 +11,15 @@ import {
   Search,
   AlertTriangle,
   Tag,
+  Printer,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { useUOMLabelMap } from '@/hooks/useGVTerms';
 
 type LocationSnapshot = Awaited<ReturnType<typeof InventoryRPC.getLocationInventorySnapshot>>;
 
@@ -51,10 +54,33 @@ function StatCard({
 export default function LocationDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const uomLabels = useUOMLabelMap();
   const [snapshot, setSnapshot] = useState<LocationSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
+  const [labelDialog, setLabelDialog] = useState<{
+    items: BarcodeLabelItem[];
+    entityType: 'item' | 'asset';
+  } | null>(null);
+
+  // Everything at this location with a printable code: items label by SKU
+  // (the mobile lookup resolves SKUs), assets by their asset tag.
+  const printableItems = useMemo<BarcodeLabelItem[]>(
+    () =>
+      (snapshot?.items || [])
+        .filter((i) => i.sku)
+        .map((i) => ({ code: i.sku!, label: i.item_name, kind: 'stock' as const })),
+    [snapshot]
+  );
+  const printableAssets = useMemo<BarcodeLabelItem[]>(
+    () =>
+      (snapshot?.assets || [])
+        .filter((a) => a.asset_tag)
+        .map((a) => ({ code: a.asset_tag, label: a.item_name || a.asset_tag, kind: 'individual' as const })),
+    [snapshot]
+  );
+  const itemsWithoutSku = (snapshot?.items.length || 0) - printableItems.length;
 
   useEffect(() => {
     if (!params.id) return;
@@ -129,7 +155,7 @@ export default function LocationDetailPage() {
           onClick={() => router.push(`/inventory/items/${row.item_id}`)}
           className="text-left"
         >
-          <div className="font-medium text-primary hover:underline">{row.item_name}</div>
+          <div className="font-medium text-foreground hover:text-primary hover:underline">{row.item_name}</div>
           {row.sku && (
             <div className="font-mono text-xs text-muted-foreground">{row.sku}</div>
           )}
@@ -137,9 +163,9 @@ export default function LocationDetailPage() {
       ),
     },
     {
-      key: 'unit_of_measure',
+      key: 'uom_term_id',
       header: 'UOM',
-      render: (row: LocationSnapshot['items'][number]) => row.unit_of_measure || '-',
+      render: (row: LocationSnapshot['items'][number]) => uomLabels[(row as any).uom_term_id] || (row as any).uom_term_id || '-',
     },
     {
       key: 'on_hand',
@@ -168,29 +194,48 @@ export default function LocationDetailPage() {
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Back + Header */}
+        {/* Header */}
         <div>
-          <button
-            onClick={() => router.push('/inventory/locations')}
-            className="mb-3 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Locations
-          </button>
           <PageHeader
+            backHref="/inventory/locations"
             title={location.name}
             description={
               [
                 location.location_type,
                 location.address,
                 location.max_capacity != null &&
-                  `Capacity: ${Number(location.max_capacity).toLocaleString()} ${location.capacity_uom || ''}`,
+                  `Capacity: ${Number(location.max_capacity).toLocaleString()} ${uomLabels[(location as any).capacity_uom_term_id] || (location as any).capacity_uom_term_id || ''}`,
               ]
                 .filter(Boolean)
                 .join('  |  ')
             }
             actions={
-              <StatusChip status={location.active ? 'active' : 'inactive'} />
+              <div className="flex items-center gap-3">
+                {printableItems.length > 0 && (
+                  <button
+                    onClick={() => setLabelDialog({ items: printableItems, entityType: 'item' })}
+                    title={
+                      itemsWithoutSku > 0
+                        ? `${itemsWithoutSku} item(s) without a SKU will be skipped`
+                        : undefined
+                    }
+                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print Item Labels ({printableItems.length})
+                  </button>
+                )}
+                {printableAssets.length > 0 && (
+                  <button
+                    onClick={() => setLabelDialog({ items: printableAssets, entityType: 'asset' })}
+                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print Asset Labels ({printableAssets.length})
+                  </button>
+                )}
+                <StatusChip status={location.active ? 'active' : 'inactive'} />
+              </div>
             }
           />
         </div>
@@ -308,6 +353,14 @@ export default function LocationDetailPage() {
               rowKey={(row) => row.asset_id}
             />
           </div>
+        )}
+
+        {labelDialog && (
+          <BarcodeLabelDialog
+            items={labelDialog.items}
+            entityType={labelDialog.entityType}
+            onClose={() => setLabelDialog(null)}
+          />
         )}
       </div>
     </AppShell>

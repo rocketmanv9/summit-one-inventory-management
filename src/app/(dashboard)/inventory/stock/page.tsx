@@ -1,45 +1,193 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+// The single Inventory page: catalog + stock balances merged into one
+// item-centric, search-first grid. Each row is an item with its quantities;
+// expanding a row shows per-location (and per-variant) balances, recent
+// activity, and a 6-month usage sparkline. Quick-add creates an item +
+// initial stock in one small form (rpc_wizard_create_item); the full wizard
+// at /inventory/items/new remains for variants/vendors/barcodes/assets.
+//
+// URL params: ?q=<search> pre-fills the search box, ?filter=low|out
+// pre-selects the status chip (dashboard widgets and Isabelle link here), and
+// ?location=<id> pre-selects the location filter so links keep their context.
+//
+// Stock is tracked PER LOCATION (inventory.stock_balances is one row per
+// item × location). With "All locations" selected, collapsed rows show a
+// clearly-labelled total and the expanded panel breaks it down by location.
+// With a location selected, every quantity on the page reflects that
+// location only.
+
+import { AppError } from '@rocketmanv9/chassis/errors';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { DataTable } from '@/components/ui/DataTable';
-import { FilterBar } from '@/components/ui/FilterBar';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Boxes, ClipboardList, PackageCheck, AlertTriangle, MapPin, Sparkles, Loader2 } from 'lucide-react';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { CategoryModal } from '@/components/modals/CategoryModal';
+import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
+import { AdjustStockModal } from '@/components/inventory/AdjustStockModal';
+import { MinLevelWizard } from '@/components/inventory/MinLevelWizard';
+import { EntityImageThumbnail } from '@/components/ui/EntityImageThumbnail';
+import { useEntityImages } from '@/hooks/useEntityImages';
+import { useUOMTerms, useUOMLabelMap } from '@/hooks/useGVTerms';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { createBrowserAuthedClient } from '@/supabase/client';
+import { errMessage } from '@/lib/client-errors';
+import { useActiveLocation } from '@/lib/active-location';
 
-interface StockBalance {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Item {
   id: string;
-  catalog_item_id: string;
-  item_name?: string;
-  item_sku?: string;
-  location_id: string;
-  location_name?: string;
-  on_hand_qty: number;
-  reserved_qty: number;
-  available_qty: number;
-  qty_on_order?: number;
-  inventory_position?: number;
-  reorder_point?: number;
-  catalog_items?: { id: string; name: string; sku: string; unit_of_measure: string };
-  locations?: { id: string; name: string; location_type: string };
+  name: string;
+  sku: string;
+  description: string | null;
+  category_id: string | null;
+  uom_term_id: string | null;
+  tracking_mode: string;
+  reorder_point: number | null;
+  min_stock_level: number | null;
+  active: boolean | null;
+  is_parent?: boolean | null;
+  parent_item_id?: string | null;
+  variant_attributes?: Record<string, string> | null;
+  variant_dimensions?: string[] | null;
+  variant_options?: Record<string, string[]> | null;
+  last_event_id: string | null;
+  item_categories?: { name: string } | null;
 }
 
-export default function StockBalancesPage() {
-  const [stock, setStock] = useState<StockBalance[]>([]);
+interface Balance {
+  catalog_item_id: string;
+  location_id: string;
+  qty_on_hand: number;
+  qty_reserved: number;
+  qty_available: number;
+  locations?: { name: string } | null;
+}
+
+interface ItemRow {
+  item: Item;
+  /** The item itself plus its variant children. */
+  memberIds: string[];
+  balances: Balance[];
+  onHand: number;
+  reserved: number;
+  available: number;
+  locationCount: number;
+  status: 'out' | 'low' | 'ok';
+}
+
+interface Movement {
+  movement_type: string;
+  qty: number;
+  created_at: string;
+}
+
+type StatusFilter = 'all' | 'low' | 'out';
+
+const variantLabel = (item: Item): string =>
+  item.variant_attributes ? Object.values(item.variant_attributes).join(' / ') : '';
+
+// ── Usage sparkline ───────────────────────────────────────────────────────────
+
+function Sparkline({ values }: { values: number[] }) {
+  const max = Math.max(...values, 1);
+  const w = 8;
+  return (
+    <svg width={values.length * (w + 2)} height={28} className="inline-block align-middle">
+      {values.map((v, i) => {
+        const h = Math.max(2, Math.round((v / max) * 26));
+        return (
+          <rect
+            key={i}
+            x={i * (w + 2)}
+            y={28 - h}
+            width={w}
+            height={h}
+            rx={1.5}
+            className={v > 0 ? 'fill-primary/70' : 'fill-muted-foreground/20'}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export default function InventoryPage() {
+  const help = useHowItWorks('inventory-stock-help');
+  const router = useRouter();
+  const uomLabels = useUOMLabelMap();
+  const { terms: uomTerms } = useUOMTerms();
+  const { defaultLocationId, isScoped: locationScoped, locations: activeLocations } = useActiveLocation();
+
+  const [items, setItems] = useState<Item[]>([]);
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [pageLocations, setPageLocations] = useState<Array<{ id: string; name: string }>>([]);
+  // Prefer the page's own list, but fall back to the app-wide active-location
+  // list so the location filter (and the active-location default) still work
+  // even if this page's bulk load fails partway.
+  const locations = pageLocations.length > 0
+    ? pageLocations
+    : activeLocations.map((l) => ({ id: l.id, name: l.name }));
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<Record<string, string>>({});
-  const [selectedItem, setSelectedItem] = useState<StockBalance | null>(null);
-  const [ledgerData, setLedgerData] = useState<any[]>([]);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [filterLocations, setFilterLocations] = useState<Array<{ id: string; name: string }>>([]);
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  // True once the location filter has been seeded (from the URL, the active
+  // location, or an explicit user choice) — stops the active-location default
+  // from clobbering a choice the user made.
+  const locationSeeded = useRef(false);
+  const [showInactive, setShowInactive] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [movementsByItem, setMovementsByItem] = useState<Record<string, Movement[] | 'loading' | 'error'>>({});
+  // catalog_item_id → usage_qty per month (oldest → newest), fetched once, lazily.
+  const [usageByItem, setUsageByItem] = useState<Record<string, number[]> | null>(null);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [labelDialog, setLabelDialog] = useState<BarcodeLabelItem[] | null>(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showMinLevelWizard, setShowMinLevelWizard] = useState(false);
+
+  const [imageRefreshKey, setImageRefreshKey] = useState(0);
+  const topLevelIds = useMemo(
+    () => items.filter((i) => !i.parent_item_id).map((i) => i.id),
+    [items]
+  );
+  const { imageMap } = useEntityImages('catalog_item', topLevelIds, imageRefreshKey);
+
+  // ── Quick add ──
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAdd, setQuickAdd] = useState({
+    name: '',
+    category_id: '',
+    uom_term_id: '',
+    location_id: '',
+    qty: '',
+    reorder_point: '',
+  });
+  const [quickAddSaving, setQuickAddSaving] = useState(false);
+  const [quickAddError, setQuickAddError] = useState('');
+
+  // ── Adjust stock (same flow as the old Stock Balances page) ──
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustForm, setAdjustForm] = useState({
     catalog_item_id: '',
+    variant_item_id: '',
     location_id: '',
     new_qty: '',
-    reason: 'count_variance',
+    reason: '',
     notes: '',
     override_reason: '',
   });
@@ -51,151 +199,357 @@ export default function StockBalancesPage() {
     details?: Record<string, any>;
     action?: string;
   } | null>(null);
-  const [adjustItems, setAdjustItems] = useState<Array<{ id: string; name: string; sku: string }>>([]);
-  const [adjustLocations, setAdjustLocations] = useState<Array<{ id: string; name: string }>>([]);
 
-  useEffect(() => {
-    fetchStock();
-  }, [filters]);
+  // ── Data loading ──────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const loadFilterLocations = async () => {
-      try {
-        const locations = await InventoryRPC.getLocations({ active: true });
-        setFilterLocations((locations || []).map((loc) => ({ id: loc.id, name: loc.name })));
-      } catch (error) {
-        console.error('Error loading locations:', error);
-      }
-    };
-
-    loadFilterLocations();
-  }, []);
-
-  useEffect(() => {
-    if (!showAdjustModal) return;
-    if (adjustItems.length > 0 && adjustLocations.length > 0) return;
-
-    const loadAdjustLookups = async () => {
-      try {
-        const [items, locations] = await Promise.all([
-          InventoryRPC.getCatalogItems({ active: true, tracking_mode: 'stock' }),
-          InventoryRPC.getLocations({ active: true }),
-        ]);
-        setAdjustItems((items || []).map((item) => ({
-          id: item.id,
-          name: item.name,
-          sku: item.sku,
-        })));
-        setAdjustLocations((locations || []).map((loc) => ({
-          id: loc.id,
-          name: loc.name,
-        })));
-      } catch (error) {
-        console.error('Error loading adjust lookups:', error);
-      }
-    };
-
-    loadAdjustLookups();
-  }, [showAdjustModal, adjustItems.length, adjustLocations.length]);
-
-  const fetchStock = async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await InventoryRPC.getStockBalances({
-        location_id: filters.location_id,
-      });
-
-      const normalized = (data || []).map((row: any) => {
-        const reorderPoint = row.reorder_point ?? row.catalog_items?.reorder_point ?? null;
-        return {
-          ...row,
-          item_name: row.item_name ?? row.catalog_items?.name,
-          item_sku: row.item_sku ?? row.catalog_items?.sku,
-          location_name: row.location_name ?? row.locations?.name,
-          on_hand_qty: row.on_hand_qty ?? row.qty_on_hand ?? 0,
-          reserved_qty: row.reserved_qty ?? row.qty_reserved ?? 0,
-          available_qty: row.available_qty ?? row.qty_available ?? 0,
-          reorder_point: reorderPoint,
-        } as StockBalance;
-      });
-
-      const filtered = filters.below_reorder === 'true'
-        ? normalized.filter((row) =>
-            row.reorder_point !== null && row.on_hand_qty <= (row.reorder_point ?? 0)
-          )
-        : normalized;
-
-      setStock(filtered);
+      const [itemData, balanceData, cats, locs] = await Promise.all([
+        InventoryRPC.getCatalogItems({ exclude_variants: false }),
+        InventoryRPC.getStockBalances({}),
+        InventoryRPC.getItemCategories(),
+        InventoryRPC.getLocations({ active: true }),
+      ]);
+      setItems((itemData || []) as unknown as Item[]);
+      setBalances((balanceData || []) as unknown as Balance[]);
+      setCategories((cats || []).map((c: any) => ({ id: c.id, name: c.name })));
+      setPageLocations((locs || []).map((l: any) => ({ id: l.id, name: l.name })));
     } catch (error) {
-      console.error('Error fetching stock:', error);
+      console.error('Error loading inventory:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchLedger = async (itemId: string, locationId: string) => {
-    setLedgerLoading(true);
-    try {
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  // Read ?q=, ?filter= and ?location= from the URL once on mount
+  // (widgets/chat/bookmarks deep-link here).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('q');
+    const filter = params.get('filter');
+    const location = params.get('location');
+    if (q) setSearch(q);
+    if (filter === 'low' || filter === 'out') setStatusFilter(filter);
+    // An explicit ?location= wins and pins the filter; otherwise the active
+    // location seeds it (in the effect below, once locations resolve).
+    if (location) {
+      setLocationFilter(location);
+      locationSeeded.current = true;
+    }
+    // ?quickadd=1 (&q= prefills the name) — the PO item picker's "not in the
+    // catalog?" escape hatch lands here with the modal already open.
+    if (params.get('quickadd') === '1') {
+      setTimeout(() => openQuickAdd(q || undefined), 0);
+    }
+    searchRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Change the location filter and mirror it into the URL (?location=) so
+  // links and bookmarks keep their location context. Movements shown in
+  // expanded rows are location-scoped, so drop that cache too.
+  const changeLocationFilter = useCallback((locId: string) => {
+    locationSeeded.current = true;
+    setLocationFilter(locId);
+    setMovementsByItem({});
+    const params = new URLSearchParams(window.location.search);
+    if (locId) params.set('location', locId);
+    else params.delete('location');
+    const qs = params.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+  }, []);
+
+  // Default the location filter to the app-wide active location the first time
+  // it resolves — unless the URL already pinned one, or the user changed it.
+  // "All locations" active leaves the filter empty (today's behavior).
+  useEffect(() => {
+    if (locationSeeded.current) return;
+    if (!defaultLocationId) return;
+    // Only apply once the location is real (present in the loaded list), so a
+    // stale stored id can't pin the page to a location that no longer exists.
+    if (locations.length > 0 && !locations.some((l) => l.id === defaultLocationId)) return;
+    locationSeeded.current = true;
+    changeLocationFilter(defaultLocationId);
+  }, [defaultLocationId, locations, changeLocationFilter]);
+
+  const selectedLocation = useMemo(
+    () => locations.find((l) => l.id === locationFilter) ?? null,
+    [locations, locationFilter]
+  );
+
+  // Lazy one-shot usage fetch the first time any row expands.
+  useEffect(() => {
+    if (!expandedId || usageByItem !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory/usage-trends?months=6');
+        if (!res.ok) throw AppError.internal(`Usage fetch failed: HTTP ${res.status}`);
+        const body = await res.json();
+        if (cancelled) return;
+        const months = Array.from(
+          new Set<string>((body.data || []).map((r: any) => r.month))
+        ).sort();
+        const monthIndex = new Map(months.map((m, i) => [m, i]));
+        const map: Record<string, number[]> = {};
+        for (const r of body.data || []) {
+          if (!map[r.catalog_item_id]) map[r.catalog_item_id] = Array(months.length).fill(0);
+          const idx = monthIndex.get(r.month);
+          if (idx !== undefined) {
+            map[r.catalog_item_id][idx] += Math.abs(Number(r.usage_qty) || 0);
+          }
+        }
+        setUsageByItem(map);
+      } catch {
+        if (!cancelled) setUsageByItem({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedId, usageByItem]);
+
+  // ── Row assembly ──────────────────────────────────────────────────────────
+
+  const rows: ItemRow[] = useMemo(() => {
+    const childrenByParent = new Map<string, Item[]>();
+    for (const item of items) {
+      if (item.parent_item_id) {
+        const list = childrenByParent.get(item.parent_item_id) || [];
+        list.push(item);
+        childrenByParent.set(item.parent_item_id, list);
+      }
+    }
+    const balancesByItem = new Map<string, Balance[]>();
+    for (const b of balances) {
+      const list = balancesByItem.get(b.catalog_item_id) || [];
+      list.push(b);
+      balancesByItem.set(b.catalog_item_id, list);
+    }
+
+    return items
+      .filter((i) => !i.parent_item_id)
+      .map((item) => {
+        const memberIds = [item.id, ...(childrenByParent.get(item.id) || []).map((c) => c.id)];
+        const allBalances = memberIds.flatMap((id) => balancesByItem.get(id) || []);
+        // When a location is selected, every quantity on the row (and the
+        // status chip) reflects that location only. "All locations" sums
+        // across every location; the expanded panel shows the breakdown.
+        const itemBalances = locationFilter
+          ? allBalances.filter((b) => b.location_id === locationFilter)
+          : allBalances;
+        const onHand = itemBalances.reduce((s, b) => s + (Number(b.qty_on_hand) || 0), 0);
+        const reserved = itemBalances.reduce((s, b) => s + (Number(b.qty_reserved) || 0), 0);
+        const available = itemBalances.reduce((s, b) => s + (Number(b.qty_available) || 0), 0);
+        const locationCount = new Set(allBalances.map((b) => b.location_id)).size;
+        const status: ItemRow['status'] =
+          onHand <= 0
+            ? 'out'
+            : item.reorder_point != null && onHand <= item.reorder_point
+              ? 'low'
+              : 'ok';
+        return { item, memberIds, balances: itemBalances, onHand, reserved, available, locationCount, status };
+      });
+  }, [items, balances, locationFilter]);
+
+  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (!showInactive && row.item.active === false) return false;
+      if (q) {
+        const members = row.memberIds.map((id) => itemById.get(id)).filter(Boolean) as Item[];
+        const hit = members.some(
+          (m) =>
+            m.name.toLowerCase().includes(q) ||
+            m.sku.toLowerCase().includes(q) ||
+            (m.description || '').toLowerCase().includes(q)
+        );
+        if (!hit) return false;
+      }
+      if (categoryFilter && row.item.category_id !== categoryFilter) return false;
+      if (statusFilter === 'low' && row.status === 'ok') return false;
+      if (statusFilter === 'out' && row.status !== 'out') return false;
+      // row.balances is already scoped to the selected location (see rows
+      // useMemo) — hide items with no stock record there at all.
+      if (locationFilter && row.balances.length === 0) return false;
+      return true;
+    });
+  }, [rows, itemById, search, categoryFilter, statusFilter, locationFilter, showInactive]);
+
+  // ── Row expansion: recent movements ───────────────────────────────────────
+
+  const toggleExpand = (row: ItemRow) => {
+    const next = expandedId === row.item.id ? null : row.item.id;
+    setExpandedId(next);
+    if (next && !movementsByItem[next]) {
+      setMovementsByItem((prev) => ({ ...prev, [next]: 'loading' }));
       const supabase = createBrowserAuthedClient().schema('inventory');
-      const { data, error } = await supabase
+      let query = supabase
         .from('stock_movements')
         .select('movement_type, quantity_delta, occurred_at')
-        .eq('catalog_item_id', itemId)
-        .eq('location_id', locationId)
+        .in('catalog_item_id', row.memberIds);
+      // Keep recent activity consistent with the location filter.
+      if (locationFilter) query = query.eq('location_id', locationFilter);
+      query
         .order('occurred_at', { ascending: false })
-        .limit(20);
+        .limit(8)
+        .then(({ data, error }) => {
+          setMovementsByItem((prev) => ({
+            ...prev,
+            [next]: error
+              ? 'error'
+              : (data || []).map((m: any) => ({
+                  movement_type: m.movement_type,
+                  qty: m.quantity_delta,
+                  created_at: m.occurred_at,
+                })),
+          }));
+        });
+    }
+  };
 
-      if (error) {
-        throw error;
+  // ── Quick add ─────────────────────────────────────────────────────────────
+
+  const openQuickAdd = (prefillName?: string) => {
+    setQuickAddError('');
+    setQuickAdd({
+      name: prefillName ?? '',
+      category_id: categories[0]?.id ?? '',
+      uom_term_id: uomTerms.find((t) => t.label?.toUpperCase() === 'EA')?.term_id ?? uomTerms[0]?.term_id ?? '',
+      location_id: locationFilter || (locations[0]?.id ?? ''),
+      qty: '',
+      reorder_point: '',
+    });
+    setQuickAddOpen(true);
+  };
+
+  // AI fill (rework P3): type a name, sparkle fills category/unit/reorder
+  // point from /api/ai/item-suggest — same one-input onboarding as vendors.
+  const [aiFilling, setAiFilling] = useState(false);
+  const [aiNote, setAiNote] = useState('');
+  const aiFillQuickAdd = async () => {
+    const name = quickAdd.name.trim();
+    if (name.length < 2 || aiFilling) return;
+    setAiFilling(true);
+    setQuickAddError('');
+    setAiNote('');
+    try {
+      const res = await fetch('/api/ai/item-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name,
+          existing_categories: categories.map((c) => ({ id: c.id, name: c.name })),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setQuickAddError(json.error || 'AI fill failed — fill it in manually.');
+        return;
       }
-
-      const normalized = (data || []).map((movement: any) => ({
-        movement_type: movement.movement_type,
-        qty: movement.quantity_delta,
-        created_at: movement.occurred_at,
+      const s = json.suggestion;
+      setQuickAdd((p) => ({
+        ...p,
+        category_id: s.category_id || p.category_id,
+        uom_term_id: s.uom_term_id || p.uom_term_id,
+        reorder_point: s.reorder_point != null ? String(s.reorder_point) : p.reorder_point,
       }));
-
-      setLedgerData(normalized);
-    } catch (error) {
-      console.error('Error fetching ledger:', error);
+      setAiNote(
+        [
+          s.category_id
+            ? `Category: ${s.category_display}`
+            : s.new_category_name
+              ? `Suggested new category “${s.new_category_name}” — create it from the dropdown`
+              : null,
+          s.uom ? `Unit: ${s.uom}` : null,
+          s.description || null,
+        ].filter(Boolean).join(' · ')
+      );
+    } catch {
+      setQuickAddError('AI fill failed — fill it in manually.');
     } finally {
-      setLedgerLoading(false);
+      setAiFilling(false);
     }
   };
 
-  const handleRowClick = (item: StockBalance) => {
-    setSelectedItem(item);
-    const itemId = item.catalog_item_id || item.catalog_items?.id;
-    const locationId = item.location_id || item.locations?.id;
-    if (itemId && locationId) {
-      fetchLedger(itemId, locationId);
+  const submitQuickAdd = async () => {
+    setQuickAddError('');
+    if (!quickAdd.name.trim()) {
+      setQuickAddError('Give the item a name.');
+      return;
+    }
+    if (!quickAdd.category_id) {
+      setQuickAddError('Pick a category.');
+      return;
+    }
+    const qty = quickAdd.qty === '' ? null : Number(quickAdd.qty);
+    if (qty !== null && (!Number.isFinite(qty) || qty < 0)) {
+      setQuickAddError('Quantity must be a positive number.');
+      return;
+    }
+    setQuickAddSaving(true);
+    try {
+      const result = await InventoryRPC.wizardCreateItem({
+        name: quickAdd.name.trim(),
+        category_id: quickAdd.category_id,
+        uom_term_id: quickAdd.uom_term_id || null,
+        tracking_mode: 'stock',
+        reorder_point: quickAdd.reorder_point === '' ? null : Number(quickAdd.reorder_point),
+        location_id: qty !== null && qty > 0 ? quickAdd.location_id || null : null,
+        initial_qty: qty !== null && qty > 0 ? qty : null,
+        idempotency_key: crypto.randomUUID(),
+      });
+      setQuickAddOpen(false);
+      setSearch('');
+      setStatusFilter('all');
+      setCategoryFilter('');
+      await fetchAll();
+      setExpandedId(result.item_id);
+      setImageRefreshKey((k) => k + 1);
+    } catch (error: any) {
+      setQuickAddError(errMessage(error, 'Failed to add item'));
+    } finally {
+      setQuickAddSaving(false);
     }
   };
 
-  const openAdjustModal = (prefill?: StockBalance | null) => {
+  // ── Adjust stock ──────────────────────────────────────────────────────────
+
+  const adjustableItems = useMemo(
+    () =>
+      items
+        .filter((i) => !i.parent_item_id && i.tracking_mode !== 'serialized' && i.active !== false)
+        .map((i) => ({
+          id: i.id,
+          name: i.name,
+          sku: i.sku,
+          is_parent: i.is_parent ?? false,
+          variant_dimensions: i.variant_dimensions ?? null,
+          variant_options: i.variant_options ?? null,
+        })),
+    [items]
+  );
+
+  const openAdjustModal = (itemId?: string, locationId?: string, currentQty?: number) => {
     setAdjustError('');
-    if (prefill) {
-      const itemId = prefill.catalog_item_id || prefill.catalog_items?.id || '';
-      const locationId = prefill.location_id || prefill.locations?.id || '';
-      setAdjustForm({
-        catalog_item_id: itemId,
-        location_id: locationId,
-        new_qty: prefill.on_hand_qty?.toString() ?? '',
-        reason: 'count_variance',
-        notes: '',
-        override_reason: '',
-      });
-    } else {
-      setAdjustForm({
-        catalog_item_id: '',
-        location_id: '',
-        new_qty: '',
-        reason: 'count_variance',
-        notes: '',
-        override_reason: '',
-      });
-    }
     setGuardrailBlock(null);
+    setAdjustForm({
+      catalog_item_id: itemId ?? '',
+      variant_item_id: '',
+      location_id: locationId ?? '',
+      new_qty: currentQty !== undefined ? String(currentQty) : '',
+      reason: currentQty !== undefined && currentQty <= 0 ? 'count_variance' : '',
+      notes: '',
+      override_reason: '',
+    });
     setShowAdjustModal(true);
   };
 
@@ -206,16 +560,26 @@ export default function StockBalancesPage() {
       setAdjustError('Select an item and location.');
       return;
     }
+    const selected = adjustableItems.find((i) => i.id === adjustForm.catalog_item_id);
+    const targetItemId = selected?.is_parent ? adjustForm.variant_item_id : adjustForm.catalog_item_id;
+    if (selected?.is_parent && !targetItemId) {
+      setAdjustError('Select which variant to adjust.');
+      return;
+    }
     const qty = Number(adjustForm.new_qty);
     if (!Number.isFinite(qty)) {
       setAdjustError('Enter a valid quantity.');
+      return;
+    }
+    if (!adjustForm.reason) {
+      setAdjustError('Select a reason for this adjustment.');
       return;
     }
 
     setAdjustSaving(true);
     try {
       const result = await InventoryRPC.adjustInventory({
-        catalog_item_id: adjustForm.catalog_item_id,
+        catalog_item_id: targetItemId,
         location_id: adjustForm.location_id,
         new_qty: qty,
         reason: adjustForm.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
@@ -224,24 +588,17 @@ export default function StockBalancesPage() {
       });
 
       if (!result.success && result.error) {
-        if (result.error.code === 'OVERRIDE_REASON_REQUIRED') {
-          // Show override reason form
-          setGuardrailBlock(result.error);
-        } else {
-          // Hard block
-          setGuardrailBlock(result.error);
-        }
+        setGuardrailBlock(result.error);
         return;
       }
-
       if (result.override_logged) {
         alert('Adjustment saved. Override has been logged for audit.');
       }
 
       setShowAdjustModal(false);
       setGuardrailBlock(null);
-      await fetchStock();
-      setSelectedItem(null);
+      setMovementsByItem({});
+      await fetchAll();
     } catch (error: any) {
       setAdjustError(error?.message || 'Failed to adjust inventory.');
     } finally {
@@ -249,360 +606,229 @@ export default function StockBalancesPage() {
     }
   };
 
-  const columns = [
-    {
-      key: 'item',
-      header: 'Item',
-      sortable: true,
-      render: (row: StockBalance) => (
-        <div>
-          <div className="font-medium">{row.item_name || row.catalog_items?.name || '-'}</div>
-          <div className="text-xs text-muted-foreground">{row.item_sku || row.catalog_items?.sku || '-'}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'location',
-      header: 'Location',
-      sortable: true,
-      render: (row: StockBalance) => (
-        <div>
-          <div>{row.location_name || row.locations?.name || '-'}</div>
-          <div className="text-xs text-muted-foreground capitalize">
-            {row.locations?.location_type?.replace('_', ' ') || ''}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'on_hand_qty',
-      header: 'On Hand',
-      sortable: true,
-      className: 'text-right font-mono',
-      render: (row: StockBalance) => (
-        <span className={row.on_hand_qty <= 0 ? 'text-red-600 font-semibold' : ''}>
-          {row.on_hand_qty?.toLocaleString() ?? 0}
-        </span>
-      ),
-    },
-    {
-      key: 'reserved_qty',
-      header: 'Reserved',
-      sortable: true,
-      className: 'text-right font-mono',
-      render: (row: StockBalance) => row.reserved_qty?.toLocaleString() ?? 0,
-    },
-    {
-      key: 'available_qty',
-      header: 'Available',
-      sortable: true,
-      className: 'text-right font-mono',
-      render: (row: StockBalance) => (
-        <span className={row.available_qty <= 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
-          {row.available_qty?.toLocaleString() ?? 0}
-        </span>
-      ),
-    },
-    {
-      key: 'qty_on_order',
-      header: 'On Order',
-      sortable: true,
-      className: 'text-right font-mono text-blue-600',
-      render: (row: StockBalance) => (
-        <span title="Quantity on open purchase orders not yet received">
-          {row.qty_on_order?.toLocaleString() ?? 0}
-        </span>
-      ),
-    },
-    {
-      key: 'inventory_position',
-      header: 'Position',
-      sortable: true,
-      className: 'text-right font-mono font-semibold',
-      render: (row: StockBalance) => {
-        const position = row.inventory_position ?? 0;
-        return (
-          <span 
-            className={position <= 0 ? 'text-red-600' : position > 10 ? 'text-green-600' : 'text-yellow-600'}
-            title="On Hand - Reserved + On Order (total expected available)"
-          >
-            {position.toLocaleString()}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      render: (row: StockBalance) => {
-        if (row.on_hand_qty <= 0) return <StatusChip status="Stockout" />;
-        if (row.reorder_point && row.on_hand_qty <= row.reorder_point) return <StatusChip status="Low Stock" />;
-        return <StatusChip status="In Stock" />;
-      },
-    },
+  // ── Misc actions ──────────────────────────────────────────────────────────
+
+  const handleScanResult = (decodedText: string) => {
+    let code = decodedText;
+    try {
+      const url = new URL(decodedText);
+      const codeParam = url.searchParams.get('code');
+      if (codeParam) code = codeParam;
+    } catch {
+      // Not a URL, use as-is
+    }
+    const match = items.find((item) => item.sku.toLowerCase() === code.toLowerCase());
+    if (match) {
+      setScannerOpen(false);
+      const rootId = match.parent_item_id ?? match.id;
+      setSearch('');
+      setExpandedId(rootId);
+      const el = document.getElementById(`inv-row-${rootId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      alert(`No item found matching: ${code}`);
+    }
+  };
+
+  const printFilteredLabels = () => {
+    const labels: BarcodeLabelItem[] = filteredRows
+      .filter((r) => (r.item as any).barcode || r.item.sku)
+      .map((r) => ({ code: (((r.item as any).barcode || r.item.sku) as string), label: r.item.name, kind: 'stock' as const }));
+    if (labels.length === 0) {
+      alert('No items with a barcode/SKU in the current view.');
+      return;
+    }
+    setMenuOpen(false);
+    setLabelDialog(labels);
+  };
+
+  const lowCount = rows.filter((r) => r.status === 'low' && r.item.active !== false).length;
+  const outCount = rows.filter((r) => r.status === 'out' && r.item.active !== false).length;
+
+  // Stock items with no min level AND no reorder point are invisible to the
+  // Low Stock system. When enough of the catalog is unconfigured, surface the
+  // "Set min levels" entry so the AI wizard can wake it up in one pass.
+  const itemsLackingLevels = useMemo(
+    () =>
+      items.filter(
+        (i) =>
+          !i.parent_item_id &&
+          i.is_parent !== true &&
+          i.active !== false &&
+          i.tracking_mode !== 'serialized' &&
+          i.min_stock_level == null &&
+          i.reorder_point == null,
+      ).length,
+    [items],
+  );
+  const showMinLevelEntry = itemsLackingLevels >= 3;
+
+  const statusChips: Array<{ key: StatusFilter; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'low', label: `Low stock${lowCount ? ` (${lowCount})` : ''}` },
+    { key: 'out', label: `Out (${outCount})` },
   ];
 
-  const filterConfig = [
-    {
-      key: 'location_id',
-      label: 'Location',
-      type: 'select' as const,
-      options: filterLocations.map((loc) => ({ value: loc.id, label: loc.name })),
-    },
-    {
-      key: 'below_reorder',
-      label: 'Show',
-      type: 'select' as const,
-      options: [
-        { value: 'true', label: 'Below Reorder Only' },
-      ],
-    },
-  ];
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <AppShell>
-      <div className="space-y-6">
+      <div className="space-y-4">
         <PageHeader
-          title="Stock Balances"
-          description="View current inventory levels by item and location. Example: See how many tons of asphalt mix you have at the main yard vs. Job Site #234, or track rebar quantities across all truck inventories."
+          title="Inventory"
+          description="Stock is tracked per location. Pick a location to see what's on hand there, or keep All locations and expand a row for the per-location breakdown."
           actions={
-            <div className="flex gap-2">
+            <div className="flex gap-3 items-center">
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              {showMinLevelEntry && (
+                <button
+                  onClick={() => setShowMinLevelWizard(true)}
+                  title={`${itemsLackingLevels} items have no min/reorder level — let AI propose them from usage`}
+                  className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-primary transition-colors hover:bg-primary/10"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Set min levels
+                  <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold">
+                    {itemsLackingLevels}
+                  </span>
+                </button>
+              )}
               <button
-                onClick={() => openAdjustModal(null)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                onClick={() => setScannerOpen(true)}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
               >
-                Add Starting Stock
+                Scan
               </button>
+              <div className="relative">
+                <button
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                  title="More actions"
+                >
+                  ⋯
+                </button>
+                {menuOpen && (
+                  <div
+                    className="absolute right-0 mt-1 w-56 rounded-md border bg-card shadow-lg z-20 py-1 text-sm"
+                    onMouseLeave={() => setMenuOpen(false)}
+                  >
+                    <button onClick={printFilteredLabels} className="w-full text-left px-3 py-2 hover:bg-muted/50">
+                      Print labels for current view
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); router.push('/inventory/items/new'); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50"
+                    >
+                      Full item wizard (variants, vendors…)
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); router.push('/inventory/categories'); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50"
+                    >
+                      Manage categories
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); router.push('/inventory/locations'); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50"
+                    >
+                      Manage locations
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); setShowInactive((v) => !v); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50"
+                    >
+                      {showInactive ? 'Hide inactive items' : 'Show inactive items'}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
-                onClick={fetchStock}
+                onClick={() => openQuickAdd()}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
               >
-                Refresh
+                + Add Item
               </button>
             </div>
           }
         />
 
-        <FilterBar
-          filters={filterConfig}
-          values={filters}
-          onChange={(key, value) => setFilters((prev) => ({ ...prev, [key]: value }))}
-          onClear={() => setFilters({})}
-        />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className={selectedItem ? 'lg:col-span-2' : 'lg:col-span-3'}>
-            <DataTable
-              data={stock}
-              columns={columns}
-              loading={loading}
-              emptyMessage="No stock balances found"
-              rowKey={(row) => `${row.catalog_item_id || row.id}-${row.location_id}`}
-              onRowClick={handleRowClick}
-            />
-          </div>
-
-          {selectedItem && (
-            <div className="lg:col-span-1">
-              <div className="rounded-lg border bg-card p-4 sticky top-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold">Stock Details</h3>
-                  <button
-                    onClick={() => setSelectedItem(null)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <div className="text-sm text-muted-foreground">Item</div>
-                    <div className="font-medium">
-                      {selectedItem.item_name || selectedItem.catalog_items?.name}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {selectedItem.item_sku || selectedItem.catalog_items?.sku}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-sm text-muted-foreground">Location</div>
-                    <div className="font-medium">
-                      {selectedItem.location_name || selectedItem.locations?.name}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold">{selectedItem.on_hand_qty}</div>
-                      <div className="text-xs text-muted-foreground">On Hand</div>
-                    </div>
-                    <div className="p-3 bg-muted/50 rounded-lg">
-                      <div className="text-2xl font-bold text-green-600">{selectedItem.available_qty}</div>
-                      <div className="text-xs text-muted-foreground">Available</div>
-                    </div>
-                  </div>
-
-                  <div className="border-t pt-4">
-                    <h4 className="font-medium mb-2">Quick Actions</h4>
-                    <div className="grid grid-cols-1 gap-2">
-                      <button
-                        onClick={() => openAdjustModal(selectedItem)}
-                        className="px-3 py-2 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
-                      >
-                        Adjust Stock
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="border-t pt-4">
-                    <h4 className="font-medium mb-2">Recent Activity</h4>
-                    {ledgerLoading ? (
-                      <div className="animate-pulse space-y-2">
-                        {[1, 2, 3].map((i) => (
-                          <div key={i} className="h-12 bg-gray-200 rounded" />
-                        ))}
-                      </div>
-                    ) : ledgerData.length > 0 ? (
-                      <div className="space-y-2 max-h-64 overflow-y-auto">
-                        {ledgerData.slice(0, 10).map((movement: any, idx: number) => (
-                          <div key={idx} className="flex items-center justify-between p-2 bg-muted/30 rounded text-sm">
-                            <div>
-                              <div className="font-medium capitalize">{movement.movement_type}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {new Date(movement.created_at).toLocaleDateString()}
-                              </div>
-                            </div>
-                            <div className={`font-mono ${movement.qty >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {movement.qty >= 0 ? '+' : ''}{movement.qty}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No recent activity</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-      {showAdjustModal && (
-        <AdjustStockModal
-          form={adjustForm}
-          items={adjustItems}
-          locations={adjustLocations}
-          saving={adjustSaving}
-          error={adjustError}
-          guardrailBlock={guardrailBlock}
-          onClose={() => { setShowAdjustModal(false); setGuardrailBlock(null); }}
-          onChange={(next) => { setAdjustForm((prev) => ({ ...prev, ...next })); setGuardrailBlock(null); }}
-          onSubmit={submitAdjustment}
-        />
-      )}
-    </AppShell>
-  );
-}
-
-function AdjustStockModal({
-  form,
-  items,
-  locations,
-  saving,
-  error,
-  guardrailBlock,
-  onClose,
-  onChange,
-  onSubmit,
-}: {
-  form: {
-    catalog_item_id: string;
-    location_id: string;
-    new_qty: string;
-    reason: string;
-    notes: string;
-    override_reason: string;
-  };
-  items: Array<{ id: string; name: string; sku: string }>;
-  locations: Array<{ id: string; name: string }>;
-  saving: boolean;
-  error: string;
-  guardrailBlock: { code: string; message: string; details?: Record<string, any>; action?: string } | null;
-  onClose: () => void;
-  onChange: (next: Partial<typeof form>) => void;
-  onSubmit: () => void;
-}) {
-  const isOverrideRequired = guardrailBlock?.code === 'OVERRIDE_REASON_REQUIRED';
-  const isHardBlock = !!guardrailBlock && !isOverrideRequired;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Add Starting Stock</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">x</button>
-        </div>
-
-        {error && (
-          <div className="mb-3 text-sm text-red-600">{error}</div>
+        {help.show && (
+          <HowItWorksCard
+            title="How inventory works"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Stock lives per location', body: 'Every balance belongs to one location (yard, truck, shop…). A row’s numbers are the total across locations until you pick a location — expand the row to see the per-location breakdown.' },
+              { title: 'Filter by location', body: 'Use the location dropdown to focus on one location. Every quantity, status chip, and recent-activity list then reflects that location only, and the choice sticks in the URL for links and bookmarks.' },
+              { title: 'Search & expand', body: 'Type a name, SKU, or description in the big box; narrow with status or category chips. Click any item to see its balances, recent movements, and a 6-month usage sparkline.' },
+              { title: 'Add & adjust', body: '+ Add Item quick-creates an item with a starting count at a location. The Adjust button on any balance sets a new counted quantity — guardrailed and fully audited.' },
+              { title: 'Stay ahead', body: 'Give items a reorder point so they flag as Low stock. Scan finds an item instantly by barcode or SKU, and the ⋯ menu prints labels for the current view.' },
+            ]}
+            legend={[
+              { badge: <StatusChip status="In Stock" />, text: 'on hand is above the reorder point' },
+              { badge: <StatusChip status="Low Stock" />, text: 'on hand is at or below the reorder point' },
+              { badge: <StatusChip status="Stockout" />, text: 'nothing on hand (in the selected location, or anywhere when All locations)' },
+            ]}
+            glossary={[
+              { Icon: MapPin, term: 'Location', blurb: 'where stock physically sits — every balance is per item, per location' },
+              { Icon: Boxes, term: 'On hand', blurb: 'physical quantity at the selected location — or the total across every location when All locations is selected' },
+              { Icon: ClipboardList, term: 'Reserved', blurb: 'quantity already allocated to jobs or reservations — not free to use' },
+              { Icon: PackageCheck, term: 'Available', blurb: 'on hand minus reserved — what you can actually promise' },
+              { Icon: AlertTriangle, term: 'Reorder point', blurb: 'the threshold that flips an item to Low stock so you reorder in time' },
+            ]}
+          />
         )}
 
-        {guardrailBlock && (
-          <div className={`mb-3 p-3 rounded-md border ${isHardBlock ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
-            <div className={`text-sm font-medium ${isHardBlock ? 'text-red-800' : 'text-amber-800'}`}>
-              {guardrailBlock.message}
-            </div>
-            {guardrailBlock.details && (
-              <div className="mt-1 text-xs text-gray-600 space-y-0.5">
-                {guardrailBlock.details.current_qty !== undefined && (
-                  <div>Current on-hand: <span className="font-mono">{guardrailBlock.details.current_qty}</span></div>
-                )}
-                {guardrailBlock.details.attempted_qty !== undefined && (
-                  <div>Attempted: <span className="font-mono">{guardrailBlock.details.attempted_qty}</span></div>
-                )}
-                {guardrailBlock.details.delta !== undefined && (
-                  <div>Change: <span className="font-mono">{guardrailBlock.details.delta > 0 ? '+' : ''}{guardrailBlock.details.delta}</span></div>
-                )}
-              </div>
-            )}
-            {guardrailBlock.action && (
-              <div className={`mt-2 text-xs ${isHardBlock ? 'text-red-600' : 'text-amber-700'}`}>
-                {guardrailBlock.action}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Answer box */}
+        <input
+          ref={searchRef}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search items — name, SKU, or description…"
+          className="w-full px-4 py-3 text-lg rounded-lg border bg-card focus:outline-none focus:ring-2 focus:ring-primary/40"
+        />
 
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium mb-1">Item</label>
-            <select
-              value={form.catalog_item_id}
-              onChange={(e) => onChange({ catalog_item_id: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md"
-              disabled={isHardBlock}
+        {/* Filter chips */}
+        <div className="flex flex-wrap items-center gap-2">
+          {statusChips.map((chip) => (
+            <button
+              key={chip.key}
+              onClick={() => setStatusFilter(chip.key)}
+              className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                statusFilter === chip.key
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-card hover:bg-muted/50'
+              }`}
             >
-              <option value="">Select item...</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} ({item.sku})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Location</label>
-            <select
-              value={form.location_id}
-              onChange={(e) => onChange({ location_id: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md"
-              disabled={isHardBlock}
+              {chip.label}
+            </button>
+          ))}
+          <span className="mx-1 text-muted-foreground">·</span>
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setCategoryFilter(categoryFilter === cat.id ? '' : cat.id)}
+              className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                categoryFilter === cat.id
+                  ? 'bg-foreground text-background border-foreground'
+                  : 'bg-card hover:bg-muted/50'
+              }`}
             >
-              <option value="">Select location...</option>
+              {cat.name}
+            </button>
+          ))}
+          <div
+            className={`ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1 transition-colors ${
+              locationFilter ? 'border-primary bg-primary/5' : 'bg-card'
+            }`}
+          >
+            <MapPin className={`h-4 w-4 ${locationFilter ? 'text-primary' : 'text-muted-foreground'}`} />
+            <select
+              value={locationFilter}
+              onChange={(e) => changeLocationFilter(e.target.value)}
+              className="bg-transparent text-sm font-medium focus:outline-none"
+              title="Show stock balances for one location"
+            >
+              <option value="">All locations</option>
               {locations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
                   {loc.name}
@@ -610,84 +836,565 @@ function AdjustStockModal({
               ))}
             </select>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">On Hand Quantity</label>
-            <input
-              type="number"
-              value={form.new_qty}
-              onChange={(e) => onChange({ new_qty: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md"
-              disabled={isHardBlock}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Reason</label>
-            <select
-              value={form.reason}
-              onChange={(e) => onChange({ reason: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md"
-              disabled={isHardBlock}
-            >
-              <option value="count_variance">Initial count</option>
-              <option value="damage">Damage</option>
-              <option value="theft">Theft</option>
-              <option value="expiration">Expiration</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={(e) => onChange({ notes: e.target.value })}
-              className="w-full px-3 py-2 border rounded-md"
-              rows={3}
-              disabled={isHardBlock}
-            />
-          </div>
-
-          {isOverrideRequired && (
-            <div>
-              <label className="block text-sm font-medium mb-1 text-amber-800">
-                Override Reason (required) *
-              </label>
-              <textarea
-                value={form.override_reason}
-                onChange={(e) => onChange({ override_reason: e.target.value })}
-                className="w-full px-3 py-2 border border-amber-300 rounded-md bg-amber-50 focus:ring-amber-500 focus:border-amber-500"
-                rows={2}
-                placeholder="Explain why negative inventory is acceptable for this adjustment..."
-                autoFocus
-              />
-            </div>
-          )}
         </div>
 
-        <div className="flex gap-3 mt-6">
-          <button
-            onClick={onClose}
-            className="flex-1 px-4 py-2 border rounded-md text-gray-700 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          {!isHardBlock && (
-            <button
-              onClick={onSubmit}
-              disabled={saving || (isOverrideRequired && !form.override_reason.trim())}
-              className={`flex-1 px-4 py-2 text-white rounded-md disabled:opacity-50 ${
-                isOverrideRequired
-                  ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {saving ? 'Saving...' : isOverrideRequired ? 'Override & Save' : 'Save'}
+        {/* Location context banner — makes it unmissable that every number
+            below is scoped to the chosen location. */}
+        {selectedLocation && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <span className="flex items-center gap-2 min-w-0">
+              <MapPin className="h-4 w-4 shrink-0 text-primary" />
+              <span className="truncate">
+                Showing stock at <span className="font-semibold">{selectedLocation.name}</span> — all quantities and
+                status chips reflect this location only.
+              </span>
+            </span>
+            <button onClick={() => changeLocationFilter('')} className="shrink-0 text-primary hover:underline">
+              Show all locations
             </button>
+          </div>
+        )}
+
+        {/* Grid */}
+        <div className="rounded-lg border bg-card divide-y">
+          <div className="hidden md:grid grid-cols-[2.5rem_1fr_8rem_6rem_6rem_6rem_7rem_2rem] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            <span />
+            <span>Item</span>
+            <span>Category</span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `Physical quantity at ${selectedLocation.name}` : 'Physical quantity — total across all locations'}
+            >
+              On Hand
+            </span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `Allocated to jobs/reservations at ${selectedLocation.name}` : 'Allocated to jobs/reservations (all locations)'}
+            >
+              Reserved
+            </span>
+            <span
+              className="text-right"
+              title={selectedLocation ? `On hand minus reserved at ${selectedLocation.name}` : 'On hand minus reserved (all locations)'}
+            >
+              Available
+            </span>
+            <span>Status</span>
+            <span />
+          </div>
+
+          {loading ? (
+            <div className="p-8 text-center text-muted-foreground animate-pulse">Loading inventory…</div>
+          ) : filteredRows.length === 0 ? (
+            <div className="p-8 text-center space-y-3">
+              <p className="text-muted-foreground">
+                {search.trim() ? (
+                  <>No items match “{search.trim()}”{selectedLocation ? <> at {selectedLocation.name}</> : null}.</>
+                ) : selectedLocation ? (
+                  <>No items have stock records at {selectedLocation.name} yet.</>
+                ) : (
+                  'No items yet.'
+                )}
+              </p>
+              <button
+                onClick={() => openQuickAdd(search.trim() || undefined)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                + Quick-add {search.trim() ? `“${search.trim()}”` : 'an item'}
+              </button>
+            </div>
+          ) : (
+            filteredRows.map((row) => {
+              const expanded = expandedId === row.item.id;
+              const movements = movementsByItem[row.item.id];
+              const usage =
+                usageByItem === null
+                  ? null
+                  : row.memberIds.reduce<number[]>((acc, id) => {
+                      const series = usageByItem[id];
+                      if (!series) return acc;
+                      if (acc.length === 0) return [...series];
+                      return acc.map((v, i) => v + (series[i] || 0));
+                    }, []);
+              return (
+                <div key={row.item.id} id={`inv-row-${row.item.id}`}>
+                  <button
+                    onClick={() => toggleExpand(row)}
+                    className={`w-full grid grid-cols-[2.5rem_1fr_7rem_2rem] md:grid-cols-[2.5rem_1fr_8rem_6rem_6rem_6rem_7rem_2rem] gap-3 px-4 py-3 items-center text-left hover:bg-muted/30 transition-colors ${
+                      expanded ? 'bg-muted/20' : ''
+                    }`}
+                  >
+                    <EntityImageThumbnail url={imageMap[row.item.id]} alt={row.item.name} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-medium truncate ${row.item.active === false ? 'line-through text-muted-foreground' : ''}`}>
+                          {row.item.name}
+                        </span>
+                        {row.item.is_parent && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700">
+                            Variants
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground font-mono truncate">
+                        {row.item.sku}
+                        {selectedLocation ? (
+                          <span className="font-sans"> · at {selectedLocation.name}</span>
+                        ) : (
+                          row.locationCount > 0 && (
+                            <span className="font-sans">
+                              {' '}· total across {row.locationCount} location{row.locationCount === 1 ? '' : 's'}
+                            </span>
+                          )
+                        )}
+                        {row.item.uom_term_id && (
+                          <span className="font-sans"> · {uomLabels[row.item.uom_term_id] || ''}</span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="hidden md:block text-sm text-muted-foreground truncate">
+                      {row.item.item_categories?.name || '—'}
+                    </span>
+                    <span
+                      className={`hidden md:block text-right font-mono ${row.onHand <= 0 ? 'text-red-600 font-semibold' : ''}`}
+                      title={
+                        selectedLocation
+                          ? `On hand at ${selectedLocation.name}`
+                          : `Total across ${row.locationCount} location${row.locationCount === 1 ? '' : 's'}`
+                      }
+                    >
+                      {row.onHand.toLocaleString()}
+                    </span>
+                    <span className="hidden md:block text-right font-mono text-muted-foreground">
+                      {row.reserved.toLocaleString()}
+                    </span>
+                    <span className={`hidden md:block text-right font-mono ${row.available <= 0 ? 'text-red-600 font-semibold' : 'text-green-600'}`}>
+                      {row.available.toLocaleString()}
+                    </span>
+                    <span className="md:col-span-1 justify-self-start">
+                      {row.status === 'out' ? (
+                        <StatusChip status="Stockout" />
+                      ) : row.status === 'low' ? (
+                        <StatusChip status="Low Stock" />
+                      ) : (
+                        <StatusChip status="In Stock" />
+                      )}
+                    </span>
+                    <span className="text-muted-foreground text-sm justify-self-end">{expanded ? '▾' : '▸'}</span>
+                  </button>
+
+                  {expanded && (
+                    <div className="px-4 pb-4 pt-1 bg-muted/10 space-y-4">
+                      {/* Per-location / per-variant balances */}
+                      <div className="rounded-md border bg-card divide-y">
+                        <div className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <span>{selectedLocation ? `Balance at ${selectedLocation.name}` : 'Balance by location'}</span>
+                          <span className="text-right">On hand</span>
+                          <span className="text-right">Reserved</span>
+                          <span className="text-right">Available</span>
+                          <span />
+                        </div>
+                        {row.balances.length === 0 ? (
+                          <div className="flex items-center justify-between px-3 py-2 text-sm">
+                            <span className="text-muted-foreground">
+                              {selectedLocation
+                                ? `No stock recorded at ${selectedLocation.name} yet.`
+                                : 'No stock recorded yet.'}
+                            </span>
+                            <button
+                              onClick={() => openAdjustModal(row.item.id, locationFilter || undefined)}
+                              className="px-3 py-1.5 text-sm bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
+                            >
+                              Set a count
+                            </button>
+                          </div>
+                        ) : (
+                          row.balances.map((b) => {
+                            const member = itemById.get(b.catalog_item_id);
+                            const vLabel = member && member.id !== row.item.id ? variantLabel(member) : '';
+                            return (
+                              <div
+                                key={`${b.catalog_item_id}-${b.location_id}`}
+                                className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-2 text-sm"
+                              >
+                                <span className="truncate">
+                                  {b.locations?.name || 'Unknown location'}
+                                  {vLabel && <span className="ml-2 text-xs text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded">{vLabel}</span>}
+                                </span>
+                                <span className={`text-right font-mono ${Number(b.qty_on_hand) <= 0 ? 'text-red-600' : ''}`}>
+                                  {Number(b.qty_on_hand).toLocaleString()}
+                                </span>
+                                <span className="text-right font-mono text-muted-foreground">
+                                  {Number(b.qty_reserved).toLocaleString()}
+                                </span>
+                                <span className="text-right font-mono text-green-600">
+                                  {Number(b.qty_available).toLocaleString()}
+                                </span>
+                                <button
+                                  onClick={() =>
+                                    openAdjustModal(
+                                      member?.parent_item_id ? member.parent_item_id : b.catalog_item_id,
+                                      b.location_id,
+                                      Number(b.qty_on_hand)
+                                    )
+                                  }
+                                  className="px-2.5 py-1 text-xs bg-orange-100 text-orange-800 rounded hover:bg-orange-200 transition-colors"
+                                >
+                                  Adjust
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                        {/* Explicit total line so "All locations" numbers are
+                            never ambiguous. */}
+                        {!selectedLocation && row.balances.length > 1 && (
+                          <div className="grid grid-cols-[1fr_5rem_5rem_5rem_auto] gap-3 items-center px-3 py-2 text-sm font-medium bg-muted/20">
+                            <span>
+                              Total across {row.locationCount} location{row.locationCount === 1 ? '' : 's'}
+                            </span>
+                            <span className={`text-right font-mono ${row.onHand <= 0 ? 'text-red-600' : ''}`}>
+                              {row.onHand.toLocaleString()}
+                            </span>
+                            <span className="text-right font-mono text-muted-foreground">
+                              {row.reserved.toLocaleString()}
+                            </span>
+                            <span className="text-right font-mono text-green-600">
+                              {row.available.toLocaleString()}
+                            </span>
+                            <span />
+                          </div>
+                        )}
+                        {row.balances.length > 0 && (
+                          <div className="flex justify-end px-3 py-2 text-xs">
+                            <button
+                              onClick={() => openAdjustModal(row.item.id, locationFilter || undefined)}
+                              className="text-orange-700 hover:underline"
+                            >
+                              + another location
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {/* Recent activity */}
+                        <div>
+                          <h4 className="text-sm font-medium mb-2">
+                            Recent activity{selectedLocation ? ` at ${selectedLocation.name}` : ''}
+                          </h4>
+                          {movements === 'loading' || movements === undefined ? (
+                            <div className="animate-pulse space-y-1">
+                              {[1, 2, 3].map((i) => (
+                                <div key={i} className="h-8 bg-muted rounded" />
+                              ))}
+                            </div>
+                          ) : movements === 'error' ? (
+                            <p className="text-sm text-red-600">Couldn&apos;t load recent activity.</p>
+                          ) : movements.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No movements yet.</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {movements.map((m, idx) => (
+                                <div key={idx} className="flex items-center justify-between px-2 py-1 bg-card border rounded text-sm">
+                                  <span className="capitalize">{m.movement_type}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {new Date(m.created_at).toLocaleDateString()}
+                                  </span>
+                                  <span className={`font-mono ${m.qty >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {m.qty >= 0 ? '+' : ''}
+                                    {m.qty}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Usage + links */}
+                        <div className="space-y-3">
+                          <div>
+                            <h4 className="text-sm font-medium mb-2">Usage, last 6 months</h4>
+                            {usage === null ? (
+                              <div className="h-7 w-24 bg-muted rounded animate-pulse" />
+                            ) : usage.length === 0 || usage.every((v) => v === 0) ? (
+                              <p className="text-sm text-muted-foreground">No usage recorded.</p>
+                            ) : (
+                              <div className="flex items-center gap-3">
+                                <Sparkline values={usage} />
+                                <span className="text-sm text-muted-foreground">
+                                  {usage.reduce((a, b) => a + b, 0).toLocaleString()} used
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          {/* The four verbs, right where you're looking. */}
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => router.push(`/inventory/purchasing/create?item_id=${row.item.id}`)}
+                              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                            >
+                              Order more
+                            </button>
+                            <button
+                              onClick={() => router.push(`/inventory/transfers?item_id=${row.item.id}`)}
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Transfer
+                            </button>
+                            <button
+                              onClick={() =>
+                                router.push(
+                                  `/inventory/cycle-counts?create=1&item=${row.item.id}${locationFilter ? `&location=${locationFilter}` : ''}`
+                                )
+                              }
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Count now
+                            </button>
+                            <button
+                              onClick={() =>
+                                setLabelDialog([{
+                                  code: (row.item as any).barcode || row.item.sku,
+                                  label: row.item.name,
+                                  kind: 'stock',
+                                }])
+                              }
+                              title="One label works for every unit of this item (per-unit asset-tag labels live on the item page)"
+                              className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                            >
+                              Print label
+                            </button>
+                          </div>
+                          <div className="flex gap-3 text-sm">
+                            <button
+                              onClick={() => router.push(`/inventory/items/${row.item.id}`)}
+                              className="text-primary hover:underline"
+                            >
+                              Open item (edit, barcodes, vendors) →
+                            </button>
+                            <button
+                              onClick={() => router.push(`/inventory/movements?item=${row.item.id}`)}
+                              className="text-muted-foreground hover:underline"
+                            >
+                              Full history →
+                            </button>
+                          </div>
+                          {row.item.reorder_point != null && (
+                            <p className="text-xs text-muted-foreground">
+                              Reorder point: {row.item.reorder_point.toLocaleString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
+
+        {!loading && filteredRows.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {filteredRows.length} of {rows.length} items shown
+            {selectedLocation ? ` — balances scoped to ${selectedLocation.name}` : ''}
+          </p>
+        )}
       </div>
-    </div>
+
+      {/* Quick add */}
+      {quickAddOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !quickAddSaving && setQuickAddOpen(false)}>
+          <div className="w-full max-w-md rounded-lg bg-card border shadow-xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-lg">Quick add item</h3>
+              <button onClick={() => setQuickAddOpen(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium">Name</label>
+                <div className="mt-1 flex gap-2">
+                  <input
+                    autoFocus
+                    value={quickAdd.name}
+                    onChange={(e) => setQuickAdd((p) => ({ ...p, name: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitQuickAdd(); }}
+                    className="w-full px-3 py-2 rounded-md border bg-background"
+                    placeholder="e.g. Hard Hats"
+                  />
+                  <button
+                    type="button"
+                    onClick={aiFillQuickAdd}
+                    disabled={quickAdd.name.trim().length < 2 || aiFilling}
+                    title="AI fills category, unit, and reorder point from the name"
+                    className="shrink-0 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-40"
+                  >
+                    {aiFilling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  </button>
+                </div>
+                {aiNote && (
+                  <p className="mt-1.5 rounded-md bg-purple-50 px-2 py-1 text-xs text-purple-900">{aiNote}</p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">Category</label>
+                  <select
+                    value={quickAdd.category_id}
+                    onChange={(e) => {
+                      if (e.target.value === '__new__') {
+                        setShowCategoryModal(true);
+                      } else {
+                        setQuickAdd((p) => ({ ...p, category_id: e.target.value }));
+                      }
+                    }}
+                    className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
+                  >
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                    <option value="__new__">+ New category…</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Unit</label>
+                  <select
+                    value={quickAdd.uom_term_id}
+                    onChange={(e) => setQuickAdd((p) => ({ ...p, uom_term_id: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
+                  >
+                    {uomTerms.map((t) => (
+                      <option key={t.term_id} value={t.term_id}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium">Location</label>
+                  <select
+                    value={quickAdd.location_id}
+                    onChange={(e) => setQuickAdd((p) => ({ ...p, location_id: e.target.value }))}
+                    className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
+                  >
+                    {locations.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Qty on hand</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={quickAdd.qty}
+                    onChange={(e) => setQuickAdd((p) => ({ ...p, qty: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitQuickAdd(); }}
+                    className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Reorder point <span className="text-muted-foreground font-normal">(optional — flags the item as low stock)</span></label>
+                <input
+                  type="number"
+                  min="0"
+                  value={quickAdd.reorder_point}
+                  onChange={(e) => setQuickAdd((p) => ({ ...p, reorder_point: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-md border bg-background"
+                  placeholder="—"
+                />
+              </div>
+            </div>
+
+            {quickAddError && <p className="text-sm text-red-600">{quickAddError}</p>}
+
+            <div className="flex items-center justify-between pt-1">
+              <button
+                onClick={() => { setQuickAddOpen(false); router.push('/inventory/items/new'); }}
+                className="text-sm text-muted-foreground hover:underline"
+              >
+                Need variants, vendors, barcodes? Full wizard →
+              </button>
+              <button
+                onClick={submitQuickAdd}
+                disabled={quickAddSaving}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {quickAddSaving ? 'Adding…' : 'Add item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdjustModal && (
+        <AdjustStockModal
+          form={adjustForm}
+          items={adjustableItems}
+          locations={locations}
+          saving={adjustSaving}
+          error={adjustError}
+          guardrailBlock={guardrailBlock}
+          onClose={() => { setShowAdjustModal(false); setGuardrailBlock(null); }}
+          onChange={(next) => { setAdjustForm((prev) => ({ ...prev, ...next })); setGuardrailBlock(null); }}
+          onSubmit={submitAdjustment}
+          onBatchComplete={async (allSucceeded) => {
+            setMovementsByItem({});
+            await fetchAll();
+            if (allSucceeded) {
+              setShowAdjustModal(false);
+              setGuardrailBlock(null);
+            }
+          }}
+        />
+      )}
+
+      <BarcodeScannerOverlay
+        isOpen={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={handleScanResult}
+      />
+
+      <CategoryModal
+        open={showCategoryModal}
+        onClose={() => setShowCategoryModal(false)}
+        onSuccess={async () => {
+          setShowCategoryModal(false);
+          try {
+            const cats = await InventoryRPC.getItemCategories();
+            const sorted = [...cats].sort(
+              (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            );
+            setCategories(cats.map((c: any) => ({ id: c.id, name: c.name })));
+            if (sorted[0]) setQuickAdd((p) => ({ ...p, category_id: sorted[0].id }));
+          } catch {
+            // category created; list refreshes on next load
+          }
+        }}
+      />
+
+      {labelDialog && (
+        <BarcodeLabelDialog
+          items={labelDialog}
+          entityType="item"
+          onClose={() => setLabelDialog(null)}
+        />
+      )}
+
+      {showMinLevelWizard && (
+        <MinLevelWizard
+          onClose={() => setShowMinLevelWizard(false)}
+          onAccepted={async () => {
+            // Levels changed on the server — reload so status chips and the
+            // "lacking levels" entry reflect the new thresholds.
+            await fetchAll();
+          }}
+        />
+      )}
+    </AppShell>
   );
 }

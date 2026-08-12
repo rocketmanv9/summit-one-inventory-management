@@ -21,11 +21,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   }
 
   if (body.workflow === 'stock_rebalance') {
-    return stockRebalanceWorkflow(supabase, ctx.tenantId, body.dry_run, idempotencyKey, log);
+    return stockRebalanceWorkflow(supabase, ctx.tenantId, body.dry_run, idempotencyKey, log, ctx);
   }
 
   throw AppError.badRequest(`Unknown workflow: ${body.workflow}`);
-}, {
+}, { bodySchema: 'raw',
   serviceName: SERVICE_NAME,
   scope: 'POST /api/ai/workflows',
 });
@@ -91,27 +91,32 @@ async function autoReorderWorkflow(
     };
   }
 
-  // Execute: generate POs via the existing RPC
+  // Execute via rpc_generate_reorder_pos_v2 — the old generate_reorder_pos is
+  // a stub that returns vendor/location groups without inserting anything, so
+  // this path used to report "POs created" while creating nothing.
   log.info('workflow.auto_reorder.executing', { vendorCount: vendorSummaries.length });
 
   const { data: result, error: genError } = await (invSchema as any)
     .schema('supply_chain')
-    .rpc('generate_reorder_pos', { p_tenant_id: tenantId });
+    .rpc('rpc_generate_reorder_pos_v2', {
+      p_tenant_id: tenantId,
+      p_run_id: `wf-${idempotencyKey}`,
+    });
 
   if (genError) {
     throw AppError.internal(`Failed to generate reorder POs: ${genError.message}`);
   }
 
-  const createdPOs = Array.isArray(result) ? result : [];
+  const createdPOs = Array.isArray(result?.created) ? result.created : [];
 
   return {
     data: {
       posCreated: createdPOs.length,
       createdPOs: createdPOs.map((po: any) => ({
         poNumber: po.po_number,
-        vendor: po.vendor_name,
+        vendorId: po.vendor_id,
         itemCount: po.line_count,
-        totalAmount: po.total_amount,
+        totalAmount: Number(po.estimated_total) || 0,
       })),
       totalAmount,
       dryRun: false,
@@ -135,7 +140,8 @@ async function stockRebalanceWorkflow(
   tenantId: string,
   dryRun: boolean,
   idempotencyKey: string,
-  log: any
+  log: any,
+  ctx: { tenantId: string; userId?: string }
 ) {
   // Get velocity data to identify imbalances
   const { data: velocityData, error: velError } = await (supabase as any)
@@ -219,8 +225,11 @@ async function stockRebalanceWorkflow(
       if (transferQty > 0) {
         transfers.push({
           item: itemMap[itemId] || itemId,
+          catalogItemId: itemId,
           fromLocation: locationMap[surplus.location_id] || surplus.location_id,
+          fromLocationId: surplus.location_id,
           toLocation: locationMap[deficit.location_id] || deficit.location_id,
+          toLocationId: deficit.location_id,
           quantity: transferQty,
           reason: `${deficitDays}d supply at destination vs ${surplusDays}d at source`,
         });
@@ -240,16 +249,34 @@ async function stockRebalanceWorkflow(
     };
   }
 
-  // Execute: create transfer records
+  // Execute: create real transfer records via RPC
   log.info('workflow.stock_rebalance.executing', { transferCount: transfers.length });
 
-  // For actual execution, we'd create transfer records in the DB.
-  // For now, return the suggestions as "created" since the transfer creation
-  // involves complex multi-step logic that the existing transfer flow handles.
-  const createdTransfers = transfers.map((t, i) => ({
-    ...t,
-    transferId: `TRF-${Date.now()}-${i}`,
-  }));
+  const createdTransfers: any[] = [];
+  for (const t of transfers) {
+    try {
+      const { data: transferId, error: transferError } = await (supabase as any)
+        .schema('inventory')
+        .rpc('rpc_inv_transfer_create', {
+          p_tenant_id: tenantId,
+          p_from_location_id: t.fromLocationId,
+          p_to_location_id: t.toLocationId,
+          p_lines: [{ catalog_item_id: t.catalogItemId, qty: t.quantity }],
+          p_initiated_by_user_id: ctx.userId || tenantId,
+          p_notes: `Auto-rebalance: ${t.reason}`,
+          p_last_event_id: `${idempotencyKey}-rebal-${createdTransfers.length}`,
+        });
+
+      if (transferError) {
+        log.warn('workflow.stock_rebalance.transfer_failed', { error: transferError.message, item: t.item });
+        continue;
+      }
+
+      createdTransfers.push({ ...t, transferId });
+    } catch (err: any) {
+      log.warn('workflow.stock_rebalance.transfer_failed', { error: err.message, item: t.item });
+    }
+  }
 
   return {
     data: {

@@ -8,7 +8,9 @@
 
 import { useEffect, useState } from 'react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { errMessage } from '@/lib/client-errors';
 import { Package, AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
+import Link from 'next/link';
 import type { DashboardWidget } from '@/types/dashboard';
 
 interface InventorySummary {
@@ -36,10 +38,19 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
   const loadSummary = async () => {
     try {
       const data = await InventoryRPC.getInventorySummary();
-      setSummary(data);
+      // Map materialized view fields to widget-expected fields
+      setSummary({
+        total_items: Number(data.total_items) || 0,
+        total_qty_on_hand: Number(data.total_qty_on_hand) || 0,
+        total_qty_reserved: Number(data.total_qty_reserved) || 0,
+        total_qty_available: Number(data.total_qty_available) || 0,
+        low_stock_count: Number(data.low_stock_count ?? data.negative_balance_count) || 0,
+        out_of_stock_count: Number(data.out_of_stock_count ?? data.zero_balance_count) || 0,
+        total_locations: Number(data.total_locations) || 0,
+      });
       setError('');
     } catch (err: any) {
-      setError(err.message);
+      setError(errMessage(err, 'Failed to load summary'));
     } finally {
       setLoading(false);
     }
@@ -78,6 +89,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: Package,
       color: 'text-blue-600',
       bgColor: 'bg-blue-50',
+      href: '/inventory/items',
     },
     {
       label: 'On Hand',
@@ -85,6 +97,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: TrendingUp,
       color: 'text-green-600',
       bgColor: 'bg-green-50',
+      href: '/inventory/stock',
     },
     {
       label: 'Available',
@@ -92,6 +105,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: Package,
       color: 'text-emerald-600',
       bgColor: 'bg-emerald-50',
+      href: '/inventory/stock',
     },
     {
       label: 'Reserved',
@@ -99,6 +113,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: DollarSign,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50',
+      href: '/inventory/reservations',
     },
     {
       label: 'Low Stock',
@@ -106,6 +121,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: AlertTriangle,
       color: 'text-yellow-600',
       bgColor: 'bg-yellow-50',
+      href: '/inventory/stock?filter=low',
     },
     {
       label: 'Out of Stock',
@@ -113,6 +129,7 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
       icon: AlertTriangle,
       color: 'text-red-600',
       bgColor: 'bg-red-50',
+      href: '/inventory/stock',
     },
   ];
 
@@ -130,9 +147,10 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
           {metrics.map((metric, index) => {
             const Icon = metric.icon;
             return (
-              <div
+              <Link
                 key={index}
-                className="p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all"
+                href={metric.href}
+                className="block p-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-gray-600">
@@ -145,25 +163,28 @@ export function InventorySummaryWidget({ widget }: { widget: DashboardWidget }) 
                 <div className={`text-2xl font-bold ${metric.color}`}>
                   {metric.value}
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
 
         {/* Additional Info */}
         <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="flex items-center justify-between text-sm">
+          <Link
+            href="/inventory/locations"
+            className="flex items-center justify-between text-sm rounded-lg -mx-2 px-2 py-1 hover:bg-gray-50 transition-colors"
+          >
             <span className="text-gray-600">Active Locations</span>
             <span className="font-semibold text-gray-900">
               {summary.total_locations}
             </span>
-          </div>
+          </Link>
         </div>
       </div>
 
       {/* Footer */}
       <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500" suppressHydrationWarning>
           Auto-refreshes every 30 seconds • Last updated:{' '}
           {new Date().toLocaleTimeString()}
         </p>

@@ -8,7 +8,24 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { Boxes, Tag, Briefcase, CalendarClock } from 'lucide-react';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+
+// reservation_type = HOW the reservation tracks inventory (fungible stock vs a specific serialized asset).
+// allocation_type = WHAT the reservation is allocated to (job, project, customer order, etc.).
+const RESERVATION_KIND_META: Record<string, { label: string; description: string }> = {
+  fungible: { label: 'Stock', description: 'Stock reservation — reserves a quantity of a bulk/fungible item' },
+  serialized: { label: 'Serialized', description: 'Serialized reservation — reserves a specific asset by tag/serial number' },
+};
+
+const titleCase = (value: string) =>
+  value.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+const reservationKindMeta = (kind: string | null) =>
+  kind ? RESERVATION_KIND_META[kind] || { label: titleCase(kind), description: '' } : null;
+
+const ALLOCATED_TO_DESCRIPTION = 'What this reservation is allocated to (job, project, customer order, etc.)';
 
 interface Reservation {
   id: string;
@@ -36,6 +53,7 @@ interface Reservation {
 }
 
 export default function ReservationsPage() {
+  const help = useHowItWorks('inventory-reservations-help');
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -86,7 +104,7 @@ export default function ReservationsPage() {
   const allocationTypeLabel = (typeKey?: string | null) => {
     if (!typeKey) return '';
     const match = reservationTypes.find((type) => type.type_key === typeKey);
-    return match?.display_name || typeKey;
+    return match?.display_name || titleCase(typeKey);
   };
 
   const getSerializedAssetStatus = (reservation: Reservation) =>
@@ -222,18 +240,25 @@ export default function ReservationsPage() {
     },
     {
       key: 'qty',
-      header: 'Qty',
+      header: 'Reserved Qty',
       className: 'text-right font-mono',
-      render: (row: Reservation) => (
-        <div>
-          <div>{row.qty.toLocaleString()}</div>
-          {row.reservation_type && (
-            <div className="text-xs text-muted-foreground">
-              {row.reservation_type === 'serialized' ? '(Asset)' : '(Stock)'}
-            </div>
-          )}
-        </div>
-      ),
+      render: (row: Reservation) => row.qty.toLocaleString(),
+    },
+    {
+      key: 'reservation_type',
+      header: 'Kind',
+      render: (row: Reservation) => {
+        const kind = reservationKindMeta(row.reservation_type);
+        if (!kind) return '—';
+        return (
+          <span
+            title={kind.description || undefined}
+            className="inline-flex px-2 py-1 text-xs font-medium rounded bg-blue-50 text-blue-700"
+          >
+            {kind.label}
+          </span>
+        );
+      },
     },
     {
       key: 'location',
@@ -247,9 +272,12 @@ export default function ReservationsPage() {
     },
     {
       key: 'allocation_type',
-      header: 'Type',
+      header: 'Allocated To',
       render: (row: Reservation) => (
-        <span className="inline-flex px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-700">
+        <span
+          title={ALLOCATED_TO_DESCRIPTION}
+          className="inline-flex px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-700"
+        >
           {allocationTypeLabel(row.allocation_type) || '—'}
         </span>
       ),
@@ -258,10 +286,30 @@ export default function ReservationsPage() {
       key: 'job_ref',
       header: 'Job/Order',
       render: (row: Reservation) => {
-        const jobText = row.job_ref ? String(row.job_ref) : '';
+        // job_ref is free text for manual reservations, but a structured
+        // object for mirrored ones (e.g. the Operations equipment hold mirror
+        // writes {job_id, job_name, source}) — show the human name, never
+        // "[object Object]".
+        const ref = row.job_ref;
+        const jobText =
+          typeof ref === 'string'
+            ? ref
+            : ref
+              ? String(ref.job_name || ref.job_id || ref.name || ref.ref || '')
+              : '';
+        const source = ref && typeof ref === 'object' && ref.source ? String(ref.source) : null;
         return (
           <div>
-            {jobText && <div className="font-mono text-sm">{jobText}</div>}
+            {jobText && (
+              <div className={typeof ref === 'string' ? 'font-mono text-sm' : 'text-sm'}>
+                {jobText}
+                {source && (
+                  <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-medium text-slate-600">
+                    {source}
+                  </span>
+                )}
+              </div>
+            )}
             {row.external_order_ref && (
               <div className="text-xs text-muted-foreground">{row.external_order_ref}</div>
             )}
@@ -418,7 +466,7 @@ export default function ReservationsPage() {
     },
     {
       key: 'allocation_type',
-      label: 'Type',
+      label: 'Allocated To',
       type: 'select' as const,
       options: reservationTypes.map((type) => ({
         value: type.type_key,
@@ -434,22 +482,50 @@ export default function ReservationsPage() {
           title="Reservations"
           description="Manage stock reservations and allocations. Example: Reserve 300 tons of asphalt for the State Route 12 project starting next week, ensuring it's not allocated to other jobs, then release it when the material is issued to the job site."
           actions={
-            <div className="flex gap-2">
-              <a
-                href="/settings/reservation-types"
-                className="px-4 py-2 border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-              >
-                Manage Types
-              </a>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                + Create Reservation
-              </button>
-            </div>
+            <>
+              {!help.show && <HowThisWorksButton onClick={help.open} />}
+              <div className="flex gap-2">
+                <a
+                  href="/settings/reservation-types"
+                  className="px-4 py-2 border border-gray-200 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Manage Types
+                </a>
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                >
+                  + Create Reservation
+                </button>
+              </div>
+            </>
           }
         />
+
+        {help.show && (
+          <HowItWorksCard
+            title="How reservations work"
+            onDismiss={help.dismiss}
+            steps={[
+              { title: 'Reserve it', body: 'Pick an item — a quantity of bulk stock at a location, or specific serialized assets — and tie the hold to a job, project, or order. Optional needed-by date and reserved time window.' },
+              { title: 'It stays held', body: 'Reserved stock is excluded from what is available to other jobs, so nobody else can promise or issue it. Overdue holds (past their needed-by date) show in red.' },
+              { title: 'Fulfill or release', body: 'Fulfill issues the stock to the job and reduces on-hand. Release frees the hold without issuing — the stock becomes available again.' },
+              { title: 'Undo if needed', body: 'Fulfilled and released reservations both have an Undo that restores them to Active, returning stock or re-reserving the asset as appropriate.' },
+            ]}
+            legend={[
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">Active</span>, text: 'stock is held' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Fulfilled</span>, text: 'issued to the job' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">Released</span>, text: 'hold freed without issuing' },
+              { badge: <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Expired</span>, text: 'window passed without action' },
+            ]}
+            glossary={[
+              { Icon: Boxes, term: 'Stock reservation', blurb: 'holds a quantity of a bulk/fungible item at a specific location' },
+              { Icon: Tag, term: 'Serialized reservation', blurb: 'holds one specific asset by tag/serial number — not just a quantity' },
+              { Icon: Briefcase, term: 'Allocated To', blurb: 'what the hold is for — job, project, customer order, internal order (types are configurable under Manage Types)' },
+              { Icon: CalendarClock, term: 'Reserved window', blurb: 'optional from/until timespan for the hold, plus a needed-by date that flags the reservation overdue when missed' },
+            ]}
+          />
+        )}
 
         <div className="grid grid-cols-4 gap-4">
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -852,7 +928,7 @@ function CreateReservationModal({ onClose, onCreated, reservationTypes }: Create
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Type</label>
+              <label className="block text-sm font-medium mb-1" title={ALLOCATED_TO_DESCRIPTION}>Allocated To</label>
               <select
                 value={form.allocation_type}
                 onChange={(e) => setForm({ ...form, allocation_type: e.target.value })}

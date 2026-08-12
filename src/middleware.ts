@@ -1,27 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { assertChassisSchemaVersion } from '@rocketmanv9/chassis/config';
-import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
-
-// One-time schema version check on first request
-let schemaChecked = false;
 
 export async function middleware(request: NextRequest) {
-  // Verify chassis DB migrations are applied (runs once per cold start)
-  if (!schemaChecked) {
-    try {
-      const supabaseAdmin = await createTenantServiceClient({
-        url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        tenantId: '__system__',
-      });
-      await assertChassisSchemaVersion(supabaseAdmin);
-      schemaChecked = true;
-    } catch (err) {
-      console.error('[chassis] Schema version check failed:', err);
-      // Don't block requests — log and continue, check again next request
-    }
-  }
-
+  // Note: mobile count pages (/m/count/*) bypass Vercel deployment protection
+  // via Vercel's own bypass cookie — set at the edge when the QR URL carries
+  // x-vercel-protection-bypass=<secret>&x-vercel-set-bypass-cookie=true. A
+  // manually-set cookie named x-vercel-protection-bypass is NOT read by Vercel's
+  // edge, so we don't try to set one here.
   return NextResponse.next({ request });
 }
 

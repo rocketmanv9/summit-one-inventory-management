@@ -6,6 +6,7 @@
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { InventoryRPC } from '@/lib/rpc/inventory';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { stashPendingLabelBatch, type PendingLabelBatch } from '@/lib/labels/pending-batch';
 import type { IntentType } from './intents';
 
 export interface ConversationStep {
@@ -29,6 +30,8 @@ export interface ActionResult {
   message: string;
   data?: any;
   navigateTo?: string;
+  /** When true, the chat pushes navigateTo immediately instead of showing a button (e.g. opening the label print dialog). */
+  autoNavigate?: boolean;
 }
 
 // ─── Helpers to load select options dynamically ───────────────────────
@@ -69,18 +72,6 @@ async function loadItemOptions(): Promise<Array<{ label: string; value: string }
   }
 }
 
-async function loadCategoryOptions(): Promise<Array<{ label: string; value: string }>> {
-  try {
-    const categories = await InventoryRPC.getItemCategories();
-    return categories.map((c) => ({
-      label: c.name,
-      value: c.id,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 async function loadLocationTypeOptions(): Promise<Array<{ label: string; value: string }>> {
   try {
     const types = await InventoryRPC.getLocationTypes();
@@ -91,6 +82,183 @@ async function loadLocationTypeOptions(): Promise<Array<{ label: string; value: 
   } catch {
     return [];
   }
+}
+
+// ─── Fuzzy-resolve helpers ────────────────────────────────────────────
+// Accept either a UUID (pass through) or a human name (fuzzy-match).
+// This bridges the gap between what OpenAI tools send (names) and what
+// the RPC layer expects (UUIDs).
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUUID(v: string): boolean {
+  return UUID_RE.test(v);
+}
+
+function fuzzyFind<T extends { id: string }>(
+  items: T[],
+  query: string,
+  nameGetter: (item: T) => string
+): T | null {
+  if (!query) return null;
+  // If it's a UUID, match by id directly
+  if (isUUID(query)) return items.find((i) => i.id === query) || null;
+  const q = query.toLowerCase();
+  return (
+    items.find((i) => nameGetter(i).toLowerCase() === q) ||
+    items.find((i) => nameGetter(i).toLowerCase().includes(q)) ||
+    items.find((i) => q.includes(nameGetter(i).toLowerCase())) ||
+    null
+  );
+}
+
+async function resolveItemId(hint: string): Promise<{ id: string; name: string; sku: string; last_event_id?: string }> {
+  const items = await InventoryRPC.getCatalogItems({ active: true });
+  const match = fuzzyFind(items, hint, (i) => `${i.name} ${i.sku}`);
+  if (!match) throw AppError.notFound(`Item "${hint}" not found`);
+  return { id: match.id, name: match.name, sku: match.sku, last_event_id: match.last_event_id ?? undefined };
+}
+
+async function resolveLocationId(hint: string): Promise<{ id: string; name: string }> {
+  const locations = await InventoryRPC.getLocations({ active: true });
+  const match = fuzzyFind(locations, hint, (l: any) => l.name);
+  if (!match) throw AppError.notFound(`Location "${hint}" not found`);
+  return match as any;
+}
+
+async function resolveVendorId(hint: string): Promise<{ id: string; name: string; last_event_id?: string }> {
+  const vendors = await SupplyChainRPC.getVendors();
+  const match = fuzzyFind(vendors, hint, (v) => `${v.name} ${v.code || ''}`);
+  if (match) return match as any;
+
+  // Not found in tenant vendors — check the global catalog
+  try {
+    const res = await fetch('/api/gv/vendors/catalog');
+    if (res.ok) {
+      const { data: catalogVendors } = await res.json();
+      if (Array.isArray(catalogVendors)) {
+        const catalogMatch = fuzzyFind(
+          catalogVendors.map((v: any) => ({ id: v.id, name: v.name || '' })),
+          hint,
+          (v) => v.name
+        );
+        if (catalogMatch) {
+          throw AppError.notFound(
+            `Vendor "${hint}" exists in the global catalog but hasn't been added to your account yet. Say "add ${catalogMatch.name} from the catalog" to adopt it.`
+          );
+        }
+      }
+    }
+  } catch (e: any) {
+    // Re-throw if it's already an AppError (our catalog match message)
+    if (e?.statusCode) throw e;
+    // Otherwise swallow — catalog check is best-effort
+  }
+
+  throw AppError.notFound(
+    `Vendor "${hint}" not found. I can create it for you — say "add vendor ${hint}".`
+  );
+}
+
+// ─── Asset location/status matching ───────────────────────────────────
+// Assets have two sources of truth: the static columns (location_id, status)
+// and the live asset_state row (current_location_id, current_status). The
+// assets page trusts asset_state first — so must we, or "assets at the yard"
+// misses anything that moved since registration.
+
+type AssetForMatch = {
+  asset_tag?: string | null;
+  status?: string | null;
+  location_id?: string | null;
+  location?: { name?: string | null; location_type?: { name?: string | null } | null } | null;
+  asset_state?: { current_status?: string | null; current_location_id?: string | null } | null;
+};
+
+export type LocationIndex = Map<string, { name: string; type: string }>;
+
+export function buildLocationIndex(locations: Array<{ id: string; name?: string | null; location_type?: { name?: string | null } | null }>): LocationIndex {
+  return new Map(locations.map((l) => [l.id, { name: l.name ?? '', type: (l as any).location_type?.name ?? '' }]));
+}
+
+export function effectiveAssetStatus(asset: AssetForMatch): string {
+  return (asset.asset_state?.current_status || asset.status || '').toLowerCase();
+}
+
+// Words that carry no signal in a location hint ("the portland yard location").
+const LOCATION_NOISE_WORDS = new Set(['the', 'my', 'our', 'a', 'an', 'at', 'in', 'location', 'locations', 'site', 'area']);
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+
+// Typo-tolerant token presence: exact substring first, then small edit
+// distance against individual words so "portaland" still finds "Portland".
+function fuzzyTokenInText(token: string, text: string): boolean {
+  if (text.includes(token)) return true;
+  if (token.length < 5) return false;
+  const maxDist = token.length >= 8 ? 2 : 1;
+  return text.split(/[^a-z0-9]+/).some((w) => w.length >= 4 && levenshtein(w, token) <= maxDist);
+}
+
+/**
+ * Match assets against a location hint ("Portland yard", "the shop"). Uses the
+ * asset's LIVE location (asset_state.current_location_id) when set, falling
+ * back to the static location join. Hint tokens match location names AND types
+ * so "yard" catches every yard. Strict pass requires every meaningful token;
+ * if that finds nothing, an any-token pass runs so partial hints still land.
+ */
+export function matchAssetsByLocation<T extends AssetForMatch>(assets: T[], locationIndex: LocationIndex, hint: string): T[] {
+  const tokens = hint
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 0 && !LOCATION_NOISE_WORDS.has(t));
+  if (tokens.length === 0) return assets;
+
+  const textFor = (a: AssetForMatch): string => {
+    const liveId = a.asset_state?.current_location_id ?? a.location_id ?? null;
+    const rec = liveId ? locationIndex.get(liveId) : undefined;
+    const name = rec?.name || a.location?.name || '';
+    const type = rec?.type || a.location?.location_type?.name || '';
+    return `${name} ${type}`.toLowerCase();
+  };
+
+  const strict = assets.filter((a) => {
+    const t = textFor(a);
+    return t.trim().length > 0 && tokens.every((tok) => fuzzyTokenInText(tok, t));
+  });
+  if (strict.length > 0) return strict;
+
+  return assets.filter((a) => {
+    const t = textFor(a);
+    return t.trim().length > 0 && tokens.some((tok) => fuzzyTokenInText(tok, t));
+  });
+}
+
+function resolveEnum(hint: string, validValues: string[], fallback: string): string {
+  if (!hint) return fallback;
+  const q = hint.toLowerCase().replace(/[_\s-]+/g, '');
+  // Exact match
+  const exact = validValues.find((v) => v === hint);
+  if (exact) return exact;
+  // Fuzzy match
+  const fuzzy = validValues.find((v) => v.replace(/[_\s-]+/g, '').includes(q) || q.includes(v.replace(/[_\s-]+/g, '')));
+  return fuzzy || fallback;
 }
 
 // ─── Action Definitions ───────────────────────────────────────────────
@@ -166,7 +334,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Update an existing vendor',
         steps: [
           {
-            field: 'vendor_id',
+            field: 'name',
             prompt: 'Which vendor do you want to update?',
             type: 'select',
             required: true,
@@ -201,24 +369,17 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          // First fetch current vendor to get last_event_id
-          const vendor = await SupplyChainRPC.getVendorById(params.vendor_id);
-          if (!vendor) throw AppError.notFound('Vendor not found');
+          const vendor = await resolveVendorId(params.name);
           if (!vendor.last_event_id) throw AppError.badRequest('Vendor is missing concurrency token. Please try from the vendors page.');
 
-          const updates: Record<string, any> = {
-            [params.field_to_update]: params.new_value,
-          };
+          const field = resolveEnum(params.field_to_update, ['name', 'code', 'contact_name', 'contact_email', 'contact_phone', 'payment_terms', 'notes'], params.field_to_update);
+          const updates: Record<string, any> = { [field]: params.new_value };
 
-          await SupplyChainRPC.updateVendor(
-            params.vendor_id,
-            updates,
-            vendor.last_event_id
-          );
+          await SupplyChainRPC.updateVendor(vendor.id, updates, vendor.last_event_id);
 
           return {
             success: true,
-            message: `Vendor updated successfully! Set ${params.field_to_update} to "${params.new_value}".`,
+            message: `Vendor "${vendor.name}" updated! Set ${field} to "${params.new_value}".`,
           };
         },
       };
@@ -251,7 +412,6 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
 
     // ── Add Item ────────────────────────────────────────────────────
     case 'add_item': {
-      const categoryOptions = await loadCategoryOptions();
       return {
         intent: 'add_item',
         description: 'Add a new catalog item',
@@ -264,15 +424,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             validate: (v) => (v.trim().length < 2 ? 'Name must be at least 2 characters' : null),
           },
           {
-            field: 'category_id',
-            prompt: 'Which category? (optional, press Enter to skip)',
-            type: 'select',
-            required: false,
-            options: categoryOptions,
-          },
-          {
-            field: 'unit_of_measure',
-            prompt: 'Unit of measure? (e.g. each, ton, gallon, bag — press Enter to skip)',
+            field: 'uom_term_id',
+            prompt: 'Unit of measure term ID? (press Enter to skip, defaults to Each)',
             type: 'text',
             required: false,
           },
@@ -294,16 +447,61 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          // Resolve category text → category_id (fuzzy-match or auto-create)
+          let categoryId: string | null = params.category_id || null;
+          if (!categoryId && params.category) {
+            const categories = await InventoryRPC.getItemCategories();
+            const match = fuzzyFind(categories, params.category, (c) => c.name);
+            if (match) {
+              categoryId = match.id;
+            } else {
+              try {
+                const created = await InventoryRPC.createItemCategory({ name: params.category });
+                categoryId = created.id;
+              } catch {
+                // Non-fatal — create item without category
+              }
+            }
+          }
+
+          // Auto-generate SKU if not provided
+          let sku = params.sku || '';
+          if (!sku) {
+            const prefix = params.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 8).toUpperCase();
+            const suffix = Date.now().toString(36).slice(-4).toUpperCase();
+            sku = `${prefix}-${suffix}`;
+          }
+
+          // Resolve uom_term_id — use provided value or default to "EA" (Each)
+          let uomTermId = params.uom_term_id as string | undefined;
+          if (!uomTermId) {
+            try {
+              const res = await fetch('/api/gv/terms/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain: 'uom', value: 'EA', auto_create: true }),
+              });
+              if (res.ok) {
+                const resolved = await res.json();
+                uomTermId = resolved.data?.term_id;
+              }
+            } catch {
+              // Non-fatal — will fail at DB constraint if still missing
+            }
+          }
+
           const result = await InventoryRPC.createCatalogItem({
             name: params.name,
-            sku: '', // auto-generated by RPC if empty
-            category_id: params.category_id || null,
-            unit_of_measure: params.unit_of_measure || null,
+            sku,
+            description: params.description || null,
+            category_id: categoryId,
+            uom_term_id: uomTermId as string,
             tracking_mode: params.tracking_mode || 'fungible',
           });
+          const categoryNote = categoryId && params.category ? ` in category "${params.category}"` : '';
           return {
             success: true,
-            message: `Item "${params.name}" created successfully!`,
+            message: `Item "${params.name}" created successfully${categoryNote}!`,
             data: result,
             navigateTo: '/inventory/items',
           };
@@ -319,7 +517,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Update an existing catalog item',
         steps: [
           {
-            field: 'catalog_item_id',
+            field: 'name',
             prompt: 'Which item do you want to update?',
             type: 'select',
             required: true,
@@ -332,7 +530,8 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             required: true,
             options: [
               { label: 'Name', value: 'name' },
-              { label: 'Unit of Measure', value: 'unit_of_measure' },
+              { label: 'Category', value: 'category' },
+              { label: 'Unit of Measure', value: 'uom_term_id' },
               { label: 'Reorder Point', value: 'reorder_point' },
               { label: 'Description', value: 'description' },
             ],
@@ -351,24 +550,29 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          const items = await InventoryRPC.getCatalogItems({ active: true });
-          const item = items.find((i) => i.id === params.catalog_item_id);
-          if (!item) throw AppError.notFound('Item not found');
+          const item = await resolveItemId(params.name);
           if (!item.last_event_id) throw AppError.badRequest('Item is missing concurrency token. Please try from the items page.');
 
-          const updates: Record<string, any> = {
-            [params.field_to_update]: params.new_value,
-          };
+          const updates: Record<string, any> = {};
 
-          await InventoryRPC.updateCatalogItem(
-            params.catalog_item_id,
-            updates,
-            item.last_event_id
-          );
+          if (params.field_to_update === 'category') {
+            const categories = await InventoryRPC.getItemCategories();
+            const match = fuzzyFind(categories, params.new_value, (c) => c.name);
+            if (match) {
+              updates.category_id = match.id;
+            } else {
+              const created = await InventoryRPC.createItemCategory({ name: params.new_value });
+              updates.category_id = created.id;
+            }
+          } else {
+            updates[params.field_to_update] = params.new_value;
+          }
+
+          await InventoryRPC.updateCatalogItem(item.id, updates, item.last_event_id);
 
           return {
             success: true,
-            message: `Item updated successfully! Set ${params.field_to_update} to "${params.new_value}".`,
+            message: `Item "${item.name}" updated! Set ${params.field_to_update} to "${params.new_value}".`,
             navigateTo: '/inventory/items',
           };
         },
@@ -412,21 +616,21 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Adjust stock balance for an item',
         steps: [
           {
-            field: 'catalog_item_id',
+            field: 'item',
             prompt: 'Which item do you want to adjust?',
             type: 'select',
             required: true,
             options: itemOpts,
           },
           {
-            field: 'location_id',
+            field: 'location',
             prompt: 'At which location?',
             type: 'select',
             required: true,
             options: locOpts,
           },
           {
-            field: 'new_qty',
+            field: 'quantity',
             prompt: 'What is the new quantity (on-hand count)?',
             type: 'number',
             required: true,
@@ -463,24 +667,127 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          const item = await resolveItemId(params.item);
+          const loc = await resolveLocationId(params.location);
+          const reason = resolveEnum(params.reason, ['count_variance', 'damage', 'theft', 'expiration', 'other'], 'other') as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other';
+
           const result = await InventoryRPC.adjustInventory({
-            location_id: params.location_id,
-            catalog_item_id: params.catalog_item_id,
-            new_qty: Number(params.new_qty),
-            reason: params.reason as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other',
+            location_id: loc.id,
+            catalog_item_id: item.id,
+            new_qty: Number(params.quantity),
+            reason,
             notes: params.notes || `Adjusted via chat assistant`,
           });
           if (!result.success && result.error) {
-            return {
-              success: false,
-              message: result.error.message,
-              data: result.error,
-            };
+            return { success: false, message: result.error.message, data: result.error };
           }
           const delta = result.delta ?? 0;
           return {
             success: true,
-            message: `Stock adjusted! Old: ${result.current_qty} -> New: ${result.new_qty} (delta: ${delta > 0 ? '+' : ''}${delta})`,
+            message: `Stock adjusted for "${item.name}" at ${loc.name}! Old: ${result.current_qty} → New: ${result.new_qty} (delta: ${delta > 0 ? '+' : ''}${delta})`,
+            data: result,
+          };
+        },
+      };
+    }
+
+    // ── Adjust Stock Delta ─────────────────────────────────────────
+    case 'adjust_stock_delta': {
+      const deltaItemOpts = await loadItemOptions();
+      const deltaLocOpts = await loadLocationOptions();
+      return {
+        intent: 'adjust_stock_delta',
+        description: 'Adjust stock by adding or removing quantity',
+        steps: [
+          {
+            field: 'catalog_item_id',
+            prompt: 'Which item?',
+            type: 'select',
+            required: true,
+            options: deltaItemOpts,
+          },
+          {
+            field: 'location_id',
+            prompt: 'At which location?',
+            type: 'select',
+            required: true,
+            options: deltaLocOpts,
+          },
+          {
+            field: 'delta',
+            prompt: 'How many to add or remove? (use negative for removal, e.g. -10)',
+            type: 'number',
+            required: true,
+            validate: (v) => {
+              const n = Number(v);
+              if (isNaN(n) || n === 0) return 'Please enter a non-zero number (positive to add, negative to subtract)';
+              return null;
+            },
+          },
+          {
+            field: 'reason',
+            prompt: 'Reason for the adjustment?',
+            type: 'select',
+            required: true,
+            options: [
+              { label: 'Count Variance', value: 'count_variance' },
+              { label: 'Damage', value: 'damage' },
+              { label: 'Theft', value: 'theft' },
+              { label: 'Expiration', value: 'expiration' },
+              { label: 'Other', value: 'other' },
+            ],
+          },
+          {
+            field: 'notes',
+            prompt: 'Any notes? (optional, press Enter to skip)',
+            type: 'text',
+            required: false,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const item = await resolveItemId(params.catalog_item_id);
+          const loc = await resolveLocationId(params.location_id);
+          const delta = Number(params.delta);
+          const reason = resolveEnum(params.reason, ['count_variance', 'damage', 'theft', 'expiration', 'other'], 'other') as 'count_variance' | 'damage' | 'theft' | 'expiration' | 'other';
+
+          // Fetch current balance
+          const balances = await InventoryRPC.getStockBalances({
+            catalog_item_id: item.id,
+            location_id: loc.id,
+          });
+          const currentQty = balances?.[0]?.qty_on_hand ?? 0;
+          const newQty = currentQty + delta;
+
+          if (newQty < 0) {
+            return {
+              success: false,
+              message: `Cannot adjust: ${item.name} at ${loc.name} has ${currentQty} on hand. Removing ${Math.abs(delta)} would result in ${newQty} (negative).`,
+            };
+          }
+
+          const result = await InventoryRPC.adjustInventory({
+            location_id: loc.id,
+            catalog_item_id: item.id,
+            new_qty: newQty,
+            reason,
+            notes: params.notes || `Delta adjustment (${delta > 0 ? '+' : ''}${delta}) via chat assistant`,
+          });
+
+          if (!result.success && result.error) {
+            return { success: false, message: result.error.message, data: result.error };
+          }
+
+          const sign = delta > 0 ? '+' : '\u2212';
+          const absDelta = Math.abs(delta);
+          return {
+            success: true,
+            message: `${item.name} at ${loc.name}: ${currentQty} ${sign} ${absDelta} = ${newQty} \u2713`,
             data: result,
           };
         },
@@ -495,7 +802,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Check stock levels',
         steps: [
           {
-            field: 'catalog_item_id',
+            field: 'item',
             prompt: 'Which item do you want to check? (press Enter to see all)',
             type: 'select',
             required: false,
@@ -503,8 +810,17 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          let catalogItemId: string | undefined;
+          if (params.item) {
+            try {
+              const item = await resolveItemId(params.item);
+              catalogItemId = item.id;
+            } catch {
+              // Not found — show all
+            }
+          }
           const balances = await InventoryRPC.getStockBalances(
-            params.catalog_item_id ? { catalog_item_id: params.catalog_item_id } : undefined
+            catalogItemId ? { catalog_item_id: catalogItemId } : undefined
           );
           if (!balances || balances.length === 0) {
             return { success: true, message: 'No stock balances found.' };
@@ -550,7 +866,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             success: true,
             message: `Found ${items.length} low stock item(s):\n\n${list}`,
             data: items,
-            navigateTo: '/inventory/alerts',
+            navigateTo: '/inventory/stock?filter=low',
           };
         },
       };
@@ -668,13 +984,6 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             validate: (v) => (v.trim().length < 2 ? 'Name must be at least 2 characters' : null),
           },
           {
-            field: 'location_type_id',
-            prompt: 'What type of location?',
-            type: 'select',
-            required: true,
-            options: locTypeOpts,
-          },
-          {
             field: 'confirm',
             prompt: '',
             type: 'confirm',
@@ -682,18 +991,49 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          // location_type (text label) is required alongside location_type_id
-          const locTypes = await InventoryRPC.getLocationTypes();
-          const locType = locTypes.find((t) => t.id === params.location_type_id);
+          // Auto-detect location type from name or explicit param
+          let typeId: string | null = null;
+          let typeName = '';
+
+          if (locTypeOpts.length > 0) {
+            // Check if user explicitly passed a type
+            const typeHint = params.location_type || '';
+            if (typeHint) {
+              const match = fuzzyFind(
+                locTypeOpts.map((o) => ({ id: o.value, name: o.label })),
+                typeHint,
+                (t) => t.name
+              );
+              if (match) { typeId = match.id; typeName = match.name; }
+            }
+
+            // Infer from name if no explicit type
+            if (!typeId) {
+              const nameLower = params.name.toLowerCase();
+              const typeKeywords: Record<string, string[]> = {
+                warehouse: ['warehouse', 'wh'],
+                yard: ['yard'],
+                'job site': ['job site', 'jobsite', 'job'],
+                office: ['office', 'hq'],
+                shop: ['shop'],
+                truck: ['truck'],
+              };
+              for (const [typeLabel, keywords] of Object.entries(typeKeywords)) {
+                if (keywords.some((kw) => nameLower.includes(kw))) {
+                  const match = locTypeOpts.find((o) => o.label.toLowerCase().includes(typeLabel));
+                  if (match) { typeId = match.value; typeName = match.label; break; }
+                }
+              }
+            }
+          }
 
           await InventoryRPC.createLocation({
             name: params.name,
-            location_type_id: params.location_type_id,
-            location_type: locType?.name || 'warehouse',
+            location_type_id: typeId || locTypeOpts[0]?.value || '',
           });
           return {
             success: true,
-            message: `Location "${params.name}" created successfully!`,
+            message: `Location "${params.name}" created${typeName ? ` as ${typeName}` : ''}!`,
             navigateTo: '/inventory/locations',
           };
         },
@@ -708,7 +1048,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Delete a vendor',
         steps: [
           {
-            field: 'vendor_id',
+            field: 'name',
             prompt: 'Which vendor do you want to delete?',
             type: 'select',
             required: true,
@@ -722,11 +1062,10 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          const vendor = await SupplyChainRPC.getVendorById(params.vendor_id);
-          if (!vendor) throw AppError.notFound('Vendor not found');
+          const vendor = await resolveVendorId(params.name);
           if (!vendor.last_event_id) throw AppError.badRequest('Vendor is missing concurrency token.');
 
-          await SupplyChainRPC.deleteVendor(params.vendor_id, vendor.last_event_id);
+          await SupplyChainRPC.deleteVendor(vendor.id, vendor.last_event_id);
           return {
             success: true,
             message: `Vendor "${vendor.name}" has been deactivated.`,
@@ -744,7 +1083,7 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Delete a catalog item',
         steps: [
           {
-            field: 'catalog_item_id',
+            field: 'name',
             prompt: 'Which item do you want to delete?',
             type: 'select',
             required: true,
@@ -758,12 +1097,10 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
-          const items = await InventoryRPC.getCatalogItems({ active: true });
-          const item = items.find((i) => i.id === params.catalog_item_id);
-          if (!item) throw AppError.notFound('Item not found');
+          const item = await resolveItemId(params.name);
           if (!item.last_event_id) throw AppError.badRequest('Item is missing concurrency token.');
 
-          await InventoryRPC.deleteCatalogItem(params.catalog_item_id, item.last_event_id);
+          await InventoryRPC.deleteCatalogItem(item.id, item.last_event_id);
           return {
             success: true,
             message: `Item "${item.name}" (${item.sku}) has been deleted.`,
@@ -782,14 +1119,14 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Issue inventory from a location',
         steps: [
           {
-            field: 'location_id',
+            field: 'location',
             prompt: 'Which location are you issuing from?',
             type: 'select',
             required: true,
             options: issueLocOpts,
           },
           {
-            field: 'catalog_item_id',
+            field: 'item',
             prompt: 'Which item are you issuing?',
             type: 'select',
             required: true,
@@ -838,19 +1175,23 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          const loc = await resolveLocationId(params.location);
+          const item = await resolveItemId(params.item);
+          const issuedToType = resolveEnum(params.issued_to_type, ['job', 'truck', 'person', 'other'], 'other') as 'job' | 'truck' | 'person' | 'other';
+
           const result = await InventoryRPC.issueInventory({
-            location_id: params.location_id,
+            location_id: loc.id,
             items: [{
-              catalog_item_id: params.catalog_item_id,
+              catalog_item_id: item.id,
               qty_issued: Number(params.quantity),
             }],
-            issued_to_type: params.issued_to_type as 'job' | 'truck' | 'person' | 'other',
+            issued_to_type: issuedToType,
             issued_to_ref: params.issued_to_ref,
             reason: params.reason,
           });
           return {
             success: true,
-            message: `Issued ${params.quantity} unit(s) to ${params.issued_to_type} "${params.issued_to_ref}".`,
+            message: `Issued ${params.quantity} "${item.name}" from ${loc.name} to ${issuedToType} "${params.issued_to_ref}".`,
             data: result,
           };
         },
@@ -867,21 +1208,21 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         description: 'Create a stock transfer',
         steps: [
           {
-            field: 'from_location_id',
+            field: 'from_location',
             prompt: 'Transfer FROM which location?',
             type: 'select',
             required: true,
             options: fromLocOpts,
           },
           {
-            field: 'to_location_id',
+            field: 'to_location',
             prompt: 'Transfer TO which location?',
             type: 'select',
             required: true,
             options: toLocOpts,
           },
           {
-            field: 'catalog_item_id',
+            field: 'item',
             prompt: 'Which item to transfer?',
             type: 'select',
             required: true,
@@ -912,18 +1253,22 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          const fromLoc = await resolveLocationId(params.from_location);
+          const toLoc = await resolveLocationId(params.to_location);
+          const item = await resolveItemId(params.item);
+
           const transferId = await InventoryRPC.createTransfer({
-            from_location_id: params.from_location_id,
-            to_location_id: params.to_location_id,
+            from_location_id: fromLoc.id,
+            to_location_id: toLoc.id,
             notes: params.notes || null,
             lines: [{
-              catalog_item_id: params.catalog_item_id,
+              catalog_item_id: item.id,
               qty: Number(params.quantity),
             }],
           });
           return {
             success: true,
-            message: `Transfer created successfully! (ID: ${transferId?.slice(0, 8)}...)`,
+            message: `Transfer created! ${params.quantity} "${item.name}" from ${fromLoc.name} → ${toLoc.name}.`,
             data: { transfer_id: transferId },
             navigateTo: '/inventory/transfers',
           };
@@ -947,14 +1292,14 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
             validate: (v) => (v.trim().length < 1 ? 'Asset tag is required' : null),
           },
           {
-            field: 'catalog_item_id',
+            field: 'item',
             prompt: 'Which catalog item does this asset belong to?',
             type: 'select',
             required: true,
             options: assetItemOpts,
           },
           {
-            field: 'location_id',
+            field: 'location',
             prompt: 'Where is the asset located?',
             type: 'select',
             required: true,
@@ -974,16 +1319,19 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           },
         ],
         execute: async (params) => {
+          const item = await resolveItemId(params.item);
+          const loc = await resolveLocationId(params.location);
+
           const result = await InventoryRPC.createAsset({
             asset_tag: params.asset_tag,
-            catalog_item_id: params.catalog_item_id,
-            location_id: params.location_id,
+            catalog_item_id: item.id,
+            location_id: loc.id,
             serial_number: params.serial_number || null,
             status: 'available',
           });
           return {
             success: true,
-            message: `Asset "${params.asset_tag}" registered successfully!`,
+            message: `Asset "${params.asset_tag}" (${item.name}) registered at ${loc.name}!`,
             data: result,
             navigateTo: '/inventory/assets',
           };
@@ -997,10 +1345,40 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         intent: 'list_assets',
         description: 'List assets',
         steps: [],
-        execute: async () => {
-          const assets = await InventoryRPC.getAssets();
-          if (!assets || assets.length === 0) {
-            return { success: true, message: 'No assets found. Say "create an asset" to register one!' };
+        execute: async (params) => {
+          const status = (params.status || '').trim().toLowerCase();
+          const locationHint = (params.location || '').trim();
+          // Fetch unfiltered and filter locally on LIVE state — the status
+          // column and location_id go stale once asset_state takes over.
+          const all = await InventoryRPC.getAssets();
+          const locationIndex = buildLocationIndex(await InventoryRPC.getLocations({ active: true }));
+          let assets = locationHint ? matchAssetsByLocation(all || [], locationIndex, locationHint) : (all || []);
+          let statusNote = '';
+          if (status) {
+            const byStatus = assets.filter((a) => effectiveAssetStatus(a) === status);
+            if (byStatus.length > 0) {
+              assets = byStatus;
+            } else if (assets.length > 0) {
+              // "assigned to the yard" reads as a status but means a location —
+              // don't zero out the answer over it, just say what we did.
+              statusNote = ` (none have status "${status}", so I'm showing all of them)`;
+            }
+          }
+          const scope = locationHint ? ` matching location "${locationHint}"` : '';
+          if (assets.length === 0) {
+            const withLocation = (all || []).filter((a) => a.asset_state?.current_location_id ?? a.location_id);
+            if (locationHint && withLocation.length === 0 && (all || []).length > 0) {
+              return {
+                success: true,
+                message: `You have ${(all || []).length} assets, but none of them have a location recorded yet — so I can't filter by "${locationHint}". Say "list assets" to see everything, or set locations on the assets first.`,
+              };
+            }
+            return {
+              success: true,
+              message: locationHint || status
+                ? `No assets found${scope}${status && !statusNote ? ` with status "${status}"` : ''}.`
+                : 'No assets found. Say "create an asset" to register one!',
+            };
           }
           const list = assets
             .slice(0, 20)
@@ -1013,9 +1391,85 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
           const suffix = assets.length > 20 ? `\n\n...and ${assets.length - 20} more.` : '';
           return {
             success: true,
-            message: `Found ${assets.length} asset(s):\n\n${list}${suffix}`,
+            message: `Found ${assets.length} asset(s)${scope}${statusNote}:\n\n${list}${suffix}`,
             data: assets,
             navigateTo: '/inventory/assets',
+          };
+        },
+      };
+
+    // ── Print Labels ─────────────────────────────────────────────
+    // Gathers matching assets, stashes a label batch for the assets page, and
+    // sends the user there — the page opens BarcodeLabelDialog preloaded.
+    case 'print_labels':
+      return {
+        intent: 'print_labels',
+        description: 'Print asset labels',
+        steps: [],
+        execute: async (params) => {
+          const status = (params.status || '').trim().toLowerCase();
+          const locationHint = (params.location || '').trim();
+          // Unfiltered fetch + local matching on LIVE state (asset_state) —
+          // same reasoning as list_assets above.
+          const all = (await InventoryRPC.getAssets()).filter((a) => !!a.asset_tag);
+          const locations = await InventoryRPC.getLocations({ active: true });
+          const locationIndex = buildLocationIndex(locations);
+          let matched = locationHint ? matchAssetsByLocation(all, locationIndex, locationHint) : all;
+          let statusNote = '';
+          if (status) {
+            const byStatus = matched.filter((a) => effectiveAssetStatus(a) === status);
+            if (byStatus.length > 0) {
+              matched = byStatus;
+              statusNote = ` with status "${status}"`;
+            } else if (matched.length > 0) {
+              statusNote = ` (none have status "${status}", so I queued all of them)`;
+            }
+          }
+
+          if (matched.length === 0) {
+            if (locationHint) {
+              const knownLoc = fuzzyFind(locations, locationHint, (l: any) => `${l.name} ${l.location_type?.name || ''}`);
+              // Distinguish "nothing is there" from "nothing has a location at
+              // all" — filtering an unlocated fleet by location silently
+              // returns zero and reads like the yard is empty when it isn't.
+              const withLocation = all.filter((a) => a.asset_state?.current_location_id ?? a.location_id);
+              if (knownLoc && withLocation.length === 0 && all.length > 0) {
+                return {
+                  success: false,
+                  message: `You have ${all.length} assets, but none of them have a location recorded yet — so I can't tell which ones are at ${(knownLoc as any).name}. Say "print labels for all assets" and I'll queue everything, or set locations on the assets first.`,
+                };
+              }
+              return {
+                success: false,
+                message: knownLoc
+                  ? `No assets are currently at ${(knownLoc as any).name}, so there's nothing to print.`
+                  : `I couldn't find a location matching "${locationHint}". Say "list locations" to see what's available.`,
+              };
+            }
+            return { success: true, message: 'No assets found to print labels for. Say "create an asset" to register one!' };
+          }
+
+          const batch: PendingLabelBatch = {
+            items: matched.map((a) => ({
+              code: a.asset_tag,
+              label: `${a.asset_tag}${a.catalog_item?.name ? ` - ${a.catalog_item.name}` : ''}`,
+              kind: 'individual' as const,
+            })),
+            entityType: 'asset',
+          };
+          stashPendingLabelBatch(batch);
+
+          const locNames = [...new Set(matched.map((a) => {
+            const liveId = a.asset_state?.current_location_id ?? a.location_id ?? null;
+            return (liveId ? locationIndex.get(liveId)?.name : null) || a.location?.name || null;
+          }).filter(Boolean))] as string[];
+          const scope = locNames.length > 0 && locationHint ? ` at ${locNames.slice(0, 5).join(', ')}` : '';
+          return {
+            success: true,
+            message: `Queued ${batch.items.length} label${batch.items.length === 1 ? '' : 's'} for the assets${scope}${statusNote}. The print dialog is opening — pick barcode/QR format and your printer there.`,
+            data: { count: batch.items.length },
+            navigateTo: '/inventory/assets',
+            autoNavigate: true,
           };
         },
       };
@@ -1100,6 +1554,287 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
         },
       };
 
+    // ── Create Reservation ──────────────────────────────────────
+    case 'create_reservation': {
+      const resItemOpts = await loadItemOptions();
+      const resLocOpts = await loadLocationOptions();
+      return {
+        intent: 'create_reservation' as IntentType,
+        description: 'Create a stock reservation',
+        steps: [
+          {
+            field: 'item',
+            prompt: 'Which item do you want to reserve?',
+            type: 'select',
+            required: true,
+            options: resItemOpts,
+          },
+          {
+            field: 'location',
+            prompt: 'At which location?',
+            type: 'select',
+            required: true,
+            options: resLocOpts,
+          },
+          {
+            field: 'quantity',
+            prompt: 'How many units to reserve?',
+            type: 'number',
+            required: true,
+            validate: (v) => {
+              const n = Number(v);
+              if (isNaN(n) || n <= 0) return 'Please enter a positive number';
+              return null;
+            },
+          },
+          {
+            field: 'allocation_type',
+            prompt: 'What is this reservation for?',
+            type: 'select',
+            required: true,
+            options: [
+              { label: 'Job', value: 'job' },
+              { label: 'Truck', value: 'truck' },
+              { label: 'Person', value: 'person' },
+              { label: 'Transfer', value: 'transfer' },
+              { label: 'Other', value: 'other' },
+            ],
+          },
+          {
+            field: 'job_ref',
+            prompt: 'Reference (job number, truck ID, etc.)? (optional, press Enter to skip)',
+            type: 'text',
+            required: false,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const item = await resolveItemId(params.item);
+          const loc = await resolveLocationId(params.location);
+          const allocationType = resolveEnum(params.allocation_type, ['job', 'truck', 'person', 'transfer', 'other'], 'other');
+
+          const result = await InventoryRPC.reserveFungible({
+            catalog_item_id: item.id,
+            location_id: loc.id,
+            qty: Number(params.quantity),
+            allocation_type: allocationType || null,
+            job_ref: params.job_ref || null,
+            last_event_id: crypto.randomUUID(),
+          });
+          return {
+            success: true,
+            message: `Reserved ${params.quantity} "${item.name}" at ${loc.name} for ${allocationType}${params.job_ref ? ` "${params.job_ref}"` : ''}!`,
+            data: { reservation_id: result },
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+    }
+
+    // ── Release Reservation ──────────────────────────────────────
+    case 'release_reservation': {
+      let reservationOptions: Array<{ label: string; value: string }> = [];
+      try {
+        const reservations = await InventoryRPC.getReservations({ status: 'active' });
+        reservationOptions = reservations.map((r: any) => ({
+          label: `${r.catalog_items?.name || 'Unknown'} - ${r.qty} @ ${r.locations?.name || 'Unknown'}${r.job_ref ? ` (${typeof r.job_ref === 'string' ? r.job_ref : JSON.stringify(r.job_ref)})` : ''}`,
+          value: r.id,
+        }));
+      } catch {
+        // ignore
+      }
+      return {
+        intent: 'release_reservation' as IntentType,
+        description: 'Release a reservation',
+        steps: [
+          {
+            field: 'reservation_id',
+            prompt: reservationOptions.length > 0 ? 'Which reservation do you want to release?' : 'No active reservations found.',
+            type: 'select',
+            required: true,
+            options: reservationOptions,
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const reservations = await InventoryRPC.getReservations({ status: 'active' });
+          const reservation = reservations.find((r: any) => r.id === params.reservation_id);
+          if (!reservation) throw AppError.notFound('Reservation not found');
+
+          await InventoryRPC.releaseReservation(
+            params.reservation_id,
+            reservation.last_event_id || crypto.randomUUID()
+          );
+          return {
+            success: true,
+            message: 'Reservation released successfully!',
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+    }
+
+    // ── List Reservations ──────────────────────────────────────────
+    case 'list_reservations':
+      return {
+        intent: 'list_reservations' as IntentType,
+        description: 'List reservations',
+        steps: [],
+        execute: async () => {
+          const reservations = await InventoryRPC.getReservations();
+          if (!reservations || reservations.length === 0) {
+            return { success: true, message: 'No reservations found. Say "reserve stock" to create one!' };
+          }
+          const list = reservations
+            .slice(0, 15)
+            .map((r: any) => {
+              const itemName = r.catalog_items?.name || 'Unknown';
+              const loc = r.locations?.name || 'Unknown';
+              return `  ${itemName} - ${r.qty} @ ${loc} [${r.status}]${r.job_ref ? ` (${typeof r.job_ref === 'string' ? r.job_ref : ''})` : ''}`;
+            })
+            .join('\n');
+          const suffix = reservations.length > 15 ? `\n\n...and ${reservations.length - 15} more.` : '';
+          return {
+            success: true,
+            message: `Found ${reservations.length} reservation(s):\n\n${list}${suffix}`,
+            data: reservations,
+            navigateTo: '/inventory/reservations',
+          };
+        },
+      };
+
+    // ── Receive PO ────────────────────────────────────────────────
+    case 'receive_po':
+      return {
+        intent: 'receive_po' as IntentType,
+        description: 'Receive a purchase order',
+        steps: [],
+        execute: async () => {
+          return {
+            success: true,
+            message: "I'll take you to the Purchasing page where you can record receipts against your POs.",
+            navigateTo: '/inventory/purchasing',
+          };
+        },
+      };
+
+    // ── List Categories ──────────────────────────────────────────
+    case 'list_categories':
+      return {
+        intent: 'list_categories' as IntentType,
+        description: 'List item categories',
+        steps: [],
+        execute: async () => {
+          const categories = await InventoryRPC.getItemCategories();
+          if (!categories || categories.length === 0) {
+            return { success: true, message: 'No categories found. Say "add a category" to create one!' };
+          }
+          const list = categories
+            .map((c) => `  ${c.name}`)
+            .join('\n');
+          return {
+            success: true,
+            message: `Found ${categories.length} category(ies):\n\n${list}`,
+            data: categories,
+            navigateTo: '/inventory/categories',
+          };
+        },
+      };
+
+    // ── Add Category ─────────────────────────────────────────────
+    case 'add_category':
+      return {
+        intent: 'add_category' as IntentType,
+        description: 'Add an item category',
+        steps: [
+          {
+            field: 'name',
+            prompt: 'What should the category be called?',
+            type: 'text',
+            required: true,
+            validate: (v) => (v.trim().length < 2 ? 'Name must be at least 2 characters' : null),
+          },
+          {
+            field: 'confirm',
+            prompt: '',
+            type: 'confirm',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const result = await InventoryRPC.createItemCategory({
+            name: params.name,
+          });
+          return {
+            success: true,
+            message: `Category "${params.name}" created successfully!`,
+            data: result,
+            navigateTo: '/inventory/categories',
+          };
+        },
+      };
+
+    // ── Global Search ────────────────────────────────────────────
+    case 'global_search':
+      return {
+        intent: 'global_search' as IntentType,
+        description: 'Search across all entities',
+        steps: [
+          {
+            field: 'query',
+            prompt: 'What do you want to search for?',
+            type: 'text',
+            required: true,
+          },
+        ],
+        execute: async (params) => {
+          const results = await InventoryRPC.globalSearch(params.query);
+          const sections: string[] = [];
+
+          if (results.items.length > 0) {
+            sections.push('Items:\n' + results.items.map((i) => `  [${i.sku}] ${i.name}`).join('\n'));
+          }
+          if (results.assets.length > 0) {
+            sections.push('Assets:\n' + results.assets.map((a) => `  [${a.tag}] ${a.serial_number || '-'} (${a.status})`).join('\n'));
+          }
+          if (results.locations.length > 0) {
+            sections.push('Locations:\n' + results.locations.map((l) => `  ${l.name}`).join('\n'));
+          }
+          if (results.vendors.length > 0) {
+            sections.push('Vendors:\n' + results.vendors.map((v) => `  ${v.code ? `[${v.code}] ` : ''}${v.name}`).join('\n'));
+          }
+          if (results.purchase_orders.length > 0) {
+            sections.push('Purchase Orders:\n' + results.purchase_orders.map((po) => `  ${po.po_number} - ${po.vendor_name || 'Unknown'} [${po.status}]`).join('\n'));
+          }
+          if (results.reservations.length > 0) {
+            sections.push('Reservations:\n' + results.reservations.map((r) => `  ${r.ref || r.id.slice(0, 8)} - ${r.qty} [${r.status}]`).join('\n'));
+          }
+
+          if (sections.length === 0) {
+            return {
+              success: true,
+              message: `No results found for "${params.query}".`,
+            };
+          }
+
+          return {
+            success: true,
+            message: `Search results for "${params.query}":\n\n${sections.join('\n\n')}`,
+            data: results,
+          };
+        },
+      };
+
     // ── Navigate ────────────────────────────────────────────────────
     case 'navigate':
       return {
@@ -1156,8 +1891,21 @@ export async function getActionDefinition(intent: IntentType): Promise<ActionDef
               '  "Create an asset" - Register new equipment/tool',
               '  "List assets" - See registered assets',
               '',
+              'Reservations:',
+              '  "Reserve stock" - Create a stock reservation',
+              '  "List reservations" - See active reservations',
+              '  "Release reservation" - Cancel a reservation',
+              '',
+              'Categories:',
+              '  "List categories" - See item categories',
+              '  "Add a category" - Create a new category',
+              '',
+              'Search:',
+              '  "Search for [term]" - Search across all entities',
+              '',
               'Other:',
               '  "List receipts" - See recent receipts',
+              '  "Receive a PO" - Record receipt against a purchase order',
               '  "Inventory summary" - Overview of your inventory',
             ].join('\n'),
           };
@@ -1176,8 +1924,7 @@ export function resolveNavigation(message: string): string | null {
   const lower = message.toLowerCase();
   const routes: Record<string, string[]> = {
     '/dashboard': ['dashboard', 'home'],
-    '/inventory/stock': ['stock', 'stock levels', 'inventory levels'],
-    '/inventory/items': ['items', 'catalog'],
+    '/inventory/stock': ['stock', 'stock levels', 'inventory levels', 'items', 'catalog'],
     '/inventory/vendors': ['vendors', 'suppliers'],
     '/inventory/purchasing': ['purchasing', 'purchase orders', 'pos'],
     '/inventory/locations': ['locations', 'warehouses', 'yards'],
@@ -1186,7 +1933,7 @@ export function resolveNavigation(message: string): string | null {
     '/inventory/assets': ['assets', 'equipment'],
     '/inventory/categories': ['categories'],
     '/inventory/movements': ['movements', 'stock movements'],
-    '/inventory/alerts': ['alerts', 'low stock'],
+    '/inventory/stock?filter=low': ['alerts', 'low stock'],
     '/settings': ['settings', 'configuration'],
   };
 

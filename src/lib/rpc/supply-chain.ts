@@ -6,8 +6,27 @@
 
 import { createBrowserAuthedClient } from '@/supabase/client';
 import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { apiWrite } from '@/lib/api-client';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import type { Database } from 'types/supabase';
+
+/** Write-through helper for methods migrated onto chassis routes (preserves return shape + 409). */
+async function writeJson<T = unknown>(url: string, method: 'POST' | 'PATCH' | 'DELETE', body: unknown, errMsg: string): Promise<T> {
+  const res = await apiWrite(url, method, body);
+  const json = await res.json().catch(() => ({} as any));
+  // Keep the server's details on conflicts — the vendor duplicate gate attaches
+  // its scored matches there so the UI can offer "use existing" instead of a
+  // dead-end error message.
+  if (res.status === 409) throw AppError.conflict(json.error?.message || errMsg, json.error?.details);
+  if (!res.ok) {
+    const fieldErrs = json.error?.details?.errors;
+    const detail = Array.isArray(fieldErrs) && fieldErrs.length
+      ? ` — ${fieldErrs.map((e: any) => `${e.path || 'field'}: ${e.message}`).join('; ')}`
+      : '';
+    throw AppError.internal((json.error?.message || errMsg) + detail);
+  }
+  return json.data as T;
+}
 
 type VendorRow = Database['supply_chain']['Tables']['vendors']['Row'];
 type VendorInsert = Database['supply_chain']['Tables']['vendors']['Insert'];
@@ -20,6 +39,11 @@ type VendorInsertPayload = Omit<VendorInsert, 'tenant_id'> & { tenant_id?: strin
 type VendorUpdatePayload = Omit<VendorUpdate, 'tenant_id'> & { tenant_id?: string };
 type VendorItemInsertPayload = Omit<VendorItemInsert, 'tenant_id'> & { tenant_id?: string };
 type VendorItemUpdatePayload = Omit<VendorItemUpdate, 'tenant_id'> & { tenant_id?: string };
+
+/** A vendor_items row joined to its catalog item (name + sku) for hub display. */
+export type VendorItemDetailed = VendorItemRow & {
+  catalog_item: { id: string; name: string; sku: string } | null;
+};
 
 function requireAdminRole(): void {
   const token = getStoredAccessToken();
@@ -35,6 +59,8 @@ function requireAdminRole(): void {
 
 export interface CreatePurchaseOrderParams {
   vendor_id: string;
+  /** Which vendor branch/plant the PO is priced against (vendor_addresses id) */
+  vendor_address_id?: string;
   po_number?: string;
   delivery_method?: 'ship' | 'pickup';
   needed_by_date?: string;
@@ -49,7 +75,7 @@ export interface CreatePurchaseOrderParams {
   lines: Array<{
     catalog_item_id?: string;
     item_description?: string;
-    unit_of_measure?: string;
+    uom_term_id?: string;
     qty_ordered: number;
     unit_cost?: number;
     estimated_unit_cost?: number;
@@ -102,6 +128,12 @@ export interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  /** How the proactive agent handles reorder needs: notify | auto_draft | auto_send. */
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  /** When true, the nightly cron turns top cycle-count suggestions into assigned counts. */
+  auto_schedule_counts_enabled: boolean;
+  /** What Isabelle is allowed to do, per capability: off | ask | auto. */
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;
@@ -188,7 +220,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, notes, active, created_at, updated_at, last_event_id')
+      .select('id, name, code, contact_name, contact_email, contact_phone, payment_terms, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id')
       .eq('id', vendorId)
       .maybeSingle();
 
@@ -220,6 +252,7 @@ export const SupplyChainRPC = {
       p_notes: params.notes ?? null,
       p_attachments: params.attachments ?? [],
       p_lines: params.lines,
+      p_vendor_address_id: params.vendor_address_id ?? null,
     });
 
     if (error) {
@@ -227,6 +260,21 @@ export const SupplyChainRPC = {
     }
 
     return data as CreatePurchaseOrderResult;
+  },
+
+  /**
+   * Run the approval limit check on a priced draft PO (the request-a-quote
+   * flow once the vendor's numbers are in). Within limits → approved; over →
+   * awaiting_approval (lands in the manager inbox). Browser-authed on purpose:
+   * the RPC derives tenant/user from the caller's JWT.
+   */
+  async submitPoForApproval(poId: string): Promise<{ status: string; total?: number; reason?: string }> {
+    const supabase = createBrowserAuthedClient().schema('supply_chain');
+    const { data, error } = await (supabase as any).rpc('rpc_submit_po_for_approval', { p_po_id: poId });
+    if (error) {
+      throw AppError.internal(error.message);
+    }
+    return data as { status: string; total?: number; reason?: string };
   },
 
   /**
@@ -255,11 +303,13 @@ export const SupplyChainRPC = {
    * Get vendors list
    * View: inventory.vendors (compatibility view → supply_chain.vendors)
    */
-  async getVendors(): Promise<VendorRow[]> {
+  async getVendors(): Promise<Array<VendorRow & { ordering_mode?: string | null }>> {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { data, error } = await supabase
       .from('vendors')
-      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id')
+      // ordering_mode lets create-PO surfaces route integration vendors
+      // (amazon_punchout) straight into their punchout flow.
+      .select('id, tenant_id, name, code, contact_name, contact_email, contact_phone, payment_terms, lead_time_days, notes, active, created_at, updated_at, last_event_id, vendor_type_term_id, ordering_mode')
       .eq('active', true)
       .order('name');
 
@@ -267,7 +317,7 @@ export const SupplyChainRPC = {
       throw AppError.internal(`Failed to fetch vendors: ${error.message}`);
     }
 
-    return (data ?? []) as VendorRow[];
+    return (data ?? []) as Array<VendorRow & { ordering_mode?: string | null }>;
   },
 
   /**
@@ -275,73 +325,22 @@ export const SupplyChainRPC = {
    * Table: supply_chain.vendors
    */
   async createVendor(payload: VendorInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const insertPayload: VendorInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data: existingByName, error: existingError } = await supabase
-      .from('vendors')
-      .select('id, last_event_id, active')
-      .eq('name', insertPayload.name)
-      .maybeSingle();
-
-    if (existingError) {
-      throw AppError.internal(`Failed to check existing vendor: ${existingError.message}`);
-    }
-
-    if (existingByName?.active) {
-      throw AppError.conflict('A vendor with this name already exists. Edit the existing vendor or choose a different name.');
-    }
-
-    if (existingByName && !existingByName.active) {
-      const nextEventId = crypto.randomUUID();
-      const updatePayload: VendorUpdatePayload = {
-        ...insertPayload,
-        active: true,
-        last_event_id: nextEventId,
-      };
-      delete (updatePayload as VendorUpdatePayload & { tenant_id?: string }).tenant_id;
-
-      let updateQuery = supabase
-        .from('vendors')
-        .update(updatePayload)
-        .eq('id', existingByName.id);
-
-      if (existingByName.last_event_id) {
-        updateQuery = updateQuery.eq('last_event_id', existingByName.last_event_id);
-      }
-
-      const { data: restored, error: restoreError } = await updateQuery
-        .select('id, last_event_id')
-        .single();
-
-      if (restoreError) {
-        throw AppError.internal(`Failed to restore vendor: ${restoreError.message}`);
-      }
-
-      return restored as Pick<VendorRow, 'id' | 'last_event_id'>;
-    }
-
-    const { data, error } = await supabase
-      .from('vendors')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create vendor: ${error.message}`);
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis write route — the create-or-restore-inactive
+    // logic now runs server-side (idempotent, tenant-scoped). The route stamps
+    // last_event_id; trigger_vendor_events owns emission.
+    const { last_event_id, tenant_id, ...fields } = payload as VendorInsertPayload & { tenant_id?: string };
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/vendors',
+      'POST',
+      fields,
+      'Failed to create vendor',
+    );
   },
 
   /**
    * Update a vendor with optimistic concurrency control
    */
   async updateVendor(id: string, updates: VendorUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorUpdatePayload & {
       id?: string;
       created_at?: string;
@@ -349,46 +348,26 @@ export const SupplyChainRPC = {
       last_event_id?: string;
     };
 
-    const { data, error } = await supabase
-      .from('vendors')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update vendor: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Routed through the chassis OCC write route.
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendors/${id}`,
+      'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId },
+      'Vendor was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
    * Delete a vendor with optimistic concurrency control
    */
   async deleteVendor(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const nextEventId = crypto.randomUUID();
-    const { data, error } = await supabase
-      .from('vendors')
-      .update({ active: false, last_event_id: nextEventId })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to delete vendor: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorRow, 'id' | 'last_event_id'>;
+    // Soft-delete (deactivate) routed through the chassis OCC delete route.
+    return writeJson<Pick<VendorRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendors/${id}`,
+      'DELETE',
+      { expected_last_event_id: lastEventId },
+      'Vendor was updated by someone else. Please refresh and try again.',
+    );
   },
 
   /**
@@ -399,7 +378,7 @@ export const SupplyChainRPC = {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
     let query = supabase
       .from('vendor_items')
-      .select('id, vendor_id, catalog_item_id, vendor_sku, vendor_uom, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .select('id, vendor_id, catalog_item_id, vendor_address_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
       .order('updated_at', { ascending: false });
 
     if (vendorId) {
@@ -424,7 +403,7 @@ export const SupplyChainRPC = {
 
     const { data: vendorItems, error: viError } = await scSupabase
       .from('vendor_items')
-      .select('id, vendor_sku, unit_cost, catalog_item_id')
+      .select('id, vendor_sku, unit_cost, catalog_item_id, vendor_address_id')
       .eq('vendor_id', vendorId)
       .order('vendor_sku');
 
@@ -456,84 +435,100 @@ export const SupplyChainRPC = {
       vendor_sku: string;
       unit_cost: number;
       catalog_item_id: string;
+      vendor_address_id: string | null;
       catalog_items?: { id: string; name: string; sku: string } | null;
     }>;
+  },
+
+  /**
+   * Vendor items for a vendor, enriched with catalog item name + sku via a
+   * client-side cross-schema join. Returns every pricing field the vendor hub's
+   * Items tab needs (pack size, lead time, min qty, preferred, uom) so the tab
+   * renders without a second fetch. Ordered preferred-first, then by item name.
+   */
+  async getVendorItemsDetailed(vendorId: string): Promise<VendorItemDetailed[]> {
+    const scSupabase = createBrowserAuthedClient().schema('supply_chain');
+    const invSupabase = createBrowserAuthedClient().schema('inventory');
+
+    const { data: vendorItems, error: viError } = await scSupabase
+      .from('vendor_items')
+      .select('id, vendor_id, catalog_item_id, vendor_address_id, vendor_sku, vendor_uom_term_id, pack_size, is_preferred, unit_cost, currency, lead_time_days, min_order_qty, notes, created_at, updated_at, last_event_id')
+      .eq('vendor_id', vendorId)
+      .limit(500);
+
+    if (viError) {
+      throw AppError.internal(`Failed to fetch vendor items: ${viError.message}`);
+    }
+
+    if (!vendorItems || vendorItems.length === 0) {
+      return [];
+    }
+
+    const catalogItemIds = [...new Set(vendorItems.map((vi) => vi.catalog_item_id))];
+    const { data: catalogItems, error: ciError } = await invSupabase
+      .from('catalog_items')
+      .select('id, name, sku')
+      .in('id', catalogItemIds);
+
+    if (ciError) {
+      throw AppError.internal(`Failed to fetch catalog items: ${ciError.message}`);
+    }
+
+    const catalogMap = new Map((catalogItems || []).map((ci) => [ci.id, ci]));
+
+    return (vendorItems as VendorItemRow[])
+      .map((vi) => ({
+        ...vi,
+        catalog_item: catalogMap.get(vi.catalog_item_id) || null,
+      }))
+      .sort((a, b) => {
+        if (a.is_preferred !== b.is_preferred) return a.is_preferred ? -1 : 1;
+        return (a.catalog_item?.name || '').localeCompare(b.catalog_item?.name || '');
+      }) as VendorItemDetailed[];
   },
 
   /**
    * Create a vendor item mapping
    */
   async createVendorItem(payload: VendorItemInsertPayload) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const insertPayload: VendorItemInsertPayload = {
-      ...payload,
-      last_event_id: payload.last_event_id ?? crypto.randomUUID(),
-    };
-
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .insert(insertPayload)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to create vendor item: ${error.message}`);
-    }
-
-    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+    const { last_event_id, ...rest } = payload as VendorItemInsertPayload & { last_event_id?: string };
+    void last_event_id;
+    return writeJson<Pick<VendorItemRow, 'id' | 'last_event_id'>>(
+      '/api/inventory/vendor-items', 'POST', rest, 'Failed to create vendor item');
   },
 
   /**
    * Update a vendor item mapping with optimistic concurrency control
    */
   async updateVendorItem(id: string, updates: VendorItemUpdatePayload, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
     const { id: _id, created_at, tenant_id, last_event_id, ...safeUpdates } = updates as VendorItemUpdatePayload & {
-      id?: string;
-      created_at?: string;
-      tenant_id?: string;
-      last_event_id?: string;
+      id?: string; created_at?: string; tenant_id?: string; last_event_id?: string;
     };
-
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .update({ ...safeUpdates })
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id, last_event_id')
-      .single();
-
-    if (error) {
-      throw AppError.internal(`Failed to update vendor item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorItemRow, 'id' | 'last_event_id'>;
+    void _id; void created_at; void tenant_id; void last_event_id;
+    return writeJson<Pick<VendorItemRow, 'id' | 'last_event_id'>>(
+      `/api/inventory/vendor-items/${id}`, 'PATCH',
+      { ...safeUpdates, expected_last_event_id: lastEventId }, 'Failed to update vendor item');
   },
 
   /**
    * Delete a vendor item mapping with optimistic concurrency control
    */
   async deleteVendorItem(id: string, lastEventId: string) {
-    const supabase = createBrowserAuthedClient().schema('supply_chain');
-    const { data, error } = await supabase
-      .from('vendor_items')
-      .delete()
-      .eq('id', id)
-      .eq('last_event_id', lastEventId)
-      .select('id')
-      .single();
+    return writeJson<Pick<VendorItemRow, 'id'>>(
+      `/api/inventory/vendor-items/${id}`, 'DELETE',
+      { expected_last_event_id: lastEventId }, 'Failed to delete vendor item');
+  },
 
-    if (error) {
-      throw AppError.internal(`Failed to delete vendor item: ${error.message}`);
-    }
-    if (!data) {
-      throw AppError.conflict('Vendor item was updated by someone else. Please refresh and try again.');
-    }
-
-    return data as Pick<VendorItemRow, 'id'>;
+  /**
+   * Set one price for a material across all (or a selected subset of) the
+   * vendor_items rows that carry it — company defaults and branch overrides
+   * are individual rows. Also refreshes last_known_price / price_checked_at.
+   */
+  async bulkUpdateVendorItemPrice(catalogItemId: string, unitCost: number, vendorItemIds?: string[]) {
+    return writeJson<{ updated: number; vendor_items: Array<Pick<VendorItemRow, 'id' | 'vendor_id' | 'vendor_address_id' | 'unit_cost'>> }>(
+      '/api/inventory/vendor-items/bulk-price', 'POST',
+      { catalog_item_id: catalogItemId, unit_cost: unitCost, ...(vendorItemIds?.length ? { vendor_item_ids: vendorItemIds } : {}) },
+      'Failed to update material pricing');
   },
 
   /**
@@ -554,6 +549,8 @@ export const SupplyChainRPC = {
         purchase_order_lines(
           id,
           catalog_item_id,
+          item_description,
+          uom_term_id,
           qty_ordered,
           qty_received,
           unit_cost,

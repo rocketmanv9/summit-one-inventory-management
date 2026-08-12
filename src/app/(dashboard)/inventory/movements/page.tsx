@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { HowItWorksCard, HowThisWorksButton, useHowItWorks } from '@/components/ui/HowItWorksCard';
+import { ArrowLeftRight, FileText, Undo2 } from 'lucide-react';
 import { DataTable } from '@/components/ui/DataTable';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { StatusChip } from '@/components/ui/StatusChip';
@@ -26,10 +28,17 @@ interface StockMovement {
 }
 
 export default function StockMovementsPage() {
+  const help = useHowItWorks('inventory-movements-help');
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [selectedMovement, setSelectedMovement] = useState<StockMovement | null>(null);
+
+  // ?item=<catalog_item_id> deep-links from the Inventory page's "Full history".
+  useEffect(() => {
+    const itemParam = new URLSearchParams(window.location.search).get('item');
+    if (itemParam) setFilters((prev) => ({ ...prev, catalog_item_id: itemParam }));
+  }, []);
 
   useEffect(() => {
     fetchMovements();
@@ -70,7 +79,7 @@ export default function StockMovementsPage() {
 
       if (!res.ok) {
         const result = await res.json();
-        alert(`Error: ${result.error || 'Failed to reverse movement'}`);
+        alert(`Error: ${result.error?.message || result.error || 'Failed to reverse movement'}`);
         return;
       }
 
@@ -234,7 +243,33 @@ export default function StockMovementsPage() {
         <PageHeader
           title="Stock Movements"
           description="Complete ledger of all inventory transactions"
+          actions={!help.show ? <HowThisWorksButton onClick={help.open} /> : undefined}
         />
+
+        {help.show && (
+          <div className="mt-6">
+            <HowItWorksCard
+              title="How stock movements work"
+              onDismiss={help.dismiss}
+              steps={[
+                { title: 'Every change lands here', body: 'Receipts, issues, transfers, adjustments, and cycle counts each write a signed row to this ledger. Nothing is ever edited in place.' },
+                { title: 'Filter to what you need', body: 'Narrow by movement type or state. The Inventory page’s “Full history” link deep-links here pre-filtered to one item.' },
+                { title: 'Click a row for detail', body: 'The detail view shows full IDs, the source document that generated the movement, and the reason code.' },
+                { title: 'Undo with a reversal', body: 'Reverse never deletes — it creates an offsetting entry and marks the original Reversed, so the audit trail stays intact.' },
+              ]}
+              legend={[
+                { badge: <StatusChip status="pending" />, text: 'recorded but not yet confirmed — cannot be reversed yet' },
+                { badge: <StatusChip status="confirmed" />, text: 'applied to stock balances' },
+                { badge: <StatusChip status="reversed" />, text: 'offset by a reversal entry — no longer affects balances' },
+              ]}
+              glossary={[
+                { Icon: ArrowLeftRight, term: 'Movement', blurb: 'one signed quantity change (+ in, − out) for one item at one location' },
+                { Icon: FileText, term: 'Source document', blurb: 'the purchase order, count, or other record that generated the movement' },
+                { Icon: Undo2, term: 'Reversal', blurb: 'an equal-and-opposite entry that cancels a movement without deleting history' },
+              ]}
+            />
+          </div>
+        )}
 
         <div className="mt-6">
           <FilterBar

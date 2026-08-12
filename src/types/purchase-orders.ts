@@ -18,12 +18,13 @@ export type PaymentMethod = 'invoice' | 'card' | 'cod' | 'account';
  * How orders are placed with this vendor
  * Drives UI hints and workflow guidance, not hard validation
  */
-export type OrderingMode = 
+export type OrderingMode =
   | 'email_po'              // Traditional: PO emailed to vendor
   | 'portal_with_po_ref'    // Portal ordering (Uline, Grainger) - PO # referenced during checkout
   | 'phone_with_po_ref'     // Phone ordering - PO # referenced verbally
   | 'card_only_internal_po' // Card payment (Home Depot, Amazon) - PO is internal only
   | 'pickup_only'           // In-person pickup - PO is authorization
+  | 'amazon_punchout'       // Amazon Business cXML punchout ordering
   | 'mixed';                // Vendor supports multiple methods
 
 export type OrderPlacementMethod = 'portal' | 'email' | 'phone' | 'in_person' | 'other';
@@ -160,6 +161,15 @@ export interface PurchaseOrder {
   created_by_user_id?: string;
   approved_by_user_id?: string;
   approved_at?: string;
+  // Approval routing (item 09/14): where it needs sign-off, who it routed to,
+  // the approver's own words, and the structured resolution trace.
+  approval_reason?: string;
+  approver_user_id?: string;
+  approved_reason?: string;
+  approval_route?: Record<string, unknown> | null;
+  rejected_by_user_id?: string;
+  rejected_at?: string;
+  rejected_reason?: string;
   sent_at?: string;
   sent_by_user_id?: string;
   
@@ -198,8 +208,8 @@ export interface PurchaseOrderLine {
   catalog_item_id?: string;
   item_description?: string;
   item_vendor_sku?: string;
-  unit_of_measure?: string;
-  
+  uom_term_id?: string;
+
   // Quantities
   qty_ordered: number;
   qty_received: number;
@@ -229,7 +239,9 @@ export interface PurchaseOrderLine {
 export interface CreatePORequest {
   // Required Core Fields
   vendor_id: string;
-  po_number: string;
+  // Omit to let the RPC generate one server-side (supply_chain.generate_po_number)
+  // — avoids the client-side fetch-and-increment race.
+  po_number?: string;
   delivery_method: DeliveryMethod;
   needed_by_date: string;
   cost_context: CostContext;
@@ -246,6 +258,8 @@ export interface CreatePORequest {
   notes?: string;
   attachments?: POAttachment[];
   expected_delivery_date?: string;
+  // Which vendor branch/plant this PO is priced against (supply_chain.vendor_addresses id)
+  vendor_address_id?: string;
 }
 
 export interface CreatePOLineInput {
@@ -255,7 +269,7 @@ export interface CreatePOLineInput {
   
   // Required
   qty_ordered: number;
-  unit_of_measure?: string; // Required if non-catalog
+  uom_term_id?: string; // Required if non-catalog
   
   // Optional
   item_vendor_sku?: string;
@@ -399,7 +413,7 @@ export function validatePOForm(form: CreatePOFormState): POValidationResult {
     }
     
     // Non-catalog items need UOM
-    if (!line.catalog_item_id && !line.unit_of_measure) {
+    if (!line.catalog_item_id && !line.uom_term_id) {
       errors.push(`Line ${index + 1}: Unit of measure is required for non-catalog items`);
     }
     
@@ -481,6 +495,7 @@ export function getOrderingModeLabel(mode: OrderingMode): string {
     case 'phone_with_po_ref': return 'Phone (w/ PO Ref)';
     case 'card_only_internal_po': return 'Card Only (Internal PO)';
     case 'pickup_only': return 'Pickup Only';
+    case 'amazon_punchout': return 'Amazon Punchout';
     case 'mixed': return 'Mixed Methods';
     default: return mode;
   }
@@ -488,19 +503,21 @@ export function getOrderingModeLabel(mode: OrderingMode): string {
 
 export function getOrderingModeDescription(mode: OrderingMode): string {
   switch (mode) {
-    case 'email_po': 
+    case 'email_po':
       return 'PO is emailed directly to vendor';
-    case 'portal_with_po_ref': 
+    case 'portal_with_po_ref':
       return 'Order placed in vendor portal, PO # referenced during checkout';
-    case 'phone_with_po_ref': 
+    case 'phone_with_po_ref':
       return 'Order placed by phone, PO # referenced verbally';
-    case 'card_only_internal_po': 
+    case 'card_only_internal_po':
       return 'Vendor never sees PO - internal tracking only';
-    case 'pickup_only': 
+    case 'pickup_only':
       return 'Material picked up in person, PO is authorization';
-    case 'mixed': 
+    case 'amazon_punchout':
+      return 'Order via Amazon Business punchout - items selected on Amazon and submitted automatically';
+    case 'mixed':
       return 'Vendor supports multiple ordering methods';
-    default: 
+    default:
       return '';
   }
 }
@@ -512,6 +529,7 @@ export function getOrderingModeIcon(mode: OrderingMode): string {
     case 'phone_with_po_ref': return '📞';
     case 'card_only_internal_po': return '💳';
     case 'pickup_only': return '🚚';
+    case 'amazon_punchout': return '🛒';
     case 'mixed': return '🔀';
     default: return '📋';
   }
@@ -522,9 +540,10 @@ export function shouldShowSendPOButton(mode: OrderingMode): boolean {
 }
 
 export function shouldShowExternalOrderTracking(mode: OrderingMode): boolean {
-  return mode === 'portal_with_po_ref' || 
-         mode === 'phone_with_po_ref' || 
+  return mode === 'portal_with_po_ref' ||
+         mode === 'phone_with_po_ref' ||
          mode === 'card_only_internal_po' ||
+         mode === 'amazon_punchout' ||
          mode === 'mixed';
 }
 

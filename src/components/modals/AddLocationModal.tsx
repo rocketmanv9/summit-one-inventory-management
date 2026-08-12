@@ -72,12 +72,9 @@ export function AddLocationModal({ open, onClose, onSuccess }: AddLocationModalP
     setError(null);
 
     try {
-      // Find the location type name to satisfy the location_type field
-      const locType = locationTypes.find(lt => lt.id === locationTypeId);
       const result = await InventoryRPC.createLocation({
         name: name.trim(),
         location_type_id: locationTypeId,
-        location_type: locType?.name || '',
         address: address.trim() || undefined,
         last_event_id: crypto.randomUUID(),
       });
@@ -100,9 +97,10 @@ export function AddLocationModal({ open, onClose, onSuccess }: AddLocationModalP
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="loc-name">Location Name *</Label>
+            <Label htmlFor="loc-name">Location Name <span className="text-red-500">*</span></Label>
             <Input
               id="loc-name"
               value={name}
@@ -110,17 +108,19 @@ export function AddLocationModal({ open, onClose, onSuccess }: AddLocationModalP
               placeholder="e.g., Main Warehouse, Yard A, Truck #5"
               disabled={submitting}
               autoFocus
+              aria-required="true"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="loc-type">Location Type *</Label>
+            <Label htmlFor="loc-type">Location Type <span className="text-red-500">*</span></Label>
             <select
               id="loc-type"
               value={locationTypeId}
               onChange={(e) => setLocationTypeId(e.target.value)}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               disabled={submitting}
+              aria-required="true"
             >
               <option value="">-- Select Type --</option>
               {locationTypes.map((lt) => (
@@ -157,11 +157,12 @@ export function AddLocationModal({ open, onClose, onSuccess }: AddLocationModalP
           <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSubmit} disabled={submitting}>
+          <Button type="submit" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Create Location
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

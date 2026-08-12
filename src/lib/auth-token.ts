@@ -8,6 +8,7 @@
 let cachedToken: string | null = null;
 let expiresAt = 0;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let eagerLoadStarted = false;
 
 /** Margin before expiry to trigger refresh (5 minutes). */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -128,6 +129,14 @@ export async function refreshAccessToken(): Promise<string | null> {
 
 /** Clear the cached token — alias for clearAuthToken(). */
 export const clearStoredAccessToken = clearAuthToken;
+
+// Warm the in-memory cache as soon as this module loads in the browser.
+// Several RPC helpers read the cache synchronously (getStoredAccessToken) and
+// would otherwise race the first async hydration on a hard page refresh.
+if (typeof window !== 'undefined' && !eagerLoadStarted) {
+  eagerLoadStarted = true;
+  void getAuthToken();
+}
 
 /** Redirect to the Core login page. */
 export function redirectToCoreLogin(): void {

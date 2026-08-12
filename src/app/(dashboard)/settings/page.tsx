@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Sparkles, Loader2, GitBranch, ChevronRight, ExternalLink, ShoppingCart } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
@@ -16,6 +17,8 @@ interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: 'manual' | 'sequential' | 'hybrid' | 'import';
   vendor_code_required: boolean;
   vendor_code_case: 'upper' | 'lower' | 'preserve';
@@ -47,6 +50,9 @@ type SettingsForm = {
   cycle_count_number_prefix: string;
   auto_approve_enabled: boolean;
   auto_approve_limit: string;
+  reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
+  auto_schedule_counts_enabled: boolean;
+  agent_permissions: Record<string, 'off' | 'ask' | 'auto'>;
   vendor_code_strategy: VendorCodeStrategy;
   vendor_code_required: boolean;
   vendor_code_case: VendorCodeCase;
@@ -68,16 +74,28 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexMsg, setReindexMsg] = useState('');
+  const [reindexErr, setReindexErr] = useState('');
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorLimits, setVendorLimits] = useState<Record<string, string>>({});
-
   const [form, setForm] = useState<SettingsForm>({
     po_number_format: 'sequential-year',
     po_number_prefix: '',
     cycle_count_number_format: 'date-sequential',
     cycle_count_number_prefix: 'CC',
-    auto_approve_enabled: false,
+    auto_approve_enabled: true,
     auto_approve_limit: '',
+    reorder_mode: 'auto_draft',
+    auto_schedule_counts_enabled: false,
+    agent_permissions: {
+      stock_adjust: 'ask',
+      stock_issue: 'ask',
+      transfer: 'ask',
+      reserve: 'ask',
+      create_records: 'auto',
+      purchase_orders: 'ask',
+    },
     vendor_code_strategy: 'manual',
     vendor_code_required: false,
     vendor_code_case: 'preserve',
@@ -125,8 +143,19 @@ export default function SettingsPage() {
           po_number_prefix: data.po_number_prefix || '',
           cycle_count_number_format: data.cycle_count_number_format || 'date-sequential',
           cycle_count_number_prefix: data.cycle_count_number_prefix || 'CC',
-          auto_approve_enabled: data.auto_approve_enabled || false,
+          auto_approve_enabled: data.auto_approve_enabled ?? true,
           auto_approve_limit: data.auto_approve_limit ? data.auto_approve_limit.toString() : '',
+          reorder_mode: data.reorder_mode || 'auto_draft',
+          auto_schedule_counts_enabled: data.auto_schedule_counts_enabled ?? false,
+          agent_permissions: {
+            stock_adjust: 'ask',
+            stock_issue: 'ask',
+            transfer: 'ask',
+            reserve: 'ask',
+            create_records: 'auto',
+            purchase_orders: 'ask',
+            ...(data.agent_permissions || {}),
+          },
           vendor_code_strategy: data.vendor_code_strategy || 'manual',
           vendor_code_required: data.vendor_code_required || false,
           vendor_code_case: data.vendor_code_case || 'preserve',
@@ -186,6 +215,9 @@ export default function SettingsPage() {
         cycle_count_number_prefix: form.cycle_count_number_prefix || null,
         auto_approve_enabled: form.auto_approve_enabled,
         auto_approve_limit: form.auto_approve_limit ? parseFloat(form.auto_approve_limit) : null,
+        reorder_mode: form.reorder_mode,
+        auto_schedule_counts_enabled: form.auto_schedule_counts_enabled,
+        agent_permissions: form.agent_permissions,
         vendor_auto_approve_limits: vendorLimitsObj,
         vendor_code_strategy: form.vendor_code_strategy,
         vendor_code_required: form.vendor_code_required,
@@ -211,6 +243,41 @@ export default function SettingsPage() {
       setError('Failed to update settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReindex = async () => {
+    if (!isAdmin || reindexing) return;
+    setReindexing(true);
+    setReindexErr('');
+    setReindexMsg('');
+    try {
+      const res = await fetch('/api/ai/reindex', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-idempotency-key': `reindex-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setReindexErr(json?.error?.message || `Request failed (${res.status})`);
+        return;
+      }
+      const d = json.data || json;
+      const remaining = d.itemsRemaining
+        ? ` (${d.itemsRemaining} still pending — run again)`
+        : '';
+      setReindexMsg(
+        `Done — embedded ${d.itemsEmbedded ?? 0} item(s)${remaining}; linked ` +
+          `${d.relationships?.supplied_by ?? 0} supplier and ${d.relationships?.stored_at ?? 0} location relationships.`
+      );
+    } catch (e: any) {
+      setReindexErr(e?.message || 'Reindex failed. Please try again.');
+    } finally {
+      setReindexing(false);
     }
   };
 
@@ -250,6 +317,7 @@ export default function SettingsPage() {
         description="Configure purchase order numbering and approval rules"
       />
 
+
       {!isAdmin && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-yellow-800 font-medium">⚠️ Admin Access Required</p>
@@ -258,6 +326,57 @@ export default function SettingsPage() {
           </p>
         </div>
       )}
+
+      {/* Related settings surfaces that live on their own page. */}
+      <a
+        href="/settings/purchase-approvals"
+        className="mb-6 flex max-w-5xl items-center gap-3 rounded-lg border bg-white p-4 hover:border-primary hover:bg-primary/5"
+      >
+        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <GitBranch className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Purchase approvals</span>
+          <span className="block text-sm text-gray-500">
+            See who approves purchases for whom and from where, and simulate any buyer/location.
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />
+      </a>
+
+      {/* Configurable external purchase links, gated by position (sprint item 04). */}
+      <a
+        href="/settings/purchase-links"
+        className="mb-6 flex max-w-5xl items-center gap-3 rounded-lg border bg-white p-4 hover:border-primary hover:bg-primary/5"
+      >
+        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <ExternalLink className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Purchase links</span>
+          <span className="block text-sm text-gray-500">
+            Outside sites your team can buy from — e.g. business cards on Canva for Estimators — gated by position.
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />
+      </a>
+
+      {/* Configurable internal buyable item groups, gated by position (sprint item 11). */}
+      <a
+        href="/settings/buyable-groups"
+        className="mb-6 flex max-w-5xl items-center gap-3 rounded-lg border bg-white p-4 hover:border-primary hover:bg-primary/5"
+      >
+        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <ShoppingCart className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Who can buy what</span>
+          <span className="block text-sm text-gray-500">
+            Groups of catalog items each position can buy — e.g. an Estimator kit — surfaced as a quick action.
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />
+      </a>
 
       <div className="max-w-5xl">
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -301,6 +420,139 @@ export default function SettingsPage() {
                   Optional prefix to add before the number (e.g., "PO" → PO-26-0001)
                 </p>
               </div>
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">When stock runs low</label>
+                <p className="text-sm text-gray-500">
+                  How Isabelle handles reorder needs found by the daily scan. Reorder alerts and
+                  unusual-usage flags always appear in your notifications either way.
+                </p>
+              </div>
+              {([
+                {
+                  value: 'notify',
+                  title: 'Notify me only',
+                  desc: 'Just flag what needs reordering. You (or Isabelle, on request) create the PO.',
+                },
+                {
+                  value: 'auto_draft',
+                  title: 'Auto-create draft POs',
+                  desc: 'Build draft purchase orders automatically for you to review. Nothing is sent until you approve.',
+                },
+                {
+                  value: 'auto_send',
+                  title: 'Auto-create & send',
+                  desc: 'Create and send POs to vendors automatically. (Currently creates drafts — auto-send to vendors is coming soon.)',
+                },
+              ] as const).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors ${
+                    form.reorder_mode === opt.value
+                      ? 'border-primary bg-primary/5'
+                      : 'border-gray-200 hover:border-gray-300'
+                  } ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="reorder_mode"
+                    value={opt.value}
+                    checked={form.reorder_mode === opt.value}
+                    onChange={() => setForm({ ...form, reorder_mode: opt.value })}
+                    className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary"
+                    disabled={!isAdmin}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{opt.title}</div>
+                    <div className="text-sm text-gray-500">{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">Auto-schedule cycle counts</label>
+                <p className="text-sm text-gray-500">
+                  When on, a nightly job turns the top cycle-count suggestions into real assigned
+                  counts (one per location, spread across your qualified counters, scheduled for the
+                  next day). You can still schedule on demand from the Cycle Count Suggestions widget
+                  regardless of this setting.
+                </p>
+              </div>
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                  form.auto_schedule_counts_enabled
+                    ? 'border-primary bg-primary/5'
+                    : 'border-gray-200 hover:border-gray-300'
+                } ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.auto_schedule_counts_enabled}
+                  onChange={(e) => setForm({ ...form, auto_schedule_counts_enabled: e.target.checked })}
+                  className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary"
+                  disabled={!isAdmin}
+                />
+                <div>
+                  <div className="text-sm font-medium">Schedule suggested counts nightly</div>
+                  <div className="text-sm text-gray-500">
+                    Off by default. Turn on once your qualified counters are set up.
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <div className="space-y-3 border-t pt-4">
+              <div>
+                <label className="block text-sm font-medium">What Isabelle can do</label>
+                <p className="text-sm text-gray-500">
+                  Control which actions the assistant can take. <strong>Off</strong> = she won&apos;t do
+                  it, <strong>Ask first</strong> = she previews and waits for your OK, <strong>Auto</strong>
+                  = she just does it.
+                </p>
+              </div>
+              {([
+                { key: 'stock_adjust', label: 'Adjust stock levels', desc: 'Set or correct on-hand quantities.' },
+                { key: 'stock_issue', label: 'Issue stock', desc: 'Release stock to jobs, trucks, or people.' },
+                { key: 'transfer', label: 'Transfer stock', desc: 'Move stock between locations.' },
+                { key: 'reserve', label: 'Reservations', desc: 'Reserve stock and release reservations.' },
+                { key: 'create_records', label: 'Create records', desc: 'Add vendors, items, locations, categories, assets.' },
+                { key: 'purchase_orders', label: 'Purchase orders', desc: 'Create draft purchase orders.' },
+              ] as const).map((cap) => (
+                <div key={cap.key} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{cap.label}</div>
+                    <div className="text-sm text-gray-500">{cap.desc}</div>
+                  </div>
+                  <div className="flex flex-shrink-0 rounded-lg border p-0.5">
+                    {(['off', 'ask', 'auto'] as const).map((lvl) => {
+                      const active = (form.agent_permissions[cap.key] || 'ask') === lvl;
+                      const labels: Record<string, string> = { off: 'Off', ask: 'Ask first', auto: 'Auto' };
+                      return (
+                        <button
+                          key={lvl}
+                          type="button"
+                          disabled={!isAdmin}
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              agent_permissions: { ...form.agent_permissions, [cap.key]: lvl },
+                            })
+                          }
+                          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                            active ? 'bg-primary text-primary-foreground' : 'text-gray-600 hover:bg-gray-100'
+                          } ${!isAdmin ? 'cursor-not-allowed opacity-60' : ''}`}
+                        >
+                          {labels[lvl]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
 
             <div className="space-y-4 border-t pt-4">
@@ -627,6 +879,55 @@ export default function SettingsPage() {
           </div>
         </form>
 
+        {/* AI Assistant Panel */}
+        <div className="mt-6 bg-white rounded-lg border p-6">
+          <h3 className="text-lg font-semibold pb-2 border-b flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-teal-600" />
+            AI Assistant (Isabelle)
+          </h3>
+          <p className="text-sm text-gray-600 mt-3">
+            Rebuild Isabelle&apos;s search knowledge: generate item embeddings (powers semantic
+            search) and refresh the ontology of items, vendors, locations, and their
+            supplier/storage relationships. Run this after adding or importing items so
+            &quot;find me something like…&quot; and substitute lookups work.
+          </p>
+
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              type="button"
+              onClick={handleReindex}
+              disabled={!isAdmin || reindexing}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {reindexing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Reindexing…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Reindex AI Knowledge
+                </>
+              )}
+            </button>
+            {!isAdmin && (
+              <span className="text-sm text-gray-500">Admin access required.</span>
+            )}
+          </div>
+
+          {reindexMsg && (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+              <p className="text-sm text-green-800">{reindexMsg}</p>
+            </div>
+          )}
+          {reindexErr && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-800">{reindexErr}</p>
+            </div>
+          )}
+        </div>
+
         {/* Info Box */}
         <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h4 className="font-medium text-blue-900 mb-2">📋 How it works</h4>
@@ -638,6 +939,7 @@ export default function SettingsPage() {
           </ul>
         </div>
       </div>
+
     </AppShell>
   );
 }

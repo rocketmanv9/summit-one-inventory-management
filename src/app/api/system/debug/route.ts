@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { createReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { runDiagnostics } from '@rocketmanv9/chassis/diagnostics';
 import { detectEnvironment } from '@rocketmanv9/chassis/config';
 import { createServiceClientUnsafe } from '@rocketmanv9/chassis/supabase';
@@ -12,11 +12,11 @@ import { createServiceClientUnsafe } from '@rocketmanv9/chassis/supabase';
  * without tenant scoping — this is intentional and not a security concern
  * since the route is gated to non-production environments.
  */
-export async function GET() {
+export const GET = createReadRoute(async () => {
   const env = detectEnvironment();
 
   if (env === 'production') {
-    return new NextResponse(null, { status: 404 });
+    return new Response(null, { status: 404 });
   }
 
   let supabaseClient: any = undefined;
@@ -36,5 +36,5 @@ export async function GET() {
     supabaseClient,
   });
 
-  return NextResponse.json(result);
-}
+  return Response.json(result);
+}, { serviceName: process.env.INTERNAL_JWT_ISSUER || 'summit-inventory' });
