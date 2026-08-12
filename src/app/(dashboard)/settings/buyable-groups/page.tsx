@@ -64,7 +64,20 @@ const EMPTY_FORM: FormState = {
   items: [],
 };
 
+// useViewAs() only works INSIDE <AppShell> (it mounts the ViewAsProvider).
+// Calling it in the same component that renders the shell silently returned the
+// provider-less defaults — no position chips and isAdmin=false, which made this
+// editor read-only for everyone (groups could only be configured by SQL).
+// Fixed 2026-08-12 (tyler-ideas item 02) by splitting shell and content.
 export default function BuyableGroupsPage() {
+  return (
+    <AppShell>
+      <BuyableGroupsContent />
+    </AppShell>
+  );
+}
+
+function BuyableGroupsContent() {
   const { positions, isAdmin } = useViewAs();
   const uomLabels = useUOMLabelMap();
   const [groups, setGroups] = useState<BuyableGroup[]>([]);
@@ -237,7 +250,7 @@ export default function BuyableGroupsPage() {
   const inactiveGroups = groups.filter((g) => !g.active);
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Who can buy what"
         description="Groups of catalog items each position is allowed to buy — a quick action to get stuff."
@@ -250,6 +263,8 @@ export default function BuyableGroupsPage() {
           these items; their picks become a draft purchase order that rides the normal approval flow.
           Leave positions empty to keep a group admin-only. Looking for outside sites instead?{' '}
           <a href="/settings/purchase-links" className="font-medium underline">Purchase links</a>.
+          Prefer one grid of every position × group?{' '}
+          <a href="/inventory/buying-access" className="font-medium underline">Buying access matrix</a>.
         </p>
       </div>
 
@@ -423,7 +438,7 @@ export default function BuyableGroupsPage() {
         emptyMessage="No catalog items available."
         onSelect={(item) => addItem(item)}
       />
-    </AppShell>
+    </>
   );
 }
 

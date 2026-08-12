@@ -1,7 +1,7 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 
-import { loadAllowedGroupsForCaller, resolveBestVendorItems } from '@/lib/buyable-groups';
+import { buildConsumerGroupsPayload, loadAllowedGroupsForCaller } from '@/lib/buyable-groups';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -19,6 +19,8 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 //   returned. est_unit_cost / preferred_vendor_name come from the best
 //   vendor_items row (preferred, then cheapest) and are null when none is known.
 //   Auth: session. Position gating is server-side and cannot be bypassed.
+//   The shaping lives in buildConsumerGroupsPayload so the admin preview-as
+//   surface (/buyable-groups/preview) renders EXACTLY this response.
 export const GET = createSessionReadRoute(async ({ session, log }) => {
   const tenantId = session.tenantId!;
   const userId = session.userId!;
@@ -30,46 +32,7 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
   });
 
   const { groups } = await loadAllowedGroupsForCaller(supabase, tenantId, userId);
-
-  // Resolve UOM labels + best vendor/price across every item once.
-  const allCatalogIds = groups.flatMap((g) => g.items.map((it) => it.catalog_item_id));
-  const uomTermIds = Array.from(
-    new Set(groups.flatMap((g) => g.items.map((it) => it.uom_term_id).filter(Boolean))),
-  ) as string[];
-
-  const bestVendors = await resolveBestVendorItems(supabase, tenantId, allCatalogIds);
-
-  // UOM labels from GV — best-effort; null on failure. displayLabels resolves the
-  // exact term ids (via rpc_gv_display_labels), which also picks up tenant-specific
-  // terms that a domain listing (buildLabelMap) can miss.
-  const uomLabels: Record<string, string> = {};
-  if (uomTermIds.length > 0) {
-    try {
-      const { getGVClient } = await import('@/lib/gv');
-      const gv = getGVClient();
-      const results = await gv.displayLabels(tenantId, uomTermIds as any);
-      for (const r of results) uomLabels[r.term_id as unknown as string] = r.label;
-    } catch (e: any) {
-      log.warn('buyable_groups.uom_labels_failed', { error: e?.message });
-    }
-  }
-
-  const data = groups.map((g) => ({
-    group: { id: g.id, name: g.name, description: g.description },
-    items: g.items.map((it) => {
-      // An admin-pinned vendor overrides the resolved one for the display name,
-      // but we only have a price from the resolved best row.
-      const best = bestVendors.get(it.catalog_item_id);
-      return {
-        catalog_item_id: it.catalog_item_id,
-        name: it.name,
-        uom: it.uom_term_id ? uomLabels[it.uom_term_id] ?? null : null,
-        default_qty: it.default_qty,
-        est_unit_cost: best?.unit_cost ?? null,
-        preferred_vendor_name: best?.vendor_name ?? null,
-      };
-    }),
-  }));
+  const data = await buildConsumerGroupsPayload(supabase, tenantId, groups, (msg, meta) => log.warn(msg, meta));
 
   return Response.json({ data });
 }, { serviceName: SERVICE_NAME });

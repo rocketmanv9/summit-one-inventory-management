@@ -56,7 +56,19 @@ const EMPTY_FORM: FormState = {
   sort_order: '0',
 };
 
+// useViewAs() only works INSIDE <AppShell> (it mounts the ViewAsProvider).
+// Calling it in the same component that renders the shell silently returned the
+// provider-less defaults — no position chips and isAdmin=false, which made this
+// editor read-only for everyone. Fixed 2026-08-12 (tyler-ideas item 02).
 export default function PurchaseLinksPage() {
+  return (
+    <AppShell>
+      <PurchaseLinksContent />
+    </AppShell>
+  );
+}
+
+function PurchaseLinksContent() {
   const { positions, isAdmin } = useViewAs();
   const [links, setLinks] = useState<PurchaseLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,7 +201,7 @@ export default function PurchaseLinksPage() {
   const inactiveLinks = links.filter((l) => !l.active);
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Purchase links"
         description="Outside sites your team is allowed to buy from — gated by position."
@@ -379,7 +391,7 @@ export default function PurchaseLinksPage() {
           </div>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }
 

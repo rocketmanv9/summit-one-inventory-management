@@ -134,6 +134,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { title: 'Approvals', href: '/inventory/purchasing/approvals', icon: ClipboardCheck },
       { title: 'Vendors', href: '/inventory/vendors', icon: Users },
       { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },
+      // Position×group buying matrix (tyler-ideas item 02) — the visual admin
+      // layer over buyable groups (/settings/buyable-groups is the list form).
+      { title: 'Buying Access', href: '/inventory/buying-access', icon: ShieldCheck },
       // Parked analytics — ask Isabelle "which vendor keeps shorting us?".
       { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view', hidden: true },
     ],
