@@ -111,7 +111,7 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   let query = sc
     .from('purchase_orders')
     .select(
-      'id, po_number, origin, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(qty_ordered, unit_cost, estimated_unit_cost, status)',
+      'id, po_number, origin, vendor_name_snapshot, vendor_code_snapshot, created_by_user_id, approver_user_id, approval_reason, delivery_location_id, created_at, approved_at, approved_by_user_id, rejected_at, rejected_by_user_id, rejected_reason, purchase_order_lines(line_number, catalog_item_id, item_description, qty_ordered, unit_cost, estimated_unit_cost, status)',
       { count: 'exact' }
     );
 
@@ -160,6 +160,31 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   const nameById = new Map((people ?? []).map((b: any) => [b.user_id, b.name || b.email]));
   const locById = new Map((locs ?? []).map((l: any) => [l.id, l.name]));
 
+  // Line detail for the pending inbox only (the mobile one-by-one approval
+  // runner shows what's actually being bought). Catalog lines often carry no
+  // item_description snapshot, so resolve their display names in one
+  // cross-schema hop. History payloads stay slim — no lines there.
+  const itemNameById = new Map<string, string>();
+  if (params.status === 'pending') {
+    const catalogIds = [
+      ...new Set(
+        (pos ?? [])
+          .flatMap((p: any) => p.purchase_order_lines ?? [])
+          .map((l: any) => l.catalog_item_id)
+          .filter(Boolean)
+      ),
+    ] as string[];
+    if (catalogIds.length) {
+      const { data: cat } = await (supabase as any)
+        .schema('inventory')
+        .from('catalog_items')
+        .select('id, name')
+        .in('id', catalogIds)
+        .limit(1000);
+      for (const c of cat ?? []) itemNameById.set(c.id, c.name);
+    }
+  }
+
   const items = (pos ?? []).map((p: any) => {
     const deciderId = params.status === 'denied' ? p.rejected_by_user_id : p.approved_by_user_id;
     return {
@@ -179,6 +204,31 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
       created_at: p.created_at,
       // Buyers never approve their own — even when it routed to them somehow.
       can_decide: p.created_by_user_id !== userId,
+      // What's on the PO — pending only (feeds the mobile approval runner).
+      // ADDITIVE: existing consumers (web inbox, mobile list) ignore this.
+      lines:
+        params.status === 'pending'
+          ? (p.purchase_order_lines ?? [])
+              .filter((l: any) => l.status !== 'cancelled')
+              .sort((a: any, b: any) => (a.line_number ?? 0) - (b.line_number ?? 0))
+              .map((l: any) => {
+                const unitCost = l.unit_cost ?? l.estimated_unit_cost;
+                return {
+                  description:
+                    l.item_description || itemNameById.get(l.catalog_item_id) || 'Item',
+                  qty: Number(l.qty_ordered),
+                  // NB: stage stores a GV uom_term_id, not a display label —
+                  // resolving labels is a GV round-trip we skip here. Null is
+                  // honest and the mobile runner renders qty × description.
+                  uom: null,
+                  unit_cost: unitCost != null ? Number(unitCost) : null,
+                  line_total:
+                    unitCost != null ? Number(l.qty_ordered) * Number(unitCost) : null,
+                  // True when the price is a buyer estimate, not a committed cost.
+                  estimated: l.unit_cost == null && l.estimated_unit_cost != null,
+                };
+              })
+          : undefined,
       // History fields (null on the pending tab).
       decided_by: deciderId ? nameById.get(deciderId) || 'Unknown' : null,
       decided_at: params.status === 'denied' ? p.rejected_at : params.status === 'approved' ? p.approved_at : null,
