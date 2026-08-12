@@ -131,6 +131,9 @@ export const NAV_SECTIONS: NavSection[] = [
     capability: 'purchasing',
     tabs: [
       { title: 'Purchase Orders', href: '/inventory/purchasing', icon: ShoppingCart },
+      // Shopping list → vendor suggestions (tyler-ideas item 15): enter what you
+      // need, get the best vendor per item + the smartest list split, draft POs.
+      { title: 'Shopping List', href: '/inventory/purchasing/shopping-list', icon: Sparkles },
       { title: 'Approvals', href: '/inventory/purchasing/approvals', icon: ClipboardCheck },
       { title: 'Vendors', href: '/inventory/vendors', icon: Users },
       { title: 'Vendor Items', href: '/inventory/vendor-items', icon: PackageSearch },

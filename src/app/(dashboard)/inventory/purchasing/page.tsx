@@ -525,6 +525,12 @@ export default function PurchasingPage() {
                 </button>
                 <CapabilityGate capability="purchase_orders.manage">
                   <Link
+                    href="/inventory/purchasing/shopping-list"
+                    className="flex items-center gap-1.5 px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/10 transition-colors"
+                  >
+                    <Sparkles className="h-4 w-4" /> Shopping List
+                  </Link>
+                  <Link
                     href="/inventory/purchasing/create"
                     className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
                   >
