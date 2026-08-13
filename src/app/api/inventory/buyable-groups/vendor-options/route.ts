@@ -9,10 +9,12 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // dropdown (item 02, tyler-ideas sprint):
 //   GET /api/inventory/buyable-groups/vendor-options?catalog_item_ids=a,b,c
 //     → 200 { data: { [catalog_item_id]: [ { vendor_id, vendor_name,
-//                       unit_cost | null, is_preferred } ] } }
+//                       unit_cost | null, is_preferred, vendor_item_id } ] } }
 // Reads supply_chain.vendor_items (active rows) — the same table the draft-PO
 // path resolves against — so pinning a vendor here always pins a real option.
 // Options are sorted the way resolution ranks them: preferred, then cheapest.
+// vendor_item_id (item 03) is the underlying vendor_items row id — what a
+// fulfillment_kind='vendor_item' pin stores. Additive; older callers ignore it.
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const tenantId = session.tenantId!;
   const url = new URL(req.url);
@@ -29,7 +31,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   const { data: rows, error } = await sc
     .from('vendor_items')
-    .select('catalog_item_id, vendor_id, unit_cost, is_preferred, active')
+    .select('id, catalog_item_id, vendor_id, unit_cost, is_preferred, active')
     .in('catalog_item_id', ids)
     .limit(5000);
   if (error) { log.error('buyable_groups.vendor_options_failed', { error: error.message }); throw AppError.internal(error.message); }
@@ -47,7 +49,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     for (const v of vendors ?? []) vendorNames.set(v.id, v.name);
   }
 
-  const data: Record<string, Array<{ vendor_id: string; vendor_name: string | null; unit_cost: number | null; is_preferred: boolean }>> = {};
+  const data: Record<string, Array<{ vendor_id: string; vendor_name: string | null; unit_cost: number | null; is_preferred: boolean; vendor_item_id: string }>> = {};
   for (const r of active) {
     if (!data[r.catalog_item_id]) data[r.catalog_item_id] = [];
     data[r.catalog_item_id].push({
@@ -55,12 +57,13 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
       vendor_name: vendorNames.get(r.vendor_id) ?? null,
       unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
       is_preferred: !!r.is_preferred,
+      vendor_item_id: r.id,
     });
   }
   // Dedupe (an item can have default + branch-override rows for one vendor) and
   // sort the way PO resolution ranks: preferred first, then cheapest.
   for (const key of Object.keys(data)) {
-    const seen = new Map<string, { vendor_id: string; vendor_name: string | null; unit_cost: number | null; is_preferred: boolean }>();
+    const seen = new Map<string, { vendor_id: string; vendor_name: string | null; unit_cost: number | null; is_preferred: boolean; vendor_item_id: string }>();
     for (const opt of data[key]) {
       const cur = seen.get(opt.vendor_id);
       const better = !cur

@@ -20,6 +20,8 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 //        (or ?group_id=<uuid> for every link across a group's items)
 //        &include_people=1 → also returns the active HR roster as the person
 //        picker source (hr_person_id + name + email + position title).
+//        include_people=1 with NO group ref is allowed (item 03): the create
+//        wizard needs the roster before its group exists — links come back [].
 //     → 200 { data: [ { id, group_item_id, hr_person_id, url, active,
 //                        person_name, person_email } ], people?: [...] }
 //
@@ -31,7 +33,7 @@ const ListQuerySchema = z.object({
   group_item_id: z.string().uuid().optional(),
   group_id: z.string().uuid().optional(),
   include_people: z.string().optional(),
-}).refine((q) => q.group_item_id || q.group_id, { message: 'Pass group_item_id or group_id' });
+}).refine((q) => q.group_item_id || q.group_id || q.include_people, { message: 'Pass group_item_id or group_id (or include_people=1 for the roster alone)' });
 
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const tenantId = session.tenantId!;
@@ -50,11 +52,11 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   await assertCapability(supabase, { tenantId, userId: session.userId! }, 'purchase_orders.manage');
   const sc = (supabase as any).schema('supply_chain');
 
-  // Resolve the group-item id set to list links for.
-  let groupItemIds: string[];
+  // Resolve the group-item id set to list links for (none = roster-only call).
+  let groupItemIds: string[] = [];
   if (q.group_item_id) {
     groupItemIds = [q.group_item_id];
-  } else {
+  } else if (q.group_id) {
     const { data: items, error: iErr } = await sc
       .from('buyable_item_group_items')
       .select('id')

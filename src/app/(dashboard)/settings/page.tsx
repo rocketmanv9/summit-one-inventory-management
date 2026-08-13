@@ -361,18 +361,19 @@ export default function SettingsPage() {
         <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />
       </a>
 
-      {/* Configurable internal buyable item groups, gated by position (sprint item 11). */}
+      {/* Buyable things + who can buy them — the reworked buying-access surface
+          (item 03; the old /settings/buyable-groups list editor folded into it). */}
       <a
-        href="/settings/buyable-groups"
+        href="/inventory/buying-access"
         className="mb-6 flex max-w-5xl items-center gap-3 rounded-lg border bg-white p-4 hover:border-primary hover:bg-primary/5"
       >
         <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <ShoppingCart className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium">Who can buy what</span>
+          <span className="block text-sm font-medium">Buying access</span>
           <span className="block text-sm text-gray-500">
-            Groups of catalog items each position can buy — e.g. an Estimator kit — surfaced as a quick action.
+            Set up the things people can buy — items with exact fulfillment (catalog, pinned vendor, or link) — and which positions get them.
           </span>
         </span>
         <ChevronRight className="h-5 w-5 flex-shrink-0 text-gray-400" />

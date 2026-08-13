@@ -393,6 +393,9 @@ export interface VendorItemBest {
   vendor_id: string;
   unit_cost: number | null;
   vendor_name: string | null;
+  /** True when the winning row won because it's the marked-preferred vendor
+   *  (vs merely the cheapest) — lets admin surfaces say WHY this vendor. */
+  is_preferred: boolean;
 }
 
 /**
@@ -449,6 +452,7 @@ export async function resolveBestVendorItems(
       vendor_id: r.vendor_id,
       unit_cost: r.unit_cost != null ? Number(r.unit_cost) : null,
       vendor_name: vendorNames.get(r.vendor_id) ?? null,
+      is_preferred: !!r.is_preferred,
     });
   }
   return out;
