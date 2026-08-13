@@ -100,7 +100,7 @@ export const POST = createSessionWriteRoute<PostbackResult>(async ({ ctx, req, l
     by: SERVICE_NAME,
   };
 
-  const res = await fetch(`${base}/api/fleet/shop-requests/${encodeURIComponent(body.source_ref)}`, {
+  const res = await fetch(`${base}/api/internal/fleet/shop-requests/${encodeURIComponent(body.source_ref)}`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
