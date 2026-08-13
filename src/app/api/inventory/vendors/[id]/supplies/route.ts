@@ -37,7 +37,9 @@ function extractVendorId(req: Request): string {
   const segs = new URL(req.url).pathname.split('/');
   const id = segs[segs.indexOf('vendors') + 1];
   if (!id) throw AppError.badRequest('Missing vendor id');
-  return z.string().uuid().parse(id);
+  const parsed = z.string().uuid().safeParse(id);
+  if (!parsed.success) throw AppError.badRequest('Invalid vendor id');
+  return parsed.data;
 }
 
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, idempotencyKey }) => {

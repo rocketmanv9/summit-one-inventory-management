@@ -122,7 +122,9 @@ function toDomain(input: string | null): string | null {
 }
 
 /** Coerce the model's JSON into the strict card shape. Never invents fields. */
-export function normalizeCardExtraction(raw: any): {
+// NOTE: not exported — Next's generated route type check (TS2344) rejects any
+// non-HTTP export from a route file, which fails tsc and the Vercel build.
+function normalizeCardExtraction(raw: any): {
   vendor: ExtractedCardVendor;
   confidence: number;
   field_confidence: Record<string, number>;
