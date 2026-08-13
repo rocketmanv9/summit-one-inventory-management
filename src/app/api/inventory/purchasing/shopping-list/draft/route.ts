@@ -14,7 +14,7 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // ── Shopping list → draft POs grouped by vendor (item 15) ────────────────────
 //   POST /api/inventory/purchasing/shopping-list/draft
 //     body {
-//       lines: [ { catalog_item_id, qty, vendor_id? , unit_cost? } ],
+//       lines: [ { catalog_item_id?, text?, qty, vendor_id? , unit_cost? } ],
 //       delivery_location_id?, note?
 //     }
 //     → 200 { data: { purchase_orders: [ { po_id, po_number, status, vendor_id | null, line_count } ] } }
@@ -28,16 +28,31 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // approval gate always applies (item 14 makes those drafts visible). This is the
 // generalized, buyer-facing twin of the buyable-groups /request route (which is
 // the position-gated mobile quick-buy); the split logic here is the same one.
+//
+// Item 04 (snap-a-list) additive extension: a line may carry free `text` INSTEAD
+// of a catalog_item_id — a handwritten-list line with no catalog match still gets
+// bought. Text-only lines can never carry a vendor, so they always land on the
+// placeholder-vendor draft as written ("Requested (no catalog match): ...").
+// Existing callers (catalog_item_id on every line) are unaffected.
 
 const DraftSchema = z.object({
   lines: z
     .array(
-      z.object({
-        catalog_item_id: z.string().uuid(),
-        qty: z.number().positive().max(100000),
-        vendor_id: z.string().uuid().nullable().optional(),
-        unit_cost: z.number().nonnegative().nullable().optional(),
-      }),
+      z
+        .object({
+          catalog_item_id: z.string().uuid().nullable().optional(),
+          /** Free-text item (item 04): drafted as written when no catalog match exists. */
+          text: z.string().trim().min(1).max(300).optional(),
+          qty: z.number().positive().max(100000),
+          vendor_id: z.string().uuid().nullable().optional(),
+          unit_cost: z.number().nonnegative().nullable().optional(),
+        })
+        .refine((l) => l.catalog_item_id || l.text, {
+          message: 'Each line needs a catalog_item_id or free text.',
+        })
+        .refine((l) => l.catalog_item_id || !l.vendor_id, {
+          message: 'Free-text lines cannot carry a vendor — they go on the placeholder draft.',
+        }),
     )
     .min(1)
     .max(200),
@@ -59,12 +74,14 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
   const inv = (supabase as any).schema('inventory');
 
   // Resolve item names once so free-text (no-vendor) lines carry a description.
-  const catalogIds = [...new Set(body.lines.map((l) => l.catalog_item_id))];
-  const { data: catRows } = await inv
-    .from('catalog_items')
-    .select('id, name')
-    .in('id', catalogIds)
-    .limit(5000);
+  const catalogIds = [...new Set(body.lines.map((l) => l.catalog_item_id).filter((id): id is string => !!id))];
+  const { data: catRows } = catalogIds.length > 0
+    ? await inv
+        .from('catalog_items')
+        .select('id, name')
+        .in('id', catalogIds)
+        .limit(5000)
+    : { data: [] as any[] };
   const nameById = new Map<string, string | null>((catRows ?? []).map((c: any) => [c.id, c.name ?? null]));
 
   // Delivery location: caller-provided, else the tenant's default ship-to yard.
@@ -74,11 +91,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
   }
 
   // Bucket lines by chosen vendor. `null` = no vendor → free-text placeholder PO.
-  const byVendor = new Map<string | null, Array<{ catalog_item_id: string; qty: number; unit_cost: number | null }>>();
+  // Text-only lines (no catalog match) always land in the null bucket by schema.
+  const byVendor = new Map<string | null, Array<{ catalog_item_id: string | null; text: string | null; qty: number; unit_cost: number | null }>>();
   for (const l of body.lines) {
     const vendorId = l.vendor_id ?? null;
     if (!byVendor.has(vendorId)) byVendor.set(vendorId, []);
-    byVendor.get(vendorId)!.push({ catalog_item_id: l.catalog_item_id, qty: l.qty, unit_cost: l.unit_cost ?? null });
+    byVendor.get(vendorId)!.push({
+      catalog_item_id: l.catalog_item_id ?? null,
+      text: l.text?.trim() || null,
+      qty: l.qty,
+      unit_cost: l.unit_cost ?? null,
+    });
   }
 
   const eachUom = byVendor.has(null) ? await resolveEachUomTermId(tenantId) : null;
@@ -105,7 +128,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
         throw AppError.internal('Could not resolve a default unit of measure for the unassigned-vendor draft lines.');
       }
       poLines = lines.map((l) => ({
-        item_description: nameById.get(l.catalog_item_id) ?? 'Requested item',
+        item_description: l.catalog_item_id
+          ? nameById.get(l.catalog_item_id) ?? 'Requested item'
+          : `Requested (no catalog match): ${l.text ?? 'item'}`,
         uom_term_id: eachUom,
         qty_ordered: l.qty,
         price_basis: 'unknown',
