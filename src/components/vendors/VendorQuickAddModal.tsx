@@ -18,7 +18,7 @@
  * existing VendorModal for the detailed path.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, AlertTriangle, Globe, Loader2, Mail, MapPin, Phone, Search, Sparkles, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Globe, Loader2, Mail, MapPin, Phone, ScanLine, Search, Sparkles, X } from 'lucide-react';
 import { useVendorTypeTerms } from '@/hooks/useGVTerms';
 import {
   createVendorFromDraft,
@@ -42,6 +42,7 @@ import {
 } from '@/lib/vendor-draft';
 import { discoverVendors, type VendorCandidate } from '@/lib/ai/client';
 import { VendorMatchCard } from '@/components/vendors/VendorMatchCard';
+import { resizeImage, validateImageFile } from '@/lib/image-utils';
 
 interface VendorSuggestion {
   name: string;
@@ -138,6 +139,9 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
   // Results phase: best existing-vendor match per candidate index, so we can flag
   // "Already in your vendors" even when the name differs but the address matches.
   const [candidateMatches, setCandidateMatches] = useState<Record<number, VendorMatchResult>>({});
+  // Business-card scan (item 01): file input + in-flight state.
+  const cardInputRef = useRef<HTMLInputElement>(null);
+  const [scanning, setScanning] = useState(false);
 
   const { terms: vendorTypeTerms, loading: vendorTypeLoading } = useVendorTypeTerms();
   const existingSet = new Set(existingNames.map(normalizeName));
@@ -163,6 +167,7 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
     setCanForce(true);
     setAttachingTo(null);
     setCandidateMatches({});
+    setScanning(false);
   }, [open]);
 
   /**
@@ -309,6 +314,77 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
       setError('Web search failed. Try again.');
     } finally {
       setSearching(false);
+    }
+  }
+
+  /* ---- Business-card scan (item 01) ---- */
+
+  /**
+   * Photo of a business card → POST /api/inventory/vendors/extract-card →
+   * prefill the review form. The response carries match_candidates inline so
+   * the duplicate cards show immediately; the review phase's debounced
+   * re-check then keeps them live as the user edits.
+   */
+  async function handleCardScan(file: File) {
+    const invalid = validateImageFile(file);
+    if (invalid) { setError(invalid); return; }
+    setScanning(true);
+    setError(null);
+    try {
+      const image_data = await resizeImage(file);
+      const res = await fetch('/api/inventory/vendors/extract-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ image_data }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error || 'Card scan failed. Try again.');
+        return;
+      }
+      if (json.configured === false) {
+        setError(json.message || 'AI card scanning is not configured.');
+        return;
+      }
+      const v = json.vendor;
+      if (!v?.name) {
+        setError(json.message || 'Couldn’t read a company name off that card — try a clearer, closer photo.');
+        return;
+      }
+      const contactName = [v.contact?.first, v.contact?.last].filter(Boolean).join(' ');
+      setForm({
+        ...EMPTY_FORM,
+        name: v.name,
+        website: v.website || '',
+        city: v.address?.city || '',
+        state: v.address?.state || '',
+        contact_name: contactName,
+        contact_email: v.email || '',
+        contact_phone: v.phone || '',
+      });
+      const domain = domainFromWebsite(v.website || undefined)
+        || (v.email?.includes('@') ? v.email.split('@')[1] : null);
+      setDomains(domain ? [domain] : []);
+      setExtras({
+        street1: v.address?.line1 || undefined,
+        zip: v.address?.zip || undefined,
+        phone: v.phone || undefined,
+        email: v.email || undefined,
+      });
+      // Seed the duplicate cards from the inline candidates — the review-phase
+      // effect re-checks (same endpoint semantics) as the user edits.
+      if (Array.isArray(json.match_candidates)) {
+        setMatches(json.match_candidates);
+        if (typeof json.strongThreshold === 'number') setStrongThreshold(json.strongThreshold);
+      }
+      setAiFilled(true);
+      setPhase('review');
+    } catch {
+      setError('Card scan failed. Try again.');
+    } finally {
+      setScanning(false);
+      if (cardInputRef.current) cardInputRef.current.value = '';
     }
   }
 
@@ -561,6 +637,28 @@ export function VendorQuickAddModal({ open, onClose, onSuccess, onReview, existi
               >
                 {mailSearching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Mail className="h-4 w-4 mr-2" />}
                 {mailSearching ? 'Searching your email…' : 'Find them in my email'}
+              </Button>
+              {/* Got their business card? Photo → AI extract → prefilled review. */}
+              <input
+                ref={cardInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleCardScan(f);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => cardInputRef.current?.click()}
+                disabled={loading || searching || mailSearching || scanning}
+                title="Upload a photo of their business card — AI reads it and prefills the vendor"
+              >
+                {scanning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ScanLine className="h-4 w-4 mr-2" />}
+                {scanning ? 'Reading the card…' : 'Scan a business card'}
               </Button>
               {query.trim().length < 2 && (
                 <div className="flex flex-wrap gap-1.5">
