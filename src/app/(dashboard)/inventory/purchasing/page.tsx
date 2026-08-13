@@ -26,6 +26,7 @@ import { PurchaseTimeline } from '@/components/purchasing/PurchaseTimeline';
 import { POApprovalTrail, type ApprovalRoute } from '@/components/purchasing/POApprovalTrail';
 import { DocumentSearchBar } from '@/components/purchasing/DocumentSearchBar';
 import { MySpendCard } from '@/components/spend/MySpendCard';
+import { JobShortfallsSection } from '@/components/purchasing/JobShortfallsSection';
 import { useSession } from '@/hooks/useSession';
 import {
   poBucket,
@@ -619,6 +620,10 @@ export default function PurchasingPage() {
           </button>
         )}
 
+        {/* Job shortfalls: reservations exceed supply → one-tap draft PO (V1-C).
+            Renders nothing when no job is short. */}
+        <JobShortfallsSection onDrafted={fetchOrders} />
+
         {/* Search the receipt repository (invoices, receipts, tracking, amount…). */}
         <DocumentSearchBar
           onOpenPo={(poId) => {
@@ -891,6 +896,16 @@ function PODetailPanel({
               title={po.approval_reason || 'Drafted by the nightly auto-reorder pass'}
             >
               <Sparkles className="h-3 w-3" /> AI-drafted
+            </span>
+          )}
+          {/* Origin badge: this PO was drafted from a job material shortfall
+              (V1-C) — reservations exceeded supply and someone tapped Draft PO. */}
+          {po.origin === 'shortfall' && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800"
+              title={po.notes || 'Drafted from a job material shortfall'}
+            >
+              <Sparkles className="h-3 w-3" /> Job shortfall
             </span>
           )}
           {/* Origin badge: this PO was drafted from a guided external purchase
