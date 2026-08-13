@@ -14,6 +14,11 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // isAdmin=false (the same filter /mine applies to non-admins) shaped by the
 // same buildConsumerGroupsPayload /mine serves — so the preview cannot drift
 // from reality. Gated on purchase_orders.manage, the buying-config capability.
+//
+// Item 02: items include the additive `fulfillment` object (kind/url/vendor/
+// price/configured_for_caller). The lens previews a POSITION, not a person, so
+// external_link items resolve to the item's fallback URL only — per-person
+// Canva links show as configured only for the specific person in /mine.
 export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const tenantId = session.tenantId!;
   const url = new URL(req.url);

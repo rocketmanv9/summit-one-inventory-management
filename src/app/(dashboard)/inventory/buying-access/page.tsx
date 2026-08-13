@@ -77,6 +77,18 @@ interface PreviewGroup {
     default_qty: number;
     est_unit_cost: number | null;
     preferred_vendor_name: string | null;
+    // Item 02 (fulfillment types): how the line is actually fulfilled. The lens
+    // previews a POSITION (no person), so external_link URLs here are the item
+    // fallback only — per-person Canva links resolve in the real /mine call.
+    fulfillment?: {
+      kind: 'catalog' | 'vendor_item' | 'external_link';
+      url: string | null;
+      link_label: string | null;
+      vendor_id: string | null;
+      vendor: string | null;
+      price: number | null;
+      configured_for_caller: boolean;
+    };
   }>;
 }
 
@@ -719,12 +731,33 @@ function BuyingAccessContent() {
                                       {it.name ?? 'Item'}
                                       <span className="text-gray-400"> × {it.default_qty}{it.uom ? ` ${it.uom}` : ''}</span>
                                     </span>
-                                    <span className="flex-shrink-0 text-gray-500">
-                                      {money(it.est_unit_cost) ?? '—'}
-                                      {it.preferred_vendor_name && (
-                                        <span className="text-gray-400"> · {it.preferred_vendor_name}</span>
-                                      )}
-                                    </span>
+                                    {/* Fulfillment (item 02): link items are opened, not drafted onto POs. */}
+                                    {it.fulfillment?.kind === 'external_link' ? (
+                                      <span className="flex-shrink-0">
+                                        {it.fulfillment.url ? (
+                                          <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-600">
+                                            ↗ {it.fulfillment.link_label || 'External link'}
+                                          </span>
+                                        ) : (
+                                          <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-600" title="No fallback URL — only people with a personal link can order this">
+                                            ↗ {it.fulfillment.link_label || 'Link'} · per-person
+                                          </span>
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span className="flex-shrink-0 text-gray-500">
+                                        {it.fulfillment?.kind === 'vendor_item' && !it.fulfillment.configured_for_caller ? (
+                                          <span className="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-600">vendor pin missing</span>
+                                        ) : (
+                                          <>
+                                            {money(it.est_unit_cost) ?? '—'}
+                                            {it.preferred_vendor_name && (
+                                              <span className="text-gray-400"> · {it.preferred_vendor_name}</span>
+                                            )}
+                                          </>
+                                        )}
+                                      </span>
+                                    )}
                                   </li>
                                 ))}
                               </ul>

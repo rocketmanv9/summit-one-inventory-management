@@ -16,6 +16,12 @@ export interface CallerPurchaseIdentity {
   isAdmin: boolean;
   /** The caller's HR position title, or null if not on the roster / no position. */
   positionTitle: string | null;
+  /**
+   * The caller's HR roster id (hr_people.hr_person_id), or null if their email
+   * isn't on the mirror. Used by buyable-group external_link items to resolve
+   * per-person URLs (snap-and-buy item 02).
+   */
+  hrPersonId: string | null;
 }
 
 /**
@@ -35,18 +41,19 @@ export async function resolveCallerPurchaseIdentity(
 
   const isAdmin = me?.role === 'admin';
   const email = (me?.email || '').trim().toLowerCase();
-  if (!email) return { isAdmin, positionTitle: null };
+  if (!email) return { isAdmin, positionTitle: null, hrPersonId: null };
 
   // Match the app-user email against the HR mirror to find their position.
   const { data: person } = await supabase
     .from('hr_people')
-    .select('hr_position_id, work_email, personal_email')
+    .select('hr_person_id, hr_position_id, work_email, personal_email')
     .eq('tenant_id', tenantId)
     .or(`work_email.ilike.${email},personal_email.ilike.${email}`)
     .limit(1)
     .maybeSingle();
 
-  if (!person?.hr_position_id) return { isAdmin, positionTitle: null };
+  const hrPersonId = person?.hr_person_id ?? null;
+  if (!person?.hr_position_id) return { isAdmin, positionTitle: null, hrPersonId };
 
   const { data: pos } = await supabase
     .from('positions')
@@ -55,5 +62,5 @@ export async function resolveCallerPurchaseIdentity(
     .eq('hr_position_id', person.hr_position_id)
     .maybeSingle();
 
-  return { isAdmin, positionTitle: pos?.title ?? null };
+  return { isAdmin, positionTitle: pos?.title ?? null, hrPersonId };
 }

@@ -3,7 +3,7 @@ import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 
-import { loadAllowedGroupsForCaller, resolveBestVendorItems } from '@/lib/buyable-groups';
+import { loadAllowedGroupsForCaller, resolveBestVendorItems, resolveVendorItemRows } from '@/lib/buyable-groups';
 import {
   resolveDefaultShipToLocationId,
   resolveEachUomTermId,
@@ -15,7 +15,8 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // ── Item 12 contract (mobile quick action) ───────────────────────────────────
 //   POST /api/inventory/buyable-groups/request
 //     body { items: [ { catalog_item_id, qty } ], delivery_location_id?, note? }
-//     → 200 { data: { purchase_orders: [ { po_id, po_number, status, vendor_id | null, line_count } ] } }
+//     → 200 { data: { purchase_orders: [ { po_id, po_number, status, vendor_id | null, line_count } ],
+//                     rejected_links: [ { catalog_item_id, name, link_label, reason } ] } }
 //   Validates server-side that EVERY requested item is inside a group the
 //   CALLER's HR position allows (admins may buy from all). Then drafts PO(s)
 //   through the normal rpc_create_purchase_order path (so the standard approval
@@ -27,6 +28,18 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 //   (same one item 06 uses) so buyers can assign a real vendor before approving.
 //   Multiple vendors → multiple draft POs (simplest correct; documented choice).
 //   Auth: session, idempotent. Returns the created PO id(s)/number(s).
+//
+// ── Item 02 (fulfillment kinds) — ADDITIVE ──────────────────────────────────
+//   * 'catalog' items draft exactly as before (the default; unchanged path).
+//   * 'vendor_item' items pin the exact vendor + unit_cost from their
+//     supply_chain.vendor_items row (dangling/inactive pin falls back to the
+//     normal catalog resolution rather than failing the request).
+//   * 'external_link' items are NEVER drafted onto POs — they're opened, not
+//     purchased in-app (deliberate: no fake POs for Canva orders). A mixed
+//     payload still drafts POs for the PO-able lines; the link lines come back
+//     in data.rejected_links with a human reason. A payload of ONLY link items
+//     returns purchase_orders: [] + the rejected list (still 200 — the client
+//     explains, nothing dead-ends).
 
 const RequestSchema = z.object({
   items: z
@@ -50,9 +63,16 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
   const sc = (supabase as any).schema('supply_chain');
 
   // 1) Load the caller's allowed groups and build the set of catalog items they
-  //    may buy, with each item's admin-pinned preferred vendor and UOM.
+  //    may buy, with each item's fulfillment kind, admin-pinned vendor, and UOM.
   const { groups } = await loadAllowedGroupsForCaller(supabase, tenantId, userId);
-  const allowed = new Map<string, { preferred_vendor_id: string | null; uom_term_id: string | null; name: string | null }>();
+  const allowed = new Map<string, {
+    preferred_vendor_id: string | null;
+    uom_term_id: string | null;
+    name: string | null;
+    fulfillment_kind: string;
+    vendor_item_id: string | null;
+    link_label: string | null;
+  }>();
   for (const g of groups) {
     for (const it of g.items) {
       // First group wins if an item appears in more than one allowed group.
@@ -61,19 +81,51 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
           preferred_vendor_id: it.preferred_vendor_id,
           uom_term_id: it.uom_term_id,
           name: it.name,
+          fulfillment_kind: it.fulfillment_kind,
+          vendor_item_id: it.vendor_item_id,
+          link_label: it.link_label,
         });
       }
     }
   }
 
   // 2) Validate every requested item is allowed. Reject the whole request if any
-  //    isn't — never silently drop a line the caller can't buy.
+  //    isn't — never silently drop a line the caller can't buy. external_link
+  //    items are split out here: they are opened, not purchased in-app, so they
+  //    never draft PO lines — they come back in rejected_links with the reason.
   const requested = new Map<string, number>();
+  const rejectedLinks: Array<{ catalog_item_id: string; name: string | null; link_label: string | null; reason: string }> = [];
   for (const it of body.items) {
-    if (!allowed.has(it.catalog_item_id)) {
+    const cfg = allowed.get(it.catalog_item_id);
+    if (!cfg) {
       throw AppError.forbidden('One or more requested items are not in a group your position is allowed to buy from.');
     }
+    if (cfg.fulfillment_kind === 'external_link') {
+      if (!rejectedLinks.some((r) => r.catalog_item_id === it.catalog_item_id)) {
+        rejectedLinks.push({
+          catalog_item_id: it.catalog_item_id,
+          name: cfg.name,
+          link_label: cfg.link_label,
+          reason: `"${cfg.name ?? 'This item'}" is ordered through its external link — open the link to order it; it can't be drafted onto a purchase order.`,
+        });
+      }
+      continue;
+    }
     requested.set(it.catalog_item_id, (requested.get(it.catalog_item_id) ?? 0) + it.qty);
+  }
+
+  // Nothing PO-able (payload was only external_link items): return the rejected
+  // list without touching delivery-location or vendor resolution.
+  if (requested.size === 0) {
+    return {
+      data: { purchase_orders: [], rejected_links: rejectedLinks },
+      status: 200,
+      events: [{
+        event_name: 'buyable_item_group.requested',
+        payload: { item_count: body.items.length, po_count: 0, po_ids: [], rejected_link_count: rejectedLinks.length },
+        last_event_id: idempotencyKey,
+      }],
+    };
   }
 
   // 3) Resolve delivery location (caller-provided, else tenant default ship-to).
@@ -82,18 +134,34 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
     throw AppError.badRequest('No delivery location is configured for this tenant — add a location before requesting items.');
   }
 
-  // 4) Resolve each item's vendor: admin pin first, else best vendor_items row.
+  // 4) Resolve each item's vendor. vendor_item pins win (the exact vendor_items
+  //    row's vendor + price); then the admin-pinned preferred vendor; else the
+  //    best vendor_items row. A dangling/inactive vendor_item pin falls back to
+  //    the normal catalog resolution rather than failing the request.
   const catalogIds = Array.from(requested.keys());
   const bestVendors = await resolveBestVendorItems(supabase, tenantId, catalogIds);
+  const pinnedVendorRows = await resolveVendorItemRows(
+    supabase,
+    catalogIds
+      .map((catId) => {
+        const cfg = allowed.get(catId)!;
+        return cfg.fulfillment_kind === 'vendor_item' ? cfg.vendor_item_id : null;
+      })
+      .filter((id): id is string => !!id),
+  );
 
   // Bucket lines by vendor. `null` bucket = no known vendor → free-text lines on
   // the placeholder-vendor PO.
   const byVendor = new Map<string | null, Array<{ catalog_item_id: string; qty: number; unit_cost: number | null }>>();
   for (const [catId, qty] of requested) {
-    const pinned = allowed.get(catId)!.preferred_vendor_id;
+    const cfg = allowed.get(catId)!;
+    const pinnedRow = cfg.fulfillment_kind === 'vendor_item' && cfg.vendor_item_id
+      ? pinnedVendorRows.get(cfg.vendor_item_id)
+      : undefined;
+    const pinned = cfg.preferred_vendor_id;
     const best = bestVendors.get(catId);
-    const vendorId = pinned ?? best?.vendor_id ?? null;
-    const unitCost = pinned ? null : best?.unit_cost ?? null;
+    const vendorId = pinnedRow?.vendor_id ?? pinned ?? best?.vendor_id ?? null;
+    const unitCost = pinnedRow ? pinnedRow.unit_cost : pinned ? null : best?.unit_cost ?? null;
     if (!byVendor.has(vendorId)) byVendor.set(vendorId, []);
     byVendor.get(vendorId)!.push({ catalog_item_id: catId, qty, unit_cost: unitCost });
   }
@@ -158,7 +226,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
   }
 
   return {
-    data: { purchase_orders: createdPOs },
+    data: { purchase_orders: createdPOs, rejected_links: rejectedLinks },
     status: 200,
     events: [{
       event_name: 'buyable_item_group.requested',
@@ -166,6 +234,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
         item_count: body.items.length,
         po_count: createdPOs.length,
         po_ids: createdPOs.map((p) => p.po_id).filter(Boolean),
+        rejected_link_count: rejectedLinks.length,
       },
       last_event_id: idempotencyKey,
     }],

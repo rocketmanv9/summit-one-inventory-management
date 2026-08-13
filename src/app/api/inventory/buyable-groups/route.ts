@@ -16,11 +16,24 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 // stored in a child table (buyable_item_group_items); this route returns each
 // group with its items nested, and accepts them nested on create.
 
+// Item 02: each item declares HOW it's fulfilled — catalog (default; PO drafting
+// as always), vendor_item (pinned to one vendor_items row), or external_link
+// (opened, not purchased; URL resolves per person via buyable_item_person_links,
+// falling back to external_url). See /buyable-groups/person-links for the
+// per-person URL CRUD this pairs with.
 const GroupItemSchema = z.object({
   catalog_item_id: z.string().uuid(),
   default_qty: z.number().int().positive().max(100000).optional(),
   preferred_vendor_id: z.string().uuid().nullable().optional(),
   sort_order: z.number().int().optional(),
+  fulfillment_kind: z.enum(['catalog', 'vendor_item', 'external_link']).optional(),
+  external_url: z.string().url().max(2000).nullable().optional(),
+  link_label: z.string().max(200).nullable().optional(),
+  vendor_item_id: z.string().uuid().nullable().optional(),
+}).superRefine((it, ctx) => {
+  if (it.fulfillment_kind === 'vendor_item' && !it.vendor_item_id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'vendor_item fulfillment requires vendor_item_id' });
+  }
 });
 
 const CreateGroupSchema = z.object({
@@ -59,7 +72,7 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
   if (groupIds.length > 0) {
     const { data: items, error: iErr } = await sc
       .from('buyable_item_group_items')
-      .select('id, group_id, catalog_item_id, default_qty, preferred_vendor_id, sort_order')
+      .select('id, group_id, catalog_item_id, default_qty, preferred_vendor_id, sort_order, fulfillment_kind, external_url, link_label, vendor_item_id')
       .in('group_id', groupIds)
       .order('sort_order', { ascending: true })
       .limit(5000);
@@ -94,6 +107,10 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
         default_qty: it.default_qty,
         preferred_vendor_id: it.preferred_vendor_id,
         sort_order: it.sort_order,
+        fulfillment_kind: it.fulfillment_kind ?? 'catalog',
+        external_url: it.external_url ?? null,
+        link_label: it.link_label ?? null,
+        vendor_item_id: it.vendor_item_id ?? null,
         name: c?.name ?? null,
         sku: c?.sku ?? null,
         uom_term_id: c?.uom_term_id ?? null,
@@ -135,6 +152,10 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       default_qty: it.default_qty ?? 1,
       preferred_vendor_id: it.preferred_vendor_id ?? null,
       sort_order: it.sort_order ?? idx,
+      fulfillment_kind: it.fulfillment_kind ?? 'catalog',
+      external_url: it.external_url ?? null,
+      link_label: it.link_label ?? null,
+      vendor_item_id: it.vendor_item_id ?? null,
       last_event_id: crypto.randomUUID(),
     }));
     const { error: iErr } = await sc
