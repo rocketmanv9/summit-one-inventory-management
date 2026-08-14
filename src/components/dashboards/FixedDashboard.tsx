@@ -17,6 +17,7 @@
 import Link from 'next/link';
 import { MapPin, Globe } from 'lucide-react';
 import type { DashboardWidget } from '@/types/dashboard';
+import { NewHiresChip } from '@/components/dashboards/NewHiresChip';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { MyAssignedCounts } from '@/components/counts/MyAssignedCounts';
 import { useActiveLocation } from '@/lib/active-location';
@@ -129,6 +130,9 @@ export function FixedDashboard() {
 
       {/* Quick tools — reuse the existing modals/routes, no new flows. */}
       <QuickTools locationId={scopeId} />
+
+      {/* New-hire kit automation — silent unless it did something or is stuck. */}
+      <NewHiresChip />
 
       {/* Counts assigned to me — personal action list, keep it up top. */}
       <MyAssignedCounts />

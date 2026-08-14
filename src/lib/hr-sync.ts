@@ -23,6 +23,7 @@ import {
   indexPeopleByEmail,
   hrPersonToMirrorRow,
 } from '@/lib/hr';
+import { provisionNewHires } from '@/lib/position-kits';
 
 type Logger = { info: (msg: string, meta?: Record<string, unknown>) => void; warn: (msg: string, meta?: Record<string, unknown>) => void };
 
@@ -37,6 +38,10 @@ export interface HRSyncSummary {
   pendingHealed: number;
   /** Stubs still unresolved after the reconcile (surfaced as "Unlinked account" in the UI). */
   pendingRemaining: number;
+  /** New hires with no kit-provisioning ledger row yet (item 04's sync-diff). */
+  kitCandidates: number;
+  /** Of those, how many got reservations/POs on this run. */
+  kitsProvisioned: number;
 }
 
 export async function runHRSync(
@@ -208,6 +213,23 @@ export async function runHRSync(
     usersMatched++;
   }
 
+  // ── Position kits: catch-up provisioning for new hires ──────────────────
+  // The hub webhook (org_people.created) is the realtime path; this is the
+  // safety net for deliveries that never arrived — on stage especially, where
+  // the subscription may not be registered at all. Everyone who existed when
+  // migration 20260814000005 landed carries a 'skipped_backfill' ledger row, so
+  // this pass can only ever see genuinely new people (it will NOT kit the
+  // standing roster). Failures are logged, never fatal to the sync.
+  let kitsProvisioned = 0;
+  let kitCandidates = 0;
+  try {
+    const kitPass = await provisionNewHires(supabase, { tenantId, log });
+    kitsProvisioned = kitPass.provisioned;
+    kitCandidates = kitPass.candidates;
+  } catch (err: any) {
+    log.warn('hr.sync.kit_provision_pass_failed', { error: err?.message });
+  }
+
   const summary: HRSyncSummary = {
     configured: true,
     positionsSynced: positionRows.length,
@@ -217,6 +239,8 @@ export async function runHRSync(
     stalePeopleDeactivated,
     pendingHealed,
     pendingRemaining,
+    kitCandidates,
+    kitsProvisioned,
   };
   log.info('hr.synced', { ...summary, hrTenantId });
   return summary;

@@ -31,6 +31,7 @@ import {
   Bug,
   Sparkles,
   Camera,
+  UserPlus,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // cards + setup wizard + access grid. The ONE editor for buyable groups —
       // /settings/buyable-groups redirects here.
       { title: 'Buying Access', href: '/inventory/buying-access', icon: ShieldCheck },
+      // Position-kit automation queue (kits sprint item 04): what inventory did
+      // about each new hire — reserved from the shelf, ordered the shortfall.
+      { title: 'New Hires', href: '/inventory/onboarding', icon: UserPlus },
       // Parked analytics — ask Isabelle "which vendor keeps shorting us?".
       { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view', hidden: true },
     ],

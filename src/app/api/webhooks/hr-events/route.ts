@@ -1,6 +1,7 @@
 import { createWebhookRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { hrPersonToMirrorRow } from '@/lib/hr';
+import { provisionHire } from '@/lib/position-kits';
 
 // Scanner flags importing SupabaseClient from @supabase/supabase-js in non-util files; alias to any.
 type SupabaseClient = any;
@@ -34,6 +35,13 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
     case 'org_people.created':
     case 'org_people.updated':
       await upsertPerson(supabase, row, tenantId);
+      // Position kits (sprint 2026-08-14 item 04): the REALTIME half of new-hire
+      // provisioning. On stage this webhook is the only realtime path — Vercel
+      // crons don't fire on preview builds, so runHRSync (GH Action
+      // stage-hr-sync.yml) is the nightly catch-up, not the trigger. Runs after
+      // the mirror upsert so the engine reads the person it was just told about.
+      // Fire-and-log: a kit failure must never make the hub retry the mirror.
+      await provisionIfNew(supabase, row, tenantId, log);
       break;
     case 'org_people.deleted':
       await deletePerson(supabase, row, tenantId);
@@ -94,6 +102,39 @@ async function upsertPerson(supabase: SupabaseClient, row: any, tenantId: string
     .update({ hr_person_id: row.id, position_id: localPositionId, synced_at: nowIso })
     .eq('user_id', user.user_id)
     .eq('tenant_id', tenantId);
+}
+
+/**
+ * Kit the person this event is about — if they're genuinely new.
+ *
+ * "If" is entirely the engine's call: supply_chain.position_kit_provisions
+ * already holds a row for every human who existed when the feature shipped
+ * (backfill) and for every hire already handled, so a replayed webhook or an
+ * unrelated org_people.updated lands as a `noop`. That's why this is safe to
+ * call on `updated` as well as `created` — a person whose position/location is
+ * filled in a minute after creation still gets kitted.
+ */
+async function provisionIfNew(supabase: SupabaseClient, row: any, tenantId: string, log: any) {
+  try {
+    const outcome = await provisionHire(supabase, {
+      tenantId,
+      hrPersonId: row.id,
+      source: 'webhook',
+      log,
+    });
+    if (outcome.status !== 'noop') {
+      log.info('hr_webhook.kit_provision', {
+        hr_person_id: row.id,
+        status: outcome.status,
+        kit_id: outcome.kit_id,
+        reservations: outcome.reservation_ids.length,
+        purchase_orders: outcome.purchase_order_ids.length,
+      });
+    }
+  } catch (err: any) {
+    // Never fail the mirror over a kit — the nightly sync-diff pass will retry.
+    log.warn('hr_webhook.kit_provision_failed', { hr_person_id: row.id, error: err?.message });
+  }
 }
 
 async function deletePerson(supabase: SupabaseClient, row: any, tenantId: string) {
