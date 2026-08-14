@@ -29,6 +29,14 @@ export function PageTabs() {
   });
   if (visible.length <= 1) return null;
 
+  // A tab matches its own route AND everything nested under it, so a nested page
+  // (/settings/integrations/amazon) would light up BOTH its own tab and its
+  // parent's. Longest match wins — exactly one highlighted tab, always.
+  const activeHref =
+    visible
+      .filter((tab) => !tab.external && isTabActive(pathname, tab.href))
+      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? null;
+
   const tabClass = (active: boolean) =>
     cn(
       'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
@@ -55,7 +63,7 @@ export function PageTabs() {
       );
     }
 
-    const active = isTabActive(pathname, tab.href);
+    const active = tab.href === activeHref;
     return (
       <Link
         key={tab.href}

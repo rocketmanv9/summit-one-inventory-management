@@ -779,6 +779,10 @@ function PODetailPanel({
   const [livePo, setLivePo] = useState<PurchaseOrder>(po);
   const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
   const [confirmedAt, setConfirmedAt] = useState<string | null>(null);
+  // Who actually punched out for this PO (item 06). An Amazon PO is placed by a
+  // PERSON on their own Amazon seat, and until now the PO panel never said who —
+  // "who bought this?" meant digging through punchout_orders.
+  const [punchoutBuyer, setPunchoutBuyer] = useState<{ email: string | null; userId: string | null; amazonEmail: string | null } | null>(null);
   // Names for the approval-trail visual (buyer / routed approver / decider).
   const [approvalNames, setApprovalNames] = useState<Record<string, string>>({});
 
@@ -786,6 +790,7 @@ function PODetailPanel({
     setLivePo(po);
     setConfirmedTotal(null);
     setConfirmedAt(null);
+    setPunchoutBuyer(null);
     let alive = true;
     const client = createBrowserAuthedClient();
     const sc = client.schema('supply_chain');
@@ -797,7 +802,7 @@ function PODetailPanel({
         sc.from('purchase_order_lines').select('*').eq('po_id', po.id).order('line_number'),
         inv
           .from('punchout_orders')
-          .select('metadata')
+          .select('metadata, user_email, initiated_by')
           .eq('purchase_order_id', po.id)
           .order('created_at', { ascending: false })
           .limit(1)
@@ -815,6 +820,14 @@ function PODetailPanel({
       if (conf && conf.rejected !== true && conf.items_total != null) {
         setConfirmedTotal(Number(conf.items_total));
         setConfirmedAt(conf.received_at ?? null);
+      }
+      if (order) {
+        setPunchoutBuyer({
+          email: (order as any).user_email ?? null,
+          userId: (order as any).initiated_by ?? null,
+          // Snapshotted from the purchaser registry when the session started.
+          amazonEmail: (order as any).metadata?.purchaser_amazon_email ?? null,
+        });
       }
     };
 
@@ -845,6 +858,8 @@ function PODetailPanel({
       (livePo as any).approver_user_id,
       livePo.approved_by_user_id,
       (livePo as any).rejected_by_user_id,
+      // The person who ran the Amazon punchout, so the panel can name them.
+      punchoutBuyer?.userId,
     ].filter(Boolean) as string[];
     const need = [...new Set(ids)].filter((id) => !(id in approvalNames));
     if (need.length === 0) return;
@@ -863,7 +878,7 @@ function PODetailPanel({
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [livePo.created_by_user_id, (livePo as any).approver_user_id, livePo.approved_by_user_id, (livePo as any).rejected_by_user_id]);
+  }, [livePo.created_by_user_id, (livePo as any).approver_user_id, livePo.approved_by_user_id, (livePo as any).rejected_by_user_id, punchoutBuyer?.userId]);
 
   const fetchReceipts = async () => {
     setLoadingReceipts(true);
@@ -986,6 +1001,21 @@ function PODetailPanel({
             <div className="font-medium">{locations.get(po.delivery_location_id || '') || po.delivery_location_id || 'N/A'}</div>
           </div>
         </div>
+
+        {/* Punchout POs are placed by a person on their own Amazon seat — say who. */}
+        {punchoutBuyer && (
+          <div className="p-3 bg-muted/30 rounded-lg">
+            <div className="text-xs text-muted-foreground">Amazon purchaser</div>
+            <div className="font-medium">
+              {(punchoutBuyer.userId && approvalNames[punchoutBuyer.userId]) || punchoutBuyer.email || 'Unknown'}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {punchoutBuyer.amazonEmail
+                ? `Amazon seat: ${punchoutBuyer.amazonEmail}`
+                : punchoutBuyer.email || 'no email on the punchout session'}
+            </div>
+          </div>
+        )}
 
         {po.expected_delivery_date && (
           <div className="p-3 bg-muted/30 rounded-lg">

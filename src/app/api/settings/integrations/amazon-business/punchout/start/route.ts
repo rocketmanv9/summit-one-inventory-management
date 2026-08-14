@@ -21,6 +21,7 @@ import {
   normalizeCountryCode,
 } from '@/lib/integrations/amazon-cxml';
 import { applyInheritedAddress } from '@/lib/locations/resolve-address';
+import { assertCanPunchOut } from '@/lib/amazon-access';
 import { headers } from 'next/headers';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
@@ -42,6 +43,13 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
   const adminClient = getAdminClient();
   const inv = (adminClient as any).schema('inventory');
   const sc = (adminClient as any).schema('supply_chain');
+
+  // Purchaser gate (item 06). Soft by design: if the tenant has no purchaser
+  // registry rows at all this is a no-op and the flow behaves exactly as it did
+  // before. Once an admin registers purchasers in Settings → Integrations →
+  // Amazon, only registered people with can_punch_out may start a session — and
+  // the 403 carries copy the UI shows verbatim ("ask an admin to add you").
+  const punchOutAccess = await assertCanPunchOut(adminClient, ctx.tenantId!, ctx.userId);
 
   const cxmlConfig = await resolveCxmlCredentials(adminClient, ctx.tenantId!);
 
@@ -214,6 +222,10 @@ export const POST = createSessionWriteRoute(async ({ req, ctx, log, idempotencyK
         suggestion_ids: body.suggestion_ids ?? [],
         integration_mode: cxmlConfig.integrationMode,
         location_id: body.location_id,
+        // Snapshot the registry seat this session ran under, so the PO can name
+        // the purchaser later even if the registry row is edited or removed.
+        purchaser_amazon_email: punchOutAccess.account?.amazon_email ?? null,
+        purchaser_registry_id: punchOutAccess.account?.id ?? null,
       },
     }, { onConflict: 'setup_payload_id' })
     .select()

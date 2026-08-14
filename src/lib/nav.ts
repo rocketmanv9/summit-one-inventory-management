@@ -207,6 +207,9 @@ export const SETTINGS_SECTION: NavSection = {
     { title: 'Branding', href: '/settings/branding', icon: Palette },
     { title: 'Device Management', href: '/settings/device-management', icon: Smartphone },
     { title: 'Integrations', href: '/settings/integrations', icon: Plug },
+    // The Amazon hub answers "is it connected, who can buy, what flowed through"
+    // in one place. Credentials editing stays on the Integrations tab.
+    { title: 'Amazon', href: '/settings/integrations/amazon', icon: ShoppingCart },
     {
       title: 'Assistant',
       // Externally-hosted OpenClaw maintenance assistant (Cloudflare Access-gated).
