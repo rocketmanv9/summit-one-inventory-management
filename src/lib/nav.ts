@@ -32,6 +32,7 @@ import {
   Sparkles,
   Camera,
   UserPlus,
+  Swords,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // Position-kit automation queue (kits sprint item 04): what inventory did
       // about each new hire — reserved from the shelf, ordered the shortfall.
       { title: 'New Hires', href: '/inventory/onboarding', icon: UserPlus },
+      // Competitive quote rounds (kits sprint item 09): items we buy from 2+
+      // vendors at 2+ prices, and the bidding war that fixes that.
+      { title: 'Price Wars', href: '/inventory/price-wars', icon: Swords },
       // Parked analytics — ask Isabelle "which vendor keeps shorting us?".
       { title: 'Vendor Performance', href: '/inventory/vendor-performance', icon: TrendingUp, capability: 'vendor_performance.view', hidden: true },
     ],
