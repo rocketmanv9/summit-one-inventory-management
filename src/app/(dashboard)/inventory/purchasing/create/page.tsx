@@ -12,7 +12,8 @@ import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
 import { POEmailPreviewModal } from '@/components/modals/POEmailPreviewModal';
 import { useOrderContext, formatHint, computeFlags } from '@/components/purchasing/useOrderContext';
-import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2 } from 'lucide-react';
+import { AmazonLinkPaste, type AmazonApplyPayload } from '@/components/purchasing/AmazonLinkPaste';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2, Link2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -231,6 +232,19 @@ export default function CreatePurchaseOrderPage() {
       cancelled = true;
     };
   }, [form.vendor_id]);
+
+  // Re-pull the vendor's items after something links a NEW one mid-compose
+  // (paste-an-Amazon-link). Without this the just-mapped item stays absent from
+  // the punchout picker until a page reload. Failures are silent — the line is
+  // already filled; this only refreshes the picker/"Carried" badges.
+  const refreshVendorItems = async () => {
+    if (!form.vendor_id) return;
+    try {
+      setVendorItemRows(await SupplyChainRPC.getVendorItemsWithCatalog(form.vendor_id));
+    } catch {
+      /* picker stays as-is */
+    }
+  };
 
   // Clear line items when the user switches from one vendor to another, so a
   // PO can't end up with items the new vendor doesn't carry. Guarded so the
@@ -599,6 +613,66 @@ export default function CreatePurchaseOrderPage() {
     // Functional update so back-to-back calls in one handler don't clobber
     // each other (e.g. toggling free_text + clearing catalog_item_id).
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)));
+  };
+
+  // ── Paste an Amazon link (item 05) ─────────────────────────────────────────
+  // Which line has the paste panel open, and the one-line receipt shown on a
+  // line after a link was applied (so the buyer can see WHAT just happened).
+  const [amazonLineIndex, setAmazonLineIndex] = useState<number | null>(null);
+  const [amazonNotes, setAmazonNotes] = useState<Record<number, string>>({});
+
+  // A one-off Amazon line still needs a unit to post. Amazon sells "each", so
+  // default it there when GV has that term — the buyer can still change it.
+  const eachUomTermId = useMemo(
+    () => uomTerms.find((t) => /^(each|ea|eaches)$/i.test(t.label.trim()))?.term_id ?? '',
+    [uomTerms],
+  );
+
+  const applyAmazonResult = (index: number, payload: AmazonApplyPayload) => {
+    setLines((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l;
+        const next: POLine = { ...l };
+        if (payload.catalogItemId) {
+          // Mapped to a real catalog item — this becomes an ordinary priced line.
+          next.catalog_item_id = payload.catalogItemId;
+          next.free_text = false;
+          next.item_description = undefined;
+          next.uom_term_id = undefined;
+        } else {
+          // One-off: description + cost only. No catalog row is invented.
+          next.free_text = true;
+          next.catalog_item_id = '';
+          next.item_description = payload.description;
+          next.uom_term_id = l.uom_term_id || eachUomTermId || undefined;
+        }
+        if (payload.unitCost != null && payload.unitCost > 0) next.unit_cost = payload.unitCost;
+        if (!(next.qty_ordered > 0)) next.qty_ordered = 1;
+        return next;
+      }),
+    );
+
+    if (payload.catalogItemId) {
+      // Drop any half-finished parent/variant selection on this line.
+      setLineParentIds((prev) => {
+        const nextIds = { ...prev };
+        delete nextIds[index];
+        return nextIds;
+      });
+      // The mapping created a vendor_items row — pull it in so the picker and
+      // the "Carried" badge agree with reality.
+      void refreshVendorItems();
+    }
+    if (payload.unitCost != null && payload.unitCost > 0) {
+      setShowPriceFor((prev) => ({ ...prev, [index]: true }));
+    }
+    setAmazonNotes((prev) => ({
+      ...prev,
+      [index]: payload.mapped
+        ? `Mapped to ASIN ${payload.asin}${payload.unitCost != null ? ` at $${payload.unitCost.toFixed(2)}` : ' (enter the price yourself)'}.`
+        : `One-off Amazon line — ASIN ${payload.asin} was NOT saved as a mapping.`,
+    }));
+    setAmazonLineIndex(null);
   };
 
   const calculateTotal = () => {
@@ -1151,6 +1225,13 @@ export default function CreatePurchaseOrderPage() {
                       destinationLocationId: form.delivery_location_id || null,
                       qtyOrdered: line.qty_ordered,
                     }).filter((f) => !dismissedFlags[`${index}:${f.kind}`]);
+                // Paste-an-Amazon-link (item 05) is offered when the vendor IS
+                // Amazon, or when this line's item has no mapping to the chosen
+                // vendor yet — exactly the moments a buyer would otherwise have
+                // to detour to Settings → Integrations.
+                const amazonOffered =
+                  isPunchoutVendor ||
+                  (!line.free_text && !!line.catalog_item_id && !vendorItemIdSet.has(line.catalog_item_id));
 
                 return (
                   <div key={index} className="space-y-2">
@@ -1217,17 +1298,60 @@ export default function CreatePurchaseOrderPage() {
                         </button>
                         )}
 
-                        {/* Escape hatch: order something that isn't in the vendor's items */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateLine(index, 'free_text', !line.free_text);
-                            if (!line.free_text) updateLine(index, 'catalog_item_id', '');
-                          }}
-                          className="text-xs font-medium text-gray-500 hover:text-gray-700 underline"
-                        >
-                          {line.free_text ? 'Pick from vendor items instead' : 'Can’t find it? Type your own item'}
-                        </button>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          {/* Escape hatch: order something that isn't in the vendor's items */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateLine(index, 'free_text', !line.free_text);
+                              if (!line.free_text) updateLine(index, 'catalog_item_id', '');
+                            }}
+                            className="text-xs font-medium text-gray-500 hover:text-gray-700 underline"
+                          >
+                            {line.free_text ? 'Pick from vendor items instead' : 'Can’t find it? Type your own item'}
+                          </button>
+
+                          {/* No Amazon mapping yet? Paste the product link right here. */}
+                          {amazonOffered && (
+                            <button
+                              type="button"
+                              onClick={() => setAmazonLineIndex(amazonLineIndex === index ? null : index)}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-orange-700 underline hover:text-orange-900"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {amazonLineIndex === index ? 'Hide Amazon link' : 'Paste Amazon link'}
+                            </button>
+                          )}
+                        </div>
+
+                        {amazonLineIndex === index && (
+                          <AmazonLinkPaste
+                            catalogItemId={line.free_text ? null : line.catalog_item_id || null}
+                            catalogItemLabel={displayItem ? `${displayItem.name} (${displayItem.sku})` : null}
+                            catalogItems={items.map((i) => ({ id: i.id, name: i.name, sku: i.sku }))}
+                            onApply={(payload) => applyAmazonResult(index, payload)}
+                            onClose={() => setAmazonLineIndex(null)}
+                          />
+                        )}
+
+                        {amazonNotes[index] && (
+                          <div className="flex items-start gap-1.5 rounded border border-orange-200 bg-orange-50 px-2 py-1 text-xs text-orange-800">
+                            <Link2 className="mt-0.5 h-3 w-3 shrink-0" />
+                            <span className="flex-1">{amazonNotes[index]}</span>
+                            <button
+                              type="button"
+                              onClick={() => setAmazonNotes((prev) => {
+                                const next = { ...prev };
+                                delete next[index];
+                                return next;
+                              })}
+                              className="font-medium text-orange-600 hover:text-orange-900"
+                              aria-label="Dismiss Amazon note"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )}
 
                         {/* Variant sub-dropdown for parent items */}
                         {!line.free_text && parentId && (
