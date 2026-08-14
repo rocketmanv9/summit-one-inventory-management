@@ -190,6 +190,58 @@ export async function fetchHRLocationNames(hrTenantId: string): Promise<Map<stri
   return new Map((data ?? []).map((l: { id: string; name: string }) => [l.id, l.name]));
 }
 
+/**
+ * One HR location id → display name, WITHOUT requiring a full HR fetch.
+ *
+ * Why this exists: the full sync hands `hrPersonToMirrorRow` a
+ * `locationNameById` map built from HR's clone_tenant_locations, but the
+ * webhook only ever sees a single `org_people` row carrying a bare
+ * `location_id`. Before this helper the webhook left `hr_people.location_name`
+ * NULL — and the kit engine matches HR locations to inventory locations BY
+ * NAME, so every hire whose first-ever delivery was the webhook landed as
+ * "HR record has no location" (item 04 rescue, 2026-08-14).
+ *
+ * Resolution order, cheapest first:
+ *   1. a name carried on the payload itself (some hub envelopes denormalize it)
+ *   2. the local mirror — any other person already synced at the same
+ *      hr_location_id knows its name, and needs no HR credentials
+ *   3. HR's clone_tenant_locations (only when HR is configured, e.g. a brand
+ *      new yard nobody is mirrored at yet)
+ *
+ * Returns null when it genuinely can't tell — callers must then leave
+ * location_name untouched rather than writing NULL over a good value.
+ */
+export async function resolveHRLocationName(
+  supabase: any,
+  tenantId: string,
+  hrLocationId: string | null | undefined,
+  payloadName?: string | null,
+): Promise<string | null> {
+  const fromPayload = payloadName?.trim();
+  if (fromPayload) return fromPayload;
+  if (!hrLocationId) return null;
+
+  const { data: sibling } = await supabase
+    .from('hr_people')
+    .select('location_name')
+    .eq('tenant_id', tenantId)
+    .eq('hr_location_id', hrLocationId)
+    .not('location_name', 'is', null)
+    .limit(1)
+    .maybeSingle();
+  const mirrored = (sibling?.location_name ?? '').trim();
+  if (mirrored) return mirrored;
+
+  if (!isHRConfigured()) return null;
+  const { data: settings } = await supabase
+    .from('tenant_settings')
+    .select('hr_tenant_id')
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  const names = await fetchHRLocationNames(settings?.hr_tenant_id || tenantId);
+  return names.get(hrLocationId) ?? null;
+}
+
 /** Build a lowercased-email → HR person index (work_email + personal_email). */
 export function indexPeopleByEmail(people: HRPerson[]): Map<string, HRPerson> {
   const idx = new Map<string, HRPerson>();

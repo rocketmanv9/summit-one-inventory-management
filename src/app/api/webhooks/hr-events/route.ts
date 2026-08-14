@@ -1,6 +1,6 @@
 import { createWebhookRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
-import { hrPersonToMirrorRow } from '@/lib/hr';
+import { hrPersonToMirrorRow, resolveHRLocationName } from '@/lib/hr';
 import { provisionHire } from '@/lib/position-kits';
 
 // Scanner flags importing SupabaseClient from @supabase/supabase-js in non-util files; alias to any.
@@ -69,9 +69,26 @@ export const POST = createWebhookRoute(async ({ eventType, payload, supabase, lo
 
 async function upsertPerson(supabase: SupabaseClient, row: any, tenantId: string) {
   const nowIso = new Date().toISOString();
+
+  // Resolve the location NAME, not just the id. The kit engine matches HR
+  // locations to inventory.locations by name; a webhook-born hire with only
+  // hr_location_id set used to provision as "HR record has no location". We
+  // pass a one-entry map when (and only when) we can name it — handing
+  // hrPersonToMirrorRow an empty map would write NULL over a synced name.
+  let locationNames: Map<string, string> | undefined;
+  const locationName = await resolveHRLocationName(
+    supabase,
+    tenantId,
+    row.location_id,
+    row.location_name ?? row.location?.name ?? null,
+  );
+  if (locationName && row.location_id) locationNames = new Map([[row.location_id, locationName]]);
+
   await supabase
     .from('hr_people')
-    .upsert(hrPersonToMirrorRow(row, tenantId, nowIso), { onConflict: 'tenant_id,hr_person_id' });
+    .upsert(hrPersonToMirrorRow(row, tenantId, nowIso, locationNames), {
+      onConflict: 'tenant_id,hr_person_id',
+    });
 
   // If this person is an app user (email match), keep their position assignment current.
   const email = (row.work_email || row.personal_email || '').trim().toLowerCase();

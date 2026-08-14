@@ -38,10 +38,12 @@ export interface HRSyncSummary {
   pendingHealed: number;
   /** Stubs still unresolved after the reconcile (surfaced as "Unlinked account" in the UI). */
   pendingRemaining: number;
-  /** New hires with no kit-provisioning ledger row yet (item 04's sync-diff). */
+  /** New hires the kit sync-diff picked up (item 04): never-seen + stuck retries. */
   kitCandidates: number;
   /** Of those, how many got reservations/POs on this run. */
   kitsProvisioned: number;
+  /** Of those, how many were earlier failures being re-attempted (self-healing). */
+  kitsRetried: number;
 }
 
 export async function runHRSync(
@@ -222,10 +224,12 @@ export async function runHRSync(
   // standing roster). Failures are logged, never fatal to the sync.
   let kitsProvisioned = 0;
   let kitCandidates = 0;
+  let kitsRetried = 0;
   try {
     const kitPass = await provisionNewHires(supabase, { tenantId, log });
     kitsProvisioned = kitPass.provisioned;
     kitCandidates = kitPass.candidates;
+    kitsRetried = kitPass.retried;
   } catch (err: any) {
     log.warn('hr.sync.kit_provision_pass_failed', { error: err?.message });
   }
@@ -241,6 +245,7 @@ export async function runHRSync(
     pendingRemaining,
     kitCandidates,
     kitsProvisioned,
+    kitsRetried,
   };
   log.info('hr.synced', { ...summary, hrTenantId });
   return summary;

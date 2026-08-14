@@ -19,6 +19,7 @@
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 import { resolveGuidedPurchaseVendorId } from '@/lib/external-orders';
+import { resolveHRLocationName } from '@/lib/hr';
 
 export type KitOrderMode = 'draft' | 'auto_submit';
 
@@ -276,12 +277,19 @@ export function hireDisplayName(p: {
  * and retryable in the onboarding queue) rather than being silently kitted at
  * the wrong yard — shipping someone's boots to the wrong state is worse than
  * waiting for a human to fix the location.
+ *
+ * `hrLocationId` is the belt to the name's braces: an ingress that only stamped
+ * the HR location UUID (the webhook did exactly this) still resolves, because
+ * any other mirrored person at that yard knows its name.
  */
 export async function resolveHireLocationId(
   supabase: AnyClient,
-  params: { tenantId: string; locationName: string | null },
+  params: { tenantId: string; locationName: string | null; hrLocationId?: string | null },
 ): Promise<{ id: string; name: string } | null> {
-  const name = params.locationName?.trim();
+  let name = params.locationName?.trim() || null;
+  if (!name && params.hrLocationId) {
+    name = await resolveHRLocationName(supabase, params.tenantId, params.hrLocationId);
+  }
   if (!name) return null;
 
   const { data, error } = await supabase
@@ -492,7 +500,22 @@ export async function provisionHire(
   }
 
   // ── Location ──────────────────────────────────────────────────────────────
-  const location = await resolveHireLocationId(supabase, { tenantId, locationName: hire.location_name });
+  const location = await resolveHireLocationId(supabase, {
+    tenantId,
+    locationName: hire.location_name,
+    hrLocationId: hire.hr_location_id,
+  });
+  if (location && !hire.location_name) {
+    // Resolved via the hr_location_id fallback: heal the mirror so the roster,
+    // the onboarding queue and every later run read a real name.
+    hire.location_name = location.name;
+    stamp.location_name = location.name;
+    await supabase
+      .from('hr_people')
+      .update({ location_name: location.name })
+      .eq('tenant_id', tenantId)
+      .eq('hr_person_id', hrPersonId);
+  }
   if (!location) {
     const msg = hire.location_name
       ? `No active inventory location matches the HR location "${hire.location_name}" — kit held.`
@@ -769,21 +792,39 @@ export async function provisionHire(
 }
 
 /**
- * Sync-diff pass: active people with NO ledger row at all.
+ * Sync-diff pass: active people the automation still owes a kit.
  *
  * This is the catch-up path — stage's realtime ingress is the hub webhook, and
  * a missed (or never-registered) delivery would otherwise mean a hire never
  * gets kitted. Everyone who existed when migration 20260814000005 ran already
  * carries a `skipped_backfill` row, so this only ever sees genuinely NEW people.
  *
+ * TWO kinds of candidate, and the second one is not optional:
+ *   1. active people with NO ledger row at all — the classic missed webhook.
+ *   2. active people whose ONLY rows are `error` or a crashed `planned` claim
+ *      and haven't been touched for RETRY_AFTER_MS. Without this the catch-up
+ *      is poisoned by the realtime path: a webhook that failed (bad location,
+ *      transient DB error) leaves a ledger row, and "no ledger row" would skip
+ *      that person forever, so the nightly sync could never heal a failure it
+ *      was supposed to be the safety net for. Retrying is safe — provisionHire
+ *      updates the same row in place and never re-runs a `provisioned` one.
+ *
  * `limit` caps the blast radius of a surprise — an HR reseed that mints new
  * person ids would look like a hundred new hires. The rest are picked up on the
  * next run, and the deferred count is logged.
  */
+const RETRY_AFTER_MS = 10 * 60 * 1000;
+
 export async function provisionNewHires(
   supabase: AnyClient,
   params: { tenantId: string; log?: KitLogger; limit?: number },
-): Promise<{ candidates: number; provisioned: number; skipped: number; errors: number }> {
+): Promise<{
+  candidates: number;
+  provisioned: number;
+  skipped: number;
+  errors: number;
+  retried: number;
+}> {
   const { tenantId } = params;
   const limit = params.limit ?? 25;
 
@@ -798,15 +839,33 @@ export async function provisionNewHires(
   const { data: ledger, error: lErr } = await supabase
     .schema('supply_chain')
     .from('position_kit_provisions')
-    .select('hr_person_id')
+    .select('hr_person_id, status, updated_at, created_at')
     .eq('tenant_id', tenantId)
     .limit(20000);
   if (lErr) throw AppError.internal(`provision ledger read failed: ${lErr.message}`);
 
-  const known = new Set((ledger ?? []).map((r: any) => r.hr_person_id));
+  const rowsByPerson = new Map<string, any[]>();
+  for (const r of ledger ?? []) {
+    const list = rowsByPerson.get(r.hr_person_id);
+    if (list) list.push(r);
+    else rowsByPerson.set(r.hr_person_id, [r]);
+  }
+
+  const retryBefore = Date.now() - RETRY_AFTER_MS;
+  const stale = (rows: any[]) =>
+    rows.every((r: any) => r.status === 'error' || r.status === 'planned') &&
+    rows.every((r: any) => new Date(r.updated_at ?? r.created_at ?? 0).getTime() <= retryBefore);
+
+  let retried = 0;
   const candidates = (people ?? [])
     .map((p: any) => p.hr_person_id)
-    .filter((id: string) => !known.has(id));
+    .filter((id: string) => {
+      const rows = rowsByPerson.get(id);
+      if (!rows || rows.length === 0) return true;
+      if (!stale(rows)) return false;
+      retried++;
+      return true;
+    });
 
   let provisioned = 0;
   let skipped = 0;
@@ -826,6 +885,7 @@ export async function provisionNewHires(
   if (candidates.length > 0) {
     params.log?.info('kit_provision.sync_pass', {
       candidates: candidates.length,
+      retried,
       provisioned,
       skipped,
       errors,
@@ -833,5 +893,5 @@ export async function provisionNewHires(
     });
   }
 
-  return { candidates: candidates.length, provisioned, skipped, errors };
+  return { candidates: candidates.length, provisioned, skipped, errors, retried };
 }

@@ -13,6 +13,8 @@ interface ScanSummary {
   provisioned: number;
   skipped: number;
   errors: number;
+  /** Of the candidates, how many were stuck error/planned rows re-attempted. */
+  retried: number;
 }
 interface ProvisionResponse {
   scan: ScanSummary | null;
