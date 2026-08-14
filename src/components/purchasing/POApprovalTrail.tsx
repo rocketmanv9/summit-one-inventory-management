@@ -19,14 +19,20 @@
 
 import { AlertTriangle, ArrowRight, CheckCircle2, Clock, ShieldQuestion, User, XCircle } from 'lucide-react';
 
+export type ApprovalRouteRule =
+  | 'person_override'
+  | 'location_override'
+  | 'supervisor'
+  | 'named_fallback'
+  | 'admin_pool';
 export interface ApprovalRouteStep {
-  rule: 'location_override' | 'supervisor' | 'admin_pool';
+  rule: ApprovalRouteRule;
   outcome: 'matched' | 'none' | 'skipped' | 'unresolved';
   user_id: string | null;
   detail: string;
 }
 export interface ApprovalRoute {
-  resolved_rule?: 'location_override' | 'supervisor' | 'admin_pool';
+  resolved_rule?: ApprovalRouteRule;
   resolved_user_id?: string | null;
   buyer_user_id?: string | null;
   delivery_location_id?: string | null;
@@ -54,8 +60,10 @@ export interface POApprovalTrailProps {
 }
 
 const RULE_LABEL: Record<string, string> = {
+  person_override: 'Personal override',
   location_override: 'Location approver',
   supervisor: 'Supervisor',
+  named_fallback: 'Named fallback',
   admin_pool: 'Admin pool',
 };
 

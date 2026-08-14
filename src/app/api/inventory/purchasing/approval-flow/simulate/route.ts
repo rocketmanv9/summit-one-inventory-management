@@ -10,16 +10,26 @@ const QuerySchema = z.object({
   delivery_location_id: z.string().uuid().optional(),
 });
 
+type Rule = 'person_override' | 'location_override' | 'supervisor' | 'named_fallback' | 'admin_pool';
+
+const RULE_EXPLANATION: Record<Rule, (buyer: string, loc: string | null) => string> = {
+  person_override: (buyer) => `Personal override on ${buyer}`,
+  location_override: (_b, loc) => `Location override on ${loc || 'this location'}`,
+  supervisor: (buyer) => `${buyer}'s supervisor`,
+  named_fallback: () => 'Named fallback approver (tenant setting)',
+  admin_pool: () => 'Falls back to admins (any admin can approve)',
+};
+
 /**
  * GET /api/inventory/purchasing/approval-flow/simulate — "if THIS person buys
- * from THIS location, who approves?" (sprint item 10).
+ * from THIS location, who approves?" (sprint item 10; upgraded 2026-08-14 item
+ * 02 for the person-override + named-fallback tiers).
  *
- * Calls the REAL `supply_chain.resolve_po_approver()` for the answer — never a
- * client-side re-implementation, so this can't drift from what actually gates a
- * PO. Then it labels which of the three rules produced that answer by comparing
- * the resolved id against the two candidates the resolver would have considered
- * (the location's own override, the buyer's supervisor). A null result means
- * neither fired → the admin pool.
+ * Calls the REAL `supply_chain.resolve_po_approval_route()` — the exact
+ * function every PO-creating path stores provenance from — and relays its
+ * resolved rule + step trace verbatim. No client-side re-implementation, no
+ * rule-guessing by comparison: the tier NAME comes from the resolver itself,
+ * so new tiers show up here automatically.
  */
 export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   const tenantId = session.tenantId!;
@@ -36,8 +46,8 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   });
   const sc = (supabase as any).schema('supply_chain');
 
-  // The source of truth. Everything below only explains this value.
-  const { data: approverId, error: rpcErr } = await sc.rpc('resolve_po_approver', {
+  // The source of truth: resolved approver + rule + full step trace.
+  const { data: route, error: rpcErr } = await sc.rpc('resolve_po_approval_route', {
     p_tenant_id: tenantId,
     p_buyer_user_id: params.buyer_user_id,
     p_delivery_location_id: params.delivery_location_id ?? null,
@@ -47,50 +57,9 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
     throw AppError.internal(rpcErr.message);
   }
 
-  // Candidate inputs, read the same way the resolver reads them — used only to
-  // NAME which rule fired, never to compute the answer.
-  let locationOverrideId: string | null = null;
-  if (params.delivery_location_id) {
-    const { data: loc } = await (supabase as any)
-      .schema('inventory')
-      .from('locations')
-      .select('po_approver_user_id')
-      .eq('id', params.delivery_location_id)
-      .maybeSingle();
-    locationOverrideId = loc?.po_approver_user_id || null;
-  }
-
-  // Buyer's supervisor → their app user (mirror of the resolver's step 2).
-  let supervisorUserId: string | null = null;
-  const { data: buyer } = await supabase
-    .from('local_users')
-    .select('hr_person_id')
-    .eq('tenant_id', tenantId)
-    .eq('user_id', params.buyer_user_id)
-    .maybeSingle();
-  if (buyer?.hr_person_id) {
-    const { data: hr } = await supabase
-      .from('hr_people')
-      .select('supervisor_hr_person_id')
-      .eq('tenant_id', tenantId)
-      .eq('hr_person_id', buyer.hr_person_id)
-      .maybeSingle();
-    if (hr?.supervisor_hr_person_id) {
-      const { data: sup } = await supabase
-        .from('local_users')
-        .select('user_id')
-        .eq('tenant_id', tenantId)
-        .eq('hr_person_id', hr.supervisor_hr_person_id)
-        .maybeSingle();
-      supervisorUserId = sup?.user_id || null;
-    }
-  }
-
-  // Which rule produced the resolved approver.
-  let rule: 'location_override' | 'supervisor' | 'admin_fallback';
-  if (approverId && approverId === locationOverrideId) rule = 'location_override';
-  else if (approverId && approverId === supervisorUserId) rule = 'supervisor';
-  else rule = 'admin_fallback';
+  const approverId: string | null = route?.resolved_user_id ?? null;
+  const rule: Rule = (route?.resolved_rule as Rule) || 'admin_pool';
+  const steps: unknown[] = Array.isArray(route?.steps) ? route.steps : [];
 
   // Resolve names for the response.
   const wantedIds = [approverId, params.buyer_user_id].filter(Boolean) as string[];
@@ -115,21 +84,19 @@ export const GET = createSessionReadRoute(async ({ session, req, log }) => {
   }
 
   const buyerName = nameById.get(params.buyer_user_id) || 'this buyer';
-  const explanation =
-    rule === 'location_override'
-      ? `Location override on ${locationName || 'this location'}`
-      : rule === 'supervisor'
-        ? `${buyerName}'s supervisor`
-        : 'Falls back to admins (any admin can approve)';
+  const explain = RULE_EXPLANATION[rule] ?? RULE_EXPLANATION.admin_pool;
 
   return Response.json({
     data: {
-      approver_user_id: approverId || null,
+      approver_user_id: approverId,
       approver_name: approverId ? nameById.get(approverId) || 'Unknown' : null,
       rule,
-      explanation,
+      explanation: explain(buyerName, locationName),
       buyer_name: buyerName,
       location_name: locationName,
+      // The resolver's own step trace — the settings page renders it so the
+      // simulator explains not just WHO but WHY.
+      steps,
     },
   });
 }, { serviceName: SERVICE_NAME });

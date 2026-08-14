@@ -10,16 +10,22 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
  * resolver (`supply_chain.resolve_po_approver`) actually uses, in precedence
  * order:
  *
- *   1. Location overrides — inventory.locations.po_approver_user_id, resolved to
+ *   1. Person overrides — supply_chain.po_approver_overrides, "this buyer always
+ *      routes to that approver". Active rows with resolved names.
+ *   2. Location overrides — inventory.locations.po_approver_user_id, resolved to
  *      the approver's name/title. Every active location is returned (with a null
  *      approver where none is set) so the settings page can offer an inline
  *      editor for the whole list.
- *   2. Supervisor routing — each roster member → their HR supervisor's app user
+ *   3. Supervisor routing — each roster member → their HR supervisor's app user
  *      (via hr_people.supervisor_hr_person_id, the HR-mirrored edge the resolver
  *      reads). People whose supervisor doesn't resolve to a real app user fall
  *      through to admins; they're flagged.
- *   3. Fallback admins — anyone with role='admin' can approve when 1 and 2
- *      resolve nothing.
+ *   4. Fallback — tenant_settings.po_fallback_approver_user_ids (named list) or,
+ *      when unset, anyone with role='admin'.
+ *
+ * Plus a settings summary (auto-approve enabled/limit + per-vendor limit count)
+ * so the page can answer "how is auto-approve configured?" without a second
+ * fetch — the editor for those lives on /settings.
  *
  * Also returns the live pending count (?counts respected via the approvals API;
  * here we just include it so the page's context strip has one number to show).
@@ -142,15 +148,71 @@ export const GET = createSessionReadRoute(async ({ session, log }) => {
     };
   });
 
+  const sc = (supabase as any).schema('supply_chain');
+
+  // Section 0 (tier 1): per-person overrides — active rows with resolved names.
+  const { data: personRows, error: personErr } = await sc
+    .from('po_approver_overrides')
+    .select('id, buyer_user_id, approver_user_id, active, note, created_at')
+    .eq('tenant_id', tenantId)
+    .eq('active', true)
+    .order('created_at', { ascending: true })
+    .limit(500);
+  if (personErr) {
+    log.error('approval_flow.person_overrides_failed', { error: personErr.message });
+    throw AppError.internal(personErr.message);
+  }
+  const personOverrides = (personRows ?? []).map((r: any) => {
+    const buyer = userByUserId.get(r.buyer_user_id);
+    const approver = userByUserId.get(r.approver_user_id);
+    return {
+      id: r.id,
+      buyer_user_id: r.buyer_user_id,
+      buyer_name: buyer ? nameFor(buyer) : 'Unknown',
+      buyer_title: buyer ? titleFor(buyer) : null,
+      approver_user_id: r.approver_user_id,
+      approver_name: approver ? nameFor(approver) : null,
+      approver_title: approver ? titleFor(approver) : null,
+      approver_missing: !approver,
+      note: r.note || null,
+      created_at: r.created_at,
+    };
+  });
+
+  // Tier 4 config + the auto-approve summary, straight off tenant_settings.
+  const { data: settings } = await sc
+    .from('tenant_settings')
+    .select('auto_approve_enabled, auto_approve_limit, vendor_auto_approve_limits, po_fallback_approver_user_ids')
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  const fallbackIds: string[] = settings?.po_fallback_approver_user_ids ?? [];
+  const fallbackApprovers = fallbackIds.map((id) => {
+    const u = userByUserId.get(id);
+    return {
+      user_id: id,
+      name: u ? nameFor(u) : 'Unknown (no longer a user)',
+      title: u ? titleFor(u) : null,
+      missing: !u,
+    };
+  });
+
   // Live pending count (same source the approvals inbox uses).
-  const { count: pendingCount } = await (supabase as any)
-    .schema('supply_chain')
+  const { count: pendingCount } = await sc
     .from('purchase_orders')
     .select('id', { count: 'exact', head: true })
     .eq('status', 'awaiting_approval');
 
   return Response.json({
     data: {
+      person_overrides: personOverrides,
+      fallback_approvers: fallbackApprovers,
+      settings: {
+        auto_approve_enabled: settings?.auto_approve_enabled ?? true,
+        auto_approve_limit: settings?.auto_approve_limit ?? null,
+        vendor_limit_count: settings?.vendor_auto_approve_limits
+          ? Object.keys(settings.vendor_auto_approve_limits).length
+          : 0,
+      },
       overrides,
       supervisor_routing: supervisorRouting,
       admins,

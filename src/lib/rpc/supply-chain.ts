@@ -128,6 +128,8 @@ export interface TenantSettings {
   auto_approve_enabled: boolean;
   auto_approve_limit: number | null;
   vendor_auto_approve_limits: Record<string, number> | null;
+  /** Named fallback approvers for PO routing tier 4. Null/empty = all admins. */
+  po_fallback_approver_user_ids: string[] | null;
   /** How the proactive agent handles reorder needs: notify | auto_draft | auto_send. */
   reorder_mode: 'notify' | 'auto_draft' | 'auto_send';
   /** When true, the nightly cron turns top cycle-count suggestions into assigned counts. */
