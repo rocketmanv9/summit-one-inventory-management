@@ -33,6 +33,10 @@ export interface HRSyncSummary {
   usersMatched: number;
   stalePositionsDeactivated: number;
   stalePeopleDeactivated: number;
+  /** "Pending Sync" stubs resolved to a real identity via hr_people.profile_id. */
+  pendingHealed: number;
+  /** Stubs still unresolved after the reconcile (surfaced as "Unlinked account" in the UI). */
+  pendingRemaining: number;
 }
 
 export async function runHRSync(
@@ -153,6 +157,29 @@ export async function runHRSync(
     }
   }
 
+  // ── Self-heal "Pending Sync" stubs ──────────────────────────────────────
+  // ensure_local_user_flexible() mints a stub local_users row (name='Pending
+  // Sync', email NULL) whenever an FK reference arrives before the user is
+  // mirrored from Core. Email-based matching below can never heal those, but
+  // hr_people.profile_id IS the Core user id — so resolve stubs against the
+  // mirror we just refreshed. Runs in-DB (reconcile_pending_local_users,
+  // migration 20260814000001); failure logs a warning without failing the sync.
+  let pendingHealed = 0;
+  let pendingRemaining = 0;
+  {
+    const { data: reconciled, error: recErr } = await supabase
+      .rpc('reconcile_pending_local_users', { p_tenant_id: tenantId });
+    if (recErr) {
+      log.warn('hr.sync.pending_reconcile_failed', { error: recErr.message });
+    } else {
+      pendingHealed = reconciled?.healed ?? 0;
+      pendingRemaining = reconciled?.remaining ?? 0;
+      if (pendingHealed > 0) {
+        log.info('hr.sync.pending_stubs_healed', { healed: pendingHealed, remaining: pendingRemaining });
+      }
+    }
+  }
+
   // ── People → local_users (match app users by email) ─────────────────────
   const peopleByEmail = indexPeopleByEmail(hrPeople);
 
@@ -188,6 +215,8 @@ export async function runHRSync(
     usersMatched,
     stalePositionsDeactivated,
     stalePeopleDeactivated,
+    pendingHealed,
+    pendingRemaining,
   };
   log.info('hr.synced', { ...summary, hrTenantId });
   return summary;

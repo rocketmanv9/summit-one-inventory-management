@@ -201,3 +201,37 @@ export function indexPeopleByEmail(people: HRPerson[]): Map<string, HRPerson> {
   }
   return idx;
 }
+
+// ── Unlinked ("Pending Sync") account helpers ─────────────────────────────────
+// A local_users row is "unlinked" when the FK-safety trigger
+// (ensure_local_user_flexible) minted it before the user was mirrored from
+// Core and no identity source has resolved it since: email NULL and/or the
+// literal 'Pending Sync' placeholder name.
+
+export interface LocalUserReference {
+  table: string;
+  column: string;
+  count: number;
+}
+
+/** True when a local_users row is an unresolved trigger stub. */
+export function isUnlinkedLocalUser(u: { email?: string | null; name?: string | null }): boolean {
+  return !u.email || !u.name || u.name === 'Pending Sync';
+}
+
+/**
+ * True when a referencing table is telemetry/audit-shaped — outbox events,
+ * audit logs, domain event streams. References like these are safe to orphan
+ * (all FKs to local_users are ON DELETE SET NULL), so a stub referenced ONLY
+ * by such tables may be removed. Business records (POs, receipts, assets,
+ * locations, …) block removal.
+ */
+export function isTestSafeReference(refTable: string): boolean {
+  const bare = refTable.split('.').pop() ?? refTable;
+  return (
+    bare === 'events_outbox' ||
+    bare === 'audit_logs' ||
+    bare === 'guardrail_exceptions' ||
+    bare.endsWith('_events')
+  );
+}

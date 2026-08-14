@@ -2,6 +2,7 @@ import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 import { idFromPath } from '@/lib/api/typed-crud';
+import { isUnlinkedLocalUser, isTestSafeReference } from '@/lib/hr';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -69,3 +70,63 @@ export const PATCH = createSessionWriteRoute(async ({ req, body, ctx, supabase, 
     }],
   };
 }, { bodySchema: Schema, serviceName: SERVICE_NAME, scope: 'PATCH /api/hr/users/[id]' });
+
+/**
+ * DELETE /api/hr/users/[id] — remove an UNLINKED account (admin).
+ *
+ * Only trigger stubs (name 'Pending Sync' / email NULL — see
+ * ensure_local_user_flexible) can be removed, and only when nothing but
+ * telemetry references them (outbox events, audit logs, domain event streams —
+ * all ON DELETE SET NULL). Real users and stubs referenced by business records
+ * (POs, receipts, assets, …) are refused.
+ */
+export const DELETE = createSessionWriteRoute(async ({ req, ctx, supabase, idempotencyKey }) => {
+  const userId = idFromPath(req, 'users');
+  const tenantId = ctx.tenantId!;
+
+  const { data: me } = await supabase.from('local_users').select('role').eq('user_id', ctx.userId).eq('tenant_id', tenantId).maybeSingle();
+  if (me?.role !== 'admin') throw AppError.forbidden('Admin role required');
+
+  const { data: target, error: readErr } = await supabase
+    .from('local_users')
+    .select('user_id, name, email')
+    .eq('user_id', userId)
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  if (readErr) throw AppError.internal(readErr.message);
+  if (!target) throw AppError.notFound('User not found');
+  if (!isUnlinkedLocalUser(target)) {
+    throw AppError.badRequest('Only unlinked (never-synced) accounts can be removed');
+  }
+
+  const { data: refs, error: refErr } = await supabase.rpc('local_user_references', { p_user_id: userId });
+  if (refErr) throw AppError.internal(refErr.message);
+  const blocking = (refs ?? []).filter((r: any) => !isTestSafeReference(r.ref_table));
+  if (blocking.length > 0) {
+    throw AppError.conflict(
+      `Referenced by business records: ${blocking.map((r: any) => `${r.ref_table} (${r.ref_count})`).join(', ')}`,
+    );
+  }
+
+  const { error: delErr } = await supabase
+    .from('local_users')
+    .delete()
+    .eq('user_id', userId)
+    .eq('tenant_id', tenantId);
+  if (delErr) throw AppError.internal(delErr.message);
+
+  return {
+    data: { user_id: userId, removed: true },
+    status: 200,
+    events: [{
+      event_name: 'user.unlinked_removed',
+      payload: {
+        tenant_id: tenantId,
+        user_id: userId,
+        removed_by: ctx.userId,
+        references_nulled: (refs ?? []).map((r: any) => ({ table: r.ref_table, count: Number(r.ref_count) })),
+      },
+      last_event_id: idempotencyKey,
+    }],
+  };
+}, { bodySchema: 'raw', serviceName: SERVICE_NAME, scope: 'DELETE /api/hr/users/[id]' });

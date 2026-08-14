@@ -1,7 +1,7 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { createTenantServiceClient } from '@rocketmanv9/chassis/supabase';
 import { AppError } from '@rocketmanv9/chassis/errors';
-import { isHRConfigured } from '@/lib/hr';
+import { isHRConfigured, isUnlinkedLocalUser, isTestSafeReference, type LocalUserReference } from '@/lib/hr';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -85,14 +85,32 @@ export const GET = createSessionReadRoute(async ({ session }) => {
     };
   });
 
+  // Unlinked accounts (trigger stubs that never resolved): fetch what actually
+  // references each one so the UI can say WHY the row exists and whether it is
+  // safe to remove (only telemetry/audit references → removable).
+  const referencesByUser = new Map<string, LocalUserReference[]>();
+  for (const u of (users ?? []).filter(isUnlinkedLocalUser)) {
+    const { data: refs, error: refErr } = await supabase.rpc('local_user_references', { p_user_id: u.user_id });
+    if (refErr) throw AppError.internal(refErr.message);
+    referencesByUser.set(
+      u.user_id,
+      (refs ?? []).map((r: any) => ({ table: r.ref_table, column: r.ref_column, count: Number(r.ref_count) })),
+    );
+  }
+
   const usersWithEffective = (users ?? []).map((u: any) => {
     const pos = u.position_id ? positionById.get(u.position_id) : null;
     const userLimit = u.spending_limit ?? null;
     const positionLimit = pos?.spending_limit ?? null;
     const effective = userLimit ?? positionLimit ?? tenantLimit;
     const b = budgetByUser.get(u.user_id);
+    const unlinked = isUnlinkedLocalUser(u);
+    const references = unlinked ? referencesByUser.get(u.user_id) ?? [] : [];
     return {
       ...u,
+      unlinked,
+      references,
+      removable: unlinked && references.every((r) => isTestSafeReference(r.table)),
       position_title: pos?.title ?? null,
       position_limit: positionLimit,
       effective_limit: effective, // null => unlimited

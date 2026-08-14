@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, RefreshCw, Users, Briefcase, Bot } from 'lucide-react';
+import { Loader2, RefreshCw, Users, Briefcase, Bot, AlertTriangle, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { getStoredAccessToken, parseJwtPayload } from '@/lib/auth-token';
+import { loadAccessToken, parseJwtPayload } from '@/lib/auth-token';
 import { AppError } from '@rocketmanv9/chassis/errors';
 
 interface Position {
@@ -40,6 +40,11 @@ interface UserRow {
   budget_remaining: number | string | null;
   budget_period_start: string | null;
   budget_period_end: string | null;
+  synced_at: string | null;
+  // Unlinked-account surface (trigger stubs that never resolved to a person).
+  unlinked: boolean;
+  references: Array<{ table: string; column: string; count: number }>;
+  removable: boolean;
 }
 
 interface RosterMember {
@@ -174,9 +179,12 @@ export default function PeopleSettingsPage() {
   }, []);
 
   useEffect(() => {
-    const token = getStoredAccessToken();
-    const payload = token ? parseJwtPayload(token) : null;
-    setIsAdmin(payload?.app_metadata?.role === 'admin');
+    // Await the token load — a synchronous cache read here raced the initial
+    // hydration on hard refresh and left admins seeing a read-only page.
+    void loadAccessToken().then((token) => {
+      const payload = token ? parseJwtPayload(token) : null;
+      setIsAdmin(payload?.app_metadata?.role === 'admin');
+    });
     load();
   }, [load]);
 
@@ -196,7 +204,7 @@ export default function PeopleSettingsPage() {
       if (!res.ok) throw AppError.internal(json?.error?.message || 'Sync failed');
       const d = json.data ?? json;
       if (!d.configured) flash('HR not configured — set HR_SUPABASE_* env to sync.');
-      else flash(`Synced ${d.positionsSynced} positions · matched ${d.usersMatched} users.`);
+      else flash(`Synced ${d.positionsSynced} positions · matched ${d.usersMatched} users${d.pendingHealed ? ` · healed ${d.pendingHealed} unlinked` : ''}.`);
       await load();
     } catch (e) { fail(e); } finally { setSyncing(false); }
   };
@@ -231,6 +239,22 @@ export default function PeopleSettingsPage() {
       flash('Agent settings saved.');
       await load();
     } catch (e) { fail(e); }
+  };
+
+  const [removing, setRemoving] = useState<string | null>(null);
+  const removeUnlinked = async (userId: string) => {
+    setRemoving(userId); setErr('');
+    try {
+      const res = await fetch(`/api/hr/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'x-idempotency-key': idemKey('hr-user-remove') },
+        credentials: 'include',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw AppError.internal(json?.error?.message || `Remove failed (${res.status})`);
+      flash('Unlinked account removed.');
+      await load();
+    } catch (e) { fail(e); } finally { setRemoving(null); }
   };
 
   return (
@@ -333,7 +357,7 @@ export default function PeopleSettingsPage() {
 
           {/* Users */}
           <section className="rounded-lg border bg-white p-4">
-            <h2 className="mb-1 flex items-center gap-2 text-base font-semibold"><Users className="h-4 w-4" /> Users ({data.users.length})</h2>
+            <h2 className="mb-1 flex items-center gap-2 text-base font-semibold"><Users className="h-4 w-4" /> Users ({data.users.filter((u) => !u.unlinked).length})</h2>
             <p className="mb-4 text-sm text-gray-500">
               <span className="font-medium text-gray-600">Per-order cap</span> (Override → Effective): the biggest single PO that auto-approves.{' '}
               <span className="font-medium text-gray-600">Period budget</span>: a recurring pool of approved spend; once it&apos;s used up for the period, new POs go to draft until it resets. Both must pass to auto-approve.
@@ -344,7 +368,7 @@ export default function PeopleSettingsPage() {
                   <th className="py-2">User</th><th>Position</th><th className="text-right">Override ($)</th><th className="text-right">Effective</th><th className="text-right">Period budget</th><th className="text-right">This period</th>
                 </tr></thead>
                 <tbody>
-                  {data.users.map((u) => (
+                  {data.users.filter((u) => !u.unlinked).map((u) => (
                     <tr key={u.user_id} className="border-b last:border-0">
                       <td className="py-2">
                         <div className="font-medium">{u.name || u.email || u.user_id.slice(0, 8)}</div>
@@ -395,11 +419,68 @@ export default function PeopleSettingsPage() {
                       </td>
                     </tr>
                   ))}
-                  {data.users.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-gray-400">No users yet.</td></tr>}
+                  {data.users.filter((u) => !u.unlinked).length === 0 && <tr><td colSpan={6} className="py-4 text-center text-gray-400">No users yet.</td></tr>}
                 </tbody>
               </table>
             </div>
           </section>
+
+          {/* Unlinked accounts — FK-safety stubs that never resolved to a person */}
+          {data.users.some((u) => u.unlinked) && (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-amber-900">
+                <AlertTriangle className="h-4 w-4" /> Unlinked accounts ({data.users.filter((u) => u.unlinked).length})
+              </h2>
+              <p className="mb-4 text-sm text-amber-800">
+                Auto-created placeholders: something referenced a user id this app had never seen (usually a
+                cross-service or test flow), so a stub row was minted to keep the reference valid. Each row shows
+                what points at it. <span className="font-medium">Re-sync</span> resolves ids that belong to real
+                people in HR; <span className="font-medium">Remove</span> is enabled only when nothing but
+                event/audit telemetry references the stub.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-amber-200 text-left text-xs uppercase text-amber-600">
+                    <th className="py-2">User id</th><th>First seen</th><th>Referenced by</th><th className="text-right">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {data.users.filter((u) => u.unlinked).map((u) => (
+                      <tr key={u.user_id} className="border-b border-amber-100 last:border-0">
+                        <td className="py-2 font-mono text-xs text-amber-900">{u.user_id}</td>
+                        <td className="text-xs text-amber-700">{u.synced_at ? new Date(u.synced_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                        <td className="text-xs text-amber-800">
+                          {u.references.length === 0
+                            ? <span className="text-amber-500">nothing — safe to remove</span>
+                            : u.references.map((r) => `${r.count} × ${r.table.split('.').pop()}`).join(' · ')}
+                        </td>
+                        <td className="py-1 text-right">
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              onClick={runSync}
+                              disabled={syncing || !isAdmin}
+                              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                              Re-sync now
+                            </button>
+                            <button
+                              onClick={() => removeUnlinked(u.user_id)}
+                              disabled={!u.removable || !isAdmin || removing === u.user_id}
+                              title={u.removable ? 'Delete this stub (event references are kept, attribution cleared)' : 'Referenced by business records — cannot remove'}
+                              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-40"
+                            >
+                              {removing === u.user_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           {/* HR roster — all people (read-only) */}
           <section className="rounded-lg border bg-white p-4">
