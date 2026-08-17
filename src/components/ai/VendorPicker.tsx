@@ -99,8 +99,9 @@ type Tier = 'tenant' | 'catalog' | 'web';
 interface RowState {
   busy?: boolean;
   error?: string | null;
-  /** STRONG dup match returned by the create guard — awaiting the user's call. */
-  gate?: { matches: VendorMatchResult[] } | null;
+  /** STRONG dup match returned by the create guard — awaiting the user's call.
+   *  `forceable:false` (exact-name match) hides the "create anyway" option. */
+  gate?: { matches: VendorMatchResult[]; forceable: boolean } | null;
 }
 
 const STRONG_MATCH_THRESHOLD = 72;
@@ -314,7 +315,10 @@ export function VendorPicker({
           : [];
       const strong = matches.filter((m) => m.confidence >= STRONG_MATCH_THRESHOLD);
       if (strong.length > 0) {
-        patchRow(key, { busy: false, gate: { matches: strong }, error: null });
+        // Exact-name matches come back forceable:false — the route can't force a
+        // duplicate name, so we only offer "use existing", not "create anyway".
+        const forceable = (details?.forceable ?? err?.forceable) !== false;
+        patchRow(key, { busy: false, gate: { matches: strong, forceable }, error: null });
         return;
       }
       patchRow(key, {
@@ -544,13 +548,15 @@ export function VendorPicker({
                           >
                             Use {st.gate.matches[0].vendor_name}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => createFromWeb(c, key, true)}
-                            className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                          >
-                            Create anyway
-                          </button>
+                          {st.gate.forceable && (
+                            <button
+                              type="button"
+                              onClick={() => createFromWeb(c, key, true)}
+                              className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              Create anyway
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => patchRow(key, { gate: null })}
