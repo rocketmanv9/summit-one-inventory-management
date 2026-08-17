@@ -54,7 +54,19 @@ export interface DraftPoPreviewLine {
   price_basis: PriceBasis;
   line_total: number | null;
   advisories: Advisory[];
+  /**
+   * Amazon punchout only (sprint item 08). True when a `vendor_items` ASIN row
+   * exists for this catalog item + the Amazon vendor, so the card can warn about
+   * unmapped lines BEFORE the buyer clicks "Shop on Amazon". Always false for
+   * standard vendors (there's nothing to map).
+   */
+  amazon_mapped: boolean;
+  /** The mapped ASIN when `amazon_mapped`, else null. */
+  asin: string | null;
 }
+
+/** How the card's "Create" acts on this vendor (sprint item 08). */
+export type VendorFulfillment = 'standard' | 'amazon_punchout';
 
 export interface DraftPoPreviewVendor {
   vendor_id: string | null;
@@ -65,6 +77,13 @@ export interface DraftPoPreviewVendor {
   pending_adopt: boolean;
   /** Echoed GV identity when pending_adopt, so item 04 can adopt it. */
   catalog_vendor_id: string | null;
+  /**
+   * 'amazon_punchout' when the resolved vendor orders through Amazon Business
+   * (`ordering_mode='amazon_punchout'` or `code='AMAZON-BIZ'`); 'standard' for
+   * everyone else. The card routes Amazon "Create" through the punchout start
+   * flow (human finishes the cart on Amazon) instead of the normal PO create.
+   */
+  fulfillment: VendorFulfillment;
 }
 
 export interface DraftPoPreviewResult {
@@ -116,7 +135,7 @@ async function resolveVendor(
   if (input.vendor_id && UUID_RE.test(input.vendor_id)) {
     const { data } = await sc
       .from('vendors')
-      .select('id, name, code')
+      .select('id, name, code, ordering_mode')
       .eq('tenant_id', tenantId)
       .eq('id', input.vendor_id)
       .limit(1)
@@ -129,6 +148,7 @@ async function resolveVendor(
         address_id: null,
         pending_adopt: false,
         catalog_vendor_id: null,
+        fulfillment: vendorFulfillment(data.ordering_mode, data.code),
       };
     }
   }
@@ -137,7 +157,7 @@ async function resolveVendor(
     // Maybe the tenant already adopted this catalog vendor — prefer the real row.
     const { data: adopted } = await sc
       .from('vendors')
-      .select('id, name, code')
+      .select('id, name, code, ordering_mode')
       .eq('tenant_id', tenantId)
       .eq('catalog_vendor_id', input.catalog_vendor_id)
       .limit(1)
@@ -150,6 +170,7 @@ async function resolveVendor(
         address_id: null,
         pending_adopt: false,
         catalog_vendor_id: input.catalog_vendor_id,
+        fulfillment: vendorFulfillment(adopted.ordering_mode, adopted.code),
       };
     }
     // Not adopted — echo the GV identity so item 04's card can offer "Add & use".
@@ -168,6 +189,9 @@ async function resolveVendor(
       address_id: null,
       pending_adopt: true,
       catalog_vendor_id: input.catalog_vendor_id,
+      // A not-yet-adopted GV candidate has no ordering_mode on file — treat as
+      // standard until it's a real tenant vendor row with an Amazon flag.
+      fulfillment: 'standard',
     };
   }
 
@@ -178,7 +202,23 @@ async function resolveVendor(
     address_id: null,
     pending_adopt: false,
     catalog_vendor_id: null,
+    fulfillment: 'standard',
   };
+}
+
+/**
+ * How the card's "Create" acts on a vendor (sprint item 08). Amazon Business
+ * vendors carry `ordering_mode = 'amazon_punchout'` (canonically) or the
+ * `code = 'AMAZON-BIZ'` — the same flags findAmazonVendorId and the punchout
+ * start route key off. Everyone else is 'standard'.
+ */
+function vendorFulfillment(
+  orderingMode: string | null | undefined,
+  code: string | null | undefined,
+): VendorFulfillment {
+  if (orderingMode === 'amazon_punchout') return 'amazon_punchout';
+  if ((code ?? '').toUpperCase() === 'AMAZON-BIZ') return 'amazon_punchout';
+  return 'standard';
 }
 
 /**
@@ -256,6 +296,12 @@ export async function buildDraftPoPreview(
   const warnings: Advisory[] = [];
   const uomTermIds = new Set<string>();
 
+  // Amazon punchout only (item 08): once the resolved vendor is Amazon, each line
+  // needs an ASIN mapping (vendor_items.vendor_sku for the Amazon vendor) before
+  // the card's "Shop on Amazon" can preload it. We surface amazon_mapped/asin so
+  // the card can warn about unmapped lines BEFORE the buyer clicks.
+  const isAmazon = vendor.fulfillment === 'amazon_punchout';
+
   for (const raw of rawLines) {
     const qty = num(raw.qty) ?? 0;
     const item = await resolveItem(supabase, raw.item_ref);
@@ -272,6 +318,8 @@ export async function buildDraftPoPreview(
         price_basis: 'unknown',
         line_total: null,
         advisories: [],
+        amazon_mapped: false,
+        asin: null,
       });
       continue;
     }
@@ -281,10 +329,11 @@ export async function buildDraftPoPreview(
     // ── Price + basis ──────────────────────────────────────────────────────
     let unitCost: number | null = null;
     let basis: PriceBasis = 'unknown';
+    let asin: string | null = null;
     if (vendor.vendor_id) {
       const { data: viRows } = await sc
         .from('vendor_items')
-        .select('unit_cost, min_order_qty, vendor_address_id, active, last_known_price')
+        .select('unit_cost, min_order_qty, vendor_address_id, active, last_known_price, vendor_sku')
         .eq('vendor_id', vendor.vendor_id)
         .eq('catalog_item_id', item.id)
         .limit(200);
@@ -297,6 +346,15 @@ export async function buildDraftPoPreview(
           unitCost = num(vi.last_known_price);
           basis = 'market';
         }
+      }
+      // For Amazon, the vendor_sku on the matched vendor_item IS the ASIN —
+      // exactly what punchout/start resolves against. Only an active row with a
+      // non-empty sku counts as mapped (matches the start route's resolution).
+      if (isAmazon) {
+        const mappedRow = (viRows ?? []).find(
+          (r: any) => r.active !== false && typeof r.vendor_sku === 'string' && r.vendor_sku.trim(),
+        );
+        asin = mappedRow ? String(mappedRow.vendor_sku).trim() : null;
       }
     }
     if (unitCost == null) {
@@ -323,6 +381,8 @@ export async function buildDraftPoPreview(
       price_basis: basis,
       line_total: unitCost != null ? Number((unitCost * qty).toFixed(4)) : null,
       advisories: advisories.lineAdvisories,
+      amazon_mapped: isAmazon ? asin != null : false,
+      asin: isAmazon ? asin : null,
     });
 
     for (const w of advisories.warnings) warnings.push(w);

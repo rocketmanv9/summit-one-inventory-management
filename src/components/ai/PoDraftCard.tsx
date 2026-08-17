@@ -23,6 +23,7 @@ import {
   Boxes,
   CheckCircle2,
   ExternalLink,
+  Link2,
   Loader2,
   PackageCheck,
   ShoppingCart,
@@ -51,6 +52,8 @@ interface EditableLine {
   unit_cost: number | null;
   price_basis: PriceBasis;
   advisories: Advisory[];
+  /** Amazon punchout only — does this catalog item have an ASIN mapping? */
+  amazon_mapped: boolean;
 }
 
 interface LocationOption {
@@ -111,6 +114,7 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
       unit_cost: l.unit_cost,
       price_basis: l.price_basis,
       advisories: l.advisories,
+      amazon_mapped: l.amazon_mapped ?? false,
     })),
   );
 
@@ -129,6 +133,17 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
     po_id: string | null;
     status: string | null;
   } | null>(null);
+
+  // ── Amazon punchout branch (item 08) ──────────────────────────────────
+  // When the resolved vendor orders through Amazon Business, "Create" doesn't
+  // make an ordinary PO (that would bypass Amazon's SPAID + the purchaser gate).
+  // Instead it starts a punchout session and hands the buyer the redirect URL so
+  // they finish the cart on Amazon — the one real Amazon ordering path.
+  const [userEmail, setUserEmail] = useState('');
+  // Set when punchout/start returned a 403 gate denial — rendered verbatim as the
+  // "ask an admin" panel. The route owns the gate; we never re-check it here.
+  const [gateDenied, setGateDenied] = useState<string | null>(null);
+  const [shopStarted, setShopStarted] = useState(false);
 
   // ── Vendor picker + re-preview (item 04) ──────────────────────────────
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -177,6 +192,34 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
 
   const vendor = preview.vendor;
   const vendorMissing = !vendor.vendor_id;
+  const isAmazon = vendor.fulfillment === 'amazon_punchout';
+
+  // Lines the buyer asked for that have no Amazon ASIN mapping yet — punchout
+  // can't preload these, so the card nudges the buyer to map them first. Only
+  // meaningful for Amazon vendors; empty otherwise.
+  const unmappedAmazonLines = useMemo(
+    () =>
+      isAmazon
+        ? lines.filter((l) => l.catalog_item_id && !l.amazon_mapped)
+        : [],
+    [isAmazon, lines],
+  );
+
+  // Pre-fill the punchout session email with the logged-in user's email (same
+  // source PlaceOrderModal uses). Editable if the derived one is wrong.
+  useEffect(() => {
+    if (!isAmazon || userEmail) return;
+    let cancelled = false;
+    fetch('/api/auth/session', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data?.authenticated && data.email) setUserEmail(data.email);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isAmazon, userEmail]);
 
   // Anchor item for the picker's catalog/web tiers — the first resolved line
   // (catalog_item_id preferred, else its name as free text).
@@ -237,6 +280,7 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
           unit_cost: l.unit_cost,
           price_basis: l.price_basis,
           advisories: l.advisories,
+          amazon_mapped: l.amazon_mapped ?? false,
         })),
       );
       if (next.delivery_location_id) setDeliveryLocationId(next.delivery_location_id);
@@ -320,6 +364,136 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
       setSubmitting(false);
     }
   };
+
+  // ── Shop on Amazon: start a punchout session (item 08) ────────────────
+  // The Amazon vendor's "Create" is NOT an ordinary PO — it hands off to Amazon
+  // to finish the cart (SPAID only exists in a returned cart, so the human MUST
+  // shop). We POST the card's lines to the existing punchout/start route, which
+  // enforces the purchaser gate and ASIN mapping itself, then open the returned
+  // redirect_url. We trust the route's errors verbatim — no client-side re-gating.
+  const handleShopOnAmazon = async () => {
+    if (submitting || shopStarted) return;
+    setError(null);
+    setGateDenied(null);
+
+    if (!vendor.vendor_id) {
+      setError('Pick a vendor before starting the Amazon cart.');
+      return;
+    }
+    const email = userEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Enter your email to start the Amazon session.');
+      return;
+    }
+    if (!deliveryLocationId) {
+      setError('Pick a delivery location before shopping on Amazon.');
+      return;
+    }
+    const catalogItems = lines
+      .filter((l) => l.catalog_item_id && Number.isFinite(l.qty) && l.qty > 0)
+      .map((l) => ({
+        catalog_item_id: l.catalog_item_id!,
+        // punchout/start's schema is z.number().int() — coerce the editable qty.
+        quantity: Math.max(1, Math.round(l.qty)),
+      }));
+    if (catalogItems.length === 0) {
+      setError('Nothing to order — every line needs a resolved item and a quantity.');
+      return;
+    }
+
+    setSubmitting(true);
+    // Open the Amazon tab synchronously inside the click gesture, before the
+    // awaited fetch — otherwise the popup blocker silently kills it (same reason
+    // PlaceOrderModal pre-opens the tab).
+    const amazonTab = typeof window !== 'undefined' ? window.open('about:blank', '_blank') : null;
+    try {
+      const res = await fetch(
+        '/api/settings/integrations/amazon-business/punchout/start',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Idempotency-Key': `ai-amazon-punchout-${vendor.vendor_id}-${Date.now()}`,
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            user_email: email,
+            location_id: deliveryLocationId,
+            catalog_items: catalogItems,
+          }),
+        },
+      );
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        amazonTab?.close();
+        const code = json?.error?.code || json?.code;
+        const msg =
+          json?.error?.message || json?.message || `Couldn't start the Amazon cart (${res.status}).`;
+        // The purchaser gate (403) → render the route's copy verbatim as the
+        // "ask an admin" panel. Everything else (unmapped items, config) → the
+        // ordinary error strip, again using the route's message verbatim.
+        if (res.status === 403 || code === 'amazon_purchaser_required') {
+          setGateDenied(String(msg));
+        } else {
+          setError(String(msg));
+        }
+        setSubmitting(false);
+        return;
+      }
+
+      const payload = json?.data ?? json;
+      const redirectUrl: string | undefined = payload?.redirect_url;
+      if (!redirectUrl) {
+        amazonTab?.close();
+        setError('Amazon started the session but returned no redirect URL.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Navigate the pre-opened tab to Amazon (fallback to a fresh open if the
+      // pre-open was blocked).
+      if (amazonTab && !amazonTab.closed) {
+        amazonTab.location.href = redirectUrl;
+      } else {
+        window.open(redirectUrl, '_blank');
+      }
+      setShopStarted(true);
+    } catch (err: any) {
+      if (amazonTab && !amazonTab.closed) {
+        try {
+          amazonTab.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      setError(err?.message || 'Network error starting the Amazon cart.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ── Amazon punchout started (collapsed) state (item 08) ───────────────
+  // We stop at the redirect — the human finishes the cart on Amazon and it
+  // returns via webhook. We never place the order here.
+  if (shopStarted) {
+    return (
+      <div className="mt-2 rounded-lg border border-orange-200 bg-orange-50 p-4">
+        <div className="flex items-start gap-2">
+          <ShoppingCart className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-orange-800">
+              Amazon cart opened in a new tab
+            </div>
+            <div className="mt-0.5 text-xs text-orange-700">
+              Finish checkout on Amazon, then come back — your cart returns here
+              automatically and the PO is created from what you actually bought.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ── Success (collapsed) state ─────────────────────────────────────────
   if (result) {
@@ -582,25 +756,106 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
           </div>
         )}
 
-        {/* Create PO */}
-        <button
-          type="button"
-          onClick={handleCreate}
-          disabled={submitting || vendorMissing}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-gray-300"
-        >
-          {submitting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Creating PO…
-            </>
-          ) : (
-            <>
-              <PackageCheck className="h-4 w-4" />
-              Create PO
-            </>
-          )}
-        </button>
+        {/* ── Amazon punchout branch (item 08) ─────────────────────────── */}
+        {isAmazon && (
+          <>
+            {/* Gate denial → the route's "ask an admin" copy, verbatim. */}
+            {gateDenied && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <div className="mb-0.5 flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Amazon purchaser access needed
+                </div>
+                <span>{gateDenied}</span>
+              </div>
+            )}
+
+            {/* Unmapped lines → nudge to map them (paste-a-link / Amazon settings). */}
+            {unmappedAmazonLines.length > 0 && (
+              <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-800">
+                <div className="mb-0.5 flex items-center gap-1.5 font-semibold">
+                  <Link2 className="h-3.5 w-3.5 shrink-0" />
+                  {unmappedAmazonLines.length === 1
+                    ? '1 item isn’t linked to an Amazon product yet'
+                    : `${unmappedAmazonLines.length} items aren’t linked to Amazon products yet`}
+                </div>
+                <span>
+                  Map {unmappedAmazonLines.length === 1 ? 'it' : 'them'} first —
+                  paste the Amazon product link on the item, or add mappings in{' '}
+                  <a
+                    href="/settings/integrations/amazon"
+                    className="font-medium underline decoration-orange-300 hover:text-orange-900"
+                  >
+                    Settings → Integrations → Amazon
+                  </a>
+                  . Amazon can only preload items it can find by ASIN.
+                </span>
+              </div>
+            )}
+
+            {/* Session email (pre-filled from the logged-in user, editable). */}
+            <label className="mt-3 flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">
+                Your Amazon session email
+              </span>
+              <input
+                type="email"
+                value={userEmail}
+                placeholder="you@company.com"
+                onChange={(e) => setUserEmail(e.target.value)}
+                className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-300"
+              />
+            </label>
+          </>
+        )}
+
+        {/* Action button — Amazon hands off to a punchout cart, everyone else
+            creates an ordinary PO. Non-Amazon path is byte-for-byte unchanged. */}
+        {isAmazon ? (
+          <button
+            type="button"
+            onClick={handleShopOnAmazon}
+            disabled={submitting || vendorMissing}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Starting Amazon cart…
+              </>
+            ) : (
+              <>
+                <ShoppingCart className="h-4 w-4" />
+                Shop on Amazon
+              </>
+            )}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={submitting || vendorMissing}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Creating PO…
+              </>
+            ) : (
+              <>
+                <PackageCheck className="h-4 w-4" />
+                Create PO
+              </>
+            )}
+          </button>
+        )}
+        {isAmazon && (
+          <p className="mt-2 text-center text-[11px] text-gray-500">
+            Amazon needs you to finish the cart on their site — this opens Amazon
+            with your items preloaded; it doesn’t place the order instantly.
+          </p>
+        )}
       </div>
     </div>
   );

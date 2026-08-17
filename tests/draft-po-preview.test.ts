@@ -250,4 +250,96 @@ describe('buildDraftPoPreview', () => {
     // No tenant vendor → no vendor_items price → unpriced line, still rendered.
     expect(res.lines[0].catalog_item_id).toBe(ITEM);
   });
+
+  // ── Amazon punchout detection (sprint item 08) ──────────────────────────────
+
+  it('flags an Amazon vendor as fulfillment=amazon_punchout with a mapped line + ASIN', async () => {
+    mockResolveItem.mockResolvedValue({ id: ITEM, name: 'Fuel Can', uom_term_id: null, category_id: null });
+
+    const supabase = makeSupabase({
+      supply_chain: {
+        // ordering_mode is the canonical Amazon flag (also code='AMAZON-BIZ').
+        vendors: [{ id: VENDOR, name: 'Amazon Business', code: 'AMAZON-BIZ', ordering_mode: 'amazon_punchout' }],
+        // vendor_sku carries the ASIN — this is what punchout/start resolves.
+        vendor_items: [{
+          unit_cost: 50, min_order_qty: null, vendor_address_id: null,
+          active: true, last_known_price: null, vendor_sku: 'B0ABCD1234',
+        }],
+        purchase_order_lines: [],
+        purchase_orders: [],
+      },
+      inventory: {
+        locations: [{ id: HERE }],
+        stock_balances: [],
+      },
+    });
+
+    const res = await buildDraftPoPreview(supabase, TENANT, {
+      vendor_id: VENDOR,
+      lines: [{ item_ref: 'Fuel Can', qty: 5 }],
+    });
+
+    expect(res.vendor.fulfillment).toBe('amazon_punchout');
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0].amazon_mapped).toBe(true);
+    expect(res.lines[0].asin).toBe('B0ABCD1234');
+  });
+
+  it('marks an Amazon line unmapped when the vendor_item has no ASIN', async () => {
+    mockResolveItem.mockResolvedValue({ id: ITEM, name: 'Fuel Can', uom_term_id: null, category_id: null });
+
+    const supabase = makeSupabase({
+      supply_chain: {
+        vendors: [{ id: VENDOR, name: 'Amazon Business', code: 'AMAZON-BIZ', ordering_mode: 'amazon_punchout' }],
+        // Priced but no vendor_sku → not orderable through Amazon yet.
+        vendor_items: [{
+          unit_cost: 50, min_order_qty: null, vendor_address_id: null,
+          active: true, last_known_price: null, vendor_sku: null,
+        }],
+        purchase_order_lines: [],
+        purchase_orders: [],
+      },
+      inventory: { locations: [{ id: HERE }], stock_balances: [] },
+    });
+
+    const res = await buildDraftPoPreview(supabase, TENANT, {
+      vendor_id: VENDOR,
+      lines: [{ item_ref: 'Fuel Can', qty: 5 }],
+    });
+
+    expect(res.vendor.fulfillment).toBe('amazon_punchout');
+    expect(res.lines[0].amazon_mapped).toBe(false);
+    expect(res.lines[0].asin).toBeNull();
+  });
+
+  it('leaves a standard vendor as fulfillment=standard with no amazon fields set', async () => {
+    mockResolveItem.mockResolvedValue({ id: ITEM, name: 'Fuel Can', uom_term_id: null, category_id: null });
+
+    const supabase = makeSupabase({
+      supply_chain: {
+        vendors: [{ id: VENDOR, name: 'ACME Fuels', code: 'ACME', ordering_mode: 'email' }],
+        // Even a vendor_sku here must NOT flip amazon_mapped for a non-Amazon vendor.
+        vendor_items: [{
+          unit_cost: 50, min_order_qty: null, vendor_address_id: null,
+          active: true, last_known_price: null, vendor_sku: 'SOME-SKU',
+        }],
+        purchase_order_lines: [],
+        purchase_orders: [],
+      },
+      inventory: { locations: [{ id: HERE }], stock_balances: [] },
+    });
+
+    const res = await buildDraftPoPreview(supabase, TENANT, {
+      vendor_id: VENDOR,
+      lines: [{ item_ref: 'Fuel Can', qty: 5 }],
+    });
+
+    expect(res.vendor.fulfillment).toBe('standard');
+    // Otherwise unchanged: still priced fixed at 50, total 250.
+    expect(res.lines[0].amazon_mapped).toBe(false);
+    expect(res.lines[0].asin).toBeNull();
+    expect(res.lines[0].unit_cost).toBe(50);
+    expect(res.lines[0].price_basis).toBe('fixed');
+    expect(res.estimated_total).toBe(250);
+  });
 });
