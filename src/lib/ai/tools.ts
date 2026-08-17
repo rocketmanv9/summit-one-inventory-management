@@ -241,7 +241,7 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'create_item_with_variants',
-      description: 'Create a parent item with variant children. Use when the user mentions sizes, colors, styles, grades, or other product variations. E.g., "add t-shirts in S/M/L/XL and red/blue" or "add gloves in sizes small, medium, large".',
+      description: 'Create a catalog item on the SERVER (no page reload, chainable). Two modes: (1) pass variant_dimensions + variant_options to create a parent item with variant children when the user mentions sizes/colors/styles/grades ("add t-shirts in S/M/L/XL and red/blue"); (2) pass just name (and optional category/uom) to create a plain single-form item — use THIS in the procure playbook to add a new item ("wheelstops") and keep going straight into recommend_vendor_for_item → draft_po_preview → create_po in the same turn. Prefer this over add_item whenever you need to add an item and then immediately do more with it.',
       parameters: {
         type: 'object',
         properties: {
@@ -249,10 +249,13 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
           description: { type: 'string', description: 'Item description' },
           category: { type: 'string', description: 'Category name in plain text (auto-matched or created)' },
           uom_term_id: { type: 'string', description: 'UOM term ID from Global Values (default: EA term)' },
+          uom: { type: 'string', description: 'Plain-text unit of measure (e.g. "Each", "Gallon") — resolved to a term when uom_term_id is not given' },
+          tracking_mode: { type: 'string', description: 'Tracking mode for a single-form item (default "stock")' },
+          reorder_point: { type: 'number', description: 'Reorder point for a single-form item (optional)' },
           variant_dimensions: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Dimension names (e.g. ["size", "color"])',
+            description: 'Dimension names (e.g. ["size", "color"]). OMIT for a plain single-form item.',
           },
           variant_options: {
             type: 'object',
@@ -260,12 +263,12 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
               type: 'array',
               items: { type: 'string' },
             },
-            description: 'Options per dimension (e.g. {"size": ["S","M","L","XL"], "color": ["Red","Blue"]})',
+            description: 'Options per dimension (e.g. {"size": ["S","M","L","XL"], "color": ["Red","Blue"]}). OMIT for a plain single-form item.',
           },
           location_id: { type: 'string', description: 'Location ID for initial stock (optional)' },
           initial_qty_per_variant: { type: 'number', description: 'Initial stock quantity per variant (optional)' },
         },
-        required: ['name', 'variant_dimensions', 'variant_options'],
+        required: ['name'],
       },
     },
   },

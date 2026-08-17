@@ -3632,6 +3632,111 @@ async function purchasingAssistant(
 
 // ─── Create Item With Variants ─────────────────────────────────────
 
+/**
+ * Create a plain single-form catalog item (no variants) via the wizard RPC.
+ * Server-side sibling of the client-side add_item — used so the procure playbook
+ * ("add ‘{name}’ & keep going") can create a new item AND chain straight into
+ * recommend_vendor_for_item → draft_po_preview → create_po within the same
+ * server-tool loop, instead of emitting a client tool and closing the stream.
+ * Idempotent on SKU; reports the new item so the model can keep going.
+ */
+async function createSingleFormItem(
+  name: string,
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  try {
+    // Resolve category (fuzzy) if provided.
+    let categoryId: string | null = null;
+    if (params.category && typeof params.category === 'string') {
+      const categoryName = params.category.trim().toLowerCase();
+      const { data: cats } = await inventorySchema(ctx.supabase)
+        .from('item_categories')
+        .select('id, name')
+        .limit(100);
+      if (cats && cats.length > 0) {
+        const match =
+          cats.find((c: any) => c.name.toLowerCase() === categoryName) ||
+          cats.find((c: any) => c.name.toLowerCase().includes(categoryName) || categoryName.includes(c.name.toLowerCase()));
+        if (match) categoryId = match.id;
+      }
+    }
+
+    // Resolve UOM term ID — provided value, then free-text resolve, else default EA.
+    let uomTermId = params.uom_term_id || null;
+    if (!uomTermId) {
+      try {
+        const gv = await getTenantGVClient(ctx.tenantId);
+        const uomText = typeof params.uom === 'string' ? params.uom.trim() : 'EA';
+        uomTermId = await gv.resolveTermId(ctx.tenantId, 'uom', uomText, true);
+      } catch {
+        /* non-fatal — RPC handles null */
+      }
+    }
+
+    const trackingMode = typeof params.tracking_mode === 'string' ? params.tracking_mode.trim() : 'stock';
+    const reorderPoint = typeof params.reorder_point === 'number' ? params.reorder_point : null;
+    const idempotencyKey = `ai-item-${ctx.tenantId}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
+    const { data, error } = await inventorySchema(ctx.supabase).rpc('rpc_wizard_create_item', {
+      p_name: name,
+      p_description: params.description || null,
+      p_uom_term_id: uomTermId,
+      p_tracking_mode: trackingMode,
+      p_reorder_point: reorderPoint,
+      p_base_sku: null,
+      p_sku: null,
+      p_category_id: categoryId,
+      p_create_category: null,
+      p_vendor_id: null,
+      p_create_vendor: null,
+      p_vendor_sku: null,
+      p_vendor_unit_cost: null,
+      p_location_id: null,
+      p_create_location: null,
+      p_initial_qty: null,
+      p_initial_cost: null,
+      p_barcode: null,
+      p_create_assets: null,
+      p_has_variants: false,
+      p_variant_dimensions: null,
+      p_variant_options: null,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    if (error) {
+      return {
+        text: `Failed to add "${name}": ${error.message}`,
+        dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
+      };
+    }
+
+    const d = (data as any) || {};
+    const itemId = d.item_id || d.catalog_item_id || null;
+    return {
+      // Tell the model the item now exists AND its id, so it chains straight into
+      // recommend_vendor_for_item on the real item rather than stopping.
+      text:
+        `Added "${name}" to the catalog${d.item_sku ? ` (SKU ${d.item_sku})` : ''}${itemId ? `, id ${itemId}` : ''}. ` +
+        `Now continue the procure chain: call recommend_vendor_for_item for it, then draft_po_preview, then create the PO.`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Item Added',
+        value: name,
+        secondaryMetrics: [
+          { label: 'SKU', value: d.item_sku || 'auto' },
+          ...(itemId ? [{ label: 'Item ID', value: itemId }] : []),
+        ],
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Failed to add "${name}": ${err.message}`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Creation failed' },
+    };
+  }
+}
+
 async function createItemWithVariants(
   params: Record<string, any>,
   ctx: ServerToolContext
@@ -3647,11 +3752,12 @@ async function createItemWithVariants(
   const variantDimensions = Array.isArray(params.variant_dimensions) ? params.variant_dimensions : [];
   const variantOptions = params.variant_options && typeof params.variant_options === 'object' ? params.variant_options : {};
 
+  // No variant dimensions → this is a plain single-form item (the common procure
+  // case: "add wheelstops and keep going"). Create it server-side via the same
+  // wizard RPC so the procure chain (add → recommend → draft → create) keeps
+  // running in one turn instead of dropping out to the client-side add_item.
   if (variantDimensions.length === 0) {
-    return {
-      text: 'Please provide at least one variant dimension (e.g. "size", "color").',
-      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing dimensions' },
-    };
+    return createSingleFormItem(name, params, ctx);
   }
 
   // Validate all dimensions have options
