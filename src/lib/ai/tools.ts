@@ -104,6 +104,41 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'draft_po_preview',
+      description:
+        'Assemble a complete, reviewable Draft-PO card BEFORE creating anything. Use right after choosing a vendor, when the user says "order N of X from <vendor>" or "put together a PO for …". Returns the vendor, priced lines (with a price_basis of fixed/estimated/market/unknown), a delivery location, an estimated total, and smart buyer advisories per line (how much is already on hand here or at other yards, whether an open PO already covers the item, and a minimum-order nudge). Advisory only — it CREATES NOTHING and never places an order; the confirmation card owns the actual Create step.',
+      parameters: {
+        type: 'object',
+        properties: {
+          vendor_id: { type: 'string', description: 'Chosen tenant vendor UUID.' },
+          catalog_vendor_id: {
+            type: 'string',
+            description: 'GV shared-catalog vendor UUID when the tenant has not adopted it yet. The card marks the vendor pending_adopt so it can be added on confirm.',
+          },
+          delivery_location_id: { type: 'string', description: 'Deliver-to location UUID (optional; defaults to the tenant ship-to).' },
+          needed_by_date: { type: 'string', description: 'Needed-by date (ISO, optional).' },
+          cost_context: { type: 'string', description: 'Cost context for the PO (e.g. "overhead", "job"; optional).' },
+          lines: {
+            type: 'array',
+            description: 'Lines to preview.',
+            items: {
+              type: 'object',
+              properties: {
+                item_ref: { type: 'string', description: 'Item as free text ("Fuel Can") or a catalog_item_id UUID.' },
+                qty: { type: 'number', description: 'Quantity to order.' },
+              },
+              required: ['item_ref', 'qty'],
+            },
+          },
+        },
+        required: ['lines'],
+      },
+    },
+  },
+
   // ── Item operations ────────────────────────────────────────────────
   {
     type: 'function',

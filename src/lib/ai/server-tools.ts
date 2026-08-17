@@ -18,6 +18,7 @@ import {
   type TenantVendorOption,
   type CatalogVendorOption,
 } from './recommend-vendor';
+import { buildDraftPoPreview } from './draft-po-preview';
 
 // ─── Context ──────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ const SERVER_TOOLS = new Set([
   'query_integrations',
   'list_catalog_vendors',
   'recommend_vendor_for_item',
+  'draft_po_preview',
   'adjust_stock',
   'adjust_stock_delta',
   'issue_inventory',
@@ -235,6 +237,8 @@ async function executeServerToolInner(
       return listCatalogVendors(params, ctx);
     case 'recommend_vendor_for_item':
       return recommendVendorForItemTool(params, ctx);
+    case 'draft_po_preview':
+      return draftPoPreviewTool(params, ctx);
     case 'adjust_stock':
     case 'adjust_stock_delta':
     case 'issue_inventory':
@@ -1763,6 +1767,75 @@ async function recommendVendorForItemTool(
       secondaryMetrics: result.suggested_query
         ? [{ label: 'Suggested search', value: result.suggested_query }]
         : [],
+    },
+  };
+}
+
+// ─── Draft PO Preview (sprint item 02) ──────────────────────────────
+// Advisory: assemble the reviewable Draft-PO card — vendor, priced lines with
+// price_basis, per-line advisories (on-hand here/elsewhere, open POs, min-order
+// nudge), estimated total, and PO-level warnings. Read-only, no confirmation —
+// it CREATES NOTHING. Item 03's Create button owns the actual PO write. Delegates
+// to the shared lib so this tool and POST /api/ai/draft-po-preview run identical
+// logic (no self-HTTP-fetch).
+async function draftPoPreviewTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const rawLines = Array.isArray(params.lines) ? params.lines : [];
+  const lines = rawLines
+    .map((l: any) => ({
+      item_ref: typeof l?.item_ref === 'string' ? l.item_ref.trim() : '',
+      qty: Number(l?.qty),
+    }))
+    .filter((l: any) => l.item_ref && Number.isFinite(l.qty) && l.qty > 0);
+
+  if (lines.length === 0) {
+    return {
+      text: 'Tell me what to order — an item and a quantity (e.g. "5 Fuel Cans").',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'No lines' },
+    };
+  }
+
+  const result = await buildDraftPoPreview(ctx.supabase, ctx.tenantId, {
+    vendor_id: typeof params.vendor_id === 'string' ? params.vendor_id : undefined,
+    catalog_vendor_id: typeof params.catalog_vendor_id === 'string' ? params.catalog_vendor_id : undefined,
+    delivery_location_id: typeof params.delivery_location_id === 'string' ? params.delivery_location_id : undefined,
+    needed_by_date: typeof params.needed_by_date === 'string' ? params.needed_by_date : undefined,
+    cost_context: typeof params.cost_context === 'string' ? params.cost_context : undefined,
+    lines,
+  });
+
+  const rows = result.lines.map((l) => ({
+    item: l.name,
+    qty: `${l.qty} ${l.uom_label}`,
+    unit_cost: l.unit_cost != null ? formatCurrency(l.unit_cost) : '—',
+    basis: l.price_basis,
+    line_total: l.line_total != null ? formatCurrency(l.line_total) : '—',
+    advisories: l.advisories.map((a) => a.text).join('; ') || '—',
+  }));
+
+  // Fold the PO-level warnings + pending-adopt note into the text the model reads
+  // back so the summary is honest even before item 03's structured card lands.
+  const preface =
+    result.vendor.pending_adopt && result.vendor.catalog_vendor_id
+      ? ` (vendor not on file yet — id ${result.vendor.catalog_vendor_id})`
+      : '';
+
+  return {
+    text: `${result.message}${preface}`,
+    dataDisplay: {
+      displayType: 'table',
+      columns: [
+        { key: 'item', label: 'Item' },
+        { key: 'qty', label: 'Qty' },
+        { key: 'unit_cost', label: 'Unit' },
+        { key: 'basis', label: 'Basis' },
+        { key: 'line_total', label: 'Total' },
+        { key: 'advisories', label: 'Notes' },
+      ],
+      rows,
+      totalRows: rows.length,
     },
   };
 }

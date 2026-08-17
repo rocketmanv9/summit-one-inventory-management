@@ -114,8 +114,12 @@ export function inferIndustryTags(itemName: string | null, categoryName: string 
   return hits;
 }
 
-/** Resolve an item_ref (UUID or free text) to a catalog item. */
-async function resolveItem(
+/**
+ * Resolve an item_ref (UUID or free text) to a catalog item. Exported so other
+ * Isabelle tools (e.g. draft_po_preview) resolve item names the exact same way —
+ * one predictable, LLM-free matcher, no forks.
+ */
+export async function resolveItem(
   supabase: any,
   itemRef: string,
 ): Promise<{ id: string; name: string | null; uom_term_id: string | null; category_id: string | null } | null> {
