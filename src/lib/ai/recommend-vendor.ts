@@ -23,6 +23,7 @@
 // SERVER-ONLY. Pass a tenant-scoped service-role supabase client.
 
 import { getCatalogClient } from '@/lib/vendors';
+import { norm, tokens } from './item-match';
 
 // PO statuses that mean the order was actually placed — same list the shopping-list
 // suggest route and Create-PO order-context use for the last_paid signal.
@@ -71,32 +72,8 @@ export interface RecommendVendorResult {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Lowercase, collapse whitespace and punctuation for token comparison. */
-function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
-}
-
-/**
- * Lightweight English singularizer so "Fuel Cans" resolves to "Fuel Can".
- * Not a full stemmer — just folds the common plural endings so token-overlap
- * scoring and ilike matching don't miss on a trailing "s". Leaves short words
- * ("gas", "ppe") and already-singular words alone.
- */
-function singularize(w: string): string {
-  if (w.length <= 3) return w;
-  if (/(ss|us|is)$/.test(w)) return w; // glass, status, axis — not plurals
-  if (/ies$/.test(w)) return w.slice(0, -3) + 'y'; // batteries → battery
-  if (/(ches|shes|xes|zes|ses)$/.test(w)) return w.slice(0, -2); // boxes → box
-  if (/s$/.test(w)) return w.slice(0, -1); // cans → can
-  return w;
-}
-
-function tokens(s: string): string[] {
-  return norm(s)
-    .split(' ')
-    .filter((t) => t.length > 1)
-    .map(singularize);
-}
+// norm/singularize/tokens live in ./item-match now (shared with execute-action's
+// resolveItem so both singularize plurals identically). See item-match.ts.
 
 // Best-effort keyword → industry_tag mapping. GV item categories rarely carry a
 // gv_category_term_id, so we lean on the category name + item name text. These

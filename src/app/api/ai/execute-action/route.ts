@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { createSessionWriteRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { tokens, tokenOverlapScore, singularizedIlikePattern } from '@/lib/ai/item-match';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -55,17 +58,103 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const body = ActionSchema.parse(await req.json());
   const inv = (supabase as any).schema('inventory');
 
+  // Resolve an item name/sku to a catalog row. Uses the SAME singularize +
+  // token-overlap matcher as recommend-vendor / draft_po_preview (see
+  // @/lib/ai/item-match) so "Fuel Cans" resolves to the "Fuel Can" row — a bare
+  // `ilike %<raw>%` missed that plural before (defect 2 of the conversational
+  // procure fix).
   const resolveItem = async (name?: string): Promise<{ id: string; name: string }> => {
     if (!name) throw AppError.badRequest('An item name is required.');
-    const { data, error } = await inv
+    const raw = name.trim();
+
+    // 1) Raw ilike on name/sku (handles substrings the caller typed exactly).
+    const { data: rawHits, error } = await inv
       .from('catalog_items')
       .select('id, name, sku')
-      .or(`name.ilike.%${name}%,sku.ilike.%${name}%`)
+      .or(`name.ilike.%${raw}%,sku.ilike.%${raw}%`)
       .eq('active', true)
-      .limit(1);
+      .limit(10);
     if (error) throw AppError.internal(`Item lookup failed: ${error.message}`);
-    if (!data || data.length === 0) throw AppError.notFound(`Item "${name}" not found.`);
-    return { id: data[0].id, name: data[0].name };
+    if (rawHits && rawHits.length > 0) {
+      // Prefer the shortest name that contains the query (tightest match).
+      const sorted = [...rawHits].sort(
+        (a: any, b: any) => (a.name?.length ?? 999) - (b.name?.length ?? 999),
+      );
+      return { id: sorted[0].id, name: sorted[0].name };
+    }
+
+    // 2) Singularized ilike — folds "Fuel Cans" → "%fuel%can%" so the plural
+    //    query still catches the singular catalog row.
+    const pattern = singularizedIlikePattern(raw);
+    if (pattern) {
+      const { data: singHits } = await inv
+        .from('catalog_items')
+        .select('id, name, sku')
+        .ilike('name', pattern)
+        .eq('active', true)
+        .limit(10);
+      if (singHits && singHits.length > 0) {
+        const sorted = [...singHits].sort(
+          (a: any, b: any) => (a.name?.length ?? 999) - (b.name?.length ?? 999),
+        );
+        return { id: sorted[0].id, name: sorted[0].name };
+      }
+    }
+
+    // 3) Token-overlap fuzzy over the active catalog — identical scoring to the
+    //    recommend-vendor resolver (Jaccard on singularized tokens, ≥0.34).
+    if (tokens(raw).length > 0) {
+      const { data: all } = await inv
+        .from('catalog_items')
+        .select('id, name')
+        .eq('active', true)
+        .limit(5000);
+      let best: { row: any; score: number } | null = null;
+      for (const row of all ?? []) {
+        const score = tokenOverlapScore(raw, row.name ?? '');
+        if (score > 0 && (!best || score > best.score)) best = { row, score };
+      }
+      if (best && best.score >= 0.34) return { id: best.row.id, name: best.row.name };
+    }
+
+    throw AppError.notFound(`Item "${name}" not found.`);
+  };
+
+  // Resolve the tenant's default ship-to location for a `ship` PO when the caller
+  // didn't pass one — mirrors draft_po_preview's resolver (is_default_ship_to,
+  // else any active location). rpc_create_purchase_order requires a
+  // delivery_location_id when delivery_method='ship', and the conversational
+  // create path never supplied one (defect 1).
+  const resolveDefaultDeliveryLocation = async (
+    given?: string | null,
+  ): Promise<string | null> => {
+    if (given && UUID_RE.test(given)) {
+      const { data } = await inv
+        .from('locations')
+        .select('id')
+        .eq('tenant_id', ctx.tenantId)
+        .eq('id', given)
+        .limit(1)
+        .maybeSingle();
+      if (data) return data.id;
+    }
+    const { data: def } = await inv
+      .from('locations')
+      .select('id')
+      .eq('tenant_id', ctx.tenantId)
+      .eq('is_default_ship_to', true)
+      .eq('active', true)
+      .limit(1)
+      .maybeSingle();
+    if (def) return def.id;
+    const { data: any1 } = await inv
+      .from('locations')
+      .select('id')
+      .eq('tenant_id', ctx.tenantId)
+      .eq('active', true)
+      .limit(1)
+      .maybeSingle();
+    return any1?.id ?? null;
   };
 
   const resolveLocation = async (name?: string, label = 'location'): Promise<{ id: string; name: string }> => {
@@ -291,6 +380,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       }
       if (lines.length === 0) throw AppError.badRequest('At least one line is required.');
 
+      // rpc_create_purchase_order rejects delivery_method='ship' with no
+      // delivery_location_id. The conversational create path never supplied one,
+      // so resolve the tenant's default ship-to (or any active location) here —
+      // the same default draft_po_preview shows — before calling the RPC (defect 1).
+      const deliveryLocationId = await resolveDefaultDeliveryLocation(body.delivery_location_id);
+      if (!deliveryLocationId) {
+        throw AppError.badRequest(
+          'No delivery location is set up yet — add a location (or mark one as the default ship-to) and I can create the PO.',
+        );
+      }
+
       const { data: po, error: poErr } = await sc.rpc('rpc_create_purchase_order', {
         p_vendor_id: vendor.id,
         p_po_number: null,
@@ -298,7 +398,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         p_needed_by_date: body.needed_by_date || null,
         p_cost_context: body.cost_context || 'yard',
         p_job_id: null,
-        p_delivery_location_id: body.delivery_location_id || null,
+        p_delivery_location_id: deliveryLocationId,
         p_pickup_location_id: null,
         p_max_authorized_spend: null,
         p_vendor_quote_ref: null,

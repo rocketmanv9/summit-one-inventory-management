@@ -3702,6 +3702,12 @@ async function createSingleFormItem(
       p_variant_dimensions: null,
       p_variant_options: null,
       p_idempotency_key: idempotencyKey,
+      // ctx.supabase is a tenant SERVICE client with no JWT claims, so the RPC's
+      // current_tenant_id() would be null → "Authentication required". Pass the
+      // acting identity explicitly (service_role-only params; see migration
+      // 20260814000011). This is what lets the chat loop add a brand-new item.
+      p_tenant_id: ctx.tenantId,
+      p_acting_user_id: ctx.userId,
     });
 
     if (error) {
@@ -3836,6 +3842,10 @@ async function createItemWithVariants(
       p_variant_dimensions: variantDimensions,
       p_variant_options: variantOptions,
       p_idempotency_key: idempotencyKey,
+      // Service client has no JWT claims — pass the acting identity explicitly
+      // (service_role-only params; see migration 20260814000011).
+      p_tenant_id: ctx.tenantId,
+      p_acting_user_id: ctx.userId,
     });
 
     if (error) {
