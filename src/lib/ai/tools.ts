@@ -83,6 +83,27 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'recommend_vendor_for_item',
+      description:
+        'Recommend who to buy an item from. Use when the user says "I need X", "who sells X", "where do I buy X", or asks for the best/cheapest/fastest vendor for an item. Returns a ranked, honest list: your own vendors first (preferred, then cheapest, with a fastest marker and last-paid price), a shared-catalog candidate when you have none on file, or a note that a web search is available. Advisory only — it does not create a PO or add a vendor.',
+      parameters: {
+        type: 'object',
+        properties: {
+          item_ref: {
+            type: 'string',
+            description: 'The item to source, as free text (e.g. "wheelstops", "crack sealant") or a catalog_item_id UUID.',
+          },
+          qty: { type: 'number', description: 'Quantity needed (optional; used for context).' },
+          location_id: { type: 'string', description: 'Location UUID to anchor a web-search suggestion (optional).' },
+        },
+        required: ['item_ref'],
+      },
+    },
+  },
+
   // ── Item operations ────────────────────────────────────────────────
   {
     type: 'function',

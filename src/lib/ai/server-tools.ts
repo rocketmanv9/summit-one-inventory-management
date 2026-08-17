@@ -13,6 +13,11 @@ import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
 import { getTenantGVClient } from '@/lib/gv';
 import { getCatalogClient } from '@/lib/vendors';
+import {
+  recommendVendorForItem,
+  type TenantVendorOption,
+  type CatalogVendorOption,
+} from './recommend-vendor';
 
 // ─── Context ──────────────────────────────────────────────────────────
 
@@ -81,6 +86,7 @@ const SERVER_TOOLS = new Set([
   'query_stock_by_location',
   'query_integrations',
   'list_catalog_vendors',
+  'recommend_vendor_for_item',
   'adjust_stock',
   'adjust_stock_delta',
   'issue_inventory',
@@ -227,6 +233,8 @@ async function executeServerToolInner(
       return queryIntegrations(ctx);
     case 'list_catalog_vendors':
       return listCatalogVendors(params, ctx);
+    case 'recommend_vendor_for_item':
+      return recommendVendorForItemTool(params, ctx);
     case 'adjust_stock':
     case 'adjust_stock_delta':
     case 'issue_inventory':
@@ -1660,6 +1668,103 @@ async function listCatalogVendors(
       dataDisplay: { displayType: 'metric', label: 'Error', value: 'Catalog unavailable' },
     };
   }
+}
+
+// ─── Recommend Vendor For Item (sprint item 01) ─────────────────────
+// Advisory: "who should I buy X from?". Delegates to the shared lib so this
+// tool and GET /api/ai/recommend-vendor run identical logic. Read-only, no
+// confirmation — it never creates a PO or adopts a vendor.
+async function recommendVendorForItemTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const itemRef = typeof params.item_ref === 'string' ? params.item_ref.trim() : '';
+  if (!itemRef) {
+    return {
+      text: 'Tell me what you need a vendor for (an item name like "wheelstops" or a catalog item id).',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing item_ref' },
+    };
+  }
+
+  const result = await recommendVendorForItem(ctx.supabase, ctx.tenantId, {
+    item_ref: itemRef,
+    qty: typeof params.qty === 'number' ? params.qty : undefined,
+    location_id: typeof params.location_id === 'string' ? params.location_id : undefined,
+  });
+
+  if (!result.resolved || !result.item) {
+    return {
+      text: result.message,
+      dataDisplay: { displayType: 'metric', label: 'No match', value: itemRef },
+    };
+  }
+
+  if (result.tier === 'tenant') {
+    const options = result.options as TenantVendorOption[];
+    const rows = options.map((o) => ({
+      vendor: o.vendor_name || '—',
+      unit_cost: o.unit_cost != null ? formatCurrency(o.unit_cost) : '—',
+      lead_time_days: o.lead_time_days != null ? `${o.lead_time_days}d` : '—',
+      min_order_qty: o.min_order_qty ?? '—',
+      flags: [o.is_preferred ? 'Preferred' : '', o.is_fastest ? 'Fastest' : '']
+        .filter(Boolean)
+        .join(', ') || '—',
+    }));
+    const lp = result.last_paid;
+    const lpNote = lp
+      ? ` Last paid ${formatCurrency(lp.unit_cost)}${lp.vendor_name ? ` to ${lp.vendor_name}` : ''}.`
+      : '';
+    return {
+      text: `${result.message}${lpNote}`,
+      dataDisplay: {
+        displayType: 'table',
+        columns: [
+          { key: 'vendor', label: 'Vendor' },
+          { key: 'unit_cost', label: 'Unit Cost' },
+          { key: 'lead_time_days', label: 'Lead Time' },
+          { key: 'min_order_qty', label: 'Min Qty' },
+          { key: 'flags', label: '' },
+        ],
+        rows,
+        totalRows: rows.length,
+      },
+    };
+  }
+
+  if (result.tier === 'catalog') {
+    const options = result.options as CatalogVendorOption[];
+    const rows = options.map((o) => ({
+      vendor: o.name,
+      location: [o.city, o.state].filter(Boolean).join(', ') || '—',
+      industry: o.industry_tags.join(', ') || '—',
+    }));
+    return {
+      text: result.message,
+      dataDisplay: {
+        displayType: 'table',
+        columns: [
+          { key: 'vendor', label: 'Catalog Vendor' },
+          { key: 'location', label: 'Location' },
+          { key: 'industry', label: 'Industry' },
+        ],
+        rows,
+        totalRows: rows.length,
+      },
+    };
+  }
+
+  // Web tier.
+  return {
+    text: result.message,
+    dataDisplay: {
+      displayType: 'metric',
+      label: 'Web search available',
+      value: result.item.name || itemRef,
+      secondaryMetrics: result.suggested_query
+        ? [{ label: 'Suggested search', value: result.suggested_query }]
+        : [],
+    },
+  };
 }
 
 // ─── Search Vendors Online ──────────────────────────────────────────

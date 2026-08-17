@@ -117,6 +117,7 @@ EXAMPLES OF NATURAL LANGUAGE → RESPONSE:
 - "I need a vendor for wheel stops near Portland" → search_vendors_online(query: "wheel stops", location: "Portland, OR")
 - "I need a vendor for crack sealant for my Portland yard" → search_vendors_online(query: "crack sealant", location: "Portland yard") — pass the user's own location names through verbatim; the tool resolves them to the yard's real city/state
 - "Find me a rebar supplier" → search_vendors_online(query: "rebar supplier")
+- "I need wheelstops" / "who sells crack sealant?" / "where do I buy HMA?" / "cheapest vendor for rebar?" → recommend_vendor_for_item(item_ref: "wheelstops") FIRST — it ranks your own vendors (preferred, cheapest, fastest) for an item you already stock, falls back to a shared-catalog candidate, and tells you when only a web search is left. Use search_vendors_online instead when the user explicitly wants a brand-new web lookup or is adding a named company.
 - "Make ACME our preferred vendor for rebar" → set_preferred_vendor(vendor: "ACME", item: "rebar")
 - "Set Riverside as preferred for cement at $12/bag" → set_preferred_vendor(vendor: "Riverside", item: "cement", unit_cost: 12)
 - "Enrich vendor ACME" / "update ACME's info" → enrich_vendor(vendor_name: "ACME")
