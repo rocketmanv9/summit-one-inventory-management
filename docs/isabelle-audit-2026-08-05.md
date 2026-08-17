@@ -29,9 +29,12 @@ advertises + dispatches, closing the item→vendor / advisory / catalog-adopt ga
 The playbook that chains these (resolve → add item if new → recommend → adopt/web →
 preview → one confirm → create, with sensible defaults) lives in the
 "THE PROCURE PLAYBOOK" section of `system-prompt.ts`. Item-not-found no longer
-dead-ends: Isabelle offers to add the new item (`add_item`) and continues.
-Discoverability: an "I need …" / "Who sells …" quick-action chip on `/ai` and the
-keyword-fallback help now advertise the procure flow.
+dead-ends: when `recommend_vendor_for_item` resolves nothing, it returns an
+`item_not_found` display that renders an inline **"Add ‘{name}’ & keep going"**
+grace card (`ItemNotFoundCard.tsx`) — one tap fires the add-and-continue message
+and the playbook runs `add_item` → recommend → `draft_po_preview` without leaving
+chat (item 05). Discoverability: an "I need …" / "Who sells …" quick-action chip on
+`/ai` and the keyword-fallback help now advertise the procure flow.
 
 Still open from the gaps below (not this sprint): approval-inbox actions,
 receiving-against-PO, and cycle-count start/record hands.

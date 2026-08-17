@@ -112,7 +112,11 @@ export function ChatBot({ onClose }: ChatBotProps) {
               {/* Data display for server-side query results */}
               {message.dataDisplay && (
                 <div className="max-w-[85%]">
-                  <AiDataRenderer data={message.dataDisplay} />
+                  <AiDataRenderer
+                    data={message.dataDisplay}
+                    onSend={(msg) => chat.sendMessage(msg)}
+                    disabled={chat.isLoading}
+                  />
                 </div>
               )}
 

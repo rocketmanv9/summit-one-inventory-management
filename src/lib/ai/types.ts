@@ -80,7 +80,8 @@ export type AiDataDisplay =
   | AiTableDisplay
   | AiChartDisplay
   | AiDashboardLinkDisplay
-  | AiPoDraftDisplay;
+  | AiPoDraftDisplay
+  | AiItemNotFoundDisplay;
 
 export interface AiMetricDisplay {
   displayType: 'metric';
@@ -126,6 +127,24 @@ export interface AiDashboardLinkDisplay {
 export interface AiPoDraftDisplay {
   displayType: 'po_draft';
   preview: DraftPoPreviewResult;
+}
+
+/**
+ * Item-not-found grace card (procure playbook, sprint item 05). When the user
+ * asks to buy something that isn't in the catalog yet, recommend_vendor_for_item
+ * returns resolved:false and Isabelle renders this inline instead of dead-ending.
+ * The card offers a single "Add '{name}' & keep going" tap that fires the
+ * add-and-continue message — the LLM playbook then runs add_item → recommend →
+ * draft_po_preview so the buyer never has to leave chat to create the item first.
+ */
+export interface AiItemNotFoundDisplay {
+  displayType: 'item_not_found';
+  /** The raw thing the user typed ("wheelstops", "10 wheelstops"). */
+  itemRef: string;
+  /** A cleaned display name for the item, if we could derive one. */
+  itemName?: string;
+  /** Optional qty parsed from the ask, so the follow-up keeps the number. */
+  qty?: number;
 }
 
 // ─── Tool Error Contract ─────────────────────────────────────────────

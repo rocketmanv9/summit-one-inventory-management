@@ -282,6 +282,23 @@ function formatNumber(val: number): string {
   return new Intl.NumberFormat('en-US').format(val);
 }
 
+/**
+ * Best-effort display name for an item the user asked to buy but that isn't in
+ * the catalog. Strips a leading quantity ("10 wheelstops" → "wheelstops") and
+ * common lead-ins so the grace card shows the real thing, not the raw phrase.
+ * Only used for display + the add-and-continue message — item creation still
+ * runs through the normal add_item / item-suggest path.
+ */
+function cleanItemName(raw: string): string {
+  let s = (raw || '').trim();
+  // Drop a leading count ("10 ", "5x ", "a dozen " is left alone — just digits).
+  s = s.replace(/^\d+\s*(x\s*)?/i, '');
+  // Drop common lead-ins.
+  s = s.replace(/^(some|a|an|the|more|new)\s+/i, '');
+  s = s.trim();
+  return s || raw.trim();
+}
+
 // ─── Query Implementations ───────────────────────────────────────────
 
 async function queryInventorySummary(ctx: ServerToolContext): Promise<ServerToolResult> {
@@ -1705,9 +1722,21 @@ async function recommendVendorForItemTool(
   });
 
   if (!result.resolved || !result.item) {
+    // New item — do NOT dead-end. Render the inline grace card so the buyer can
+    // add it and keep going in one tap (the card fires an add-and-continue
+    // message; the playbook then runs add_item → recommend → draft_po_preview).
+    // The NL text still tells Isabelle to offer the add, so the two agree.
+    const itemName = cleanItemName(itemRef);
     return {
-      text: result.message,
-      dataDisplay: { displayType: 'metric', label: 'No match', value: itemRef },
+      text:
+        `"${itemName}" isn't in your catalog yet. Want me to add it and keep going — ` +
+        `I'll set it up, pick a vendor, and draft the PO.`,
+      dataDisplay: {
+        displayType: 'item_not_found',
+        itemRef,
+        itemName,
+        qty: typeof params.qty === 'number' && params.qty > 0 ? params.qty : undefined,
+      },
     };
   }
 

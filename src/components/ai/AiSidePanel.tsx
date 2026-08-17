@@ -97,7 +97,11 @@ export function AiSidePanel() {
               {/* Data display */}
               {message.dataDisplay && (
                 <div className="max-w-full mt-1">
-                  <AiDataRenderer data={message.dataDisplay} />
+                  <AiDataRenderer
+                    data={message.dataDisplay}
+                    onSend={(msg) => chat.sendMessage(msg)}
+                    disabled={chat.isLoading}
+                  />
                 </div>
               )}
 

@@ -188,7 +188,11 @@ export function AvatarChatPage() {
 
                   {message.dataDisplay && (
                     <div className="max-w-full">
-                      <AiDataRenderer data={message.dataDisplay} />
+                      <AiDataRenderer
+                        data={message.dataDisplay}
+                        onSend={(msg) => chat.sendMessage(msg)}
+                        disabled={chat.isLoading}
+                      />
                     </div>
                   )}
 
