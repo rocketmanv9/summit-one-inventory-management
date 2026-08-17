@@ -10,8 +10,9 @@
  *   1. Your vendors   — the tenant's own vendors (SupplyChainRPC.getVendors).
  *                        Picking one just swaps the card's vendor_id (no writes).
  *   2. From the catalog — GV vendor_catalog candidates. "Add & use" adopts the
- *                        candidate into supply_chain.vendors (POST /api/gv/vendors/adopt)
- *                        — a single low-risk tap — then re-previews the draft.
+ *                        candidate into supply_chain.vendors (POST /api/inventory/vendors/adopt
+ *                        — copy-on-write into the tenant's OWN store) — a single
+ *                        low-risk tap — then re-previews the draft.
  *   3. Search the web  — POST /api/ai/vendor-discover returns real candidates.
  *                        "Add & use" runs the dup-guard + creates a brand-new
  *                        vendor via createVendorFromDraft (the guarded
@@ -220,7 +221,7 @@ export function VendorPicker({
     const key = `cat:${c.catalog_vendor_id}`;
     patchRow(key, { busy: true, error: null });
     try {
-      const res = await fetch('/api/gv/vendors/adopt', {
+      const res = await fetch('/api/inventory/vendors/adopt', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

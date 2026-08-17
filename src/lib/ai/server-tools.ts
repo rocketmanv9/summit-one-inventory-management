@@ -12,7 +12,7 @@ import type { AiDataDisplay } from './types';
 import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
 import { getTenantGVClient } from '@/lib/gv';
-import { getCatalogClient, getTenantVendorClient } from '@/lib/vendors';
+import { getCatalogClient, adoptCatalogVendorsIntoSupplyChain } from '@/lib/vendors';
 import {
   recommendVendorForItem,
   type TenantVendorOption,
@@ -1835,11 +1835,12 @@ async function draftPoPreviewTool(
 }
 
 // ─── Adopt Catalog Vendor (sprint item 04) ──────────────────────────
-// Thin server tool wrapping POST /api/gv/vendors/adopt so Isabelle can adopt a
-// shared-catalog vendor conversationally ("add the first one"). Copies the
-// catalog vendor's contacts + addresses into the tenant vendor store via the
-// GV tenant client (same path the card's "Add & use" button uses). Explicit
-// confirm only — the model calls it after the user says to add.
+// Thin server tool so Isabelle can adopt a shared-catalog vendor conversationally
+// ("add the first one"). Copies the catalog vendor's contacts + addresses into the
+// tenant's OWN store (supply_chain.vendors) via adoptCatalogVendorsIntoSupplyChain
+// — the SAME copy-on-write path POST /api/inventory/vendors/adopt (the card's
+// "Add & use" button) uses. NOT the chassis tenant SDK .adopt(), which targets
+// public.vendors on the GV project (doesn't exist there). Explicit confirm only.
 async function adoptCatalogVendorTool(
   params: Record<string, any>,
   ctx: ServerToolContext
@@ -1872,10 +1873,11 @@ async function adoptCatalogVendorTool(
   }
 
   try {
-    const client = await getTenantVendorClient(ctx.tenantId);
-    const result = await client.adopt([catalogVendorId]);
-    // adopt() → { message, adopted: Vendor[], skipped }.
-    const first = (result as any)?.adopted?.[0] ?? null;
+    const sc = supplyChainSchema(ctx.supabase);
+    const idempotencyKey = `ai-adopt-vendor-${ctx.tenantId}-${Date.now()}`;
+    const result = await adoptCatalogVendorsIntoSupplyChain(sc, ctx.tenantId, [catalogVendorId], idempotencyKey);
+    // → { message, adopted: {id,name}[], skipped }.
+    const first = result.adopted[0] ?? null;
     const vendorId = first?.id || null;
     const vendorName = first?.name || name || 'the vendor';
     return {
