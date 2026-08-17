@@ -4,6 +4,7 @@
 
 import type { IntentType } from '@/lib/chat/intents';
 import type { ActionDefinition, ActionResult } from '@/lib/chat/actions';
+import type { DraftPoPreviewResult } from '@/lib/ai/draft-po-preview';
 
 // ─── Intent Classification ────────────────────────────────────────────
 
@@ -78,7 +79,8 @@ export type AiDataDisplay =
   | AiMetricDisplay
   | AiTableDisplay
   | AiChartDisplay
-  | AiDashboardLinkDisplay;
+  | AiDashboardLinkDisplay
+  | AiPoDraftDisplay;
 
 export interface AiMetricDisplay {
   displayType: 'metric';
@@ -112,6 +114,18 @@ export interface AiDashboardLinkDisplay {
   displayType: 'dashboard_link';
   dashboardId: string;
   dashboardName: string;
+}
+
+/**
+ * A reviewable Draft-PO card (sprint item 03). Carries the full item-02
+ * `draft_po_preview` payload so the chat can render an interactive card with
+ * editable lines and a one-tap "Create PO" button (wired to the existing
+ * /api/ai/execute-action create_po bridge). `preview` is the verbatim
+ * DraftPoPreviewResult from @/lib/ai/draft-po-preview.
+ */
+export interface AiPoDraftDisplay {
+  displayType: 'po_draft';
+  preview: DraftPoPreviewResult;
 }
 
 // ─── Tool Error Contract ─────────────────────────────────────────────

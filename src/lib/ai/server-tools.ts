@@ -1806,36 +1806,22 @@ async function draftPoPreviewTool(
     lines,
   });
 
-  const rows = result.lines.map((l) => ({
-    item: l.name,
-    qty: `${l.qty} ${l.uom_label}`,
-    unit_cost: l.unit_cost != null ? formatCurrency(l.unit_cost) : '—',
-    basis: l.price_basis,
-    line_total: l.line_total != null ? formatCurrency(l.line_total) : '—',
-    advisories: l.advisories.map((a) => a.text).join('; ') || '—',
-  }));
-
   // Fold the PO-level warnings + pending-adopt note into the text the model reads
-  // back so the summary is honest even before item 03's structured card lands.
+  // back so the NL summary is honest alongside the structured card.
   const preface =
     result.vendor.pending_adopt && result.vendor.catalog_vendor_id
       ? ` (vendor not on file yet — id ${result.vendor.catalog_vendor_id})`
       : '';
 
+  // Surface the full preview as a `po_draft` structured display (sprint item 03).
+  // The frontend mounts an interactive PoDraftCard inline — editable qty/cost,
+  // advisory chips, and a one-tap Create PO button — so Isabelle literally hands
+  // the buyer a ready-to-create draft. The NL `text` still feeds OpenAI's summary.
   return {
     text: `${result.message}${preface}`,
     dataDisplay: {
-      displayType: 'table',
-      columns: [
-        { key: 'item', label: 'Item' },
-        { key: 'qty', label: 'Qty' },
-        { key: 'unit_cost', label: 'Unit' },
-        { key: 'basis', label: 'Basis' },
-        { key: 'line_total', label: 'Total' },
-        { key: 'advisories', label: 'Notes' },
-      ],
-      rows,
-      totalRows: rows.length,
+      displayType: 'po_draft',
+      preview: result,
     },
   };
 }

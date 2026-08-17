@@ -27,12 +27,23 @@ const ActionSchema = z.object({
   issued_to_ref: z.string().optional(),
   job_ref: z.string().optional(),
   allocation_type: z.string().optional(),
-  // create_po
+  // create_po (name-based path — legacy/keyword flow)
   vendor: z.string().optional(),
   items: z.array(z.object({
     item: z.string(),
     quantity: z.number(),
     unit_cost: z.number().optional(),
+  })).optional(),
+  // create_po (id-based path — Isabelle draft-PO card, sprint item 03)
+  vendor_id: z.string().uuid().optional(),
+  delivery_location_id: z.string().uuid().optional(),
+  needed_by_date: z.string().max(40).optional(),
+  cost_context: z.string().max(60).optional(),
+  lines: z.array(z.object({
+    catalog_item_id: z.string().uuid(),
+    qty_ordered: z.number().positive(),
+    unit_cost: z.number().optional(),
+    price_basis: z.string().max(40).optional(),
   })).optional(),
 });
 
@@ -221,38 +232,73 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     }
 
     // ── Create a draft purchase order for a vendor ────────────────────
+    // Two shapes converge here:
+    //  • id-based (Isabelle draft-PO card, item 03): vendor_id + delivery_location_id
+    //    + lines[{ catalog_item_id, qty_ordered, unit_cost?, price_basis? }].
+    //  • name-based (legacy keyword flow): vendor (name) + items[{ item, quantity }].
     case 'create_po': {
-      if (!body.vendor) throw AppError.badRequest('A vendor name is required.');
       const sc = (supabase as any).schema('supply_chain');
-      const { data: vendors, error: vErr } = await sc
-        .from('vendors')
-        .select('id, name')
-        .ilike('name', `%${body.vendor}%`)
-        .limit(1);
-      if (vErr) throw AppError.internal(`Vendor lookup failed: ${vErr.message}`);
-      if (!vendors || vendors.length === 0) throw AppError.notFound(`Vendor "${body.vendor}" not found.`);
-      const vendor = vendors[0];
 
-      // Resolve each requested item to a line.
-      const lines: any[] = [];
-      for (const reqLine of body.items || []) {
-        const item = await resolveItem(reqLine.item);
-        lines.push({
-          catalog_item_id: item.id,
-          qty_ordered: reqLine.quantity,
-          unit_cost: reqLine.unit_cost ?? null,
-          price_basis: reqLine.unit_cost != null ? 'fixed' : 'unknown',
-        });
+      // Resolve the vendor by id (card) or fuzzy name (keyword flow).
+      let vendor: { id: string; name: string };
+      if (body.vendor_id) {
+        const { data: v, error: vErr } = await sc
+          .from('vendors')
+          .select('id, name')
+          .eq('tenant_id', ctx.tenantId)
+          .eq('id', body.vendor_id)
+          .limit(1)
+          .maybeSingle();
+        if (vErr) throw AppError.internal(`Vendor lookup failed: ${vErr.message}`);
+        if (!v) throw AppError.notFound('That vendor is no longer on file.');
+        vendor = { id: v.id, name: v.name };
+      } else if (body.vendor) {
+        const { data: vendors, error: vErr } = await sc
+          .from('vendors')
+          .select('id, name')
+          .ilike('name', `%${body.vendor}%`)
+          .limit(1);
+        if (vErr) throw AppError.internal(`Vendor lookup failed: ${vErr.message}`);
+        if (!vendors || vendors.length === 0) throw AppError.notFound(`Vendor "${body.vendor}" not found.`);
+        vendor = { id: vendors[0].id, name: vendors[0].name };
+      } else {
+        throw AppError.badRequest('A vendor is required.');
       }
+
+      // Build PO lines from whichever shape was provided.
+      const lines: any[] = [];
+      if (body.lines && body.lines.length > 0) {
+        // id-based: catalog_item_id + qty_ordered are already resolved by the card.
+        for (const reqLine of body.lines) {
+          lines.push({
+            catalog_item_id: reqLine.catalog_item_id,
+            qty_ordered: reqLine.qty_ordered,
+            unit_cost: reqLine.unit_cost ?? null,
+            price_basis: reqLine.price_basis || (reqLine.unit_cost != null ? 'fixed' : 'unknown'),
+          });
+        }
+      } else {
+        // name-based: fuzzy-resolve each item name to a catalog id.
+        for (const reqLine of body.items || []) {
+          const item = await resolveItem(reqLine.item);
+          lines.push({
+            catalog_item_id: item.id,
+            qty_ordered: reqLine.quantity,
+            unit_cost: reqLine.unit_cost ?? null,
+            price_basis: reqLine.unit_cost != null ? 'fixed' : 'unknown',
+          });
+        }
+      }
+      if (lines.length === 0) throw AppError.badRequest('At least one line is required.');
 
       const { data: po, error: poErr } = await sc.rpc('rpc_create_purchase_order', {
         p_vendor_id: vendor.id,
         p_po_number: null,
         p_delivery_method: 'ship',
-        p_needed_by_date: null,
-        p_cost_context: 'yard',
+        p_needed_by_date: body.needed_by_date || null,
+        p_cost_context: body.cost_context || 'yard',
         p_job_id: null,
-        p_delivery_location_id: null,
+        p_delivery_location_id: body.delivery_location_id || null,
         p_pickup_location_id: null,
         p_max_authorized_spend: null,
         p_vendor_quote_ref: null,
@@ -269,12 +315,15 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
 
       const poId = (po as any)?.po_id || (po as any)?.id || po;
       const poNumber = (po as any)?.po_number || null;
+      // status may be draft / approved / awaiting_approval depending on tenant
+      // auto-approve + spend limits — surface it honestly for the card.
+      const poStatus = (po as any)?.status || 'draft';
       return {
-        data: { po_id: poId, po_number: poNumber, vendor: vendor.name, line_count: lines.length } as Record<string, unknown>,
+        data: { po_id: poId, po_number: poNumber, status: poStatus, vendor: vendor.name, line_count: lines.length } as Record<string, unknown>,
         status: 201,
         events: [{
           event_name: 'po.created_via_ai',
-          payload: { po_id: poId, po_number: poNumber, vendor_id: vendor.id, line_count: lines.length },
+          payload: { po_id: poId, po_number: poNumber, status: poStatus, vendor_id: vendor.id, line_count: lines.length },
           last_event_id: idempotencyKey,
         }],
       };

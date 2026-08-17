@@ -5,6 +5,7 @@ import { AiMetricCard } from './AiMetricCard';
 import { AiDataTable } from './AiDataTable';
 import { AiBarChart } from './AiBarChart';
 import { AiDashboardLink } from './AiDashboardLink';
+import { PoDraftCard } from './PoDraftCard';
 
 interface AiDataRendererProps {
   data: AiDataDisplay;
@@ -24,6 +25,8 @@ export function AiDataRenderer({ data }: AiDataRendererProps) {
       return <AiBarChart data={data} />;
     case 'dashboard_link':
       return <AiDashboardLink data={data} />;
+    case 'po_draft':
+      return <PoDraftCard data={data} />;
     default:
       return null;
   }
