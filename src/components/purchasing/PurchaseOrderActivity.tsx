@@ -22,6 +22,7 @@ import {
   MessageCircleQuestion,
   Mail,
 } from 'lucide-react';
+import { type Shipment, trackingUrl, shipDate } from '@/lib/po/shipments';
 
 interface Suggestion {
   id: string;
@@ -61,29 +62,6 @@ const EVENT_META: Record<string, { label: string; Icon: typeof Truck }> = {
   question: { label: 'Vendor question', Icon: MessageCircleQuestion },
   other: { label: 'Vendor reply', Icon: Mail },
 };
-
-interface Shipment {
-  carrier: string | null;
-  tracking_number: string | null;
-  shipment_id: string | null;
-  ship_date: string | null;
-  delivery_date: string | null;
-  received_at: string | null;
-}
-
-/** Build a carrier tracking URL from the ASN carrier name + tracking number. */
-function trackingUrl(carrier: string | null, num: string | null): string | null {
-  if (!num) return null;
-  const c = (carrier || '').toLowerCase();
-  const n = encodeURIComponent(num.trim());
-  if (c.includes('ups')) return `https://www.ups.com/track?tracknum=${n}`;
-  if (c.includes('fedex')) return `https://www.fedex.com/fedextrack/?trknbr=${n}`;
-  if (c.includes('usps')) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${n}`;
-  if (c.includes('dhl')) return `https://www.dhl.com/us-en/home/tracking.html?tracking-id=${n}`;
-  return `https://www.google.com/search?q=${n}`; // carrier-agnostic fallback
-}
-
-const shipDate = (s: string | null) => (s ? s.split('T')[0] : null);
 
 function changeSummary(c: Record<string, unknown>): string[] {
   const out: string[] = [];

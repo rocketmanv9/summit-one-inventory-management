@@ -12,11 +12,12 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, PackageCheck, AlertCircle, Printer, Check } from 'lucide-react';
+import { Loader2, PackageCheck, AlertCircle, Printer, Check, Truck } from 'lucide-react';
 import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { receivePurchaseOrderLines } from '@/lib/api/purchase-orders';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
+import { type Shipment, trackingUrl, shipDate } from '@/lib/po/shipments';
 
 interface POLine {
   id: string;
@@ -51,6 +52,10 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   // After a successful receive: offer to print labels for what just arrived.
   const [receivedLabels, setReceivedLabels] = useState<BarcodeLabelItem[] | null>(null);
   const [showLabelDialog, setShowLabelDialog] = useState(false);
+  // Carrier tracking from the Amazon ship-notice (ASN), surfaced read-only so
+  // the receiver can confirm the box that arrived matches what was shipped.
+  // An ASN means "shipped", never "received" — this never posts a receipt.
+  const [shipments, setShipments] = useState<Shipment[]>([]);
 
   // Outstanding quantity per line (numeric strings from PostgREST → coerce).
   const lines = useMemo(() => (po?.purchase_order_lines || []).map((l) => {
@@ -91,10 +96,26 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     setSaving(false);
     setReceivedLabels(null);
     setShowLabelDialog(false);
+    setShipments([]);
     // Default every receivable line to its full outstanding quantity.
     const init: Record<string, string> = {};
     for (const l of receivable) init[l.id] = String(l.outstanding);
     setQtyByLine(init);
+    // Pull any carrier shipments (ASN) for this PO so the receiver sees
+    // "on its way via UPS 1Z…" alongside the lines. Read-only, best-effort.
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/purchasing/po-activity?po_id=${po.id}`);
+        const json = await res.json();
+        if (!cancelled && res.ok) setShipments(json.data?.shipments || []);
+      } catch {
+        // Tracking is a convenience — never block receiving on it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, po?.id]);
 
@@ -227,6 +248,40 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
               <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />{error}
+            </div>
+          )}
+
+          {/* Carrier tracking from the Amazon ship-notice — read-only, so the
+              receiver can match the box that arrived to the ASN. */}
+          {shipments.length > 0 && (
+            <div className="space-y-2">
+              {shipments.map((sh, i) => {
+                const url = trackingUrl(sh.carrier, sh.tracking_number);
+                return (
+                  <div key={i} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <Truck className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-blue-900">
+                          Shipped{sh.carrier ? ` via ${sh.carrier}` : ''}
+                        </div>
+                        <div className="text-xs text-blue-800 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+                          {sh.tracking_number &&
+                            (url ? (
+                              <a href={url} target="_blank" rel="noopener noreferrer" className="font-medium underline">
+                                Track {sh.tracking_number} ↗
+                              </a>
+                            ) : (
+                              <span>Tracking: {sh.tracking_number}</span>
+                            ))}
+                          {shipDate(sh.ship_date) && <span>· Shipped {shipDate(sh.ship_date)}</span>}
+                          {shipDate(sh.delivery_date) && <span>· Expected {shipDate(sh.delivery_date)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

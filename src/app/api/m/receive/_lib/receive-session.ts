@@ -13,6 +13,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { getAdminClient } from '@/utils/supabase/admin';
 import { getGVClient } from '@/lib/gv';
 import { statusesForBucket } from '@/lib/po/po-status';
+import { type Shipment, parseShipments } from '@/lib/po/shipments';
 
 const ISSUER = 'mobile-receive';
 const AUDIENCE = 'summit-inventory';
@@ -168,6 +169,9 @@ export interface OpenPo {
   status: string;
   outstanding_line_count: number;
   lines: OpenPoLine[];
+  /** Carrier shipments from an integration ASN (e.g. Amazon ship-notice),
+   *  surfaced read-only so a receiver can match the box to the tracking. */
+  shipments: Shipment[];
 }
 
 /**
@@ -205,6 +209,28 @@ export async function fetchOpenPos(tenantId: string): Promise<OpenPo[]> {
 
   if (lineError) throw AppError.internal(lineError.message);
   const lines: any[] = rawLines || [];
+
+  // Carrier shipments (ASN) live on the linked punchout order's metadata. Batch
+  // one query across all POs, keep the newest punchout row per PO, and map its
+  // metadata.shipments[]. Tenant-scoped; best-effort (tracking is a convenience,
+  // never a receiving gate).
+  const shipmentsByPo = new Map<string, Shipment[]>();
+  try {
+    const { data: punchouts } = await inv
+      .from('punchout_orders')
+      .select('purchase_order_id, metadata, created_at')
+      .eq('tenant_id', tenantId)
+      .in('purchase_order_id', poIds)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    for (const row of punchouts || []) {
+      const poId = (row as any).purchase_order_id;
+      if (!poId || shipmentsByPo.has(poId)) continue; // newest row wins
+      shipmentsByPo.set(poId, parseShipments((row as any).metadata?.shipments));
+    }
+  } catch {
+    // Best-effort — POs still list without tracking.
+  }
 
   // Catalog item names/SKUs for catalog-backed lines.
   const itemIds = [...new Set(lines.map((l) => l.catalog_item_id).filter(Boolean))];
@@ -279,6 +305,7 @@ export async function fetchOpenPos(tenantId: string): Promise<OpenPo[]> {
         status: p.status,
         outstanding_line_count: poLines.filter((l) => l.outstanding > 0).length,
         lines: poLines,
+        shipments: shipmentsByPo.get(p.id) || [],
       };
     })
     .filter((p: OpenPo) => p.lines.length > 0);

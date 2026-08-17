@@ -8,6 +8,7 @@
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
 import { AppError } from '@rocketmanv9/chassis/errors';
 import { getAdminClient } from '@/utils/supabase/admin';
+import { parseShipments } from '@/lib/po/shipments';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -47,9 +48,7 @@ export const GET = createSessionReadRoute(
         .maybeSingle(),
     ]);
 
-    const shipments = Array.isArray((punchout as any)?.metadata?.shipments)
-      ? (punchout as any).metadata.shipments
-      : [];
+    const shipments = parseShipments((punchout as any)?.metadata?.shipments);
 
     return Response.json({
       data: {

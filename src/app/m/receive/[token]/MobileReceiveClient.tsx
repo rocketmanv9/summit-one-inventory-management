@@ -6,6 +6,7 @@ import { MobileSessionExpired } from '@/components/mobile/MobileSessionExpired';
 import { BarcodeScannerOverlay } from '@/components/mobile/BarcodeScannerOverlay';
 import { apiErrorMessage } from '@/lib/api-error';
 import { scanFx } from '@/lib/mobile/scan-fx';
+import { type Shipment, trackingUrl, shipDate } from '@/lib/po/shipments';
 
 interface ReceiveLine {
   id: string;
@@ -30,6 +31,7 @@ interface ReceivePo {
   status: string;
   outstanding_line_count: number;
   lines: ReceiveLine[];
+  shipments?: Shipment[];
 }
 
 interface SuccessInfo {
@@ -766,6 +768,46 @@ export function MobileReceiveClient({
 
           {/* Lines */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 120px', WebkitOverflowScrolling: 'touch' as any }}>
+            {/* Carrier tracking from the Amazon ship-notice (ASN) — read-only, so
+                the receiver can match the box that arrived to what was shipped. */}
+            {(selectedPo.shipments || []).map((sh, i) => {
+              const url = trackingUrl(sh.carrier, sh.tracking_number);
+              const shipped = shipDate(sh.ship_date);
+              const expected = shipDate(sh.delivery_date);
+              return (
+                <div
+                  key={`ship-${i}`}
+                  style={{
+                    background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px',
+                    padding: '12px 14px', marginBottom: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <svg width="18" height="18" fill="none" stroke="#2563eb" viewBox="0 0 24 24" style={{ marginTop: '1px', flexShrink: 0 }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 001 1h2m-3-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1" />
+                    </svg>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#1e3a8a' }}>
+                        Shipped{sh.carrier ? ` via ${sh.carrier}` : ''}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#1d4ed8', marginTop: '2px' }}>
+                        {sh.tracking_number &&
+                          (url ? (
+                            <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, textDecoration: 'underline', color: '#1d4ed8' }}>
+                              Track {sh.tracking_number} ↗
+                            </a>
+                          ) : (
+                            <span>Tracking: {sh.tracking_number}</span>
+                          ))}
+                        {shipped && <span>{sh.tracking_number ? ' · ' : ''}Shipped {shipped}</span>}
+                        {expected && <span> · Expected {expected}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
             {visibleLines.map((l) => {
               const blocked = isOverBlocked(l);
               const overOk = isOverAllowed(l);
