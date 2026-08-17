@@ -3646,10 +3646,17 @@ async function createSingleFormItem(
   ctx: ServerToolContext
 ): Promise<ServerToolResult> {
   try {
-    // Resolve category (fuzzy) if provided.
+    // Resolve category (fuzzy) if provided; if the name is new, tell the wizard
+    // to CREATE it (p_create_category) rather than silently dropping it. That
+    // matters because with NO category and NO sku the wizard RPC errors with
+    // "SKU is required when no category is selected" — which is exactly what
+    // stalled the "add wheelstops & keep going" procure step when the model
+    // passed an unknown category like "Paving".
     let categoryId: string | null = null;
-    if (params.category && typeof params.category === 'string') {
-      const categoryName = params.category.trim().toLowerCase();
+    let createCategory: Record<string, any> | null = null;
+    const rawCategory = typeof params.category === 'string' ? params.category.trim() : '';
+    if (rawCategory) {
+      const categoryName = rawCategory.toLowerCase();
       const { data: cats } = await inventorySchema(ctx.supabase)
         .from('item_categories')
         .select('id, name')
@@ -3660,6 +3667,22 @@ async function createSingleFormItem(
           cats.find((c: any) => c.name.toLowerCase().includes(categoryName) || categoryName.includes(c.name.toLowerCase()));
         if (match) categoryId = match.id;
       }
+      if (!categoryId) {
+        // New category → let the wizard create it (sequential SKUs). A 3-4 char
+        // uppercase prefix from the name keeps generated SKUs readable.
+        const prefix = rawCategory.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 4).toUpperCase() || 'GEN';
+        createCategory = { name: rawCategory, sku_prefix: prefix, sku_mode: 'sequential' };
+      }
+    }
+
+    // Guarantee the wizard can always mint a SKU. If we have neither an existing
+    // category nor a create-category (e.g. "add wheelstops" with no category),
+    // the wizard's no-category branch requires an explicit SKU — derive a safe,
+    // idempotent one from the item name so the add never dead-ends.
+    let explicitSku: string | null = null;
+    if (!categoryId && !createCategory) {
+      explicitSku =
+        (name.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toUpperCase() || 'ITEM').slice(0, 40);
     }
 
     // Resolve UOM term ID — provided value, then free-text resolve, else default EA.
@@ -3685,9 +3708,9 @@ async function createSingleFormItem(
       p_tracking_mode: trackingMode,
       p_reorder_point: reorderPoint,
       p_base_sku: null,
-      p_sku: null,
+      p_sku: explicitSku,
       p_category_id: categoryId,
-      p_create_category: null,
+      p_create_category: createCategory,
       p_vendor_id: null,
       p_create_vendor: null,
       p_vendor_sku: null,
