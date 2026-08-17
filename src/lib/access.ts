@@ -44,6 +44,7 @@ export const PURCHASING_CAPABILITIES: AccessCapability[] = [
   { key: 'vendors.preferred', label: 'Manage preferred vendors', description: 'Set or change the preferred vendor for an item', group: 'Purchasing & Vendors', kind: 'action' },
   { key: 'vendor_performance.view', label: 'View vendor performance', description: 'See the vendor performance scorecards', group: 'Purchasing & Vendors', kind: 'view' },
   { key: 'purchase_orders.manage', label: 'Manage purchase orders', description: 'Create, edit, send, cancel & place purchase orders', group: 'Purchasing & Vendors', kind: 'action' },
+  { key: 'amazon.punchout', label: 'Order through Amazon', description: 'Start an Amazon Business punchout session (alongside the per-person Amazon purchaser registry)', group: 'Purchasing & Vendors', kind: 'action' },
 ];
 
 export const ACCESS_CAPABILITIES: AccessCapability[] = [

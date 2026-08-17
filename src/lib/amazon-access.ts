@@ -22,6 +22,15 @@
  */
 
 import { AppError } from '@rocketmanv9/chassis/errors';
+import { resolveUserCapabilities } from '@/lib/access-server';
+
+/**
+ * Capability key (catalog: src/lib/access.ts) that grants Amazon-punchout
+ * authority to a whole POSITION, alongside the per-person registry. A position
+ * that lists this key can start a punchout even without an individual registry
+ * seat — so admins can authorize a role instead of hand-registering every buyer.
+ */
+export const AMAZON_PUNCHOUT_CAPABILITY = 'amazon.punchout';
 
 export interface AmazonPurchaserAccount {
   id: string;
@@ -43,6 +52,13 @@ export interface PunchOutAccessDecision {
   dormant: boolean;
   /** Machine-readable denial cause, null when allowed. */
   reason: 'not_registered' | 'punchout_disabled' | 'account_inactive' | null;
+  /**
+   * How the allow was granted, null when denied or dormant.
+   *   • 'registry'  — the caller has an active seat with can_punch_out.
+   *   • 'position'  — no seat, but their position grants amazon.punchout
+   *                   (or they have full access: admin / developer / no position).
+   */
+  via: 'registry' | 'position' | null;
   /** Always safe to show a user verbatim. */
   message: string;
   /** The caller's registry row when they have one. */
@@ -52,6 +68,8 @@ export interface PunchOutAccessDecision {
 const ALLOWED_DORMANT =
   'Amazon purchasing is open to everyone — no purchaser registry has been configured yet.';
 const ALLOWED_REGISTERED = 'Registered Amazon purchaser.';
+const ALLOWED_BY_POSITION =
+  'Allowed to order through Amazon by position (no individual purchaser seat needed).';
 
 const DENY_NOT_REGISTERED =
   "You're not set up as an Amazon purchaser. Ask an admin to add you in Settings → Integrations → Amazon.";
@@ -102,14 +120,14 @@ export async function canUserPunchOut(
 
   // Dormant: nothing configured, so behave exactly as before.
   if (registrySize === 0) {
-    return { allowed: true, dormant: true, reason: null, message: ALLOWED_DORMANT, account: null };
+    return { allowed: true, dormant: true, reason: null, via: null, message: ALLOWED_DORMANT, account: null };
   }
 
   // Registry exists but we have no user to check (service-to-service / token
   // sessions without a user id). Don't invent a denial we can't justify — the
   // registry gates PEOPLE, and there's no person here.
   if (!userId) {
-    return { allowed: true, dormant: false, reason: null, message: ALLOWED_REGISTERED, account: null };
+    return { allowed: true, dormant: false, reason: null, via: 'registry', message: ALLOWED_REGISTERED, account: null };
   }
 
   const { data: row } = await purchasers(supabase)
@@ -118,20 +136,34 @@ export async function canUserPunchOut(
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (!row) {
-    return { allowed: false, dormant: false, reason: 'not_registered', message: DENY_NOT_REGISTERED, account: null };
+  const account = (row ?? null) as AmazonPurchaserAccount | null;
+
+  // A live, punchout-enabled seat is the direct grant — unchanged behaviour.
+  if (account && account.active && account.can_punch_out) {
+    return { allowed: true, dormant: false, reason: null, via: 'registry', message: ALLOWED_REGISTERED, account };
   }
 
-  const account = row as AmazonPurchaserAccount;
-
-  if (!account.active) {
-    return { allowed: false, dormant: false, reason: 'account_inactive', message: DENY_INACTIVE, account };
+  // No qualifying seat. Before denying, fall back to the POSITION-based access
+  // system (the repo's real, position-driven access model — position_capabilities).
+  // Unifying the two grant paths here means an admin can authorize a whole role
+  // to order through Amazon instead of hand-registering every buyer. This only
+  // ever WIDENS who is allowed; it never locks out anyone the seat check passed.
+  const caps = await resolveUserCapabilities(supabase, tenantId, userId);
+  const positionGrants = caps === null || caps.has(AMAZON_PUNCHOUT_CAPABILITY);
+  if (positionGrants) {
+    return { allowed: true, dormant: false, reason: null, via: 'position', message: ALLOWED_BY_POSITION, account };
   }
-  if (!account.can_punch_out) {
-    return { allowed: false, dormant: false, reason: 'punchout_disabled', message: DENY_PUNCHOUT_OFF, account };
-  }
 
-  return { allowed: true, dormant: false, reason: null, message: ALLOWED_REGISTERED, account };
+  // Genuinely denied — no seat AND no position grant. Keep the soft, specific
+  // copy: prefer explaining the seat state they DO have (inactive / punchout
+  // off) over the generic "not registered", so an admin knows what to fix.
+  if (account && !account.active) {
+    return { allowed: false, dormant: false, reason: 'account_inactive', via: null, message: DENY_INACTIVE, account };
+  }
+  if (account && !account.can_punch_out) {
+    return { allowed: false, dormant: false, reason: 'punchout_disabled', via: null, message: DENY_PUNCHOUT_OFF, account };
+  }
+  return { allowed: false, dormant: false, reason: 'not_registered', via: null, message: DENY_NOT_REGISTERED, account: null };
 }
 
 /** Error code the UI keys off to render the "ask an admin" panel. */

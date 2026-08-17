@@ -35,6 +35,7 @@ import {
   Link2,
   Activity as ActivityIcon,
   Users,
+  Briefcase,
 } from 'lucide-react';
 
 import { AppShell } from '@/components/layout/AppShell';
@@ -83,6 +84,12 @@ interface Candidate {
   spending_limit: number | null;
 }
 
+interface CapabilityPosition {
+  position_id: string;
+  title: string | null;
+  people_count: number;
+}
+
 interface ActivityRow {
   id: string;
   status: string;
@@ -113,6 +120,7 @@ interface Overview {
   connection: Connection | null;
   purchasers: Purchaser[];
   candidates: Candidate[];
+  capability_positions: CapabilityPosition[];
   gate: { configured: boolean; dormant: boolean };
   activity: ActivityRow[];
   status_counts: Record<string, number>;
@@ -423,6 +431,48 @@ function AmazonHubContent() {
                   <strong>Gate live.</strong> Only the people below with punchout enabled can start an Amazon session.
                   Everyone else gets &ldquo;ask an admin to add you as an Amazon purchaser&rdquo;. Remove every row to
                   make it dormant again.
+                </>
+              )}
+            </div>
+
+            {/* Positions with Amazon buying — the OTHER grant path (item 07).
+                A position that carries the `amazon.punchout` capability may
+                punch out without an individual seat below, so admins can
+                authorize a whole role. Read-only here; edit the capability set
+                in the access editor. */}
+            <div className="mb-3 rounded-md border bg-muted/20 p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-foreground">
+                <Briefcase className="h-3.5 w-3.5" /> Positions with Amazon buying
+              </div>
+              {(data?.capability_positions?.length ?? 0) === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No position grants Amazon buying yet. Grant the &ldquo;Order through Amazon&rdquo; capability to a
+                  position in the{' '}
+                  <Link href="/settings/access" className="underline">access editor</Link> to let a whole role punch
+                  out without an individual seat.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Anyone in these positions may start an Amazon punchout even without an individual seat below.
+                  </p>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {data?.capability_positions.map((cp) => (
+                      <li
+                        key={cp.position_id}
+                        className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800"
+                      >
+                        {cp.title || 'Untitled position'}
+                        {cp.people_count > 0 && (
+                          <span className="text-green-600">· {cp.people_count}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Edit which positions get this in the{' '}
+                    <Link href="/settings/access" className="underline">access editor</Link>.
+                  </p>
                 </>
               )}
             </div>
