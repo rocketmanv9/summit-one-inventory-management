@@ -12,7 +12,7 @@ import type { AiDataDisplay } from './types';
 import { resolveEntity } from './ontology/entity-resolver';
 import { findSubstitutes as findSubstitutesQuery, findAllRelationships } from './ontology/relationship-query';
 import { getTenantGVClient } from '@/lib/gv';
-import { getCatalogClient } from '@/lib/vendors';
+import { getCatalogClient, getTenantVendorClient } from '@/lib/vendors';
 import {
   recommendVendorForItem,
   type TenantVendorOption,
@@ -89,6 +89,8 @@ const SERVER_TOOLS = new Set([
   'list_catalog_vendors',
   'recommend_vendor_for_item',
   'draft_po_preview',
+  'adopt_catalog_vendor',
+  'find_vendors_online',
   'adjust_stock',
   'adjust_stock_delta',
   'issue_inventory',
@@ -239,6 +241,10 @@ async function executeServerToolInner(
       return recommendVendorForItemTool(params, ctx);
     case 'draft_po_preview':
       return draftPoPreviewTool(params, ctx);
+    case 'adopt_catalog_vendor':
+      return adoptCatalogVendorTool(params, ctx);
+    case 'find_vendors_online':
+      return findVendorsOnlineTool(params, ctx);
     case 'adjust_stock':
     case 'adjust_stock_delta':
     case 'issue_inventory':
@@ -573,6 +579,8 @@ export const TOOL_CAPABILITY: Record<string, string> = {
   create_reservation: 'reserve',
   release_reservation: 'reserve',
   add_vendor: 'create_records',
+  // Adopting a catalog vendor writes a tenant vendor row — gate like other creators.
+  adopt_catalog_vendor: 'create_records',
   add_item: 'create_records',
   add_location: 'create_records',
   add_category: 'create_records',
@@ -1824,6 +1832,180 @@ async function draftPoPreviewTool(
       preview: result,
     },
   };
+}
+
+// ─── Adopt Catalog Vendor (sprint item 04) ──────────────────────────
+// Thin server tool wrapping POST /api/gv/vendors/adopt so Isabelle can adopt a
+// shared-catalog vendor conversationally ("add the first one"). Copies the
+// catalog vendor's contacts + addresses into the tenant vendor store via the
+// GV tenant client (same path the card's "Add & use" button uses). Explicit
+// confirm only — the model calls it after the user says to add.
+async function adoptCatalogVendorTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  let catalogVendorId = typeof params.catalog_vendor_id === 'string' ? params.catalog_vendor_id.trim() : '';
+  const name = typeof params.name === 'string' ? params.name.trim() : '';
+
+  // Resolve an id from a name against the catalog when only a name was given.
+  if (!catalogVendorId && name) {
+    try {
+      const catalog = getCatalogClient();
+      const rows = await catalog.list({ activeOnly: true }).catch(() => []);
+      const lower = name.toLowerCase();
+      const hit =
+        rows.find((v: any) => (v.name || '').toLowerCase() === lower) ||
+        rows.find((v: any) => (v.name || '').toLowerCase().includes(lower));
+      if (hit) catalogVendorId = hit.id;
+    } catch {
+      /* fall through to the missing-id error */
+    }
+  }
+
+  if (!catalogVendorId) {
+    return {
+      text: name
+        ? `I couldn't find "${name}" in the shared catalog. Try recommend_vendor_for_item first to get a catalog candidate.`
+        : 'Tell me which catalog vendor to add (a catalog_vendor_id or a name).',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing catalog vendor' },
+    };
+  }
+
+  try {
+    const client = await getTenantVendorClient(ctx.tenantId);
+    const result = await client.adopt([catalogVendorId]);
+    // adopt() → { message, adopted: Vendor[], skipped }.
+    const first = (result as any)?.adopted?.[0] ?? null;
+    const vendorId = first?.id || null;
+    const vendorName = first?.name || name || 'the vendor';
+    return {
+      text: vendorId
+        ? `Added ${vendorName} to your vendors. You can now build a PO against them — want me to draft one?`
+        : `Adopted ${vendorName}, but no vendor id came back — check your vendors list.`,
+      dataDisplay: {
+        displayType: 'metric',
+        label: 'Vendor added',
+        value: vendorName,
+        secondaryMetrics: vendorId ? [{ label: 'Vendor id', value: vendorId }] : [],
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Couldn't add that catalog vendor: ${err?.message || 'unknown error'}.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Adopt failed' },
+    };
+  }
+}
+
+// ─── Find Vendors Online (sprint item 04) ───────────────────────────
+// Non-destructive web discovery: returns a LIST of real supplier candidates for
+// the user to review. Creates nothing — adoption/creation stays an explicit
+// confirm (the card's "Add & use" or a follow-up tool call). Mirrors the
+// /api/ai/vendor-discover route's search so card taps and conversational asks
+// return the same candidates.
+async function findVendorsOnlineTool(
+  params: Record<string, any>,
+  ctx: ServerToolContext
+): Promise<ServerToolResult> {
+  const query = typeof params.query === 'string' ? params.query.trim() : '';
+  if (!query) {
+    return {
+      text: 'Tell me what to search for — an item and ideally a place (e.g. "wheel stop supplier near Portland").',
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Missing query' },
+    };
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return {
+      text: 'Web vendor search is not available — the OpenAI API key is not configured.',
+      dataDisplay: { displayType: 'metric', label: 'Unavailable', value: 'No API key' },
+    };
+  }
+
+  try {
+    const OpenAI = (await import('openai')).default;
+    const openai = new OpenAI({ apiKey });
+    const completion = await openai.chat.completions.create({
+      // search-preview model (plain gpt-4o rejects web_search_options + temperature).
+      model: 'gpt-4o-search-preview',
+      web_search_options: { search_context_size: 'medium' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a procurement research assistant for a construction / asphalt-paving company.',
+            'Use web search to find up to 6 REAL businesses that match the request.',
+            'Prefer a local branch with a real street address and phone over a national HQ.',
+            'Return ONLY a valid JSON object {"results": [ ... ]}. Each result MUST have a name; include when found: name, code, category, street1, city, state, zip, phone, email, website.',
+            'Drop any result with neither a street address nor a phone. No markdown fences. If nothing, return {"results": []}.',
+          ].join('\n'),
+        },
+        { role: 'user', content: query },
+      ],
+      max_tokens: 1500,
+    } as any);
+
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) {
+      return {
+        text: `I couldn't find suppliers online for "${query}". Try different wording or a nearby city.`,
+        dataDisplay: { displayType: 'metric', label: 'No results', value: query },
+      };
+    }
+
+    let jsonStr = content.trim();
+    const fence = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) jsonStr = fence[1].trim();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      parsed = { results: [] };
+    }
+    const rawList: any[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.results) ? parsed.results : [];
+    const results = rawList
+      .map((item) => ({
+        name: typeof item?.name === 'string' ? item.name.trim() : '',
+        category: typeof item?.category === 'string' ? item.category.trim() : '',
+        location: [item?.city, item?.state].filter((s) => typeof s === 'string' && s.trim()).join(', '),
+        phone: typeof item?.phone === 'string' ? item.phone.trim() : '',
+        email: typeof item?.email === 'string' ? item.email.trim() : '',
+        website: typeof item?.website === 'string' ? item.website.trim() : '',
+      }))
+      .filter((r) => r.name && (r.location || r.phone || r.website))
+      .slice(0, 6);
+
+    if (results.length === 0) {
+      return {
+        text: `I couldn't find usable suppliers online for "${query}". Try a nearby city or different wording.`,
+        dataDisplay: { displayType: 'metric', label: 'No results', value: query },
+      };
+    }
+
+    return {
+      text: `Found ${results.length} supplier${results.length === 1 ? '' : 's'} online for "${query}": ${results
+        .map((r) => r.name)
+        .join(', ')}. These aren't added yet — say "add <name>" to bring one in (I'll run a duplicate check first).`,
+      dataDisplay: {
+        displayType: 'table',
+        columns: [
+          { key: 'name', label: 'Vendor' },
+          { key: 'category', label: 'Sells' },
+          { key: 'location', label: 'Location' },
+          { key: 'phone', label: 'Phone' },
+          { key: 'website', label: 'Website' },
+        ],
+        rows: results,
+        totalRows: results.length,
+      },
+    };
+  } catch (err: any) {
+    return {
+      text: `Web vendor search failed: ${err?.message || 'unknown error'}.`,
+      dataDisplay: { displayType: 'metric', label: 'Error', value: 'Search failed' },
+    };
+  }
 }
 
 // ─── Search Vendors Online ──────────────────────────────────────────

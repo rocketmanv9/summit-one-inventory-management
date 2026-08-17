@@ -139,6 +139,38 @@ export const INVENTORY_TOOLS: ChatCompletionTool[] = [
     },
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'adopt_catalog_vendor',
+      description:
+        'Adopt a shared-catalog vendor into the tenant\'s own vendor list so it can be used on a PO. Use after recommend_vendor_for_item returns a catalog candidate and the user says "add the first one" / "add <name> from the catalog". Copies the catalog vendor\'s contacts and addresses into the tenant vendor store and returns the new tenant vendor id. This is an explicit add — only call it when the user confirms.',
+      parameters: {
+        type: 'object',
+        properties: {
+          catalog_vendor_id: { type: 'string', description: 'The GV vendor_catalog UUID to adopt (from recommend_vendor_for_item\'s catalog options).' },
+          name: { type: 'string', description: 'Optional catalog vendor name to resolve the id from, when the id is not known.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'find_vendors_online',
+      description:
+        'Search the web for real supplier candidates for an item when there is nothing on file and nothing in the shared catalog. Returns a LIST of candidates (name, category, address, phone, email, website) for the user to review — it CREATES NOTHING. To actually add one, adopt_catalog_vendor (catalog) or the vendor create flow (web) runs only on an explicit confirm. Use for "find me a supplier for X online".',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to search for, ideally with a place (e.g. "wheel stop supplier near Portland OR").' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+
   // ── Item operations ────────────────────────────────────────────────
   {
     type: 'function',

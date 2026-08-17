@@ -11,8 +11,10 @@
  * the card collapses to an honest status line ("PO 26-0032 created — awaiting
  * approval") with a link to the purchasing surface.
  *
- * Item 04 owns the GV-catalog "Add & use" vendor flow — here we only surface the
- * pending-adopt tag and leave a clean (disabled) "Change vendor" seam.
+ * Item 04 wires the "Change / find vendor" affordance: a compact three-tier
+ * VendorPicker (your vendors / GV catalog "Add & use" / web discover) that,
+ * after adopting or creating a vendor, re-runs draft_po_preview against the now-
+ * real vendor so pricing + advisories refresh in place.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -30,9 +32,11 @@ import type { AiPoDraftDisplay } from '@/lib/ai/types';
 import type {
   Advisory,
   DraftPoPreviewLine,
+  DraftPoPreviewResult,
   PriceBasis,
 } from '@/lib/ai/draft-po-preview';
 import { InventoryRPC } from '@/lib/rpc/inventory';
+import { VendorPicker, type PickedVendor } from './VendorPicker';
 
 interface PoDraftCardProps {
   data: AiPoDraftDisplay;
@@ -91,7 +95,10 @@ function AdvisoryChip({ advisory }: { advisory: Advisory }) {
 }
 
 export function PoDraftCard({ data }: PoDraftCardProps) {
-  const preview = data.preview;
+  // The live preview — starts as the item-02 payload item 03 rendered, but a
+  // vendor swap (item 04) re-runs draft_po_preview and replaces it in place so
+  // pricing + advisories refresh against the newly adopted/created vendor.
+  const [preview, setPreview] = useState<DraftPoPreviewResult>(data.preview);
 
   // ── Editable line state (qty + unit cost) ─────────────────────────────
   const [lines, setLines] = useState<EditableLine[]>(() =>
@@ -122,6 +129,12 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
     po_id: string | null;
     status: string | null;
   } | null>(null);
+
+  // ── Vendor picker + re-preview (item 04) ──────────────────────────────
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [repreviewing, setRepreviewing] = useState(false);
+  // A one-line status Isabelle-style narration after a vendor swap.
+  const [vendorNote, setVendorNote] = useState<string | null>(null);
 
   // ── Load delivery locations for the select ────────────────────────────
   useEffect(() => {
@@ -165,6 +178,80 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
   const vendor = preview.vendor;
   const vendorMissing = !vendor.vendor_id;
 
+  // Anchor item for the picker's catalog/web tiers — the first resolved line
+  // (catalog_item_id preferred, else its name as free text).
+  const anchorItemRef = useMemo(() => {
+    const first = lines.find((l) => l.catalog_item_id) || lines[0];
+    return first ? first.catalog_item_id || first.name : null;
+  }, [lines]);
+
+  // Re-run draft_po_preview against a newly chosen/adopted/created vendor so the
+  // whole card (prices, basis, advisories, warnings, total) refreshes honestly.
+  const applyVendor = async (picked: PickedVendor) => {
+    setPickerOpen(false);
+    setError(null);
+    setRepreviewing(true);
+    setVendorNote(`Added ${picked.name} and rebuilding your draft…`);
+    try {
+      const body = {
+        vendor_id: picked.vendor_id,
+        delivery_location_id: deliveryLocationId || undefined,
+        needed_by_date: neededByDate || undefined,
+        cost_context: preview.cost_context || undefined,
+        // Rebuild from the current (possibly edited) lines. A catalog/new vendor
+        // usually has no vendor_items yet → price_basis 'unknown', handled below.
+        lines: lines
+          .map((l) => ({
+            item_ref: l.catalog_item_id || l.name,
+            qty: Number.isFinite(l.qty) && l.qty > 0 ? l.qty : 1,
+          }))
+          .filter((l) => l.item_ref),
+      };
+      const res = await fetch('/api/ai/draft-po-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      const next: DraftPoPreviewResult | undefined = json?.data;
+      if (!res.ok || !next) {
+        // Re-preview failed — keep the current card but point the vendor at the
+        // picked one so Create still works, and surface the hiccup.
+        setPreview((cur) => ({
+          ...cur,
+          vendor: { ...cur.vendor, vendor_id: picked.vendor_id, name: picked.name, code: picked.code, pending_adopt: false, catalog_vendor_id: null },
+        }));
+        setVendorNote(`Added ${picked.name}. Couldn't refresh pricing — you can still create the PO.`);
+        return;
+      }
+      setPreview(next);
+      // Re-sync the editable rows to the refreshed preview (new prices/basis).
+      setLines(
+        (next.lines || []).map((l: DraftPoPreviewLine) => ({
+          catalog_item_id: l.catalog_item_id,
+          item_description: l.item_description,
+          name: l.name,
+          qty: l.qty,
+          uom_label: l.uom_label,
+          unit_cost: l.unit_cost,
+          price_basis: l.price_basis,
+          advisories: l.advisories,
+        })),
+      );
+      if (next.delivery_location_id) setDeliveryLocationId(next.delivery_location_id);
+      setVendorNote(`Added ${picked.name} and rebuilt your draft.`);
+    } catch (err: any) {
+      setPreview((cur) => ({
+        ...cur,
+        vendor: { ...cur.vendor, vendor_id: picked.vendor_id, name: picked.name, code: picked.code, pending_adopt: false, catalog_vendor_id: null },
+      }));
+      setVendorNote(`Added ${picked.name}. Couldn't refresh pricing — you can still create the PO.`);
+    } finally {
+      setRepreviewing(false);
+    }
+  };
+
   // ── Create PO via the existing write bridge ───────────────────────────
   const handleCreate = async () => {
     if (submitting || result) return;
@@ -173,9 +260,10 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
     if (!vendor.vendor_id) {
       setError(
         vendor.pending_adopt
-          ? "This vendor isn't on file yet — add them first (coming soon) before creating the PO."
+          ? 'This vendor isn\'t on file yet — tap "Find vendor" to add them, then create the PO.'
           : 'Pick a vendor before creating this PO.',
       );
+      setPickerOpen(true);
       return;
     }
     const orderable = lines.filter(
@@ -294,16 +382,37 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
             ) : null}
           </div>
         </div>
-        {/* Item 04 seam: "Change vendor" — disabled stub until the Add & use flow lands. */}
+        {/* Item 04: open the three-tier vendor picker (your vendors / catalog / web). */}
         <button
           type="button"
-          disabled
-          title="Changing vendors comes with the catalog Add & use flow"
-          className="shrink-0 cursor-not-allowed rounded-md border border-gray-200 px-2 py-1 text-[11px] font-medium text-gray-400"
+          onClick={() => setPickerOpen((o) => !o)}
+          disabled={repreviewing}
+          className="shrink-0 rounded-md border border-teal-300 bg-white px-2 py-1 text-[11px] font-medium text-teal-700 transition-colors hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Change vendor
+          {vendor.vendor_id ? 'Change vendor' : 'Find vendor'}
         </button>
       </div>
+
+      {/* Vendor picker (item 04) */}
+      {pickerOpen && (
+        <div className="border-b border-gray-100 px-4 pb-3 pt-1">
+          <VendorPicker
+            itemRef={anchorItemRef}
+            locationId={deliveryLocationId}
+            currentVendorId={vendor.vendor_id}
+            onPick={applyVendor}
+            onClose={() => setPickerOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Vendor-swap narration + re-preview spinner */}
+      {(vendorNote || repreviewing) && (
+        <div className="flex items-center gap-2 border-b border-teal-100 bg-teal-50 px-4 py-2 text-xs font-medium text-teal-800">
+          {repreviewing && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+          {vendorNote}
+        </div>
+      )}
 
       {/* Top-level warnings strip */}
       {preview.warnings && preview.warnings.length > 0 && (
@@ -457,10 +566,19 @@ export function PoDraftCard({ data }: PoDraftCardProps) {
         )}
 
         {vendorMissing && !error && (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            {vendor.pending_adopt
-              ? "This vendor isn't on file yet — the catalog Add & use step is coming soon."
-              : 'No vendor selected yet.'}
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <span>
+              {vendor.pending_adopt
+                ? `${vendor.name || 'This catalog vendor'} isn't on file yet — add them to build the draft.`
+                : 'No vendor on file for these items yet.'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-700"
+            >
+              {vendor.pending_adopt ? 'Add & use' : 'Find vendor'}
+            </button>
           </div>
         )}
 
