@@ -638,7 +638,7 @@ export function useAiChat(options?: AiChatOptions) {
     if (!actionDef) {
       addMessage(
         'assistant',
-        "I'm not sure what you mean. Try asking me to:\n\n  \"Add a vendor\"\n  \"Adjust stock balance\"\n  \"List purchase orders\"\n  \"Check low stock\"\n\nOr type \"help\" for the full list."
+        "I'm not sure what you mean. Try asking me to:\n\n  \"I need 10 wheelstops\" (I'll find a vendor and draft the PO)\n  \"Add a vendor\"\n  \"Adjust stock balance\"\n  \"List purchase orders\"\n  \"Check low stock\"\n\nOr type \"help\" for the full list."
       );
       return;
     }
@@ -1240,6 +1240,7 @@ export function useAiChat(options?: AiChatOptions) {
 
         if (intent.type === 'unknown') {
           const fallbackMsg = "I wasn't able to understand that. Here's what I can help with:\n\n" +
+            "  **Procure** — \"I need 10 wheelstops\", \"who sells rebar?\" (I'll pick a vendor and draft the PO)\n" +
             "  **Stock** — \"What's in stock?\", \"What's running low?\"\n" +
             "  **Vendors** — \"Show vendors\", \"Add a vendor\"\n" +
             "  **Purchase Orders** — \"Create a PO\", \"Show late orders\"\n" +

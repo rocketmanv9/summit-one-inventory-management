@@ -6,6 +6,36 @@ tenant). This is an audit-and-fix pass, not a redesign — the tool registry pat
 (`tool-registry.ts` + `tool-registrations/` + `tools.ts` + `server-tools.ts`) is
 unchanged.
 
+## Procure flow shipped 2026-08-17
+
+The "I need X" → PO chain the gaps below asked for is now built and wired end to
+end (sprint `2026-08-17-isabelle-procure`, items 01–05). New tools Isabelle now
+advertises + dispatches, closing the item→vendor / advisory / catalog-adopt gaps:
+
+- **`recommend_vendor_for_item`** (`@/lib/ai/recommend-vendor.ts`) — resolves the
+  item and ranks vendors tiered: your vendors (preferred → cheapest, with fastest +
+  last-paid), else GV `vendor_catalog` candidates, else a web-search flag. Answers
+  "who sells X / cheapest / fastest?" Backs the item-first vendor page.
+- **`draft_po_preview`** (`@/lib/ai/draft-po-preview.ts`) — assembles a reviewable
+  Draft-PO card (priced lines, estimated total, buyer advisories: on-hand here /
+  surplus at other yards / open PO already covering it / min-order nudges). Creates
+  nothing; the card's Create PO uses the existing `create_po` bridge and reports the
+  honest status (approved vs awaiting approval). Renders via `PoDraftCard.tsx`.
+- **`adopt_catalog_vendor`** / **`find_vendors_online`** — the catalog "Add & use"
+  one-tap (copies a GV catalog vendor into your list, then re-previews against it)
+  and the web-discover list (candidates to review; creates nothing, dup-guarded).
+  Wired into the card's three-tier `VendorPicker`.
+
+The playbook that chains these (resolve → add item if new → recommend → adopt/web →
+preview → one confirm → create, with sensible defaults) lives in the
+"THE PROCURE PLAYBOOK" section of `system-prompt.ts`. Item-not-found no longer
+dead-ends: Isabelle offers to add the new item (`add_item`) and continues.
+Discoverability: an "I need …" / "Who sells …" quick-action chip on `/ai` and the
+keyword-fallback help now advertise the procure flow.
+
+Still open from the gaps below (not this sprint): approval-inbox actions,
+receiving-against-PO, and cycle-count start/record hands.
+
 ## How tools were exercised
 
 The dev/stage overlay signs its dev-login JWT with the stage-issuer key, so

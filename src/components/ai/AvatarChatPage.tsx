@@ -256,7 +256,16 @@ export function AvatarChatPage() {
                 {quickActions.map((qa) => (
                   <button
                     key={qa.label}
-                    onClick={() => chat.sendMessage(qa.message)}
+                    onClick={() => {
+                      if (qa.fill) {
+                        // Open-ended starter ("I need …") — pre-fill and let the
+                        // user finish typing, don't send a bare fragment.
+                        chat.setInput(qa.message);
+                        inputRef.current?.focus();
+                      } else {
+                        chat.sendMessage(qa.message);
+                      }
+                    }}
                     disabled={chat.isLoading}
                     className="px-2.5 py-1 text-xs bg-gray-50 border border-gray-200 rounded-full hover:bg-teal-50 hover:border-teal-300 transition-colors disabled:opacity-50 text-gray-600"
                   >

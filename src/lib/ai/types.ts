@@ -219,6 +219,12 @@ export interface AiChatOptions {
 export interface QuickAction {
   label: string;
   message: string;
+  /**
+   * When true, the chip pre-fills the input with `message` and focuses it
+   * instead of sending immediately — for open-ended starters like "I need …"
+   * that the user finishes typing (e.g. "I need 10 wheelstops").
+   */
+  fill?: boolean;
 }
 
 export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
@@ -275,5 +281,12 @@ export const QUICK_ACTIONS: Record<string, QuickAction[]> = {
     { label: 'Low stock', message: 'Show low stock items' },
     { label: 'Reorder', message: 'What should I reorder?' },
     { label: 'Valuation', message: "What's my total inventory value?" },
+  ],
+  '/ai': [
+    { label: 'I need…', message: 'I need ', fill: true },
+    { label: 'Who sells…', message: 'Who sells ', fill: true },
+    { label: 'Low stock', message: "What's running low?" },
+    { label: 'Reorder', message: 'What should I reorder?' },
+    { label: 'KPIs', message: "How's inventory looking?" },
   ],
 };
