@@ -162,6 +162,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
     throw AppError.internal(`Purchase order creation failed: ${poErr.message}`);
   }
 
+  // Stamp provenance so the list reads "Guided purchase" instead of a mystery
+  // draft. The RPC defaults origin='user'; only the placeholder-vendor path is a
+  // guided/needs-a-vendor draft. (from-shortage uses this same post-insert stamp.)
+  if (placeholderVendor && poResult?.po_id) {
+    await sc
+      .from('purchase_orders')
+      .update({ origin: 'guided_purchase' })
+      .eq('id', poResult.po_id)
+      .eq('tenant_id', tenantId);
+  }
+
   return {
     data: {
       po_id: poResult?.po_id ?? null,

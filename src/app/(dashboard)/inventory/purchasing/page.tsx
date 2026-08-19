@@ -49,6 +49,7 @@ interface PurchaseOrder {
   delivery_location_id?: string;
   status: string;
   origin?: string;
+  is_test?: boolean;
   approval_reason?: string;
   // Approval routing (item 09/14) — surfaced in the detail panel's trail.
   created_by_user_id?: string;
@@ -74,6 +75,38 @@ interface PurchaseOrder {
     unit_cost: number;
     status: string;
   }>;
+}
+
+// Where a PO came from, for the trust-at-a-glance Source badge. `origin` is the
+// machine-readable provenance stamped at creation (user / agent / auto_reorder /
+// guided_purchase / shortfall). Manual user POs get no badge (the default, no
+// noise); everything non-manual is called out so real orders are unmistakable.
+const PO_SOURCE_META: Record<string, { label: string; className: string; title: string }> = {
+  auto_reorder: { label: 'Auto-reorder', className: 'bg-violet-100 text-violet-800', title: 'Drafted by the nightly auto-reorder pass' },
+  agent: { label: 'AI', className: 'bg-fuchsia-100 text-fuchsia-800', title: 'Drafted by Isabelle (the purchasing agent)' },
+  guided_purchase: { label: 'Guided purchase', className: 'bg-sky-100 text-sky-800', title: 'Guided/needs-a-vendor draft — assign a vendor before approving' },
+  shortfall: { label: 'Job shortfall', className: 'bg-red-100 text-red-800', title: 'Drafted from a job material shortfall' },
+};
+
+function POSourceBadge({ origin, isTest }: { origin?: string; isTest?: boolean }) {
+  const meta = origin ? PO_SOURCE_META[origin] : undefined;
+  if (!meta && !isTest) return <span className="text-xs text-muted-foreground">Manual</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {meta ? (
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`} title={meta.title}>
+          <Sparkles className="h-3 w-3" /> {meta.label}
+        </span>
+      ) : (
+        <span className="text-xs text-muted-foreground">Manual</span>
+      )}
+      {isTest && (
+        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800" title="Flagged as a test / placeholder PO — hidden from the default list">
+          Test
+        </span>
+      )}
+    </span>
+  );
 }
 
 export default function PurchasingPage() {
@@ -221,12 +254,23 @@ export default function PurchasingPage() {
   // Cancelled/voided POs are hidden from the active list unless explicitly filtered.
   const bucketFilter = (filters.status || '') as PoBucket | '';
   const buyerFilter = filters.buyer || '';
+  // Source filter: 'manual' = plain user POs (no origin badge); any other value
+  // matches an origin. Empty = all sources.
+  const sourceFilter = filters.source || '';
+  // Test POs are hidden by default (they're placeholder/verify litter); the
+  // "Test POs" filter set to 'show' reveals them.
+  const showTest = filters.test === 'show';
   const displayedOrders = orders.filter((o) => {
     const bucket = poBucket(o.status);
     const createdBy = (o as PurchaseOrder & { created_by_user_id?: string | null }).created_by_user_id;
+    if (!showTest && o.is_test) return false;
     if (buyerFilter === 'mine' && createdBy !== currentUserId) return false;
     // Any other buyer value is a specific user id from the Buyer dropdown.
     if (buyerFilter && buyerFilter !== 'mine' && createdBy !== buyerFilter) return false;
+    if (sourceFilter) {
+      const isManual = !o.origin || o.origin === 'user';
+      if (sourceFilter === 'manual' ? !isManual : o.origin !== sourceFilter) return false;
+    }
     if (bucketFilter) return bucket === bucketFilter;
     return bucket !== 'cancelled';
   });
@@ -406,6 +450,13 @@ export default function PurchasingPage() {
       ),
     },
     {
+      key: 'source',
+      header: 'Source',
+      render: (row: PurchaseOrder) => (
+        <POSourceBadge origin={row.origin} isTest={row.is_test} />
+      ),
+    },
+    {
       key: 'lines',
       header: 'Lines',
       render: (row: PurchaseOrder) => (
@@ -505,6 +556,24 @@ export default function PurchasingPage() {
       label: 'Buyer',
       type: 'select' as const,
       options: buyerOptions,
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      type: 'select' as const,
+      options: [
+        { value: 'manual', label: 'Manual' },
+        { value: 'auto_reorder', label: 'Auto-reorder' },
+        { value: 'agent', label: 'AI (Isabelle)' },
+        { value: 'guided_purchase', label: 'Guided purchase' },
+        { value: 'shortfall', label: 'Job shortfall' },
+      ],
+    },
+    {
+      key: 'test',
+      label: 'Test POs',
+      type: 'select' as const,
+      options: [{ value: 'show', label: 'Show test/placeholder POs' }],
     },
   ];
 

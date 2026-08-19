@@ -154,6 +154,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
       throw AppError.internal(`Draft PO creation failed: ${poErr.message}`);
     }
 
+    // Placeholder-vendor drafts (no vendor on file) are guided-purchase parking
+    // rows — stamp origin so the list badges them "Guided purchase" rather than
+    // leaving them as mystery user drafts. Vendor-assigned drafts stay origin='user'.
+    if (!vendorId && poResult?.po_id) {
+      await sc
+        .from('purchase_orders')
+        .update({ origin: 'guided_purchase' })
+        .eq('id', poResult.po_id)
+        .eq('tenant_id', tenantId);
+    }
+
     createdPOs.push({
       po_id: poResult?.po_id ?? null,
       po_number: poResult?.po_number ?? null,

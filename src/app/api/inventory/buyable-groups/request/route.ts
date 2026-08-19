@@ -216,6 +216,17 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
     });
     if (poErr) { log.error('buyable_groups.request_po_failed', { vendor_id: poVendorId, error: poErr.message }); throw AppError.internal(`Draft PO creation failed: ${poErr.message}`); }
 
+    // Placeholder-vendor drafts are guided/needs-a-vendor parking rows — stamp
+    // origin so the list badges them "Guided purchase" (same post-insert stamp
+    // as from-shortage). Vendor-assigned quick-buy drafts stay origin='user'.
+    if (!vendorId && poResult?.po_id) {
+      await sc
+        .from('purchase_orders')
+        .update({ origin: 'guided_purchase' })
+        .eq('id', poResult.po_id)
+        .eq('tenant_id', tenantId);
+    }
+
     createdPOs.push({
       po_id: poResult?.po_id ?? null,
       po_number: poResult?.po_number ?? null,
