@@ -11,8 +11,10 @@
  *      "record response" box that reads a pasted reply, and "AI counter" that
  *      drafts the next volley for the rivals citing the real recorded low.
  *
- * NOTHING IS SENT FROM HERE. The app has no vendor mailer. A human copies the
- * draft into their own email client. That is stated on screen, not just in code.
+ * The AI drafts each vendor's message; the arena then SENDS the invites by email
+ * (reusing the PO email transport — tenant Gmail preferred, Resend fallback) so
+ * the vendors really do bid against each other. Copy / open-in-mail stays as a
+ * fallback for vendors with no email, and the AI still never invents a price.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -33,6 +35,7 @@ import {
   ShoppingCart,
   AlertTriangle,
   Flame,
+  Send,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -80,6 +83,9 @@ interface Bid {
   quote_history: any[];
   contact_email: string | null;
   notes: string | null;
+  sent_at: string | null;
+  sent_method: 'gmail' | 'resend' | null;
+  sent_to_email: string | null;
 }
 
 interface Standing {
@@ -238,7 +244,7 @@ function PriceWarsContent() {
         onClose={() => setShowStart(false)}
         onStarted={(anchor, _requestId) => {
           setShowStart(false);
-          setNotice('Price war open — draft invites are on each vendor. Copy them and send.');
+          setNotice('Price war open — draft invites are on each vendor. Send the invites to put them in the ring.');
           if (anchor) setOpenRoundId(anchor);
           load();
         }}
@@ -484,6 +490,13 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
 
   const bidById = useMemo(() => new Map(bids.map((b) => [b.id, b])), [bids]);
 
+  // Vendors we can actually email right now: has a draft, has an email, not sent.
+  const sendable = useMemo(
+    () => bids.filter((b) => b.status !== 'declined' && !!b.draft_message && !!b.contact_email && !b.sent_at),
+    [bids],
+  );
+  const sentCount = useMemo(() => bids.filter((b) => !!b.sent_at).length, [bids]);
+
   // Sibling products: other rounds sharing this round's request_id. This is what
   // makes a multi-product war navigable — each product keeps its own arena.
   const thisRound = allRounds.find((r) => r.id === roundId);
@@ -591,6 +604,30 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
     }
   };
 
+  // Actually email the drafted RFQ to vendors — the whole point of this feature.
+  // bidIds omitted = every invited vendor with a draft and an email.
+  const sendInvites = async (bidIds?: string[]) => {
+    setBusy(bidIds && bidIds.length === 1 ? `${bidIds[0]}:send` : 'send-all');
+    setError('');
+    setNotice('');
+    try {
+      const res = await apiWrite(`/api/inventory/price-wars/rounds/${roundId}/send-invites`, {
+        method: 'POST',
+        body: bidIds ? { bid_ids: bidIds } : {},
+      });
+      const result = await readJson(res);
+      if (!result.ok) { setError(result.message); return; }
+      const d = result.json.data;
+      if (d?.message) setNotice(d.message);
+      else setNotice(`Sent ${d?.sent_count ?? 0} invite(s).`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Sending invites failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (loading && !data) {
     return <div className="flex items-center gap-2 p-8 text-gray-500"><Loader2 className="h-5 w-5 animate-spin" /> Loading the arena…</div>;
   }
@@ -633,7 +670,7 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
         title={round?.item_name ?? 'Price war'}
         description={
           round?.status === 'open'
-            ? `${bids.length} vendors bidding on ${Number(round?.target_qty ?? 1).toLocaleString()} units. Messages are drafted here and sent by you — the app never emails a vendor.`
+            ? `${bids.length} vendors bidding on ${Number(round?.target_qty ?? 1).toLocaleString()} units. Draft each message, then send the invites — the vendors get the RFQ by email and bid against each other.`
             : round?.status === 'awarded'
               ? `Awarded to ${round?.awarded_vendor_name ?? 'a vendor'} at ${money(round?.awarded_unit_cost)}.`
               : 'This round was abandoned.'
@@ -730,14 +767,28 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
         )}
       </div>
 
-      {/* Manual-send banner — stated on screen, not just in the code. */}
-      <div className="mb-5 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-        <Mail className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>
-          <strong>Sending is manual for now.</strong> The AI writes the message; you copy it or open it in your mail client and send it yourself.
-          Nothing on this page emails a vendor.
-        </span>
-      </div>
+      {/* Send-invites banner — the AI drafts, then this page actually emails
+          each vendor so they really bid against each other. Copy / open-in-mail
+          stays as a fallback for vendors with no email on file. */}
+      {round?.status === 'open' && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+          <Send className="h-4 w-4 shrink-0" />
+          <span className="flex-1 min-w-[12rem]">
+            <strong>Send the invites.</strong> The AI drafted the message on each vendor — send them all and the vendors bid against each other.
+            {sentCount > 0 && <span className="ml-1 text-sky-700">{sentCount} sent so far.</span>}
+            {sendable.length === 0 && sentCount === 0 && <span className="ml-1 text-sky-700">Draft a message on each vendor first (and add their email).</span>}
+          </span>
+          <button
+            onClick={() => sendInvites()}
+            disabled={sendable.length === 0 || busy === 'send-all'}
+            className="inline-flex items-center gap-2 rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+            title={sendable.length > 0 ? `Email the drafted RFQ to ${sendable.length} vendor(s)` : 'No vendor is ready to send yet'}
+          >
+            {busy === 'send-all' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {sendable.length > 0 ? `Send invites (${sendable.length})` : 'Send invites'}
+          </button>
+        </div>
+      )}
 
       {/* Vendor cards */}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -757,6 +808,7 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
               onDraft={draft}
               onRecord={recordQuote}
               onAward={award}
+              onSend={(bidId) => sendInvites([bidId])}
             />
           );
         })}
@@ -768,7 +820,7 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
 // ── One vendor in the ring ───────────────────────────────────────────────────
 
 function VendorCard({
-  bid, standing, roundOpen, isWinner, itemName, busy, awarding, onDraft, onRecord, onAward,
+  bid, standing, roundOpen, isWinner, itemName, busy, awarding, onDraft, onRecord, onAward, onSend,
 }: {
   bid: Bid;
   standing: Standing;
@@ -780,6 +832,7 @@ function VendorCard({
   onDraft: (bidId: string, kind: 'rfq' | 'counter') => void;
   onRecord: (bidId: string, payload: any) => Promise<boolean>;
   onAward: (vendorId: string) => void;
+  onSend: (bidId: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -841,13 +894,25 @@ function VendorCard({
             {bid.contact_email ?? <span className="text-amber-600">no contact email on file</span>}
           </div>
         </div>
-        <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-          bid.status === 'quoted' ? 'border-sky-200 bg-sky-50 text-sky-700'
-            : bid.status === 'declined' ? 'border-gray-200 bg-gray-100 text-gray-500'
-            : 'border-amber-200 bg-amber-50 text-amber-700'
-        }`}>
-          {bid.status === 'quoted' ? 'Quoted' : bid.status === 'declined' ? 'Out' : 'Invited'}
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+            bid.status === 'quoted' ? 'border-sky-200 bg-sky-50 text-sky-700'
+              : bid.status === 'declined' ? 'border-gray-200 bg-gray-100 text-gray-500'
+              : 'border-amber-200 bg-amber-50 text-amber-700'
+          }`}>
+            {bid.status === 'quoted' ? 'Quoted' : bid.status === 'declined' ? 'Out' : 'Invited'}
+          </span>
+          {bid.sent_at ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+              title={`Emailed ${bid.sent_to_email ?? ''}${bid.sent_method ? ` via ${bid.sent_method}` : ''}`}
+            >
+              <Send className="h-3 w-3" /> Sent · {new Date(bid.sent_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            </span>
+          ) : bid.draft_message ? (
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">Draft</span>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3 flex items-baseline gap-3">
@@ -880,6 +945,17 @@ function VendorCard({
               {busy === `${bid.id}:draft` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {hasDraft ? 'Draft next volley' : 'AI draft the ask'}
             </button>
+            {hasDraft && bid.contact_email && !bid.sent_at && (
+              <button
+                onClick={() => onSend(bid.id)}
+                disabled={busy === `${bid.id}:send`}
+                className="inline-flex items-center gap-1.5 rounded-md bg-sky-600 px-2.5 py-1.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+                title={`Email this RFQ to ${bid.contact_email}`}
+              >
+                {busy === `${bid.id}:send` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send
+              </button>
+            )}
             <button
               onClick={() => setShowRecord((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
