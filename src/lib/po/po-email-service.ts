@@ -303,11 +303,20 @@ export interface SendNotificationEmailInput {
   fetchImpl: FetchLike;
   /** Resolve a personal Gmail connection for this user too (optional — cron callers have no user). */
   userId?: string;
+  /**
+   * Reply-To address. Price-wars invites set this to the monitored mailbox so a
+   * vendor's reply lands where the inbox monitor is watching. Omitted for
+   * digests that don't expect a reply.
+   */
+  replyTo?: string;
 }
 
 export interface SendNotificationEmailResult {
   provider: 'gmail' | 'resend';
   messageId: string | null;
+  /** Gmail thread id when sent via Gmail (kept so replies can match by thread). */
+  threadId?: string | null;
+  /** The address the message was actually sent from (the monitored mailbox for Gmail). */
   from: string;
 }
 
@@ -337,21 +346,25 @@ export async function sendNotificationEmail(
     const sent = await sendGmailMessage(input.fetchImpl, accessToken, {
       from: `${fromName} <${connection.google_email}>`,
       to: input.to,
+      // Default the reply-to to the mailbox we send from, so a vendor's reply
+      // lands back in the monitored inbox even when no explicit one is passed.
+      replyTo: input.replyTo ?? connection.google_email,
       subject: input.subject,
       html: input.html,
       text: input.text,
     });
-    return { provider: 'gmail', messageId: sent.id, from: connection.google_email };
+    return { provider: 'gmail', messageId: sent.id, threadId: sent.threadId, from: connection.google_email };
   }
 
   const sent = await sendEmail(input.fetchImpl, {
     // from omitted → sendEmail falls back to ORDER_EMAIL_FROM (Resend-verified).
     to: input.to,
+    replyTo: input.replyTo,
     subject: input.subject,
     html: input.html,
     text: input.text,
   });
-  return { provider: 'resend', messageId: sent.id, from: process.env.ORDER_EMAIL_FROM || '' };
+  return { provider: 'resend', messageId: sent.id, threadId: null, from: process.env.ORDER_EMAIL_FROM || '' };
 }
 
 // ── AI draft helper ──────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 
 import { assertCapability } from '@/lib/access-server';
-import { findWarCandidates, rankBids, currentLow, roundSavings } from '@/lib/price-wars';
+import { findWarCandidates, rankBids, currentLow, roundSavings, recommendWinner } from '@/lib/price-wars';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -122,6 +122,9 @@ export const GET = createSessionReadRoute(async ({ req, session }) => {
       standings,
       current_low: low,
       savings_so_far: roundSavings(targetQty, baseline, low?.unit_cost ?? null),
+      // Who's best, once replies are in — the decision Grant confirms. Only real
+      // recorded quotes are eligible; empty until someone actually quotes.
+      recommendation: recommendWinner(bids, { targetQty, baseline }),
       market: candidate ?? null,
     },
   });

@@ -36,6 +36,8 @@ import {
   AlertTriangle,
   Flame,
   Send,
+  Inbox,
+  Sparkle,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -98,6 +100,30 @@ interface Standing {
   move_pct: number | null;
   is_low: boolean;
   rank: number | null;
+}
+
+interface WinnerReasonLine {
+  vendor_id: string;
+  vendor_name: string;
+  unit_cost: number;
+  move_pct: number | null;
+  is_winner: boolean;
+}
+
+interface Recommendation {
+  has_recommendation: boolean;
+  winner_vendor_id: string | null;
+  winner_vendor_name: string | null;
+  winner_unit_cost: number | null;
+  runner_up_vendor_name: string | null;
+  runner_up_unit_cost: number | null;
+  savings_vs_baseline: number | null;
+  margin_over_runner_up: number | null;
+  quoted: WinnerReasonLine[];
+  awaiting_count: number;
+  awaiting_vendor_names: string[];
+  declined_count: number;
+  summary: string;
 }
 
 interface RoundSummary {
@@ -510,6 +536,7 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
   const bids: Bid[] = data?.bids ?? [];
   const standings: Standing[] = data?.standings ?? [];
   const low = data?.current_low ?? null;
+  const recommendation: Recommendation | null = data?.recommendation ?? null;
 
   const bidById = useMemo(() => new Map(bids.map((b) => [b.id, b])), [bids]);
 
@@ -646,6 +673,28 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
       await load();
     } catch (e: any) {
       setError(e?.message || 'Sending invites failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Ask the inbox monitor to pull in any vendor replies and record their prices.
+  const checkInbox = async () => {
+    setBusy('check-inbox');
+    setError('');
+    setNotice('');
+    try {
+      const res = await apiWrite('/api/inventory/price-wars/ingest-replies', {
+        method: 'POST',
+        body: { round_id: roundId },
+      });
+      const result = await readJson(res);
+      if (!result.ok) { setError(result.message); return; }
+      const d = result.json.data;
+      setNotice(d?.message || 'Checked the inbox.');
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Checking the inbox failed.');
     } finally {
       setBusy(null);
     }
@@ -810,6 +859,86 @@ function Arena({ roundId, allRounds, onNavigate, onBack }: {
             {busy === 'send-all' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             {sendable.length > 0 ? `Send invites (${sendable.length})` : 'Send invites'}
           </button>
+        </div>
+      )}
+
+      {/* Watch the inbox — pull vendor replies in and record their prices. */}
+      {round?.status === 'open' && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-md border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+          <Inbox className="h-4 w-4 shrink-0" />
+          <span className="flex-1 min-w-[12rem]">
+            <strong>Watching for replies.</strong> When vendors answer, check the inbox and their quoted prices land on the leaderboard automatically — no copy/paste.
+          </span>
+          <button
+            onClick={checkInbox}
+            disabled={busy === 'check-inbox'}
+            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy === 'check-inbox' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Inbox className="h-4 w-4" />}
+            Check the inbox
+          </button>
+        </div>
+      )}
+
+      {/* The recommendation — who's best, once replies are in. Grant confirms it
+          with "Award & create PO"; the PO lands in the approval inbox. */}
+      {round?.status === 'open' && recommendation?.has_recommendation && (
+        <div className="mb-5 overflow-hidden rounded-xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50">
+          <div className="flex flex-wrap items-start gap-4 p-5">
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+              <Sparkle className="h-6 w-6" />
+            </div>
+            <div className="min-w-[16rem] flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Recommended winner</div>
+              <div className="mt-0.5 flex flex-wrap items-baseline gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xl font-bold text-gray-900">
+                  <Crown className="h-5 w-5 text-amber-500" /> {recommendation.winner_vendor_name}
+                </span>
+                <span className="font-mono text-xl font-bold text-emerald-700">{money(recommendation.winner_unit_cost)}</span>
+                <span className="text-xs text-gray-500">/unit</span>
+              </div>
+              <div className="mt-1 text-sm text-gray-700">
+                {recommendation.savings_vs_baseline && recommendation.savings_vs_baseline > 0 ? (
+                  <>Saves <strong className="text-emerald-700">{money0(recommendation.savings_vs_baseline)}</strong> vs today&apos;s price on this volume. </>
+                ) : null}
+                {recommendation.runner_up_vendor_name ? (
+                  <>Beats {recommendation.runner_up_vendor_name} ({money(recommendation.runner_up_unit_cost)}){recommendation.margin_over_runner_up ? ` by ${money(recommendation.margin_over_runner_up)}/unit` : ''}. </>
+                ) : null}
+                {recommendation.awaiting_count > 0 ? (
+                  <span className="text-amber-700">{recommendation.awaiting_count} vendor{recommendation.awaiting_count === 1 ? '' : 's'} still to reply ({recommendation.awaiting_vendor_names.join(', ')}).</span>
+                ) : (
+                  <span className="text-emerald-700">All invited vendors have responded.</span>
+                )}
+              </div>
+              {/* Per-line reasoning — every price is a real recorded quote. */}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {recommendation.quoted.map((q) => (
+                  <span
+                    key={q.vendor_id}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${
+                      q.is_winner ? 'border-emerald-400 bg-emerald-100 font-semibold text-emerald-800' : 'border-gray-200 bg-white text-gray-700'
+                    }`}
+                  >
+                    {q.is_winner && <Crown className="h-3 w-3 text-amber-500" />}
+                    {q.vendor_name} <span className="font-mono">{money(q.unit_cost)}</span>
+                    {q.move_pct !== null && q.move_pct < 0 && <span className="text-emerald-600">{q.move_pct.toFixed(0)}%</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col items-stretch gap-2">
+              <button
+                onClick={() => recommendation.winner_vendor_id && award(recommendation.winner_vendor_id)}
+                disabled={!recommendation.winner_vendor_id || awarding === recommendation.winner_vendor_id}
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                title="Award this vendor and draft a PO to them (it still needs your approval)"
+              >
+                {awarding === recommendation.winner_vendor_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trophy className="h-4 w-4" />}
+                Award &amp; create PO
+              </button>
+              <span className="text-center text-[11px] text-gray-500">Goes to the approval inbox — nothing is ordered or sent.</span>
+            </div>
+          </div>
         </div>
       )}
 

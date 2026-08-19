@@ -80,6 +80,18 @@ interface InviteResult {
   error?: string | null;
 }
 
+/**
+ * Stamp the correlation marker `[pw:<round>:<bid>]` into the RFQ so a vendor's
+ * reply carries it back and the inbox monitor can match the reply to this exact
+ * bid. Idempotent — never double-stamps if a resend already carries the marker.
+ */
+function stampToken(text: string, roundId: string, bidId: string): string {
+  const marker = `[pw:${roundId}:${bidId}]`;
+  if (text.includes(marker)) return text;
+  // Keep the reference on its own trailing line, out of the way of the message.
+  return `${text.trimEnd()}\n\nRef: ${marker} (please keep this reference when you reply)`;
+}
+
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fetch, idempotencyKey }) => {
   await assertCapability(supabase, { tenantId: ctx.tenantId!, userId: ctx.userId! }, 'purchase_orders.manage');
   const roundId = extractId(req);
@@ -125,6 +137,11 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
   const personal = shared.length === 0 ? await getUserConnection(admin, tenantId, userId) : null;
   const emailConfigured = shared.length > 0 || !!personal || isEmailConfigured();
 
+  // The mailbox we send from is the one the inbox monitor watches — set it as
+  // the RFQ's Reply-To so a vendor's reply lands where ingest-replies looks.
+  const monitoredMailbox =
+    (shared[0]?.google_email || personal?.google_email || process.env.ORDER_EMAIL_FROM || '').trim() || null;
+
   const now = new Date().toISOString();
   const results: InviteResult[] = [];
   const eventPayloads: any[] = [];
@@ -142,7 +159,16 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
       continue;
     }
 
-    const { subject, body: draftBody } = splitDraft(bid.draft_message);
+    const { subject: rawSubject, body: rawBody } = splitDraft(bid.draft_message);
+
+    // Correlation: stamp [pw:<round>:<bid>] into the RFQ so the reply is
+    // matchable. The token is persisted on the bid (backfilled deterministically
+    // in the migration; fall back to the bid id if somehow null).
+    const token = (bid.correlation_token as string | null) ?? bid.id.replace(/-/g, '');
+    const draftBody = stampToken(rawBody, roundId, bid.id);
+    // Keep the marker in the subject too — a reply that quotes the subject line
+    // (most do) then carries it even if the body signature is trimmed.
+    const subject = rawSubject.includes('[pw:') ? rawSubject : `${rawSubject} [pw:${roundId}:${bid.id}]`;
 
     try {
       const sent = await sendNotificationEmail({
@@ -153,6 +179,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
         text: draftBody,
         fetchImpl: fetch,
         userId,
+        replyTo: monitoredMailbox ?? undefined,
       });
 
       const { error: upErr } = await sc
@@ -163,6 +190,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
           sent_method: sent.provider,
           sent_message_id: sent.messageId,
           sent_to_email: to,
+          correlation_token: token,
           updated_at: now,
           last_event_id: idempotencyKey,
         })

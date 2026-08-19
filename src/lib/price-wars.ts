@@ -392,3 +392,114 @@ export function roundSavings(targetQty: number, baseline: number | null, unitCos
   if (baseline === null || unitCost === null || !Number.isFinite(targetQty)) return null;
   return round2(Math.max(0, (baseline - unitCost) * targetQty));
 }
+
+// ── Recommendation ───────────────────────────────────────────────────────────
+
+export interface WinnerReasonLine {
+  vendor_id: string;
+  vendor_name: string;
+  unit_cost: number;
+  /** unit_cost vs the round baseline, as a percentage. Negative = cheaper. */
+  move_pct: number | null;
+  is_winner: boolean;
+}
+
+export interface WinnerRecommendation {
+  /** True only when at least one vendor has actually quoted a price. */
+  has_recommendation: boolean;
+  winner_vendor_id: string | null;
+  winner_vendor_name: string | null;
+  winner_unit_cost: number | null;
+  /** Second-cheapest quote, when one exists — "you beat this by X". */
+  runner_up_vendor_name: string | null;
+  runner_up_unit_cost: number | null;
+  /** Savings vs baseline across the round's target quantity, when computable. */
+  savings_vs_baseline: number | null;
+  /** How much cheaper the winner is than the runner-up per unit (>= 0). */
+  margin_over_runner_up: number | null;
+  /** Vendors who quoted, cheapest first — the per-line reasoning. */
+  quoted: WinnerReasonLine[];
+  /** How many invited vendors have not replied yet. */
+  awaiting_count: number;
+  awaiting_vendor_names: string[];
+  declined_count: number;
+  /** A plain-English line the UI can show verbatim. */
+  summary: string;
+}
+
+/**
+ * Recommend a winner from a round's bids: the lowest qualifying quote, with the
+ * runner-up, savings vs baseline, and who's still silent. Never invents a price
+ * — only vendors who actually quoted are eligible, and if nobody has quoted the
+ * recommendation is honestly empty. Reuses `rankBids` so the arena and this
+ * agree on ordering.
+ */
+export function recommendWinner(
+  bids: Array<any>,
+  opts: { targetQty?: number; baseline?: number | null } = {},
+): WinnerRecommendation {
+  const standings = rankBids(bids);
+  const targetQty = Number(opts.targetQty) > 0 ? Number(opts.targetQty) : 1;
+  const baseline = opts.baseline !== undefined && opts.baseline !== null ? Number(opts.baseline) : null;
+
+  const quoted = standings.filter((s) => s.status === 'quoted' && s.current_quote !== null);
+  const awaiting = standings.filter((s) => s.status === 'invited');
+  const declined = standings.filter((s) => s.status === 'declined');
+
+  const quotedLines: WinnerReasonLine[] = quoted.map((s, i) => ({
+    vendor_id: s.vendor_id,
+    vendor_name: s.vendor_name,
+    unit_cost: Number(s.current_quote),
+    move_pct: s.move_pct,
+    is_winner: i === 0,
+  }));
+
+  if (quoted.length === 0) {
+    return {
+      has_recommendation: false,
+      winner_vendor_id: null,
+      winner_vendor_name: null,
+      winner_unit_cost: null,
+      runner_up_vendor_name: null,
+      runner_up_unit_cost: null,
+      savings_vs_baseline: null,
+      margin_over_runner_up: null,
+      quoted: [],
+      awaiting_count: awaiting.length,
+      awaiting_vendor_names: awaiting.map((s) => s.vendor_name),
+      declined_count: declined.length,
+      summary: awaiting.length > 0
+        ? `No quotes yet — waiting on ${awaiting.length} vendor${awaiting.length === 1 ? '' : 's'}.`
+        : 'No quotes recorded in this round yet.',
+    };
+  }
+
+  const winner = quoted[0];
+  const runnerUp = quoted[1] ?? null;
+  const savings = roundSavings(targetQty, baseline, Number(winner.current_quote));
+  const margin = runnerUp ? round2(Math.max(0, Number(runnerUp.current_quote) - Number(winner.current_quote))) : null;
+
+  const winnerCost = Number(winner.current_quote);
+  const parts: string[] = [
+    `Recommended: ${winner.vendor_name} at $${winnerCost.toFixed(2)}/unit`,
+  ];
+  if (savings !== null && savings > 0) parts.push(`saves $${savings.toFixed(2)} vs baseline`);
+  if (runnerUp) parts.push(`beats ${runnerUp.vendor_name} ($${Number(runnerUp.current_quote).toFixed(2)})`);
+  if (awaiting.length > 0) parts.push(`${awaiting.length} vendor${awaiting.length === 1 ? '' : 's'} still to reply`);
+
+  return {
+    has_recommendation: true,
+    winner_vendor_id: winner.vendor_id,
+    winner_vendor_name: winner.vendor_name,
+    winner_unit_cost: winnerCost,
+    runner_up_vendor_name: runnerUp?.vendor_name ?? null,
+    runner_up_unit_cost: runnerUp ? Number(runnerUp.current_quote) : null,
+    savings_vs_baseline: savings,
+    margin_over_runner_up: margin,
+    quoted: quotedLines,
+    awaiting_count: awaiting.length,
+    awaiting_vendor_names: awaiting.map((s) => s.vendor_name),
+    declined_count: declined.length,
+    summary: parts.join(' · ') + '.',
+  };
+}
