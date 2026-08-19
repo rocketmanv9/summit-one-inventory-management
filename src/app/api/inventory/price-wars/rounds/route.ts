@@ -40,6 +40,8 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
 
   let query = sc
     .from('quote_rounds')
+    // request_id is part of '*' but named here for clarity — the arena groups
+    // multi-product wars by it.
     .select('*')
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: false })

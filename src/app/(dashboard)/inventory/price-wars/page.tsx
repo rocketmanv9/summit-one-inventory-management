@@ -37,6 +37,7 @@ import {
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { apiWrite } from '@/lib/api-client';
+import { StartWarModal } from '@/components/purchasing/StartWarModal';
 
 // ── Types (mirror the route payloads) ────────────────────────────────────────
 
@@ -96,6 +97,7 @@ interface Standing {
 interface RoundSummary {
   id: string;
   catalog_item_id: string;
+  request_id: string | null;
   item_name: string | null;
   item_sku: string | null;
   status: 'open' | 'awarded' | 'abandoned';
@@ -149,6 +151,7 @@ function PriceWarsContent() {
   const [notice, setNotice] = useState('');
   const [openRoundId, setOpenRoundId] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  const [showStart, setShowStart] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -202,6 +205,8 @@ function PriceWarsContent() {
     return (
       <Arena
         roundId={openRoundId}
+        allRounds={rounds}
+        onNavigate={(id) => setOpenRoundId(id)}
         onBack={() => { setOpenRoundId(null); load(); }}
       />
     );
@@ -215,6 +220,28 @@ function PriceWarsContent() {
       <PageHeader
         title="Price wars"
         description="Items we buy from more than one vendor, at more than one price. Start a round, let them bid each other down, award the winner — the winning price becomes the price we buy at."
+        actions={
+          candidates.length > 0 ? (
+            <button
+              onClick={() => setShowStart(true)}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
+            >
+              <Swords className="h-4 w-4" /> Start a price war
+            </button>
+          ) : null
+        }
+      />
+
+      <StartWarModal
+        open={showStart}
+        candidates={candidates}
+        onClose={() => setShowStart(false)}
+        onStarted={(anchor, _requestId) => {
+          setShowStart(false);
+          setNotice('Price war open — draft invites are on each vendor. Copy them and send.');
+          if (anchor) setOpenRoundId(anchor);
+          load();
+        }}
       />
 
       {/* Headline — the money on the table. */}
@@ -419,7 +446,12 @@ function CandidateCard({ candidate: c, busy, onStart }: { candidate: Candidate; 
 
 // ── The arena ────────────────────────────────────────────────────────────────
 
-function Arena({ roundId, onBack }: { roundId: string; onBack: () => void }) {
+function Arena({ roundId, allRounds, onNavigate, onBack }: {
+  roundId: string;
+  allRounds: RoundSummary[];
+  onNavigate: (roundId: string) => void;
+  onBack: () => void;
+}) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -451,6 +483,15 @@ function Arena({ roundId, onBack }: { roundId: string; onBack: () => void }) {
   const low = data?.current_low ?? null;
 
   const bidById = useMemo(() => new Map(bids.map((b) => [b.id, b])), [bids]);
+
+  // Sibling products: other rounds sharing this round's request_id. This is what
+  // makes a multi-product war navigable — each product keeps its own arena.
+  const thisRound = allRounds.find((r) => r.id === roundId);
+  const siblings = useMemo(() => {
+    const rid = thisRound?.request_id ?? round?.request_id ?? null;
+    if (!rid) return [] as RoundSummary[];
+    return allRounds.filter((r) => r.request_id === rid);
+  }, [allRounds, thisRound, round, roundId]);
 
   const draft = async (bidId: string, kind: 'rfq' | 'counter') => {
     setBusy(`${bidId}:draft`);
@@ -559,6 +600,34 @@ function Arena({ roundId, onBack }: { roundId: string; onBack: () => void }) {
       <button onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">
         <ArrowLeft className="h-4 w-4" /> All price wars
       </button>
+
+      {/* Multi-product war: switch between the products in this request. Each
+          product keeps its own leaderboard, quotes and award. */}
+      {siblings.length > 1 && (
+        <div className="mb-4">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <Swords className="h-3.5 w-3.5" /> {siblings.length} products in this war
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {siblings.map((s) => {
+              const active = s.id === roundId;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => { if (!active) onNavigate(s.id); }}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
+                    active ? 'border-primary bg-primary text-white font-semibold' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {s.status === 'awarded' && <Trophy className="h-3.5 w-3.5 text-amber-400" />}
+                  {s.item_name ?? 'Item'}
+                  <span className={`text-[11px] ${active ? 'text-white/80' : 'text-gray-400'}`}>{s.quoted_count}/{s.bid_count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <PageHeader
         title={round?.item_name ?? 'Price war'}
