@@ -95,6 +95,29 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
         }
       : null;
 
+  // ── Name-only fallback SKU ──────────────────────────────────────────────
+  // When the caller supplies NO category (neither category_id nor
+  // new_category_name), the wizard's inner rpc_create_catalog_item raises
+  // "SKU is required when no category is selected" — breaking the "AI
+  // unavailable → add the item name-only" path the mobile card advertises.
+  // We can't safely default a "General" category: the wizard dedups category
+  // creation by (tenant_id, last_event_id='wiz-cat-'||idempotency_key), NOT by
+  // name, so passing p_create_category would spawn a fresh duplicate "General"
+  // category on every call. Instead we synthesize a stable SKU from the item
+  // name so the guard is satisfied while the item stays category-less. The
+  // suffix is derived from the (per-request) idempotency key so retries reuse
+  // the same SKU; (tenant_id, sku) is unique, so the slug prefix collision is
+  // resolved by that suffix. Matches the derive-from-name convention in
+  // src/app/api/m/count/create-item/route.ts.
+  const hasCategory = Boolean(body.category_id || createCategory);
+  let fallbackSku: string | null = null;
+  if (!hasCategory) {
+    const prefix =
+      (body.sku_prefix || body.name).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'ITM';
+    const suffix = idempotencyKey.replace(/[^A-Za-z0-9]/g, '').slice(-6).toUpperCase() || '000000';
+    fallbackSku = `${prefix}-${suffix}`;
+  }
+
   const { data, error } = await inv.rpc('rpc_wizard_create_item', {
     p_name: body.name,
     p_description: body.description ?? null,
@@ -102,7 +125,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, idempotencyK
     p_tracking_mode: toCatalogTrackingMode(body.tracking_mode),
     p_reorder_point: body.reorder_point ?? null,
     p_base_sku: null,
-    p_sku: null,
+    p_sku: fallbackSku,
     p_category_id: body.category_id ?? null,
     p_create_category: createCategory,
     p_vendor_id: body.vendor_id,
