@@ -11,9 +11,10 @@ import { useUOMLabelMap, useUOMTerms } from '@/hooks/useGVTerms';
 import { useEntityImages } from '@/hooks/useEntityImages';
 import { ItemPickerModal } from '@/components/purchasing/ItemPickerModal';
 import { POEmailPreviewModal } from '@/components/modals/POEmailPreviewModal';
+import { buildPurchaseOrderEmail } from '@/lib/email/order-email';
 import { useOrderContext, formatHint, computeFlags } from '@/components/purchasing/useOrderContext';
 import { AmazonLinkPaste, type AmazonApplyPayload } from '@/components/purchasing/AmazonLinkPaste';
-import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2, Link2 } from 'lucide-react';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2, Link2, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -689,6 +690,15 @@ export default function CreatePurchaseOrderPage() {
     if (form.delivery_method === 'ship' && !form.delivery_location_id) {
       throw AppError.badRequest('Please select a delivery location');
     }
+    // Pickup: either a tenant will-call location OR the vendor's own pickup
+    // address must resolve. A blank pickup location means "pick up from the
+    // vendor" — which only works if that vendor actually has an address on file.
+    // Catch it here with friendly copy instead of letting the create fail.
+    if (form.delivery_method === 'pickup' && !form.pickup_location_id && !vendorPickupBranch) {
+      throw AppError.badRequest(
+        `${selectedVendor?.name || 'This vendor'} has no pickup address on file. Add one to the vendor, or choose one of your locations for on-site will-call.`
+      );
+    }
 
     const validLines = lines.filter((line) =>
       line.qty_ordered > 0 &&
@@ -786,6 +796,68 @@ export default function CreatePurchaseOrderPage() {
   );
   // A previously saved draft is only reusable if the order is unchanged since.
   const reusableDraft = draftPo && draftPo.sig === orderSignature ? draftPo : null;
+
+  // ── Live inline vendor-email preview ───────────────────────────────────────
+  // Built client-side from the CURRENT form (no draft-save needed) using the
+  // exact same buildPurchaseOrderEmail the send path renders, so this can't drift
+  // from what the vendor actually gets. Updates as vendor / lines / fulfillment
+  // change. Only meaningful for email (non-punchout) vendors.
+  const inlineEmail = useMemo(() => {
+    if (!selectedVendor || isPunchoutVendor) return null;
+    // Resolve each line to a human description + unit (mirrors the server's PDF
+    // line shape). Skip blank/incomplete lines so the preview shows real content.
+    const emailLines = lines
+      .map((l) => {
+        if (l.qty_ordered <= 0) return null;
+        if (l.free_text) {
+          if (!l.item_description?.trim()) return null;
+          return {
+            description: l.item_description.trim(),
+            quantity: l.qty_ordered,
+            uom: (l.uom_term_id && uomLabels[l.uom_term_id]) || null,
+            unitPrice: !requestQuote && l.unit_cost > 0 ? l.unit_cost : null,
+          };
+        }
+        if (!l.catalog_item_id) return null;
+        const item =
+          items.find((i) => i.id === l.catalog_item_id) ||
+          Object.values(variantsByParent).flat().find((v) => v.id === l.catalog_item_id);
+        if (!item) return null;
+        return {
+          description: item.name,
+          quantity: l.qty_ordered,
+          uom: (item.uom_term_id && uomLabels[item.uom_term_id]) || null,
+          unitPrice: !requestQuote && l.unit_cost > 0 ? l.unit_cost : null,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    return buildPurchaseOrderEmail({
+      poNumber: reusableDraft?.number || 'Draft (unsaved)',
+      vendorName: selectedVendor.name,
+      shipTo: addressPreview?.name ?? null,
+      shipToAddress: addressPreview?.address ?? null,
+      deliveryLabel: form.delivery_method === 'pickup' ? 'PICKUP AT' : 'SHIP TO',
+      lines: emailLines,
+      neededBy: null,
+      notes: form.notes || null,
+      message: null,
+      requesterEmail: sessionEmail || 'you@example.com',
+    });
+  }, [
+    selectedVendor, isPunchoutVendor, lines, items, variantsByParent, uomLabels,
+    requestQuote, addressPreview, form.delivery_method, form.notes, sessionEmail,
+    reusableDraft?.number,
+  ]);
+
+  // Wrap the rendered email HTML in a minimal document for the sandboxed iframe.
+  const inlineEmailDoc = useMemo(
+    () =>
+      inlineEmail
+        ? `<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body style="margin:0;padding:16px;background:#fff;">${inlineEmail.html}</body></html>`
+        : '',
+    [inlineEmail],
+  );
 
   // "Preview email": save the order as a draft (or reuse the matching one) and
   // open the read-only vendor-email preview. Never sends. Not offered for
@@ -1010,7 +1082,7 @@ export default function CreatePurchaseOrderPage() {
                 {form.vendor_id && vendorBranches.length > 0 && (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-1 mt-2">
-                      Vendor Branch / Plant
+                      Vendor Branch / Plant <span className="font-normal text-gray-400">— sets pricing</span>
                     </label>
                     <select
                       value={form.vendor_address_id}
@@ -1025,7 +1097,9 @@ export default function CreatePurchaseOrderPage() {
                       ))}
                     </select>
                     <p className="mt-1 text-xs text-gray-500">
-                      Line prices prefill from this branch when it has its own pricing; otherwise the company default applies.
+                      Which of {selectedVendor?.name || 'the vendor'}&apos;s branches you&apos;re buying from — line prices prefill
+                      from it when it has its own pricing, otherwise the company default applies. This does <strong>not</strong> set
+                      where you pick up; that&apos;s the Pickup Location on the right.
                     </p>
                   </>
                 )}
@@ -1104,7 +1178,7 @@ export default function CreatePurchaseOrderPage() {
                 ) : (
                   <>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Pickup Location
+                      Pickup Location <span className="font-normal text-gray-400">— where you&apos;ll collect it</span>
                     </label>
                     <select
                       value={form.pickup_location_id}
@@ -1113,10 +1187,10 @@ export default function CreatePurchaseOrderPage() {
                     >
                       <option value="">
                         {vendorPickupBranch
-                          ? `Pick up from ${selectedVendor?.name || 'the vendor'}`
+                          ? `At ${selectedVendor?.name || 'the vendor'}'s counter / plant`
                           : selectedVendor
-                            ? `${selectedVendor.name} (no address on file)`
-                            : 'Pick up from the vendor'}
+                            ? `${selectedVendor.name}'s counter (no address on file yet)`
+                            : "At the vendor's counter / plant"}
                       </option>
                       {locations.map((loc) => (
                         <option key={loc.id} value={loc.id}>
@@ -1125,8 +1199,17 @@ export default function CreatePurchaseOrderPage() {
                       ))}
                     </select>
                     <p className="mt-1 text-xs text-gray-500">
-                      Leave on the vendor to pick up at their counter/plant, or choose one of your locations for on-site will-call.
+                      Leave on <strong>{selectedVendor?.name || 'the vendor'}&apos;s counter</strong> to collect it straight
+                      from them, or pick one of <strong>your own locations</strong> for on-site will-call. Not the same as the
+                      Vendor Branch on the left, which only sets pricing.
                     </p>
+                    {form.delivery_method === 'pickup' && !form.pickup_location_id && selectedVendor && !vendorPickupBranch && (
+                      <p className="mt-1 flex items-start gap-1 text-xs text-amber-700">
+                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                        {selectedVendor.name} has no pickup address on file. Add one to the vendor, or choose one of your
+                        locations above for will-call.
+                      </p>
+                    )}
                   </>
                 )}
 
@@ -1576,23 +1659,61 @@ export default function CreatePurchaseOrderPage() {
             </div>
           )}
 
-          {/* Preview the vendor email before creating — email vendors only.
-              Punchout vendors order through Amazon, so there's no vendor email
-              to preview; the note above explains the Amazon handoff. */}
-          {!isPunchoutVendor && (
-            <div>
-              <button
-                type="button"
-                onClick={handlePreview}
-                disabled={previewSaving || submitting}
-                className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {previewSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                {previewSaving ? 'Saving draft…' : 'Preview vendor email'}
-              </button>
-              <p className="mt-1 text-xs text-gray-500">
-                See exactly what the vendor will receive (email + PDF). Saves this order as a draft — nothing is sent.
-              </p>
+          {/* Live inline vendor-email preview — email vendors only. Always
+              visible and updates as vendor / lines / fulfillment change, built
+              client-side from the current form (no draft-save needed) with the
+              same builder the send path uses. The modal (below) adds the PDF
+              attachment view and needs a saved draft. Punchout vendors order
+              through Amazon, so there's no vendor email — the note above explains
+              the Amazon handoff. */}
+          {!isPunchoutVendor && selectedVendor && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Mail className="h-5 w-5 text-blue-600" /> Vendor email preview
+                  </h2>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    Exactly what <span className="font-medium">{selectedVendor.name}</span> will receive — updates live as you
+                    edit. Nothing is sent until you send it from the Purchasing page.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handlePreview}
+                  disabled={previewSaving || submitting}
+                  className="inline-flex items-center gap-2 text-sm font-medium text-blue-700 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {previewSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  {previewSaving ? 'Saving draft…' : 'Open with PDF attachment'}
+                </button>
+              </div>
+              <div className="px-6 py-4">
+                {inlineEmail && inlineEmail.subject ? (
+                  <>
+                    <div className="text-xs text-gray-500 space-y-0.5 mb-2">
+                      <div>
+                        <span className="text-gray-400">Subject:</span>{' '}
+                        <span className="font-medium text-gray-800">{inlineEmail.subject}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">To:</span>{' '}
+                        <span className="italic">the vendor&apos;s email (confirmed when you send)</span>
+                      </div>
+                    </div>
+                    <iframe
+                      title="Live vendor email preview"
+                      srcDoc={inlineEmailDoc}
+                      sandbox=""
+                      className="w-full h-[320px] border rounded-md bg-white"
+                    />
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500 py-6 text-center">
+                    Add at least one line item with a quantity to see the vendor email preview.
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
