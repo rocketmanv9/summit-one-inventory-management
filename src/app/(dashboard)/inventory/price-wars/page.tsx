@@ -17,7 +17,7 @@
  * fallback for vendors with no email, and the AI still never invents a price.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Swords,
   Crown,
@@ -181,6 +181,29 @@ function PriceWarsContent() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-link into a specific round's arena via ?round=<roundId> — the PO-create
+  // "make vendors compete" handoff lands here. Applied once, and only after we
+  // know the round exists (the arena needs the rounds list for sibling nav).
+  const roundLinkApplied = useRef(false);
+  useEffect(() => {
+    if (roundLinkApplied.current) return;
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const wantedRound = sp.get('round');
+    const wantedRequest = sp.get('request');
+    if (!wantedRound && !wantedRequest) { roundLinkApplied.current = true; return; }
+    // Prefer an explicit round id; else open the first round of a request id.
+    const target = wantedRound && rounds.some((r) => r.id === wantedRound)
+      ? wantedRound
+      : wantedRequest
+        ? (rounds.find((r) => r.request_id === wantedRequest)?.id ?? null)
+        : null;
+    if (target) {
+      roundLinkApplied.current = true;
+      setOpenRoundId(target);
+    }
+  }, [rounds]);
 
   const startWar = async (c: Candidate) => {
     if (c.open_round_id) { setOpenRoundId(c.open_round_id); return; }

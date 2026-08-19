@@ -14,7 +14,7 @@
  * checked. It never sends anything — drafting only.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Swords,
   Loader2,
@@ -73,12 +73,32 @@ export function StartWarModal({
   candidates,
   onClose,
   onStarted,
+  initialPicks,
+  initialVendorIds,
+  title,
+  description,
 }: {
   open: boolean;
   candidates: Candidate[];
   onClose: () => void;
   /** Called with the anchor round id once a war is open, to jump into the arena. */
   onStarted: (anchorRoundId: string | null, requestId: string) => void;
+  /**
+   * Seed the product picks when the modal opens — product id → target qty
+   * (0/absent = auto). Only ids that are actually startable candidates take.
+   * Used by the PO-create "make vendors compete" handoff so the war opens with
+   * the PO's lines already staged. Applied once per open.
+   */
+  initialPicks?: Record<string, number>;
+  /**
+   * Vendors to force-select on open (e.g. the PO's chosen vendor), on top of the
+   * default "vendors that price everything" selection. Only vendors eligible for
+   * the seeded picks take effect. Applied once per open.
+   */
+  initialVendorIds?: string[];
+  /** Override the modal heading/subtext for the handoff context. */
+  title?: string;
+  description?: string;
 }) {
   const [query, setQuery] = useState('');
   // product id → target qty (string so the input is controllable / clearable).
@@ -88,12 +108,47 @@ export function StartWarModal({
   const [draftInvites, setDraftInvites] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Apply the caller's seeds once each time the modal opens (not on every
+  // candidate refresh), so the user's edits inside the modal aren't clobbered.
+  const seededForOpen = useRef(false);
 
   // Only items with 2+ prices and no live war are startable here.
   const startable = useMemo(
     () => candidates.filter((c) => !c.open_round_id && c.vendors.length >= 2),
     [candidates],
   );
+
+  // Reset the "seeded this open" latch whenever the modal closes so the next
+  // open re-applies the caller's seeds.
+  useEffect(() => {
+    if (!open) seededForOpen.current = false;
+  }, [open]);
+
+  // Seed the picks (and vendor selection) once per open from the caller. Only
+  // ids that are genuinely startable candidates take — anything the PO carried
+  // that has fewer than two vendor prices simply isn't offered here.
+  useEffect(() => {
+    if (!open || seededForOpen.current) return;
+    // Wait for candidates to have loaded before seeding, so the ids can match.
+    if (startable.length === 0 && (initialPicks && Object.keys(initialPicks).length > 0)) return;
+    seededForOpen.current = true;
+
+    if (initialPicks && Object.keys(initialPicks).length > 0) {
+      const startableIds = new Set(startable.map((c) => c.catalog_item_id));
+      const seededPicks: Record<string, string> = {};
+      for (const [id, qty] of Object.entries(initialPicks)) {
+        if (!startableIds.has(id)) continue;
+        seededPicks[id] = qty > 0 ? String(Math.round(qty)) : '';
+      }
+      if (Object.keys(seededPicks).length > 0) setPicked(seededPicks);
+    }
+
+    if (initialVendorIds && initialVendorIds.length > 0) {
+      const sel: Record<string, boolean> = {};
+      for (const id of initialVendorIds) sel[id] = true;
+      setVendorSel(sel);
+    }
+  }, [open, startable, initialPicks, initialVendorIds]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -187,11 +242,11 @@ export function StartWarModal({
         <div className="border-b bg-background px-6 pb-4 pt-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Swords className="h-5 w-5 text-primary" /> Start a price war
+              <Swords className="h-5 w-5 text-primary" /> {title ?? 'Start a price war'}
             </DialogTitle>
             <DialogDescription>
-              Pick a couple of vendors, add the products you want them to bid on, and we&apos;ll draft one invitation
-              per vendor. Nothing is sent — you copy the drafts and send them yourself.
+              {description ??
+                'Pick a couple of vendors, add the products you want them to bid on, and we’ll draft one invitation per vendor. Nothing is sent — you copy the drafts and send them yourself.'}
             </DialogDescription>
           </DialogHeader>
         </div>

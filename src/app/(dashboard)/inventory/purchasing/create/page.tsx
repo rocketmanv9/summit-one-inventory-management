@@ -14,7 +14,8 @@ import { POEmailPreviewModal } from '@/components/modals/POEmailPreviewModal';
 import { buildPurchaseOrderEmail } from '@/lib/email/order-email';
 import { useOrderContext, formatHint, computeFlags } from '@/components/purchasing/useOrderContext';
 import { AmazonLinkPaste, type AmazonApplyPayload } from '@/components/purchasing/AmazonLinkPaste';
-import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2, Link2, FileText } from 'lucide-react';
+import { Plus, AlertCircle, Check, Package, MapPin, Tag, PackageCheck, ArrowLeftRight, ClipboardList, X, Mail, Loader2, Link2, FileText, Swords } from 'lucide-react';
+import { StartWarModal } from '@/components/purchasing/StartWarModal';
 import { useRouter } from 'next/navigation';
 import { useActiveLocation } from '@/lib/active-location';
 
@@ -187,6 +188,83 @@ export default function CreatePurchaseOrderPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewSaving, setPreviewSaving] = useState(false);
   const [draftPo, setDraftPo] = useState<{ id: string; number: string | null; sig: string } | null>(null);
+
+  // ── "Make vendors compete" → price war (item 04) ───────────────────────────
+  // A branch off the create flow: instead of buying from the one chosen vendor,
+  // hand the current line item(s) + quantities to the price-wars start flow and
+  // let a couple of vendors bid it down. Reuses StartWarModal (item 02) and the
+  // /candidates + /requests routes wholesale — this page only stages the inputs.
+  const [warOpen, setWarOpen] = useState(false);
+  const [warLoading, setWarLoading] = useState(false);
+  const [warCandidates, setWarCandidates] = useState<any[]>([]);
+  const [warError, setWarError] = useState('');
+  // Catalog line ids on the current PO that resolve to a war candidate (2+ vendor
+  // prices) — the products we can actually start a war over. Seeds the modal, and
+  // gates the button so it only shows when a war is possible.
+  const warReadyIds = useMemo(() => {
+    if (warCandidates.length === 0) return new Set<string>();
+    const startable = new Set(
+      warCandidates.filter((c) => !c.open_round_id && (c.vendors?.length ?? 0) >= 2).map((c) => c.catalog_item_id),
+    );
+    return new Set(
+      lines.filter((l) => !l.free_text && l.catalog_item_id && startable.has(l.catalog_item_id)).map((l) => l.catalog_item_id),
+    );
+  }, [warCandidates, lines]);
+
+  // Product id → target qty from the current PO lines, for seeding the war modal.
+  const warInitialPicks = useMemo(() => {
+    const picks: Record<string, number> = {};
+    for (const l of lines) {
+      if (l.free_text || !l.catalog_item_id) continue;
+      picks[l.catalog_item_id] = l.qty_ordered > 0 ? l.qty_ordered : 0;
+    }
+    return picks;
+  }, [lines]);
+
+  // Prefetch the price-war candidate list in the background whenever this PO has
+  // any catalog line item — so the "make them compete" button knows whether a war
+  // is even possible (and how many lines are ready) before it's clicked. Cheap,
+  // cached by the browser, non-fatal on failure. Punchout vendors never compete
+  // (Amazon supplies the price), so we skip the fetch for them.
+  const hasCatalogLine = useMemo(
+    () => lines.some((l) => !l.free_text && !!l.catalog_item_id),
+    [lines],
+  );
+  useEffect(() => {
+    if (isPunchoutVendor || !hasCatalogLine) { setWarCandidates([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory/price-wars/candidates?limit=100', { credentials: 'include' });
+        if (!res.ok) { if (!cancelled) setWarCandidates([]); return; }
+        const json = await res.json();
+        if (!cancelled) setWarCandidates(json?.data?.candidates ?? []);
+      } catch {
+        if (!cancelled) setWarCandidates([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isPunchoutVendor, hasCatalogLine]);
+
+  // Open the war modal. If candidates aren't in yet (e.g. the prefetch is still
+  // in flight), pull them now so the modal never opens empty.
+  const openPriceWar = async () => {
+    setWarError('');
+    if (warCandidates.length === 0) {
+      setWarLoading(true);
+      try {
+        const res = await fetch('/api/inventory/price-wars/candidates?limit=100', { credentials: 'include' });
+        const json = await res.json().catch(() => null);
+        if (res.ok) setWarCandidates(json?.data?.candidates ?? []);
+        else setWarError(json?.error?.message || json?.error || 'Could not load competing vendors.');
+      } catch (e: any) {
+        setWarError(e?.message || 'Could not load competing vendors.');
+      } finally {
+        setWarLoading(false);
+      }
+    }
+    setWarOpen(true);
+  };
 
   // Price hints (last paid / catalog list) + the best-vendor suggestion for the
   // prefill. Qty-first entry keeps unit cost tucked away, so each line tracks
@@ -1263,6 +1341,22 @@ export default function CreatePurchaseOrderPage() {
                     Request pricing from vendor
                   </label>
                 )}
+                {/* Make them compete: hand these lines to a price war instead of
+                    buying from the one vendor. Shown only when at least one line
+                    item actually has 2+ vendor prices to fight over. */}
+                {!isPunchoutVendor && warReadyIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={openPriceWar}
+                    disabled={warLoading}
+                    title="Instead of buying from one vendor, let a couple of vendors bid this down"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {warLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Swords className="h-4 w-4" />}
+                    Make vendors compete
+                    <span className="rounded-full bg-amber-200/70 px-1.5 text-xs font-semibold">{warReadyIds.size}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={addLine}
@@ -1278,6 +1372,12 @@ export default function CreatePurchaseOrderPage() {
               <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
                 Quantities only — no prices. The PO is created as a draft asking the vendor to
                 quote each line; enter their prices on the PO once they respond.
+              </div>
+            )}
+
+            {warError && (
+              <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {warError}
               </div>
             )}
 
@@ -1744,6 +1844,29 @@ export default function CreatePurchaseOrderPage() {
         open={previewOpen}
         poId={reusableDraft?.id ?? draftPo?.id ?? null}
         onClose={() => setPreviewOpen(false)}
+      />
+
+      {/* Price war handoff (item 04): the current PO's lines + vendor, staged so
+          a couple of vendors can bid it down. Launching creates the war (item 02
+          flow) and drops the user into the arena. */}
+      <StartWarModal
+        open={warOpen}
+        candidates={warCandidates}
+        initialPicks={warInitialPicks}
+        initialVendorIds={form.vendor_id ? [form.vendor_id] : undefined}
+        title="Make vendors compete"
+        description="You were about to buy these from one vendor — instead, let a couple of vendors bid on them. Add the competitors, and we’ll draft one invitation per vendor. Nothing is sent until you send it."
+        onClose={() => setWarOpen(false)}
+        onStarted={(anchor, requestId) => {
+          setWarOpen(false);
+          // Into the arena for this war. The price-wars page opens the round from
+          // ?round=; falling back to the request or the list if no anchor came back.
+          router.push(
+            anchor
+              ? `/inventory/price-wars?round=${anchor}`
+              : `/inventory/price-wars${requestId ? `?request=${requestId}` : ''}`,
+          );
+        }}
       />
 
       <ItemPickerModal
