@@ -714,10 +714,13 @@ export async function provisionHire(
         // Badge it — rpc_create_purchase_order defaults origin='user'.
         await sc.from('purchase_orders').update({ origin: 'onboarding' }).eq('id', poId).eq('tenant_id', tenantId);
 
-        // auto_submit: route into the approval inbox through item 02's
-        // resolver, exactly like the nightly reorder generator does. Approval
-        // is still a human step and nothing is sent to a vendor here.
-        if (kit.order_mode === 'auto_submit' && poResult?.status === 'draft') {
+        // Always route the shortfall PO into the approval inbox through item
+        // 02's resolver, so a new hire's needs surface for a decision in ONE
+        // place instead of sitting as an invisible draft. (Grant, 2026-08-20:
+        // "if we don't have it, it offers to create a PO that shows up in the
+        // inbox.") order_mode only tweaks the wording; approval is still a human
+        // step and nothing is sent to a vendor here.
+        if (poResult?.status === 'draft') {
           const { data: approver } = await sc.rpc('resolve_po_approver', {
             p_tenant_id: tenantId,
             p_buyer_user_id: buyerUserId,
@@ -727,12 +730,14 @@ export async function provisionHire(
             .from('purchase_orders')
             .update({
               status: 'awaiting_approval',
-              approval_reason: `New hire kit (${kit.name}) — auto-submitted for approval`,
+              approval_reason:
+                `New hire kit (${kit.name}) for ${base.person_name ?? 'an incoming employee'}` +
+                (realVendorId ? '' : ' — no vendor on file, assign one before approving'),
               approver_user_id: approver ?? null,
             })
             .eq('id', poId)
             .eq('tenant_id', tenantId);
-          if (subErr) log?.warn('kit_provision.auto_submit_failed', { po_id: poId, error: subErr.message });
+          if (subErr) log?.warn('kit_provision.submit_failed', { po_id: poId, error: subErr.message });
         }
       }
     }
