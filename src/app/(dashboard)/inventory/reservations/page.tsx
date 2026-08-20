@@ -107,6 +107,16 @@ export default function ReservationsPage() {
     return match?.display_name || titleCase(typeKey);
   };
 
+  // The Operations equipment-hold mirror leaves a 'released' tombstone every
+  // time a job is re-dispatched, so the raw list is mostly dead rows. Default
+  // the table to live holds (active + fulfilled); the Status filter still
+  // reaches released/cancelled/expired on demand. Summary cards above keep
+  // counting the full fetched set, so they stay accurate.
+  const HIDDEN_BY_DEFAULT = new Set(['released', 'cancelled', 'expired']);
+  const visibleReservations = filters.status
+    ? reservations
+    : reservations.filter((r) => !HIDDEN_BY_DEFAULT.has(r.status ?? ''));
+
   const getSerializedAssetStatus = (reservation: Reservation) =>
     reservation.reservation_type === 'serialized' ? reservation.assets?.status ?? null : null;
 
@@ -291,12 +301,16 @@ export default function ReservationsPage() {
         // writes {job_id, job_name, source}) — show the human name, never
         // "[object Object]".
         const ref = row.job_ref;
-        const jobText =
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const rawName =
           typeof ref === 'string'
             ? ref
             : ref
               ? String(ref.job_name || ref.job_id || ref.name || ref.ref || '')
               : '';
+        // A mirrored hold whose name never arrived falls back to the job_id
+        // UUID — show a compact "Ops job #abcd1234" instead of a wall of hex.
+        const jobText = UUID_RE.test(rawName) ? `Ops job #${rawName.slice(0, 8)}` : rawName;
         const source = ref && typeof ref === 'object' && ref.source ? String(ref.source) : null;
         return (
           <div>
@@ -564,8 +578,15 @@ export default function ReservationsPage() {
           onClear={() => setFilters({})}
         />
 
+        {!filters.status && visibleReservations.length < reservations.length && (
+          <p className="text-xs text-muted-foreground -mb-2">
+            Showing {visibleReservations.length} live hold{visibleReservations.length === 1 ? '' : 's'}.{' '}
+            {reservations.length - visibleReservations.length} released/closed hidden — use the Status filter to view them.
+          </p>
+        )}
+
         <DataTable
-          data={reservations}
+          data={visibleReservations}
           columns={columns}
           loading={loading}
           emptyMessage="No reservations found"
