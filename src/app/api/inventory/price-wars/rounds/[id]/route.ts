@@ -67,9 +67,12 @@ async function loadRound(supabase: any, tenantId: string, id: string) {
     for (const v of vendors ?? []) vendorMap.set(v.id, v);
   }
 
-  const { data: item } = await supabase
-    .schema('inventory').from('catalog_items').select('id, name, sku, description')
-    .eq('id', round.catalog_item_id).maybeSingle();
+  // Ad-hoc rounds carry no catalog item — their name lives in round.item_label.
+  const { data: item } = round.catalog_item_id
+    ? await supabase
+        .schema('inventory').from('catalog_items').select('id, name, sku, description')
+        .eq('id', round.catalog_item_id).maybeSingle()
+    : { data: null };
 
   const enriched = (bids ?? []).map((b: any) => {
     const v = vendorMap.get(b.vendor_id);
@@ -102,8 +105,11 @@ export const GET = createSessionReadRoute(async ({ req, session }) => {
   const low = currentLow(bids);
 
   // Live market context, so the arena can show a vendor who was never invited
-  // still sitting cheaper than everyone in the ring.
-  const [candidate] = await findWarCandidates(supabase, tenantId, { catalogItemId: round.catalog_item_id, limit: 1 });
+  // still sitting cheaper than everyone in the ring. Only meaningful for a real
+  // catalog item — an ad-hoc line has no market history to pull.
+  const [candidate] = round.catalog_item_id
+    ? await findWarCandidates(supabase, tenantId, { catalogItemId: round.catalog_item_id, limit: 1 })
+    : [null];
 
   const targetQty = Number(round.target_qty) || 1;
   const baseline = round.baseline_unit_cost !== null ? Number(round.baseline_unit_cost) : null;
@@ -112,7 +118,7 @@ export const GET = createSessionReadRoute(async ({ req, session }) => {
     data: {
       round: {
         ...round,
-        item_name: item?.name ?? null,
+        item_name: item?.name ?? round.item_label ?? null,
         item_sku: item?.sku ?? null,
         awarded_vendor_name: round.awarded_vendor_id
           ? bids.find((b: any) => b.vendor_id === round.awarded_vendor_id)?.vendor_name ?? null

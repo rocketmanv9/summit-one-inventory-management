@@ -25,19 +25,24 @@ import { AppError } from '@rocketmanv9/chassis/errors';
 import { z } from 'zod';
 
 import { assertCapability } from '@/lib/access-server';
-import { findWarCandidates, rankBids } from '@/lib/price-wars';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
+// You decide the war: pick any two vendors, and any items — a catalog item OR an
+// ad-hoc free-text line for something not in the catalog yet. No requirement
+// that vendors already price the items; the whole point is to go find out.
 const CreateRequestSchema = z.object({
   /** Vendors to put in the ring for the whole request. Two minimum. */
   vendor_ids: z.array(z.string().uuid()).min(2).max(12),
-  /** The products, each with an optional target quantity. */
+  /** The lines to price. Each is a catalog item id OR an ad-hoc label. */
   lines: z
     .array(
       z.object({
-        catalog_item_id: z.string().uuid(),
+        catalog_item_id: z.string().uuid().optional(),
+        item_label: z.string().trim().min(1).max(200).optional(),
         target_qty: z.number().positive().max(1_000_000).optional(),
+      }).refine((l) => !!l.catalog_item_id || !!l.item_label, {
+        message: 'Each line needs a catalog item or an ad-hoc label.',
       }),
     )
     .min(1)
@@ -73,7 +78,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   if (requestIds.length > 0) {
     const { data: rounds } = await sc
       .from('quote_rounds')
-      .select('id, request_id, catalog_item_id, status, target_qty, baseline_unit_cost, awarded_unit_cost')
+      .select('id, request_id, catalog_item_id, item_label, status, target_qty, baseline_unit_cost, awarded_unit_cost')
       .in('request_id', requestIds)
       .limit(2000);
     for (const r of rounds ?? []) {
@@ -94,7 +99,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
   const data = (requests ?? []).map((r: any) => {
     const rounds = (roundsByRequest.get(r.id) ?? []).map((rd: any) => ({
       ...rd,
-      item_name: itemMap.get(rd.catalog_item_id)?.name ?? null,
+      item_name: itemMap.get(rd.catalog_item_id)?.name ?? rd.item_label ?? null,
       item_sku: itemMap.get(rd.catalog_item_id)?.sku ?? null,
     }));
     return {
@@ -113,42 +118,81 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
   const tenantId = ctx.tenantId!;
   const sc = (supabase as any).schema('supply_chain');
 
-  // De-dupe products — the same item twice would fight itself.
+  // De-dupe lines: a catalog item by id, an ad-hoc line by its label (folded to
+  // lowercase). The same thing twice would just fight itself.
   const seen = new Set<string>();
   const lines = body.lines.filter((l) => {
-    if (seen.has(l.catalog_item_id)) return false;
-    seen.add(l.catalog_item_id);
+    const key = l.catalog_item_id ? `c:${l.catalog_item_id}` : `a:${(l.item_label ?? '').toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 
-  // Re-derive real prices for every product up front so baselines are defensible
-  // and every selected vendor is proven to have a price on that item.
-  const candidateByItem = new Map<string, Awaited<ReturnType<typeof findWarCandidates>>[number]>();
-  for (const line of lines) {
-    const [candidate] = await findWarCandidates(supabase, tenantId, { catalogItemId: line.catalog_item_id, limit: 1 });
-    if (!candidate) {
-      throw AppError.badRequest(`"${line.catalog_item_id}" does not have prices from two or more vendors, so there is nothing to bid on.`);
-    }
-    const priceByVendor = new Map(candidate.vendors.map((v) => [v.vendor_id, v]));
-    const unknown = body.vendor_ids.filter((id) => !priceByVendor.has(id));
-    if (unknown.length > 0) {
-      throw AppError.badRequest(`One or more selected vendors has no recorded price for ${candidate.name}. Pick vendors that already price every product, or drop that product.`);
-    }
-    candidateByItem.set(line.catalog_item_id, candidate);
+  // ── Validate the vendors we're putting in the ring ──────────────────────────
+  // Any active vendor is fair game — no requirement that they already price the
+  // items. We just need them to exist so we can address the email.
+  const { data: vendorRows, error: vErr } = await sc
+    .from('vendors')
+    .select('id, name, contact_email, po_email, active')
+    .in('id', body.vendor_ids)
+    .eq('tenant_id', tenantId)
+    .limit(50);
+  if (vErr) { log.error('price_wars.vendor_lookup_failed', { error: vErr.message }); throw AppError.internal(vErr.message); }
+  const vendorMap = new Map<string, any>((vendorRows ?? []).map((v: any) => [v.id, v]));
+  const missingVendors = body.vendor_ids.filter((id) => !vendorMap.has(id));
+  if (missingVendors.length > 0) {
+    throw AppError.badRequest('One or more selected vendors could not be found for this tenant.');
+  }
+  if (vendorMap.size < 2) {
+    throw AppError.badRequest('Pick at least two vendors — one vendor is not a war.');
   }
 
-  // Guard against products already in a live war before we create the parent.
-  const { data: openRounds } = await sc
-    .from('quote_rounds')
-    .select('catalog_item_id')
-    .eq('tenant_id', tenantId)
-    .eq('status', 'open')
-    .in('catalog_item_id', lines.map((l) => l.catalog_item_id))
-    .limit(100);
-  if (openRounds && openRounds.length > 0) {
-    const busy = new Set(openRounds.map((r: any) => r.catalog_item_id));
-    const names = lines.filter((l) => busy.has(l.catalog_item_id)).map((l) => candidateByItem.get(l.catalog_item_id)?.name ?? 'an item');
-    throw AppError.conflict(`Already fighting over ${names.join(', ')} — close that war first or drop the product.`);
+  // ── Validate the catalog lines exist; ad-hoc lines carry their own label ─────
+  const catalogIds = lines.map((l) => l.catalog_item_id).filter(Boolean) as string[];
+  const itemMap = new Map<string, any>();
+  if (catalogIds.length > 0) {
+    const { data: items, error: iErr } = await (supabase as any)
+      .schema('inventory').from('catalog_items').select('id, name, sku').in('id', catalogIds).eq('tenant_id', tenantId).limit(50);
+    if (iErr) throw AppError.internal(iErr.message);
+    for (const i of items ?? []) itemMap.set(i.id, i);
+    const missingItems = catalogIds.filter((id) => !itemMap.has(id));
+    if (missingItems.length > 0) throw AppError.badRequest('One or more chosen catalog items could not be found.');
+  }
+
+  // ── Best-effort baselines: a standing vendor_items price per (item, vendor),
+  // used only to show "their price with us" — never to gate the pick. ──────────
+  const priceByItemVendor = new Map<string, number>();
+  if (catalogIds.length > 0) {
+    const { data: vi } = await sc
+      .from('vendor_items')
+      .select('catalog_item_id, vendor_id, unit_cost')
+      .in('catalog_item_id', catalogIds)
+      .in('vendor_id', body.vendor_ids)
+      .eq('tenant_id', tenantId)
+      .limit(2000);
+    for (const row of vi ?? []) {
+      const n = row.unit_cost === null ? null : Number(row.unit_cost);
+      if (n !== null && Number.isFinite(n)) priceByItemVendor.set(`${row.catalog_item_id}:${row.vendor_id}`, n);
+    }
+  }
+
+  const lineLabel = (l: (typeof lines)[number]) =>
+    l.catalog_item_id ? (itemMap.get(l.catalog_item_id)?.name ?? 'an item') : (l.item_label ?? 'an item');
+
+  // Guard: don't open a second live war over a catalog item already in one.
+  if (catalogIds.length > 0) {
+    const { data: openRounds } = await sc
+      .from('quote_rounds')
+      .select('catalog_item_id')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'open')
+      .in('catalog_item_id', catalogIds)
+      .limit(100);
+    if (openRounds && openRounds.length > 0) {
+      const busy = new Set(openRounds.map((r: any) => r.catalog_item_id));
+      const names = lines.filter((l) => l.catalog_item_id && busy.has(l.catalog_item_id)).map(lineLabel);
+      throw AppError.conflict(`Already fighting over ${names.join(', ')} — close that war first or drop the item.`);
+    }
   }
 
   // ── 1. Parent request ──────────────────────────────────────────────────────
@@ -166,22 +210,28 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .single();
   if (reqErr) { log.error('price_wars.request_create_failed', { error: reqErr.message }); throw AppError.internal(reqErr.message); }
 
-  // ── 2. One round per product, each with a bid per vendor ────────────────────
-  const createdRounds: Array<{ round_id: string; catalog_item_id: string; item_name: string }> = [];
+  // ── 2. One round per line, each with a bid per vendor ───────────────────────
+  const createdRounds: Array<{ round_id: string; catalog_item_id: string | null; item_name: string }> = [];
   try {
     for (const line of lines) {
-      const candidate = candidateByItem.get(line.catalog_item_id)!;
-      const priceByVendor = new Map(candidate.vendors.map((v) => [v.vendor_id, v]));
+      const label = lineLabel(line);
+      // Round baseline = the highest known vendor price on this item (what we'd
+      // otherwise pay), or null when nobody prices it yet.
+      const known = line.catalog_item_id
+        ? body.vendor_ids.map((vid) => priceByItemVendor.get(`${line.catalog_item_id}:${vid}`)).filter((n): n is number => n !== undefined)
+        : [];
+      const roundBaseline = known.length > 0 ? Math.max(...known) : null;
 
       const { data: round, error: rErr } = await sc
         .from('quote_rounds')
         .insert({
           tenant_id: tenantId,
           request_id: request.id,
-          catalog_item_id: line.catalog_item_id,
+          catalog_item_id: line.catalog_item_id ?? null,
+          item_label: line.catalog_item_id ? null : line.item_label,
           status: 'open',
-          target_qty: line.target_qty ?? (candidate.qty_last_12m > 0 ? candidate.qty_last_12m : 1),
-          baseline_unit_cost: candidate.avg_paid_unit_cost ?? candidate.high_unit_cost,
+          target_qty: line.target_qty ?? 1,
+          baseline_unit_cost: roundBaseline,
           notes: body.notes ?? null,
           created_by_user_id: ctx.userId,
           last_event_id: crypto.randomUUID(),
@@ -190,27 +240,28 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
         .single();
       if (rErr) {
         if ((rErr as any).code === '23505') {
-          throw AppError.conflict(`A price war is already running for ${candidate.name} — drop it from this request.`);
+          throw AppError.conflict(`A price war is already running for ${label} — drop it from this request.`);
         }
         throw AppError.internal(rErr.message);
       }
 
       const bidRows = body.vendor_ids.map((vendorId) => {
-        const v = priceByVendor.get(vendorId)!;
+        const vendor = vendorMap.get(vendorId);
+        const baseline = line.catalog_item_id ? priceByItemVendor.get(`${line.catalog_item_id}:${vendorId}`) ?? null : null;
         return {
           tenant_id: tenantId,
           round_id: round.id,
           vendor_id: vendorId,
           status: 'invited',
-          baseline_unit_cost: v.last_unit_cost,
-          contact_email: v.contact_email,
+          baseline_unit_cost: baseline,
+          contact_email: (vendor?.contact_email || vendor?.po_email || null),
           last_event_id: crypto.randomUUID(),
         };
       });
       const { error: bErr } = await sc.from('quote_round_bids').insert(bidRows);
       if (bErr) throw AppError.internal(bErr.message);
 
-      createdRounds.push({ round_id: round.id, catalog_item_id: line.catalog_item_id, item_name: candidate.name });
+      createdRounds.push({ round_id: round.id, catalog_item_id: line.catalog_item_id ?? null, item_name: label });
     }
   } catch (err) {
     // Best-effort rollback: cascade-delete the rounds/bids we made, then the

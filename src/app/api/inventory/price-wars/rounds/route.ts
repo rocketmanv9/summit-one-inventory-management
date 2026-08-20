@@ -74,7 +74,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     for (const v of vendors ?? []) vendorNames.set(v.id, v.name);
   }
 
-  const itemIds = Array.from(new Set((rounds ?? []).map((r: any) => r.catalog_item_id)));
+  const itemIds = Array.from(new Set((rounds ?? []).map((r: any) => r.catalog_item_id).filter(Boolean)));
   const itemMap = new Map<string, any>();
   if (itemIds.length > 0) {
     const { data: items } = await (supabase as any)
@@ -86,7 +86,7 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     const bids = (bidsByRound.get(r.id) ?? []).map((b: any) => ({ ...b, vendor_name: vendorNames.get(b.vendor_id) ?? 'Vendor' }));
     return {
       ...r,
-      item_name: itemMap.get(r.catalog_item_id)?.name ?? null,
+      item_name: itemMap.get(r.catalog_item_id)?.name ?? r.item_label ?? null,
       item_sku: itemMap.get(r.catalog_item_id)?.sku ?? null,
       awarded_vendor_name: r.awarded_vendor_id ? vendorNames.get(r.awarded_vendor_id) ?? null : null,
       bid_count: bids.length,

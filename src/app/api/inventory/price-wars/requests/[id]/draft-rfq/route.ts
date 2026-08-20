@@ -126,9 +126,10 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .from('quote_round_bids').select('*').in('round_id', roundIds).eq('tenant_id', tenantId).limit(1000);
   if (bErr) throw AppError.internal(bErr.message);
 
-  const itemIds = Array.from(new Set(rounds.map((r: any) => r.catalog_item_id)));
-  const { data: items } = await (supabase as any)
-    .schema('inventory').from('catalog_items').select('id, name, sku').in('id', itemIds).limit(200);
+  const itemIds = Array.from(new Set(rounds.map((r: any) => r.catalog_item_id).filter(Boolean)));
+  const { data: items } = itemIds.length > 0
+    ? await (supabase as any).schema('inventory').from('catalog_items').select('id, name, sku').in('id', itemIds).limit(200)
+    : { data: [] };
   const itemMap = new Map<string, any>((items ?? []).map((i: any) => [i.id, i]));
 
   const vendorIds: string[] = Array.isArray(request.vendor_ids) && request.vendor_ids.length > 0
@@ -160,7 +161,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
       const round = roundById.get(b.round_id);
       const item = round ? itemMap.get(round.catalog_item_id) : null;
       return {
-        itemName: item?.name ?? 'the item',
+        itemName: item?.name ?? round?.item_label ?? 'the item',
         sku: item?.sku ?? null,
         qty: Number(round?.target_qty) || 1,
         baseline: b.baseline_unit_cost !== null ? Number(b.baseline_unit_cost) : null,

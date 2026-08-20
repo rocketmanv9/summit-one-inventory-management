@@ -276,14 +276,12 @@ function PriceWarsContent() {
         title="Price wars"
         description="Items we buy from more than one vendor, at more than one price. Start a round, let them bid each other down, award the winner — the winning price becomes the price we buy at."
         actions={
-          candidates.length > 0 ? (
-            <button
-              onClick={() => setShowStart(true)}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
-            >
-              <Swords className="h-4 w-4" /> Start a price war
-            </button>
-          ) : null
+          <button
+            onClick={() => setShowStart(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
+          >
+            <Swords className="h-4 w-4" /> Start a price war
+          </button>
         }
       />
 
@@ -392,8 +390,8 @@ function PriceWarsContent() {
             </h2>
             {candidates.length === 0 ? (
               <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-                Nothing to fight over yet — every item we buy has a price from a single vendor, or the vendors already agree.
-                Add a second vendor price to an item (Vendor Items) and it will show up here.
+                No auto-detected candidates — but you don&apos;t need them. Hit <span className="font-semibold text-gray-700">Start a price war</span> to
+                pick any two vendors and any items (catalog or custom) and put them head-to-head.
               </div>
             ) : (
               <div className="space-y-3">
