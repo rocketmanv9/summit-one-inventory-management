@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Backpack, Loader2, Plus, Pencil, Power, Eye, X, Trash2, MapPin, Users } from 'lucide-react';
+import { Activity, AlertTriangle, Backpack, Loader2, Plus, Pencil, Power, Eye, X, Trash2, MapPin, Users } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { apiWrite } from '@/lib/api-client';
@@ -67,6 +67,21 @@ interface PlanLine {
 interface Preview {
   kit: { id: string; name: string; scope: string; order_mode: string } | null;
   plan: { lines: PlanLine[]; total_needed: number; total_reserve: number; total_shortfall: number } | null;
+  approval: {
+    buyer: { user_id: string; name: string | null } | null;
+    approver: { user_id: string; name: string | null } | null;
+  } | null;
+}
+
+interface Coverage {
+  totals: { positions_active: number; positions_with_kit: number; people_active: number; people_covered: number };
+  positions: Array<{ hr_position_id: string; title: string; people: number; has_kit: boolean }>;
+  ledger: {
+    total: number;
+    last_fired_at: string | null;
+    by_status: Array<{ status: string; count: number; last_at: string | null }>;
+  };
+  recent: Array<{ id: string; person_name: string | null; position_title: string | null; status: string; source: string | null; error: string | null; at: string | null }>;
 }
 
 type VendorOption = { vendor_id: string; vendor_name: string | null; unit_cost: number | null; is_preferred: boolean };
@@ -170,6 +185,8 @@ function PositionKitsContent() {
         </button>
       </div>
 
+      <CoveragePanel />
+
       {error && (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
@@ -223,7 +240,7 @@ function PositionKitsContent() {
                         {kit.description && <p className="mt-1 text-sm text-gray-400">{kit.description}</p>}
                       </div>
                       <div className="flex flex-shrink-0 items-center gap-1">
-                        <button onClick={() => setPreviewFor(kit)} title="Preview a hire" className="rounded p-2 text-gray-500 hover:bg-gray-100">
+                        <button onClick={() => setPreviewFor(kit)} title="Preview fulfillment" className="rounded p-2 text-gray-500 hover:bg-gray-100">
                           <Eye className="h-4 w-4" />
                         </button>
                         <button onClick={() => { setEditing(kit); setCreating(false); }} title="Edit" className="rounded p-2 text-gray-500 hover:bg-gray-100">
@@ -253,6 +270,169 @@ function PositionKitsContent() {
 
       {previewFor && (
         <HirePreview kit={previewFor} options={options} onClose={() => setPreviewFor(null)} />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Coverage panel — item 07 (2026-08-26): the engine's health can't hide.
+//
+// Three questions, answered with real ledger data: which positions are covered
+// (headcount-weighted), has the engine EVER fired, and what the provision
+// ledger looks like right now. "Never fired" renders loud on purpose — this
+// engine sat dormant for two weeks with nothing surfacing it.
+// ---------------------------------------------------------------------------
+
+const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
+  provisioned: { label: 'Provisioned', cls: 'bg-green-100 text-green-800' },
+  skipped_no_kit: { label: 'No kit configured', cls: 'bg-gray-100 text-gray-600' },
+  skipped_backfill: { label: 'Pre-dated the feature', cls: 'bg-gray-100 text-gray-500' },
+  planned: { label: 'Stuck mid-run', cls: 'bg-amber-100 text-amber-800' },
+  error: { label: 'Errors', cls: 'bg-red-100 text-red-700' },
+};
+
+function fmtWhen(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function CoveragePanel() {
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [err, setErr] = useState('');
+  const [showAllUncovered, setShowAllUncovered] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory/position-kits/coverage', { credentials: 'include' });
+        const result = await readJson(res);
+        if (!result.ok) { setErr(result.message); return; }
+        setCoverage(result.json.data as Coverage);
+      } catch (e: any) {
+        setErr(e?.message || 'Could not load kit coverage.');
+      }
+    })();
+  }, []);
+
+  if (err) {
+    return <div className="mb-6 max-w-5xl rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>;
+  }
+  if (!coverage) {
+    return (
+      <div className="mb-6 flex max-w-5xl items-center gap-2 rounded-lg border bg-white p-4 text-sm text-gray-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Checking kit coverage…
+      </div>
+    );
+  }
+
+  const { totals, ledger } = coverage;
+  const uncovered = coverage.positions.filter((p) => !p.has_kit && p.people > 0);
+  const shownUncovered = showAllUncovered ? uncovered : uncovered.slice(0, 6);
+  const neverFired = !ledger.last_fired_at;
+
+  return (
+    <div className="mb-6 max-w-5xl rounded-lg border bg-white p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Activity className="h-4 w-4 text-primary" />
+        <h3 className="text-sm font-semibold">Coverage &amp; engine health</h3>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {/* Positions covered */}
+        <div className="rounded-md border p-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Positions with a kit</p>
+          <p className="mt-1 text-2xl font-semibold">
+            {totals.positions_with_kit}
+            <span className="text-base font-normal text-gray-400"> / {totals.positions_active}</span>
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            {totals.people_covered} of {totals.people_active} active people are in a covered position
+          </p>
+        </div>
+
+        {/* Last fire */}
+        <div className={`rounded-md border p-3 ${neverFired ? 'border-amber-300 bg-amber-50' : ''}`}>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Engine last fired</p>
+          {neverFired ? (
+            <p className="mt-1 flex items-center gap-2 text-lg font-semibold text-amber-800">
+              <AlertTriangle className="h-5 w-5" /> Never fired
+            </p>
+          ) : (
+            <p className="mt-1 text-lg font-semibold text-green-700">{fmtWhen(ledger.last_fired_at)}</p>
+          )}
+          <p className="mt-1 text-xs text-gray-500">
+            {neverFired
+              ? 'No hire has ever been provisioned by the kit engine.'
+              : 'Most recent real provisioning (reservation and/or PO created).'}
+          </p>
+        </div>
+
+        {/* Ledger rollup */}
+        <div className="rounded-md border p-3">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Provision ledger ({ledger.total})</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {ledger.by_status.length === 0 && <span className="text-sm text-gray-400">Empty</span>}
+            {ledger.by_status.map((s) => {
+              const meta = STATUS_LABELS[s.status] ?? { label: s.status, cls: 'bg-gray-100 text-gray-600' };
+              return (
+                <span
+                  key={s.status}
+                  title={s.last_at ? `Last: ${fmtWhen(s.last_at)}` : undefined}
+                  className={`rounded-full px-2 py-0.5 text-xs ${meta.cls}`}
+                >
+                  {meta.label}: {s.count}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {uncovered.length > 0 && (
+        <div className="mt-3 rounded-md border border-dashed p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+            Biggest uncovered positions (people who&apos;d get nothing on day one)
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {shownUncovered.map((p) => (
+              <span key={p.hr_position_id} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                {p.title} · {p.people}
+              </span>
+            ))}
+            {uncovered.length > 6 && (
+              <button
+                onClick={() => setShowAllUncovered((v) => !v)}
+                className="rounded-full border px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-50"
+              >
+                {showAllUncovered ? 'Show fewer' : `+${uncovered.length - 6} more`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {coverage.recent.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-gray-500">
+            Recent engine activity
+          </summary>
+          <div className="mt-2 space-y-1">
+            {coverage.recent.map((r) => {
+              const meta = STATUS_LABELS[r.status] ?? { label: r.status, cls: 'bg-gray-100 text-gray-600' };
+              return (
+                <div key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${meta.cls}`}>{meta.label}</span>
+                  <span className="font-medium">{r.person_name ?? 'Unknown person'}</span>
+                  {r.position_title && <span className="text-gray-500">{r.position_title}</span>}
+                  <span className="text-xs text-gray-400">{fmtWhen(r.at)}{r.source ? ` · ${r.source}` : ''}</span>
+                  {r.error && <span className="text-xs text-red-600">{r.error}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -615,6 +795,19 @@ function HirePreview({ kit, options, onClose }: { kit: Kit; options: Options; on
                   </tfoot>
                 </table>
               </div>
+              {preview.plan.total_shortfall > 0 ? (
+                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                  The {preview.plan.total_shortfall}-unit shortfall becomes a PO
+                  {preview.approval?.buyer ? <> authored by <span className="font-medium">{preview.approval.buyer.name ?? 'the fallback buyer'}</span></> : null}
+                  {' '}and lands in the approvals inbox
+                  {preview.approval?.approver
+                    ? <> routed to <span className="font-medium">{preview.approval.approver.name ?? 'its approver'}</span></>
+                    : <> for any purchasing admin</>}
+                  .
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500">Everything is on the shelf — a hire here creates reservations only, no PO.</p>
+              )}
               <p className="text-xs text-gray-400">
                 Dry run only — nothing is reserved or ordered from this screen.
               </p>

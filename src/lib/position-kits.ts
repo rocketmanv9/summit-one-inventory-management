@@ -313,8 +313,11 @@ export async function resolveHireLocationId(
  * Machine-created POs still need an author (spend limits, budgets and approval
  * routing all key on the buyer). Same fallback the nightly reorder generator
  * uses: the most recent human PO creator in this tenant.
+ *
+ * Exported so the settings preview (item 07, 2026-08-26) can answer "who would
+ * this PO route to?" with the SAME buyer the automation would use.
  */
-async function resolveFallbackBuyer(supabase: AnyClient, tenantId: string): Promise<string | null> {
+export async function resolveFallbackBuyer(supabase: AnyClient, tenantId: string): Promise<string | null> {
   const { data } = await supabase
     .schema('supply_chain')
     .from('purchase_orders')
