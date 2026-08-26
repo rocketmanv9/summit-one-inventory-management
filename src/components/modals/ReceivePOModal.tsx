@@ -70,6 +70,8 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   const [poReceipts, setPoReceipts] = useState<ReceiptRef[]>([]);
   // Which shipment this receipt is attributed to ('' = no specific shipment).
   const [attributedRef, setAttributedRef] = useState<string>('');
+  // Vendor packing-slip number off the paperwork in the box (optional).
+  const [packingSlipNo, setPackingSlipNo] = useState('');
 
   // Outstanding quantity per line (numeric strings from PostgREST → coerce).
   const lines = useMemo(() => (po?.purchase_order_lines || []).map((l) => {
@@ -117,6 +119,7 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     setShipments([]);
     setPoReceipts([]);
     setAttributedRef('');
+    setPackingSlipNo('');
     // Default every receivable line to its full outstanding quantity.
     const init: Record<string, string> = {};
     for (const l of receivable) init[l.id] = String(l.outstanding);
@@ -198,6 +201,10 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
           // Attribute the receipt to the shipment the receiver picked (ASN
           // shipmentID / tracking number) so tracking links to receiving.
           shipment_ref: attributedRef || null,
+          // Vendor packing-slip number as typed by the receiver (empty → null).
+          // Kept separate from shipment_ref — a user-entered slip number is
+          // never overwritten by carrier-tracking fallbacks.
+          packing_slip_no: packingSlipNo.trim() || null,
           lines: catalogToReceive,
         });
       }
@@ -424,6 +431,23 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Vendor packing-slip number off the paperwork in the box —
+                  optional, lands on the receipt row for matching/auditing. */}
+              <div className="flex items-center gap-3">
+                <label htmlFor="receive-packing-slip" className="text-sm text-muted-foreground shrink-0">
+                  Packing slip #
+                </label>
+                <input
+                  id="receive-packing-slip"
+                  type="text"
+                  value={packingSlipNo}
+                  maxLength={120}
+                  placeholder="Optional — from the vendor's slip"
+                  onChange={(e) => setPackingSlipNo(e.target.value)}
+                  className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+                />
               </div>
             </>
           )}

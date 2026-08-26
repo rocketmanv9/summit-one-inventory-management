@@ -828,6 +828,7 @@ function PODetailPanel({
     id: string;
     receipt_number: string;
     received_at: string;
+    packing_slip_no?: string | null;
     location_id?: string;
     locations?: { name: string };
     users?: { email: string };
@@ -1170,6 +1171,7 @@ function PODetailPanel({
                     </div>
                     <div className="text-xs text-muted-foreground mb-2">
                       Location: {locationLabel}
+                      {receipt.packing_slip_no && <> · Packing slip {receipt.packing_slip_no}</>}
                     </div>
                   </div>
                 );

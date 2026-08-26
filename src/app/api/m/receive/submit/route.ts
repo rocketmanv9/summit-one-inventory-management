@@ -28,6 +28,8 @@ const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
 const SubmitSchema = z.object({
   po_id: z.string().uuid(),
+  // Vendor packing-slip number the receiver typed in (optional; empty → null).
+  packing_slip_no: z.string().max(120).optional().nullable(),
   lines: z
     .array(
       z.object({
@@ -44,6 +46,9 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
   const body = SubmitSchema.parse(await req.json());
 
   const sc = (supabase as any).schema('supply_chain');
+
+  // Normalize the user-entered packing-slip number: trimmed, empty → null.
+  const packingSlipNo = body.packing_slip_no?.trim() || null;
 
   // 1. Load + verify the PO (tenant-scoped, receivable status).
   const { data: po, error: poError } = await sc
@@ -160,7 +165,7 @@ export const POST = createWriteRoute(async ({ req, log, supabase, idempotencyKey
       p_po_id: po.id,
       p_vendor_id: null,
       p_notes: 'Received via mobile receiving',
-      p_packing_slip_no: null,
+      p_packing_slip_no: packingSlipNo,
       p_vendor_invoice_no: null,
       p_source_type: 'delivery',
       p_status: 'confirmed',
