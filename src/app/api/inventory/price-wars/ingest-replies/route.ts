@@ -38,7 +38,7 @@ import {
   type GoogleConnectionRow,
 } from '@/lib/integrations/google-connections';
 import { listGmailMessages, getGmailMessage, parseEmailAddress } from '@/lib/integrations/gmail';
-import { extractQuoteFromText } from '@/lib/price-wars-extract';
+import { extractQuoteFromText, extractQuoteLinesFromText } from '@/lib/price-wars-extract';
 
 const SERVICE_NAME = process.env.INTERNAL_JWT_ISSUER || 'summit-inventory';
 
@@ -90,7 +90,9 @@ interface OpenBid {
   current_quote: number | null;
   quote_history: any;
   round_target_qty: number | null;
-  round_catalog_item_id: string;
+  round_catalog_item_id: string | null;
+  /** Parent multi-item request, when this round belongs to one (null = standalone round). */
+  round_request_id: string | null;
   vendor_name: string;
   vendor_contact_email: string | null;
   item_name: string | null;
@@ -104,6 +106,16 @@ type IngestOutcome =
   | 'duplicate_bid'
   | 'already_seen';
 
+/** Per-line detail when one reply covers several of a request's items. */
+interface ReplyLineResult {
+  round_id: string;
+  bid_id: string;
+  item: string | null;
+  outcome: 'recorded' | 'not_quoted' | 'declined';
+  unit_cost: number | null;
+  confidence: number | null;
+}
+
 interface ReplyResult {
   message_id: string;
   from: string | null;
@@ -114,6 +126,8 @@ interface ReplyResult {
   outcome: IngestOutcome;
   unit_cost: number | null;
   confidence: number | null;
+  /** Present when the reply was matched against a multi-item request. */
+  lines?: ReplyLineResult[];
 }
 
 export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fetch, idempotencyKey }) => {
@@ -127,7 +141,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
   // ── Load open bids in scope (the match targets) ────────────────────────────
   let roundQuery = sc
     .from('quote_rounds')
-    .select('id, target_qty, catalog_item_id')
+    .select('id, target_qty, catalog_item_id, request_id, item_label')
     .eq('tenant_id', tenantId)
     .eq('status', 'open')
     .limit(500);
@@ -156,7 +170,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
 
   // Enrich with vendor + item names (extractor context, honest results).
   const vendorIds = [...new Set((bidRows ?? []).map((b: any) => b.vendor_id))];
-  const itemIds = [...new Set(openRounds.map((r: any) => r.catalog_item_id))];
+  const itemIds = [...new Set(openRounds.map((r: any) => r.catalog_item_id).filter(Boolean))];
   const [{ data: vendors }, { data: items }] = await Promise.all([
     vendorIds.length
       ? sc.from('vendors').select('id, name, contact_email, po_email').in('id', vendorIds).limit(5000)
@@ -174,10 +188,12 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
     return {
       ...b,
       round_target_qty: round?.target_qty ?? null,
-      round_catalog_item_id: round?.catalog_item_id,
+      round_catalog_item_id: round?.catalog_item_id ?? null,
+      round_request_id: round?.request_id ?? null,
       vendor_name: v?.name ?? 'Vendor',
       vendor_contact_email: (v?.contact_email ?? v?.po_email ?? null),
-      item_name: itemMap.get(round?.catalog_item_id)?.name ?? null,
+      // Catalog name when the round is a real item; the free-text label on an ad-hoc line.
+      item_name: itemMap.get(round?.catalog_item_id)?.name ?? round?.item_label ?? null,
     };
   });
 
@@ -280,11 +296,25 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
         { onConflict: 'tenant_id,provider_message_id', ignoreDuplicates: true },
       )
       .select('id');
-    const eventRow = claimed?.[0];
-    if (!eventRow) {
-      // Already ingested on an earlier poll — don't touch the bid again.
-      results.push({ message_id: reply.messageId, from: reply.fromEmail, matched_by: null, round_id: null, bid_id: null, vendor_name: null, outcome: 'already_seen', unit_cost: null, confidence: null });
-      continue;
+    let ledgerId: string | null = claimed?.[0]?.id ?? null;
+    if (!ledgerId) {
+      // Seen before. A row still 'pending' means an earlier run claimed this
+      // message but died before finishing (crash / released retry) — reclaim it
+      // and finish the job; the per-bid history guard in recordQuote makes
+      // re-applying safe. Any other outcome = completed ingest → strict no-op.
+      const { data: prior } = await sc
+        .from('quote_round_reply_events')
+        .select('id, outcome')
+        .eq('tenant_id', tenantId)
+        .eq('provider_message_id', reply.messageId)
+        .limit(1);
+      if (prior?.[0]?.outcome === 'pending') {
+        ledgerId = prior[0].id;
+      } else {
+        // Already ingested on an earlier poll — don't touch the bids again.
+        results.push({ message_id: reply.messageId, from: reply.fromEmail, matched_by: null, round_id: null, bid_id: null, vendor_name: null, outcome: 'already_seen', unit_cost: null, confidence: null });
+        continue;
+      }
     }
 
     // 1) Match: token first (subject or body), then vendor email.
@@ -303,75 +333,186 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
     }
     if (!bid && reply.fromEmail) {
       const candidates = bidsByEmail.get(reply.fromEmail) ?? [];
-      // Only auto-match on email when it's unambiguous (one open bid for that
-      // address). Multiple → leave for a human rather than guess the round.
+      // One open bid for that address → unambiguous, match it. Several open bids
+      // that are all the SAME vendor's lines under the SAME multi-item request →
+      // that's just the combined RFQ we sent them; match the request (the
+      // per-line extractor sorts out which line is which). Anything else stays
+      // ambiguous → leave for a human rather than guess the round.
       if (candidates.length === 1) {
         bid = candidates[0];
         matchedBy = 'email';
       } else if (candidates.length > 1) {
-        results.push({ message_id: reply.messageId, from: reply.fromEmail, matched_by: null, round_id: null, bid_id: null, vendor_name: null, outcome: 'duplicate_bid', unit_cost: null, confidence: null });
-        await sc.from('quote_round_reply_events').update({ matched_by: 'email', outcome: 'duplicate_bid', updated_at: now }).eq('id', eventRow.id).eq('tenant_id', tenantId);
-        continue;
+        const sameVendor = new Set(candidates.map((c) => c.vendor_id)).size === 1;
+        const requestIds = new Set(candidates.map((c) => c.round_request_id ?? `standalone:${c.round_id}`));
+        if (sameVendor && requestIds.size === 1 && candidates[0].round_request_id) {
+          bid = candidates[0];
+          matchedBy = 'email';
+        } else {
+          results.push({ message_id: reply.messageId, from: reply.fromEmail, matched_by: null, round_id: null, bid_id: null, vendor_name: null, outcome: 'duplicate_bid', unit_cost: null, confidence: null });
+          await sc.from('quote_round_reply_events').update({ matched_by: 'email', outcome: 'duplicate_bid', updated_at: now }).eq('id', ledgerId).eq('tenant_id', tenantId);
+          continue;
+        }
       }
     }
 
     if (!bid) {
       unmatched += 1;
       results.push({ message_id: reply.messageId, from: reply.fromEmail, matched_by: null, round_id: null, bid_id: null, vendor_name: null, outcome: 'unmatched', unit_cost: null, confidence: null });
-      await sc.from('quote_round_reply_events').update({ matched_by: null, outcome: 'unmatched', updated_at: now }).eq('id', eventRow.id).eq('tenant_id', tenantId);
+      await sc.from('quote_round_reply_events').update({ matched_by: null, outcome: 'unmatched', updated_at: now }).eq('id', ledgerId).eq('tenant_id', tenantId);
       continue;
     }
     matched += 1;
 
-    // 2) Extract the quote from the reply (never invents a number).
-    const extracted = await extractQuoteFromText({
-      text: reply.bodyText ?? reply.snippet ?? '',
-      item_name: bid.item_name,
-      vendor_name: bid.vendor_name,
-    });
+    // 2) Reply scope. The combined RFQ (send-invites) covers EVERY line this
+    // vendor holds under the matched bid's request, so one reply may quote
+    // several of them. Standalone rounds (no parent request) keep the
+    // single-bid scope — the path that always existed.
+    let scopeBids: OpenBid[] = [bid];
+    if (bid.round_request_id) {
+      const siblings = bids.filter(
+        (b) => b.vendor_id === bid!.vendor_id && b.round_request_id === bid!.round_request_id && b.status !== 'declined',
+      );
+      if (siblings.length > 0) scopeBids = siblings;
+      if (!scopeBids.some((b) => b.id === bid!.id)) scopeBids = [bid, ...scopeBids];
+    }
 
-    let outcome: IngestOutcome;
-    if (extracted.declined) {
-      // Vendor explicitly bowed out.
-      await sc.from('quote_round_bids')
-        .update({ status: 'declined', updated_at: now, last_event_id: `${idempotencyKey}:${bid.id}:decl` })
-        .eq('id', bid.id).eq('tenant_id', tenantId);
-      outcome = 'declined';
-      events.push({ event_name: 'quote_round.reply_declined', payload: { round_id: bid.round_id, vendor_id: bid.vendor_id }, last_event_id: `${idempotencyKey}:${bid.id}:decl` });
-    } else if (extracted.unit_cost !== null) {
-      // Record the price exactly as the human-paste path does.
+    // Record a price on a bid — shared by the single- and multi-line paths;
+    // writes exactly what the human-paste path writes.
+    const replyRaw = (reply.bodyText ?? reply.snippet ?? '').slice(0, 4000);
+    const recordQuote = async (
+      target: OpenBid,
+      q: { unit_cost: number; moq: number | null; lead_time_days: number | null; confidence: number | null },
+    ) => {
       const entry = {
-        unit_cost: extracted.unit_cost,
+        unit_cost: q.unit_cost,
         recorded_at: now,
         source: 'inbound_email',
-        moq: extracted.moq ?? null,
-        lead_time_days: extracted.lead_time_days ?? null,
-        confidence: extracted.confidence ?? null,
-        raw: (reply.bodyText ?? reply.snippet ?? '').slice(0, 4000),
+        moq: q.moq ?? null,
+        lead_time_days: q.lead_time_days ?? null,
+        confidence: q.confidence ?? null,
+        raw: replyRaw,
         message_id: reply.messageId,
       };
-      const history = Array.isArray(bid.quote_history) ? bid.quote_history : [];
+      const history = Array.isArray(target.quote_history) ? target.quote_history : [];
+      if (history.some((e: any) => e?.message_id === reply.messageId && e?.source === 'inbound_email')) {
+        // This exact message already put its price on this bid — a reclaimed
+        // 'pending' retry landing again. Never stack a duplicate history entry.
+        return;
+      }
       const { error: upErr } = await sc.from('quote_round_bids')
         .update({
           status: 'quoted',
-          current_quote: extracted.unit_cost,
+          current_quote: q.unit_cost,
           quote_history: [...history, entry],
           updated_at: now,
-          last_event_id: `${idempotencyKey}:${bid.id}:q`,
+          last_event_id: `${idempotencyKey}:${target.id}:q`,
         })
-        .eq('id', bid.id).eq('tenant_id', tenantId);
-      if (upErr) { log.error('price_wars.ingest_bid_write_failed', { bidId: bid.id, error: upErr.message }); throw AppError.internal(upErr.message); }
+        .eq('id', target.id).eq('tenant_id', tenantId);
+      if (upErr) { log.error('price_wars.ingest_bid_write_failed', { bidId: target.id, error: upErr.message }); throw AppError.internal(upErr.message); }
       // Keep the in-memory bid current so a later reply in the same run stacks history.
-      bid.status = 'quoted';
-      bid.current_quote = extracted.unit_cost;
-      bid.quote_history = [...history, entry];
+      target.status = 'quoted';
+      target.current_quote = q.unit_cost;
+      target.quote_history = [...history, entry];
       recorded += 1;
-      outcome = 'recorded';
-      events.push({ event_name: 'quote_round.quote_recorded', payload: { round_id: bid.round_id, vendor_id: bid.vendor_id, unit_cost: extracted.unit_cost, source: 'inbound_email' }, last_event_id: `${idempotencyKey}:${bid.id}:q` });
+      events.push({ event_name: 'quote_round.quote_recorded', payload: { round_id: target.round_id, vendor_id: target.vendor_id, unit_cost: q.unit_cost, source: 'inbound_email' }, last_event_id: `${idempotencyKey}:${target.id}:q` });
+    };
+
+    const declineBid = async (target: OpenBid) => {
+      await sc.from('quote_round_bids')
+        .update({ status: 'declined', updated_at: now, last_event_id: `${idempotencyKey}:${target.id}:decl` })
+        .eq('id', target.id).eq('tenant_id', tenantId);
+      target.status = 'declined';
+      events.push({ event_name: 'quote_round.reply_declined', payload: { round_id: target.round_id, vendor_id: target.vendor_id }, last_event_id: `${idempotencyKey}:${target.id}:decl` });
+    };
+
+    let outcome: IngestOutcome;
+    let unitCost: number | null = null;
+    let confidence: number | null = null;
+    let lineResults: ReplyLineResult[] | undefined;
+
+    if (scopeBids.length <= 1) {
+      // 3a) Single-line scope — extract ONE price, the original path unchanged.
+      const extracted = await extractQuoteFromText({
+        text: reply.bodyText ?? reply.snippet ?? '',
+        item_name: bid.item_name,
+        vendor_name: bid.vendor_name,
+      });
+      unitCost = extracted.unit_cost;
+      confidence = extracted.confidence;
+
+      if (extracted.declined) {
+        // Vendor explicitly bowed out.
+        await declineBid(bid);
+        outcome = 'declined';
+      } else if (extracted.unit_cost !== null) {
+        await recordQuote(bid, {
+          unit_cost: extracted.unit_cost,
+          moq: extracted.moq,
+          lead_time_days: extracted.lead_time_days,
+          confidence: extracted.confidence,
+        });
+        outcome = 'recorded';
+      } else {
+        // Reply received, but no firm price — flag for a human, never guess.
+        unclear += 1;
+        outcome = 'price_unclear';
+      }
     } else {
-      // Reply received, but no firm price — flag for a human, never guess.
-      unclear += 1;
-      outcome = 'price_unclear';
+      // 3b) Multi-line scope — extract per-line prices against the vendor's own
+      // open lines. The model may only pick from these candidates; items the
+      // vendor didn't quote stay untouched.
+      const candidates = scopeBids.map((b, i) => ({
+        ref: `L${i + 1}`,
+        item_name: b.item_name ?? 'Line item',
+        qty: b.round_target_qty,
+      }));
+      const bidByRef = new Map<string, OpenBid>(scopeBids.map((b, i) => [`L${i + 1}`, b]));
+      const extracted = await extractQuoteLinesFromText({
+        text: reply.bodyText ?? reply.snippet ?? '',
+        vendor_name: bid.vendor_name,
+        candidates,
+      });
+
+      const recordedByBidId = new Map<string, { unit_cost: number; confidence: number | null }>();
+      if (extracted.declined && extracted.lines.length === 0) {
+        // Vendor bowed out of the whole request — the lines still awaiting an
+        // answer decline. A bid that already carries a recorded quote keeps it:
+        // a model misread must never erase a real price (withdrawing a recorded
+        // quote is a human decision, not an extractor's).
+        for (const b of scopeBids) {
+          if (b.status !== 'quoted') await declineBid(b);
+        }
+        outcome = 'declined';
+      } else if (extracted.lines.length > 0) {
+        for (const line of extracted.lines) {
+          const target = bidByRef.get(line.ref);
+          if (!target) continue; // validation upstream makes this unreachable, but never guess
+          await recordQuote(target, line);
+          recordedByBidId.set(target.id, { unit_cost: line.unit_cost, confidence: line.confidence });
+        }
+        outcome = 'recorded';
+      } else {
+        // Reply received, but no line carried a firm price — human review, never guess.
+        unclear += 1;
+        outcome = 'price_unclear';
+      }
+
+      lineResults = scopeBids.map((b): ReplyLineResult => {
+        const rec = recordedByBidId.get(b.id);
+        return {
+          round_id: b.round_id,
+          bid_id: b.id,
+          item: b.item_name,
+          outcome: rec ? 'recorded' : b.status === 'declined' && outcome === 'declined' ? 'declined' : 'not_quoted',
+          unit_cost: rec?.unit_cost ?? null,
+          confidence: rec?.confidence ?? null,
+        };
+      });
+      // Headline number = the matched bid's own line when it got one, else the
+      // first line that recorded (granularity lives in `lines`).
+      const primary = recordedByBidId.get(bid.id) ?? [...recordedByBidId.values()][0] ?? null;
+      unitCost = primary?.unit_cost ?? null;
+      confidence = primary?.confidence ?? null;
     }
 
     await sc.from('quote_round_reply_events')
@@ -379,13 +520,15 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
         round_id: bid.round_id,
         bid_id: bid.id,
         vendor_id: bid.vendor_id,
+        request_id: bid.round_request_id,
         matched_by: matchedBy,
         outcome,
-        extracted_unit_cost: extracted.unit_cost,
-        extraction_confidence: extracted.confidence,
+        extracted_unit_cost: unitCost,
+        extraction_confidence: confidence,
+        line_outcomes: lineResults ?? null,
         updated_at: now,
       })
-      .eq('id', eventRow.id).eq('tenant_id', tenantId);
+      .eq('id', ledgerId).eq('tenant_id', tenantId);
 
     results.push({
       message_id: reply.messageId,
@@ -395,8 +538,9 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, fe
       bid_id: bid.id,
       vendor_name: bid.vendor_name,
       outcome,
-      unit_cost: extracted.unit_cost,
-      confidence: extracted.confidence,
+      unit_cost: unitCost,
+      confidence,
+      ...(lineResults ? { lines: lineResults } : {}),
     });
   }
 
