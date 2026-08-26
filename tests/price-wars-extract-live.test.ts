@@ -97,6 +97,55 @@ maybe('extractQuoteLinesFromText (live)', () => {
     expect(r.lines).toHaveLength(0);
   }, 45000);
 
+  // Ad-hoc lines (catalog_item_id NULL, name from quote_rounds.item_label) ride
+  // the same candidate list: ingest-replies passes item_label as the candidate's
+  // item_name, so the extractor must match on the free-text label alone.
+  const mixedCandidates = [
+    { ref: 'L1', item_name: 'Traffic Cone 28in', qty: 8 }, // catalog line
+    { ref: 'L2', item_name: 'Custom stencil set — ACM logo 24"', qty: 3 }, // ad-hoc line (label only)
+  ];
+
+  it('records both a catalog line and an ad-hoc label line from one reply', async () => {
+    const r = await extractQuoteLinesFromText({
+      text: [
+        'Hi — pricing per your request:',
+        '- 28" traffic cones: $38.50 each',
+        '- Custom 24" ACM logo stencil set: $112.00 each, made to order, 10 day lead',
+        'Ref: [pw:round:bid]',
+      ].join('\n'),
+      vendor_name: 'SiteWorks Supply',
+      candidates: mixedCandidates,
+    });
+    expect(r.declined).toBe(false);
+    expect(r.lines).toHaveLength(2);
+    const byRef = new Map(r.lines.map((l) => [l.ref, l]));
+    expect(byRef.get('L1')?.unit_cost).toBe(38.5);
+    expect(byRef.get('L2')?.unit_cost).toBe(112);
+  }, 45000);
+
+  it('matches a reply quoting ONLY the ad-hoc line by its label', async () => {
+    const r = await extractQuoteLinesFromText({
+      text: 'We can do the ACM logo stencil sets at $118.00 each. We do not stock traffic cones.',
+      vendor_name: 'SiteWorks Supply',
+      candidates: mixedCandidates,
+    });
+    expect(r.declined).toBe(false);
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0].ref).toBe('L2');
+    expect(r.lines[0].unit_cost).toBe(118);
+  }, 45000);
+
+  it('leaves an ad-hoc line untouched when the vendor is vague about it', async () => {
+    const r = await extractQuoteLinesFromText({
+      text: 'Cones are $38.50 each. For the custom stencils we would need artwork before we can price them.',
+      vendor_name: 'SiteWorks Supply',
+      candidates: mixedCandidates,
+    });
+    const byRef = new Map(r.lines.map((l) => [l.ref, l]));
+    expect(byRef.get('L1')?.unit_cost).toBe(38.5);
+    expect(byRef.has('L2')).toBe(false); // no firm number → untouched, never guessed
+  }, 45000);
+
   it('drops prices for items we never asked about (model may not invent an item)', async () => {
     const r = await extractQuoteLinesFromText({
       text: 'Cones are $38.50 each. We can also do safety vests at $12.00 each if you want them.',

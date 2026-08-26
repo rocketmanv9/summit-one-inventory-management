@@ -133,8 +133,12 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .from('vendors').select('id, name, contact_name').in('id', vendorIds).limit(100);
   const vendorMap = new Map<string, any>((vendors ?? []).map((v: any) => [v.id, v]));
 
-  const { data: item } = await (supabase as any)
-    .schema('inventory').from('catalog_items').select('name, sku').eq('id', round.catalog_item_id).maybeSingle();
+  // Ad-hoc rounds carry no catalog item — their name lives in round.item_label,
+  // so only hit the catalog when there is a real item to look up.
+  const { data: item } = round.catalog_item_id
+    ? await (supabase as any)
+        .schema('inventory').from('catalog_items').select('name, sku').eq('id', round.catalog_item_id).maybeSingle()
+    : { data: null };
 
   // The rival low is the lowest RECORDED quote from anyone who is NOT this
   // vendor. If nobody else has quoted, there is no number to cite and the
@@ -148,7 +152,7 @@ export const POST = createSessionWriteRoute(async ({ ctx, req, log, supabase, id
     .from('local_users').select('name, email').eq('user_id', ctx.userId!).eq('tenant_id', tenantId).maybeSingle();
 
   const vendorName = vendorMap.get(target.vendor_id)?.name ?? 'Vendor';
-  const itemName = item?.name ?? 'the item';
+  const itemName = item?.name ?? round.item_label ?? 'the item';
   const targetQty = Number(round.target_qty) || 1;
   const baseline = target.baseline_unit_cost !== null ? Number(target.baseline_unit_cost) : null;
   const theirQuote = target.current_quote !== null ? Number(target.current_quote) : null;
