@@ -13,6 +13,11 @@
  * Merge semantics are the shipped ones (POST /api/inventory/vendors/[id]/merge):
  * everything the duplicate owns re-points to the survivor, dupes are skipped,
  * and the duplicate is deactivated with an audit link.
+ *
+ * False positives get Dismissed instead ("not a duplicate" → POST
+ * /api/inventory/vendors/duplicates/dismiss): the pair is persisted to
+ * vendor_duplicate_dismissals and the duplicates route filters it from every
+ * future scan, so it never resurfaces.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -30,6 +35,7 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
+  EyeOff,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -115,6 +121,11 @@ function pluralize(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+/** How a pair left the list this session. */
+type PairResolution =
+  | { kind: 'merged'; survivorName: string }
+  | { kind: 'dismissed' };
+
 /* -------------------------------------------------------------------------- */
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -124,8 +135,10 @@ export default function VendorDuplicatesPage() {
   const [strongThreshold, setStrongThreshold] = useState(72);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  // Pair keys resolved this session (merged) so they drop out without a rescan.
-  const [resolved, setResolved] = useState<Record<string, { survivorName: string }>>({});
+  // Pairs already dismissed as "not a dupe" (filtered server-side).
+  const [dismissedCount, setDismissedCount] = useState(0);
+  // Pair keys resolved this session (merged/dismissed) so they drop out without a rescan.
+  const [resolved, setResolved] = useState<Record<string, PairResolution>>({});
 
   const fetchPairs = useCallback(async () => {
     setLoading(true);
@@ -136,6 +149,7 @@ export default function VendorDuplicatesPage() {
       const json = await res.json();
       setPairs(json.pairs || []);
       setStrongThreshold(json.strongThreshold ?? 72);
+      setDismissedCount(json.dismissedCount ?? 0);
       setResolved({});
     } catch (err) {
       setError(errMessage(err, 'Failed to scan for duplicates'));
@@ -162,7 +176,7 @@ export default function VendorDuplicatesPage() {
       <div className="space-y-6">
         <PageHeader
           title="Possible duplicate vendors"
-          description="Pairs of vendors that look like the same company, ranked by match confidence. Merge folds the duplicate into the survivor — items, addresses, contacts, POs, and history all move."
+          description="Pairs of vendors that look like the same company, ranked by match confidence. Merge folds the duplicate into the survivor — items, addresses, contacts, POs, and history all move. Dismiss a false positive and it never resurfaces."
           actions={
             <div className="flex items-center gap-2">
               <Link
@@ -201,9 +215,20 @@ export default function VendorDuplicatesPage() {
               Your vendor book is clean. New near-duplicates are also blocked at add time,
               so this page should stay quiet.
             </p>
+            {dismissedCount > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {pluralize(dismissedCount, 'pair')} previously dismissed as “not a duplicate” — hidden for good.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-8">
+            {dismissedCount > 0 && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <EyeOff className="h-3.5 w-3.5" />
+                {pluralize(dismissedCount, 'pair')} previously dismissed as “not a duplicate” — hidden from this list.
+              </p>
+            )}
             {strongPairs.length > 0 && (
               <section className="space-y-3">
                 <h2 className="text-sm font-semibold text-red-700 uppercase tracking-wide">
@@ -215,8 +240,8 @@ export default function VendorDuplicatesPage() {
                     pair={p}
                     strong
                     resolved={resolved[pairKey(p)]}
-                    onMerged={(survivorName) =>
-                      setResolved((prev) => ({ ...prev, [pairKey(p)]: { survivorName } }))}
+                    onResolved={(resolution) =>
+                      setResolved((prev) => ({ ...prev, [pairKey(p)]: resolution }))}
                   />
                 ))}
               </section>
@@ -232,8 +257,8 @@ export default function VendorDuplicatesPage() {
                     pair={p}
                     strong={false}
                     resolved={resolved[pairKey(p)]}
-                    onMerged={(survivorName) =>
-                      setResolved((prev) => ({ ...prev, [pairKey(p)]: { survivorName } }))}
+                    onResolved={(resolution) =>
+                      setResolved((prev) => ({ ...prev, [pairKey(p)]: resolution }))}
                   />
                 ))}
               </section>
@@ -253,12 +278,12 @@ function DuplicatePairCard({
   pair,
   strong,
   resolved,
-  onMerged,
+  onResolved,
 }: {
   pair: DuplicatePair;
   strong: boolean;
-  resolved?: { survivorName: string };
-  onMerged: (survivorName: string) => void;
+  resolved?: PairResolution;
+  onResolved: (resolution: PairResolution) => void;
 }) {
   const a = sideA(pair);
   const b = sideB(pair);
@@ -266,7 +291,9 @@ function DuplicatePairCard({
   const [preview, setPreview] = useState<MergePreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingDismiss, setConfirmingDismiss] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const [error, setError] = useState('');
 
   const survivor = survivorId === a.id ? a : b;
@@ -278,6 +305,7 @@ function DuplicatePairCard({
     setSurvivorId(id);
     setPreview(null);
     setConfirming(false);
+    setConfirmingDismiss(false);
     setError('');
   };
 
@@ -310,7 +338,7 @@ function DuplicatePairCard({
         body: JSON.stringify({ target_vendor_id: survivor.id }),
       });
       if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to merge vendor'));
-      onMerged(survivor.name);
+      onResolved({ kind: 'merged', survivorName: survivor.name });
     } catch (err) {
       setError(errMessage(err, 'Failed to merge vendor'));
     } finally {
@@ -318,7 +346,25 @@ function DuplicatePairCard({
     }
   };
 
-  if (resolved) {
+  const runDismiss = async () => {
+    setDismissing(true);
+    setError('');
+    try {
+      const res = await fetch('/api/inventory/vendors/duplicates/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ vendor_a_id: pair.vendor_a_id, vendor_b_id: pair.vendor_b_id }),
+      });
+      if (!res.ok) throw AppError.internal(await apiErrorMessage(res, 'Failed to dismiss pair'));
+      onResolved({ kind: 'dismissed' });
+    } catch (err) {
+      setError(errMessage(err, 'Failed to dismiss pair'));
+    } finally {
+      setDismissing(false);
+    }
+  };
+
+  if (resolved?.kind === 'merged') {
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 flex items-start gap-3">
         <CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" />
@@ -334,6 +380,20 @@ function DuplicatePairCard({
         >
           View survivor →
         </Link>
+      </div>
+    );
+  }
+
+  if (resolved?.kind === 'dismissed') {
+    return (
+      <div className="rounded-lg border bg-muted/30 p-4 flex items-start gap-3">
+        <EyeOff className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+        <div className="text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">Dismissed — not a duplicate</p>
+          <p className="mt-0.5">
+            {a.name} and {b.name} stay separate vendors. This pair won&apos;t appear in future scans.
+          </p>
+        </div>
       </div>
     );
   }
@@ -405,7 +465,7 @@ function DuplicatePairCard({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={fetchPreview}
-              disabled={previewing || merging}
+              disabled={previewing || merging || dismissing}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-md hover:bg-muted/30 transition-colors disabled:opacity-50"
             >
               {previewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -414,8 +474,8 @@ function DuplicatePairCard({
 
             {!confirming ? (
               <button
-                onClick={() => setConfirming(true)}
-                disabled={merging || previewing}
+                onClick={() => { setConfirming(true); setConfirmingDismiss(false); }}
+                disabled={merging || previewing || dismissing}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 Merge into {survivor.name}…
@@ -436,6 +496,38 @@ function DuplicatePairCard({
                 <button
                   onClick={() => setConfirming(false)}
                   disabled={merging}
+                  className="text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </span>
+            )}
+
+            {!confirmingDismiss ? (
+              <button
+                onClick={() => { setConfirmingDismiss(true); setConfirming(false); }}
+                disabled={merging || dismissing || previewing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors disabled:opacity-50"
+                title="These are different companies — hide this pair from future scans"
+              >
+                <EyeOff className="h-3.5 w-3.5" /> Not a duplicate
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5">
+                <span className="text-xs font-medium text-foreground">
+                  Keep “{a.name}” and “{b.name}” separate and never show this pair again?
+                </span>
+                <button
+                  onClick={runDismiss}
+                  disabled={dismissing}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-foreground text-background hover:opacity-90 disabled:opacity-50"
+                >
+                  {dismissing && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {dismissing ? 'Dismissing…' : 'Yes, dismiss'}
+                </button>
+                <button
+                  onClick={() => setConfirmingDismiss(false)}
+                  disabled={dismissing}
                   className="text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
                 >
                   Cancel

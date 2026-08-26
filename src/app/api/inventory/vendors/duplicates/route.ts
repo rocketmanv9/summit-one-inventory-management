@@ -10,6 +10,11 @@
  * never O(n) round trips. Active vendors only; merged vendors are already
  * inactive and drop out on their own. Each side carries the item / PO /
  * address / contact counts the browser shows side-by-side.
+ *
+ * Pairs an admin dismissed ("not a dupe" → vendor_duplicate_dismissals) are
+ * filtered out here so false positives never resurface. Dismissals are stored
+ * with the same normalized ordering the RPC emits (vendor_a_id < vendor_b_id),
+ * so filtering is a straight key lookup.
  */
 
 import { createSessionReadRoute } from '@rocketmanv9/chassis/nextjs';
@@ -42,8 +47,26 @@ export const GET = createSessionReadRoute(async ({ req, session, log }) => {
     throw AppError.internal(error.message);
   }
 
+  // Drop pairs an admin already dismissed as "not a dupe". Both sides are
+  // normalized (a < b), so a simple key set does it.
+  const { data: dismissals, error: dismissErr } = await sc
+    .from('vendor_duplicate_dismissals')
+    .select('vendor_a_id, vendor_b_id')
+    .eq('tenant_id', session.tenantId!)
+    .limit(2000);
+  if (dismissErr) {
+    log.error('vendor.duplicates_dismissals_lookup_failed', { error: dismissErr.message });
+    throw AppError.internal(dismissErr.message);
+  }
+  const dismissedKeys = new Set(
+    (dismissals || []).map((d: { vendor_a_id: string; vendor_b_id: string }) => `${d.vendor_a_id}:${d.vendor_b_id}`),
+  );
+  const allPairs = (data || []) as Array<{ vendor_a_id: string; vendor_b_id: string }>;
+  const pairs = allPairs.filter((p) => !dismissedKeys.has(`${p.vendor_a_id}:${p.vendor_b_id}`));
+
   return Response.json({
-    pairs: data || [],
+    pairs,
+    dismissedCount: allPairs.length - pairs.length,
     strongThreshold: STRONG_MATCH_THRESHOLD,
     hintThreshold: HINT_MATCH_THRESHOLD,
   });

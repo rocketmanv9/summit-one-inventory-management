@@ -131,6 +131,9 @@ export default function VendorsPage() {
   const [removeError, setRemoveError] = useState('');
   // The duplicate vendor being folded into another via the merge tool.
   const [mergeSource, setMergeSource] = useState<Vendor | null>(null);
+  // Open duplicate-pair count for the Duplicates button badge (dismissed pairs
+  // are already filtered server-side, so 0 means genuinely nothing to review).
+  const [dupPairCount, setDupPairCount] = useState(0);
 
   /* ---- Fetching ---- */
 
@@ -175,6 +178,22 @@ export default function VendorsPage() {
       fetchCatalog();
     }
   }, [activeTab]);
+
+  // Badge on the Duplicates button — best-effort, never blocks the page.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/inventory/vendors/duplicates?limit=200');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) setDupPairCount((json.pairs || []).length);
+      } catch {
+        /* scan is advisory — a failure just means no badge */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'catalog') {
@@ -408,9 +427,14 @@ export default function VendorsPage() {
                   <Link
                     href="/inventory/vendors/duplicates"
                     className="px-4 py-2 border rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors inline-flex items-center gap-1.5"
-                    title="Scan your vendors for likely duplicates and merge them"
+                    title="Scan your vendors for likely duplicates — merge the real ones, dismiss false positives"
                   >
                     <Copy className="h-4 w-4" /> Duplicates
+                    {dupPairCount > 0 && (
+                      <span className="ml-0.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-600 text-white text-[11px] font-semibold tabular-nums">
+                        {dupPairCount}
+                      </span>
+                    )}
                   </Link>
                   <button
                     onClick={() => setShowAddModal(true)}
