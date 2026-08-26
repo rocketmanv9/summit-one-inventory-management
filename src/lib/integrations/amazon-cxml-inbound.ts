@@ -146,10 +146,32 @@ export interface ParsedShipNotice {
   shipmentId: string | null;
   shipDate: string | null;
   deliveryDate: string | null;
+  /**
+   * Per-line shipped quantities from <ShipNoticeItem lineNumber=".." quantity="..">.
+   * lineNumber echoes the OrderRequest ItemOut lineNumber, which we populate from
+   * purchase_order_lines.line_number — so it maps straight back to our PO lines.
+   * Empty when the ASN is header-only (no item detail).
+   */
+  items: Array<{ lineNumber: number; quantity: number }>;
 }
 
 export function parseShipNoticeRequest(xml: string): ParsedShipNotice {
   const header = xml.match(/<ShipNoticeHeader\b([^>]*)>/i)?.[1] ?? '';
+
+  // Per-line shipped quantities (optional in the ASN). Matches both container
+  // (<ShipNoticeItem ...>...</ShipNoticeItem>) and self-closing forms.
+  const items: ParsedShipNotice['items'] = [];
+  const itemPattern = /<ShipNoticeItem\b([^>]*?)\/?>/gi;
+  let im: RegExpExecArray | null;
+  while ((im = itemPattern.exec(xml)) !== null) {
+    const attrs = im[1];
+    const line = parseInt(attrs.match(/lineNumber="([^"]+)"/i)?.[1] ?? '', 10);
+    const qty = parseFloat(attrs.match(/quantity="([^"]+)"/i)?.[1] ?? '');
+    if (Number.isFinite(line) && Number.isFinite(qty)) {
+      items.push({ lineNumber: line, quantity: qty });
+    }
+  }
+
   return {
     orderId: xml.match(/orderID="([^"]+)"/i)?.[1]?.trim() ?? null,
     // CarrierIdentifier text is the human carrier name (UPS, FedEx, ...).
@@ -163,6 +185,7 @@ export function parseShipNoticeRequest(xml: string): ParsedShipNotice {
     shipmentId: header.match(/shipmentID="([^"]+)"/i)?.[1]?.trim() ?? null,
     shipDate: header.match(/shipmentDate="([^"]+)"/i)?.[1]?.trim() ?? null,
     deliveryDate: header.match(/deliveryDate="([^"]+)"/i)?.[1]?.trim() ?? null,
+    items,
   };
 }
 

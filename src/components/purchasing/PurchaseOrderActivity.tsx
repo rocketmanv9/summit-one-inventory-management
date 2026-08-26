@@ -22,7 +22,13 @@ import {
   MessageCircleQuestion,
   Mail,
 } from 'lucide-react';
-import { type Shipment, trackingUrl, shipDate } from '@/lib/po/shipments';
+import {
+  type Shipment,
+  type ReceiptRef,
+  trackingUrl,
+  shipDate,
+  receiptsForShipment,
+} from '@/lib/po/shipments';
 
 interface Suggestion {
   id: string;
@@ -77,6 +83,7 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [replies, setReplies] = useState<Reply[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptRef[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
@@ -90,6 +97,7 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
         setSuggestions(json.data.suggestions || []);
         setReplies(json.data.replies || []);
         setShipments(json.data.shipments || []);
+        setReceipts(json.data.receipts || []);
       }
     } catch {
       // silent
@@ -171,18 +179,37 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
         <div className="p-3 bg-muted/30 rounded-lg animate-pulse h-12" />
       ) : (
         <div className="space-y-3">
-          {/* Carrier shipments (from the integration ASN, e.g. Amazon ship-notice) */}
+          {/* Carrier shipments (from the integration ASN, e.g. Amazon ship-notice)
+              with derived receiving state: green when a posted receipt was
+              attributed to the shipment, amber when the expected delivery date
+              has passed with nothing received against it — so a delivered box
+              nobody has received is visible at a glance. Read-only. */}
           {shipments.length > 0 && (
             <div className="space-y-2">
               {shipments.map((sh, i) => {
                 const url = trackingUrl(sh.carrier, sh.tracking_number);
+                const attributed = receiptsForShipment(sh, receipts);
+                const received = attributed.length > 0;
+                const expected = shipDate(sh.delivery_date);
+                const overdue = !received && !!expected && expected < new Date().toISOString().slice(0, 10);
                 return (
                   <div key={i} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <div className="flex items-start gap-2">
                       <Truck className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-blue-900">
+                        <div className="text-sm font-medium text-blue-900 flex items-center gap-2 flex-wrap">
                           Shipped{sh.carrier ? ` via ${sh.carrier}` : ''}
+                          {received && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-green-100 text-green-800 border-green-300">
+                              Received{attributed[0].receipt_number ? ` · ${attributed[0].receipt_number}` : ''}
+                              {attributed[0].received_at ? ` · ${shipDate(attributed[0].received_at)}` : ''}
+                            </span>
+                          )}
+                          {overdue && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-300">
+                              Delivered? Not received yet
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-blue-800 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
                           {sh.tracking_number &&
@@ -194,7 +221,13 @@ export function PurchaseOrderActivity({ poId, onChanged }: { poId: string; onCha
                               <span>Tracking: {sh.tracking_number}</span>
                             ))}
                           {shipDate(sh.ship_date) && <span>· Shipped {shipDate(sh.ship_date)}</span>}
-                          {shipDate(sh.delivery_date) && <span>· Expected {shipDate(sh.delivery_date)}</span>}
+                          {expected && <span>· Expected {expected}</span>}
+                          {sh.lines.length > 0 && (
+                            <span>
+                              · {sh.lines.length} line{sh.lines.length === 1 ? '' : 's'},{' '}
+                              {sh.lines.reduce((s, l) => s + l.quantity, 0)} shipped
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

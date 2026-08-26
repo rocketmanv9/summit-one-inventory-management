@@ -96,6 +96,13 @@ export async function POST(req: NextRequest) {
                 ship_date: asn.shipDate,
                 delivery_date: asn.deliveryDate,
                 received_at: new Date().toISOString(),
+                // Per-line shipped quantities (when the ASN carries item detail).
+                // line_number maps to purchase_order_lines.line_number. Stored so
+                // the receiving surface can show shipped-vs-ordered per line —
+                // this webhook still NEVER posts a receipt.
+                ...(asn.items.length > 0
+                  ? { lines: asn.items.map((i) => ({ line_number: i.lineNumber, quantity: i.quantity })) }
+                  : {}),
               },
             ],
           },

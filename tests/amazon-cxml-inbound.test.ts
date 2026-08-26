@@ -82,6 +82,34 @@ describe('parseShipNoticeRequest', () => {
     expect(r.shipDate).toBe('2026-06-10T13:00:00Z');
     expect(r.deliveryDate).toBe('2026-06-12T13:00:00Z');
   });
+
+  it('returns empty items for a header-only ASN', () => {
+    expect(parseShipNoticeRequest(xml).items).toEqual([]);
+  });
+
+  it('extracts per-line shipped quantities from ShipNoticeItem elements', () => {
+    const withItems = xml.replace(
+      '</ShipNoticePortion>',
+      `  <ShipNoticeItem quantity="2" lineNumber="1">
+          <UnitOfMeasure>EA</UnitOfMeasure>
+        </ShipNoticeItem>
+        <ShipNoticeItem quantity="5" lineNumber="3"/>
+      </ShipNoticePortion>`,
+    );
+    const r = parseShipNoticeRequest(withItems);
+    expect(r.items).toEqual([
+      { lineNumber: 1, quantity: 2 },
+      { lineNumber: 3, quantity: 5 },
+    ]);
+  });
+
+  it('skips ShipNoticeItem elements missing lineNumber or quantity', () => {
+    const bad = xml.replace(
+      '</ShipNoticePortion>',
+      `<ShipNoticeItem quantity="2"/><ShipNoticeItem lineNumber="1"/></ShipNoticePortion>`,
+    );
+    expect(parseShipNoticeRequest(bad).items).toEqual([]);
+  });
 });
 
 describe('buildCxmlResponse', () => {

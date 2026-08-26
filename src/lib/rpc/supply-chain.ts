@@ -550,6 +550,7 @@ export const SupplyChainRPC = {
         *,
         purchase_order_lines(
           id,
+          line_number,
           catalog_item_id,
           item_description,
           uom_term_id,
@@ -697,6 +698,8 @@ export const SupplyChainRPC = {
     source_type?: string;
     status?: string;
     auto_post?: boolean;
+    /** ASN shipment this receipt is attributed to (shipmentID or tracking number). */
+    shipment_ref?: string | null;
     lines: any[];
   }) {
     const supabase = createBrowserAuthedClient().schema('supply_chain');
@@ -713,7 +716,8 @@ export const SupplyChainRPC = {
       p_vendor_invoice_no: params.vendor_invoice_no || null,
       p_source_type: params.source_type || 'delivery',
       p_status: params.status || 'confirmed',
-      p_auto_post: params.auto_post ?? true
+      p_auto_post: params.auto_post ?? true,
+      p_shipment_ref: params.shipment_ref || null
     });
 
     if (error) {

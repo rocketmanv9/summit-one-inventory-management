@@ -17,10 +17,20 @@ import { SupplyChainRPC } from '@/lib/rpc/supply-chain';
 import { receivePurchaseOrderLines } from '@/lib/api/purchase-orders';
 import { useUOMLabelMap } from '@/hooks/useGVTerms';
 import { BarcodeLabelDialog, type BarcodeLabelItem } from '@/components/modals/BarcodeLabelDialog';
-import { type Shipment, trackingUrl, shipDate } from '@/lib/po/shipments';
+import {
+  type Shipment,
+  type ReceiptRef,
+  trackingUrl,
+  shipDate,
+  shipmentRef,
+  receiptsForShipment,
+  defaultShipmentRef,
+  shippedQtyByLine,
+} from '@/lib/po/shipments';
 
 interface POLine {
   id: string;
+  line_number?: number | null;
   catalog_item_id: string | null;
   item_description?: string | null;
   uom_term_id?: string | null;
@@ -56,6 +66,10 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   // the receiver can confirm the box that arrived matches what was shipped.
   // An ASN means "shipped", never "received" — this never posts a receipt.
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  // Posted receipts already attributed to shipments (for received/unreceived state).
+  const [poReceipts, setPoReceipts] = useState<ReceiptRef[]>([]);
+  // Which shipment this receipt is attributed to ('' = no specific shipment).
+  const [attributedRef, setAttributedRef] = useState<string>('');
 
   // Outstanding quantity per line (numeric strings from PostgREST → coerce).
   const lines = useMemo(() => (po?.purchase_order_lines || []).map((l) => {
@@ -66,6 +80,10 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
   // Every line still owing quantity is receivable — catalog lines post to stock,
   // free-text lines are confirmation-only.
   const receivable = lines.filter((l) => l.outstanding > 0);
+
+  // Quantity shipped per PO line (from ship-notices carrying line detail) —
+  // shipped-vs-ordered context so the receiver knows what should be in the box.
+  const shippedByLine = useMemo(() => shippedQtyByLine(shipments), [shipments]);
 
   // Lines where the entered quantity exceeds what's still outstanding.
   const isOver = (l: (typeof lines)[number]) => parseFloat(qtyByLine[l.id] || '0') > l.outstanding;
@@ -97,18 +115,29 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
     setReceivedLabels(null);
     setShowLabelDialog(false);
     setShipments([]);
+    setPoReceipts([]);
+    setAttributedRef('');
     // Default every receivable line to its full outstanding quantity.
     const init: Record<string, string> = {};
     for (const l of receivable) init[l.id] = String(l.outstanding);
     setQtyByLine(init);
     // Pull any carrier shipments (ASN) for this PO so the receiver sees
-    // "on its way via UPS 1Z…" alongside the lines. Read-only, best-effort.
+    // "on its way via UPS 1Z…" alongside the lines, plus the receipts already
+    // attributed to them. Read-only, best-effort.
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/inventory/purchasing/po-activity?po_id=${po.id}`);
         const json = await res.json();
-        if (!cancelled && res.ok) setShipments(json.data?.shipments || []);
+        if (!cancelled && res.ok) {
+          const ships: Shipment[] = json.data?.shipments || [];
+          const receipts: ReceiptRef[] = json.data?.receipts || [];
+          setShipments(ships);
+          setPoReceipts(receipts);
+          // Default attribution: most recent shipment nothing was received
+          // against yet (receiver can change or clear it).
+          setAttributedRef(defaultShipmentRef(ships, receipts) ?? '');
+        }
       } catch {
         // Tracking is a convenience — never block receiving on it.
       }
@@ -166,6 +195,9 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
           location_id: po.delivery_location_id!,
           po_id: po.id,
           auto_post: true,
+          // Attribute the receipt to the shipment the receiver picked (ASN
+          // shipmentID / tracking number) so tracking links to receiving.
+          shipment_ref: attributedRef || null,
           lines: catalogToReceive,
         });
       }
@@ -251,19 +283,46 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
             </div>
           )}
 
-          {/* Carrier tracking from the Amazon ship-notice — read-only, so the
-              receiver can match the box that arrived to the ASN. */}
+          {/* Carrier tracking from the Amazon ship-notice. Each shipment shows
+              whether a receipt was already attributed to it, and the receiver
+              picks which shipment this receipt comes from (default: the most
+              recent one nothing has been received against). The ASN itself
+              still never posts a receipt. */}
           {shipments.length > 0 && (
             <div className="space-y-2">
               {shipments.map((sh, i) => {
                 const url = trackingUrl(sh.carrier, sh.tracking_number);
+                const ref = shipmentRef(sh);
+                const attributed = receiptsForShipment(sh, poReceipts);
+                const selectable = !!ref;
+                const selected = !!ref && attributedRef === ref;
                 return (
-                  <div key={i} className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <label
+                    key={i}
+                    className={`block p-3 rounded-lg border ${
+                      selected ? 'bg-blue-100 border-blue-400' : 'bg-blue-50 border-blue-200'
+                    } ${selectable ? 'cursor-pointer' : ''}`}
+                  >
                     <div className="flex items-start gap-2">
-                      <Truck className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      {selectable ? (
+                        <input
+                          type="radio"
+                          name="receive-shipment"
+                          checked={selected}
+                          onChange={() => setAttributedRef(ref!)}
+                          className="mt-0.5 flex-shrink-0 accent-blue-600"
+                        />
+                      ) : (
+                        <Truck className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      )}
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-blue-900">
+                        <div className="text-sm font-medium text-blue-900 flex items-center gap-2 flex-wrap">
                           Shipped{sh.carrier ? ` via ${sh.carrier}` : ''}
+                          {attributed.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full border bg-green-100 text-green-800 border-green-300">
+                              Received{attributed[0].receipt_number ? ` · ${attributed[0].receipt_number}` : ''}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-blue-800 mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
                           {sh.tracking_number &&
@@ -277,11 +336,28 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
                           {shipDate(sh.ship_date) && <span>· Shipped {shipDate(sh.ship_date)}</span>}
                           {shipDate(sh.delivery_date) && <span>· Expected {shipDate(sh.delivery_date)}</span>}
                         </div>
+                        {selected && (
+                          <div className="text-[11px] text-blue-700 mt-1">
+                            This receipt will be recorded against this shipment.
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
+                  </label>
                 );
               })}
+              {shipments.some((sh) => shipmentRef(sh)) && (
+                <label className="flex items-center gap-2 px-1 text-xs text-muted-foreground cursor-pointer">
+                  <input
+                    type="radio"
+                    name="receive-shipment"
+                    checked={attributedRef === ''}
+                    onChange={() => setAttributedRef('')}
+                    className="accent-blue-600"
+                  />
+                  Not from a specific shipment
+                </label>
+              )}
             </div>
           )}
 
@@ -315,6 +391,11 @@ export function ReceivePOModal({ open, po, catalogItems, onClose, onReceived }: 
                           <div className="font-medium truncate">{info.name}</div>
                           <div className="text-xs text-muted-foreground">
                             {info.sku ? `${info.sku} · ` : ''}{l.outstanding}{info.uom ? ` ${info.uom}` : ''} outstanding
+                            {l.line_number != null && shippedByLine[l.line_number] != null && (
+                              <span className="ml-1 text-blue-700">
+                                · {shippedByLine[l.line_number]} shipped
+                              </span>
+                            )}
                             {!info.tracked && <span className="ml-1 text-amber-600">· not stock-tracked</span>}
                           </div>
                         </div>

@@ -21,7 +21,7 @@ export const GET = createSessionReadRoute(
     const sc = admin.schema('supply_chain');
     const inv = admin.schema('inventory');
 
-    const [{ data: suggestions }, { data: replies }, { data: punchout }] = await Promise.all([
+    const [{ data: suggestions }, { data: replies }, { data: punchout }, { data: receipts }] = await Promise.all([
       sc
         .from('purchase_order_suggestions')
         .select('id, reply_id, event_type, confidence, summary, proposed_changes, status, applied_at, created_at')
@@ -46,6 +46,16 @@ export const GET = createSessionReadRoute(
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // Posted receipts for the PO — shipment_ref links each back to the ASN
+      // shipment it was attributed to (receipt→shipment reconciliation).
+      sc
+        .from('receipts')
+        .select('id, receipt_number, received_at, shipment_ref, status')
+        .eq('tenant_id', session.tenantId)
+        .eq('po_id', poId)
+        .neq('status', 'cancelled')
+        .order('received_at', { ascending: false })
+        .limit(100),
     ]);
 
     const shipments = parseShipments((punchout as any)?.metadata?.shipments);
@@ -55,6 +65,7 @@ export const GET = createSessionReadRoute(
         suggestions: suggestions ?? [],
         replies: replies ?? [],
         shipments,
+        receipts: receipts ?? [],
         pending_count: (suggestions ?? []).filter((s: any) => s.status === 'suggested').length,
       },
     });
